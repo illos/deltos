@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#11131a" />
+    <meta name="description" content="A private, multi-surface notes framework." />
+    <!-- iOS installed-PWA hints -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="deltos" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml" />
+    <title>deltos</title>
+    <!--
+      Render-before-data: paint the shell from inline critical CSS + static markup so first
+      paint never waits on the JS bundle or any data fetch. React mounts into #root and replaces
+      this skeleton once hydrated.
+    -->
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #11131a;
+        --fg: #e7e9ee;
+        --muted: #8b90a0;
+        --edge: #232634;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body,
+      #root {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          15px/1.5 system-ui,
+          -apple-system,
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .shell {
+        display: flex;
+        flex-direction: column;
+        min-height: 100%;
+      }
+      .shell__bar {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.9rem 1.1rem;
+        border-bottom: 1px solid var(--edge);
+      }
+      .shell__mark {
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+      .shell__main {
+        flex: 1;
+        display: grid;
+        place-items: center;
+        padding: 2rem;
+        text-align: center;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="shell" aria-hidden="true">
+        <header class="shell__bar"><span class="shell__mark">δ deltos</span></header>
+        <main class="shell__main">Loading…</main>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

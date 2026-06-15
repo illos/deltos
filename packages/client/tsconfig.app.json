@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["vite/client", "vite-plugin-pwa/client"],
+    "noEmit": true
+  },
+  // The service worker runs in the WebWorker lib, not DOM — typechecked separately.
+  "include": ["src"],
+  "exclude": ["src/sw.ts"]
+}

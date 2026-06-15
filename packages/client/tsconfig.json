@@ -1,0 +1,10 @@
+{
+  // Editor convenience: point IDEs at all three real configs. Build/typecheck scripts invoke
+  // tsconfig.app.json (DOM), tsconfig.sw.json (WebWorker), and tsconfig.node.json directly.
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.sw.json" },
+    { "path": "./tsconfig.node.json" }
+  ]
+}

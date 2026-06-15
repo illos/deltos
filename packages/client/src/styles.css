@@ -1,0 +1,62 @@
+/* App styles. The critical shell CSS lives inline in index.html for instant first paint;
+   this sheet refines the same chrome once the bundle loads. */
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.shell__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.9rem 1.1rem;
+  border-bottom: 1px solid var(--edge);
+}
+
+.shell__mark {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.shell__net {
+  margin-left: auto;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  color: var(--muted);
+}
+
+.shell__net--online {
+  color: #6ee7a8;
+  border-color: #1f3b2c;
+}
+
+.shell__net--offline {
+  color: #f0b86e;
+  border-color: #3b321f;
+}
+
+.shell__main {
+  flex: 1;
+  display: grid;
+  place-content: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+.shell__lede {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.shell__sub {
+  margin: 0;
+  max-width: 34rem;
+  color: var(--muted);
+}
