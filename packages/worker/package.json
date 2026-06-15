@@ -1,0 +1,25 @@
+{
+  "name": "@deltos/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "deltos backend — Cloudflare Worker + Hono + D1. The substrate's server edge; every route passes through the can() chokepoint.",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "build": "tsc -p tsconfig.json --noEmit && wrangler deploy --dry-run --outdir dist",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply deltos --local",
+    "db:migrate:remote": "wrangler d1 migrations apply deltos --remote"
+  },
+  "dependencies": {
+    "@deltos/shared": "workspace:*",
+    "hono": "^4.6.14",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241218.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^4.0.0"
+  }
+}

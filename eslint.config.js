@@ -14,6 +14,12 @@ export default tseslint.config(
       // contract, never `any`. Forbid the escape hatch so it can't creep in at a boundary.
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/consistent-type-imports': 'error',
+      // `_`-prefixed names are intentionally-unused seam params (e.g. a stub implementing a
+      // typed signature whose arguments arrive in a later phase).
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
     },
   },
 );

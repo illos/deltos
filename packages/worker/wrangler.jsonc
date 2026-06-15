@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "deltos",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-01",
+  "observability": {
+    "enabled": true,
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "deltos",
+      // Placeholder for local dev (miniflare uses a local SQLite file and ignores this).
+      // Run `wrangler d1 create deltos` and paste the real id here before the first deploy.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  // Reserved per the locked architecture — NOT wired in Phase 0:
+  //   - Durable Objects (live collaboration's promote-to-DO seam; the E2EE relay)
+  //   - R2 (the content-addressed blob store)
+}
