@@ -145,6 +145,12 @@ the media/file/table types as available); `pmDocToSpine()` / `spineToPmDoc()` se
 Plugin-island seam **designed** via `NodeView` (no plugin built yet — seam shaped). Render-before-
 data shell (paint editor instantly, hydrate from local store, persist optimistically).
 
+**Cheap full-view hedge** [2026-06-15 design thread; coordinate with pilot]: route the surface's
+note→view selection through a **resolution indirection** (Phase-1's only resolver = the block-body
+editor) rather than hardcoding note→editor. Costs ~nothing now and lets Phase-2 **full-views**
+(recipe cook-view, kanban, code-as-body — the bridge for non-document notes, **no note-type
+polymorphism**) drop in without a rewrite. Phase 1 builds only the default resolver, not full-views.
+
 **Explicitly in scope — the unique-block-ID plugin** [scopeSys catch, 2026-06-15]: the spine is
 **ID-first**, but PM does **not** preserve node IDs across **copy/paste, split, or merge** for free
 (paste can duplicate IDs; split must mint a fresh one; merge must pick one). A dedicated PM plugin

@@ -99,3 +99,28 @@ also done). Silence here is fine — I'll read it as "looks right, proceed."
 ### My response
 
 _____________________________________________
+
+---
+
+## D5 · Device revocation limits — ✅ ACKNOWLEDGED (v1 account-level accepted)
+
+Surfacing a security-posture limitation for your awareness — it's already the decided v1 path, not
+a fork. In our identity model your **24-word recovery phrase IS your account** (that's what makes
+it email-free). The signing key that authenticates your devices is derived from that phrase, so it's
+**the same on every device you own**. Consequence: if a device is lost/stolen, "revoking" it
+invalidates its active session token (so it can't keep syncing), but **anyone still holding the
+recovery phrase can simply re-enroll a new device** — revocation doesn't lock out the phrase itself.
+This is inherent to any recovery-phrase system (whoever has the phrase is you), and it's what
+secSys + devSys are documenting as the accepted v1 posture. The lost-device-*without*-the-phrase
+case is fully covered; the phrase-compromise case is the irreducible part. The stronger alternative
+— **per-device keypairs** giving true per-device lockout even against a phrase-holder — is now a
+**non-breaking Phase-2 upgrade**: devSys is pre-shaping the device registry
+(`deviceSigningPublicKey` + `deviceAuthorization`) so it can drop in later without reworking the
+identity layer. Flag if you'd want it on the roadmap; otherwise we proceed account-level as-is.
+
+### My response
+
+**Acknowledged + accepted — proceed account-level for v1.** This exact limitation surfaced during
+**full-beans** development (our custody-extraction source), so it's familiar, known, and an accepted
+tradeoff for recovery-phrase identity. No upgrade roadmap requested now; keep the pre-shaped
+device-registry seam so per-device lockout stays a non-breaking add if ever wanted. (via scopeSys)

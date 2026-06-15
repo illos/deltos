@@ -54,11 +54,24 @@ promote to devSys/opus if first audit finds a CAS/single-flight/race defect.
 
 ## Later (framed, not yet specced)
 - **Phase 2** — second surface (proves decoupling) + notebooks + universal search + plugin
-  manifest/contribution-registry MVP (one real plugin).
+  manifest/contribution-registry MVP (one real plugin). Also carries (all from the 2026-06-15
+  design threads, see brainstorm §Plugins):
+  - **full-view seam contract** (note→view resolution; full-view reads/writes via the substrate
+    API; collab/offline participation) — how non-document notes (recipe cook-view, kanban,
+    code-as-body) get custom UI without note-type polymorphism;
+  - **notebook plugin/surface loadout** (active contributions + default view) — notebook becomes the
+    unit of UI coherence + plugin scope, not just data scope;
+  - **portable fallback rendering** — the highest-leverage primitive: ONE mandatory per-type render
+    serving FOUR features (cross-notebook/aggregate views, D4 soft-link placeholder, Markdown export,
+    collab read-only shard = `collaborative:false`). Build once in Phase 2; v2 collab inherits its
+    view-only shard free. Anti-siloing guardrail that keeps D4 global relations working across
+    notebook plugin-scoping.
 - **Phase 3** — embeds + blob store (R2/OPFS) + capability-URL sharing + Markdown export +
   backup-via-replica + more surfaces/plugins + history/trash.
 - **v2** — E2EE zone (option (a) Evolu vs (b) encrypt-on-trkr-stack — decide at build time),
-  live collaboration (promote-to-DO), import, notifications/reminders, schema migration.
+  live collaboration (promote-to-DO), import, **behavior/automation dimension** (reactions /
+  recurrence / scheduled triggers / notifications — the named-now third extension dimension, NOT
+  `commands`), schema migration.
 
 ## Open decisions (decide at the relevant slice — not current blockers)
 - **Editor engine** — Phase 1, informed by S2. The next user-facing call.
@@ -123,3 +136,40 @@ promote to devSys/opus if first audit finds a CAS/single-flight/race defect.
   at the boundary for the 5–7d identity stream), B→gruntSys, C→gruntSys2, D→pilot. secSys
   carry-forward into Stream A: **invert the prod tripwire to fail-CLOSED on missing-env** (before
   real handlers) — strengthens the #8 prod guard. Phase-1 build underway.
+- 2026-06-15 — **Polymorphism design thread (user via scopeSys).** "One block editor for
+  everything, or note-body polymorphism?" → **NO note-type polymorphism; spine stays monomorphic;
+  compose the 3 seams** (block/island, property bag, full-views). D1/PM NOT reopened. Two hardening
+  items folded into the design record + Phase-2: (A) **full-view = load-bearing seam** needing a
+  Phase-2 contract (note→view resolution, substrate-API read/write, collab/offline opt-in) +
+  cheap-now Phase-1 view-resolution-indirection hedge; (B) **behavior/automation NAMED as the 3rd
+  extension dimension** (reactions/triggers, NOT commands; notifications v2-deferred). See brainstorm
+  §Spine + §Plugins.
+- 2026-06-15 — **Notebook-model design thread (user via scopeSys), approved.** (1) Notebook carries
+  a **plugin/surface loadout** (active contributions + default view) → notebook = unit of UI
+  coherence + plugin scope. (2) Mandatory **portable fallback rendering** per note/block type for
+  viewing outside the home notebook's plugins — the anti-siloing guardrail that keeps D4 global
+  relations working (notebooks = coherent surfaces, not sealed boxes). **Convergence (user-spotted):
+  the portable fallback is ONE primitive serving FOUR features** — cross-notebook/aggregate views,
+  D4 soft-link placeholder (PIN-MODEL-1), Markdown export, and the collab read-only shard
+  (`collaborative:false`, already in the manifest). Spec as a single first-class artifact; build in
+  Phase 2, v2 collab inherits the view-only shard free. Folded into brainstorm §Layered-model +
+  §Plugins + Phase-2 framing. Highest-leverage small primitive in the thread.
+- 2026-06-15 — **Stream-A audit (secSys early read):** caught a CRITICAL account-takeover bug
+  (server wasn't enforcing `accountFingerprint == hash(signingPublicKey)` at registration) + 3
+  lock-blockers — all fixed before the auth contract locks (the early-read approach earning its
+  keep). **F1 (accepted v1 posture → DECISIONS D5):** SLIP-21-sibling signing key is **shared
+  across the account's devices**, so grant revocation revokes the TOKEN but a mnemonic-holder can
+  re-enroll — consistent with PIN-ID-5 (inherent to recovery-phrase identity: phrase-holder = the
+  account). Per-device keypairs (true key-level revocation) = a **non-breaking Phase-2 upgrade** —
+  devSys pre-shapes the DeviceRegistry seam (`deviceSigningPublicKey` + `deviceAuthorization`) now
+  so it drops in without reworking identity. Pilot authoritatively confirmed (a) account-level v1 to
+  devSys citing D5 — clean escalation discipline, no separate re-decision needed. **D5 ACKNOWLEDGED
+  by user** — accepts v1 account-level; notes this limitation is **known/accepted ground from
+  full-beans** (the custody-extraction source), a deliberate recovery-phrase-identity tradeoff. No
+  upgrade roadmapped; keep the pre-shaped seam.
+- 2026-06-15 — **Git baseline on remote.** Planner artifacts committed by path (`1d14c7a`); pilot
+  committed root docs (`d2e3423`, incl. brainstorm.md S3 edits). `origin/phase-0-foundation` =
+  `d2e3423` (planner docs + P0 foundation + devSys Stream-A strawman). Durable thread now survives a
+  planner clear. **Ops caveat (deltos not coord-opted-in):** clear-teammate's clean-tree gate sees
+  the WHOLE shared tree → before any subordinate clear, all active streams commit WIP by path first,
+  never `--force`. Clean baseline means only live stream WIP needs flushing at a clear boundary.

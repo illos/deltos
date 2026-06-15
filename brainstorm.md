@@ -23,13 +23,16 @@ be offline/local-first or online/cloud per its needs.
 ### The layered model (vocabulary)
 - **Substrate** — local-first store + sync + schema/type system + universal search + transport.
 - **Notebooks (vaults)** — scoped note collections; each carries a capability profile
-  (online/offline, encryption) + enabled plugins. TTRPG, recipes, fiber-work are notebooks.
+  (online/offline, encryption) **+ a plugin/surface LOADOUT** (which contributions are active +
+  the default view). TTRPG, recipes, fiber-work are notebooks. The loadout makes the notebook the
+  unit of **UI coherence + plugin scope** too — not just data scope (2026-06-15 refinement).
 - **Surfaces** — UIs tuned per use case, each a **route in the single PWA**, optionally pinned
   as a home-screen icon. The "many paths into one database."
 - **Plugins** — feature modules that extend both data types and UI.
 
 The recurring theme that signals the design is coherent: **the notebook is the unit of
-everything** — sync authority, storage clip, backup replica, encryption key, capability scope.
+everything** — sync authority, storage clip, backup replica, encryption key, capability scope,
+**plugin/surface loadout (UI coherence)**.
 
 ---
 
@@ -142,6 +145,18 @@ spine stays frozen.
   transport). `title` defaults to first heading. **No formal note type** — behavior emerges
   from a notebook's plugins + the note's own properties/blocks.
 
+**Polymorphism resolution (2026-06-15 design thread, reaffirmed):** "Is one block editor powerful
+enough for everything — code notes, recipes with custom layout, todo+automation — or do we add
+polymorphism at the note-body level?" → **NO note-type polymorphism. The spine stays
+monomorphic.** Heterogeneity is achieved by **composing the three existing seams**, never by adding
+note types: (1) **block types / island NodeViews** for in-document custom UI, (2) **property types
++ loose bag** for structured data + facets (`type:recipe`), (3) **full views** as the bridge for
+notes that aren't document-shaped (recipe cook-view, kanban, code-as-whole-body). Polymorphism
+lives in *composition*; collab / export / search / sync / offline stay solved **once**. This does
+NOT reopen the editor choice — ProseMirror remains the default block-body editor + island host;
+non-document note types live in full-views (a different *surface*, same substrate). See §Plugins
+for the full-view seam contract + the behavior/automation dimension this surfaced.
+
 ---
 
 ## Embeds & file storage
@@ -176,6 +191,25 @@ A plugin declares one **manifest = capability flags + contribution registry**:
 - `collaborative` (default false → read-only shard), `markdownExport` (clean/fenced/none),
   `offline`, and the block/property types it registers.
 
+**Portable fallback rendering — the highest-leverage primitive in the design (2026-06-15 thread).**
+Every note/block type MUST declare a **mandatory portable fallback render**, used whenever the note
+is viewed **outside its home notebook's plugin loadout**. This is the **anti-siloing guardrail**:
+notebook plugin-scoping (the loadout above) would otherwise make notebooks sealed boxes and break
+**D4 global relations** — the fallback keeps notebooks *coherent surfaces, not sealed boxes*.
+**KEY CONVERGENCE — ONE artifact serves FOUR features**, so spec it as a single first-class
+primitive, never per-surface:
+1. **cross-notebook / aggregate surfaces** (a note shown where its plugins aren't loaded);
+2. **D4 soft-link cached-title / placeholder** (PIN-MODEL-1 rail #2/#3 — the placeholder render *is*
+   the fallback, access-conditional);
+3. **Markdown export** (the degrade-without-the-plugin render → see §Markdown);
+4. **collaboration read-only mode** for non-collaborative objects — and this maps **directly onto
+   the existing manifest flag `collaborative:false → read-only shard`**: that shard's rendering **IS**
+   the portable fallback.
+Consequence: build it once for **notebooks + universal search in Phase 2**, and the **promote-to-DO
+collaboration** feature (v2) **inherits its view-only shard for free** — four features, one
+primitive. (Phase-1's D4 relation placeholder is the first sighting of it; keep that minimal render
+shaped so Phase-2 generalizes it rather than replacing it.)
+
 **Six UI slots**, increasing power: block renderer+editor → property widget → commands
 (slash/palette/menu) → panels → full views → settings. **Host owns chrome; plugins fill slots,
 never seize layout** (VSCode/Obsidian model).
@@ -195,6 +229,26 @@ Smaller: host ships theme tokens / a design system so plugins keep the "one app"
 plugin↔surface line is a **gradient** (a surface ≈ chrome + arranged plugin contributions;
 "full view" is the bridge). Cost to accept: the registry + scoped API + tokens are a **stable
 contract that must be versioned** — the real tax of extensibility.
+
+**Three extension dimensions — name them now (2026-06-15 design thread).** The plugin model
+extends along **three** distinct dimensions, not two; naming the third keeps it from being
+mis-shaped later:
+1. **Data seams** — property types & block types (the two seams above).
+2. **UI slots** — the six slots above (block / property / command / panel / full-view / settings).
+3. **Behavior / automation** — reactive logic: on-change reactions, recurrence, scheduled triggers,
+   notifications. A **distinct third dimension**, neither a data seam nor a UI slot, and it must
+   **NOT** be jammed into `commands` (commands are *user-invoked*; reactions/triggers fire on
+   *events*). Notifications are v2-deferred, so this seam is only **named** now and designed later —
+   but naming it now prevents it being crammed into commands when it arrives.
+
+**Full-view is a load-bearing seam, not just "the bridge."** It's how a non-document-shaped note
+gets a purpose-built UI *without* note-type polymorphism, so it needs a **real contract in the
+Phase-2 plugin-manifest work**: (a) how a note **resolves to a view** (default = the block-body
+editor; or a registered full-view); (b) how a full-view **reads/writes properties + blocks via the
+substrate API** (the same scoped API as everything else — no privileged path); (c) whether it
+**participates in collab/offline or opts out**. **Cheap-now Phase-1 hedge:** route the capture
+surface's note→view selection through a resolution indirection (default = block editor) so Phase-2
+full-views drop in without rework.
 
 ---
 
