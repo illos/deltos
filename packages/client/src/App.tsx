@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
-import { CORE_BLOCK_TYPES } from '@deltos/shared';
+import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { NewNote } from './routes/NewNote.js';
+import { NoteRoute } from './routes/NoteRoute.js';
 
 /**
- * Phase 0 shell: empty of features, but real. It paints the host chrome and — to prove the
- * single substrate contract is consumed by the client exactly as by the worker — reads the
- * core block types straight from @deltos/shared. No surfaces, no editor, no data fetch yet;
- * those are Phase 1, and they mount inside this same chrome.
+ * App shell — the host chrome that every surface mounts inside.
+ *
+ * Routing uses BrowserRouter (history API). The service worker's SPA navigation fallback
+ * serves index.html for all in-scope navigations, so direct loads of /note/:id and /new work
+ * offline without a server. The /api/ denylist in sw.ts ensures API navigations reach the
+ * worker, not the shell.
  */
 export function App() {
   const [online, setOnline] = useState(() => navigator.onLine);
@@ -21,24 +25,34 @@ export function App() {
   }, []);
 
   return (
-    <div className="shell">
-      <header className="shell__bar">
-        <span className="shell__mark">δ deltos</span>
-        <span
-          className={`shell__net shell__net--${online ? 'online' : 'offline'}`}
-          title={online ? 'online' : 'offline — running from cache'}
-        >
-          {online ? 'online' : 'offline'}
-        </span>
-      </header>
+    <BrowserRouter>
+      <div className="shell">
+        <header className="shell__bar">
+          <Link to="/" className="shell__mark">δ deltos</Link>
+          <span
+            className={`shell__net shell__net--${online ? 'online' : 'offline'}`}
+            title={online ? 'online' : 'offline — running from cache'}
+          >
+            {online ? 'online' : 'offline'}
+          </span>
+        </header>
 
-      <main className="shell__main">
-        <p className="shell__lede">An empty surface, installed and offline-ready.</p>
-        <p className="shell__sub">
-          The substrate spine is wired — {CORE_BLOCK_TYPES.length} core block types are known to
-          this client from the shared contract.
-        </p>
-      </main>
-    </div>
+        <main className="shell__main">
+          <Routes>
+            <Route path="/new" element={<NewNote />} />
+            <Route path="/note/:id" element={<NoteRoute />} />
+            <Route
+              path="/"
+              element={
+                <div className="home">
+                  <p className="home__lede">Your notes.</p>
+                  <Link to="/new" className="home__new-btn">+ New note</Link>
+                </div>
+              }
+            />
+          </Routes>
+        </main>
+      </div>
+    </BrowserRouter>
   );
 }

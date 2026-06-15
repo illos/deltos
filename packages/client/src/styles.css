@@ -1,5 +1,7 @@
-/* App styles. The critical shell CSS lives inline in index.html for instant first paint;
-   this sheet refines the same chrome once the bundle loads. */
+/* App styles. Critical shell CSS lives inline in index.html for instant first paint;
+   this sheet refines the chrome and adds editor-specific styles. */
+
+/* ── Shell chrome ─────────────────────────────────────────────────────────────── */
 
 .shell {
   display: flex;
@@ -13,11 +15,14 @@
   gap: 0.6rem;
   padding: 0.9rem 1.1rem;
   border-bottom: 1px solid var(--edge);
+  flex-shrink: 0;
 }
 
 .shell__mark {
   font-weight: 600;
   letter-spacing: 0.01em;
+  color: inherit;
+  text-decoration: none;
 }
 
 .shell__net {
@@ -31,32 +36,197 @@
   color: var(--muted);
 }
 
-.shell__net--online {
-  color: #6ee7a8;
-  border-color: #1f3b2c;
-}
-
-.shell__net--offline {
-  color: #f0b86e;
-  border-color: #3b321f;
-}
+.shell__net--online  { color: #6ee7a8; border-color: #1f3b2c; }
+.shell__net--offline { color: #f0b86e; border-color: #3b321f; }
 
 .shell__main {
   flex: 1;
-  display: grid;
-  place-content: center;
-  gap: 0.5rem;
-  padding: 2rem;
-  text-align: center;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.shell__lede {
+/* ── Home screen ──────────────────────────────────────────────────────────────── */
+
+.home {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 1.2rem;
+  padding: 2rem;
+}
+
+.home__lede {
   margin: 0;
   font-size: 1.05rem;
+  color: var(--muted);
 }
 
-.shell__sub {
-  margin: 0;
-  max-width: 34rem;
+.home__new-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1.1rem;
+  border-radius: 0.4rem;
+  background: var(--edge);
+  color: inherit;
+  text-decoration: none;
+  font-size: 0.9rem;
+  letter-spacing: 0.01em;
+  transition: background 0.1s;
+}
+.home__new-btn:hover { background: #2a2d3a; }
+
+/* ── Route transitions ────────────────────────────────────────────────────────── */
+
+.route-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.route-error {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* ── Note editor ──────────────────────────────────────────────────────────────── */
+
+.editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  max-width: 680px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+  box-sizing: border-box;
+}
+
+.editor--loading { opacity: 0; }
+
+.editor__title {
+  font-size: 1.55rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: inherit;
+  background: transparent;
+  border: none;
+  outline: none;
+  width: 100%;
+  padding: 0;
+  margin-bottom: 1rem;
+  letter-spacing: -0.01em;
+}
+
+.editor__title::placeholder { color: var(--muted); opacity: 0.55; }
+
+/* ProseMirror host div */
+.editor__pm {
+  flex: 1;
+  outline: none;
+  min-height: 200px;
+}
+
+/* ProseMirror — base prose */
+.editor__pm .ProseMirror {
+  outline: none;
+  min-height: 200px;
+  line-height: 1.65;
+}
+
+.editor__pm .ProseMirror p   { margin: 0 0 0.55em; }
+.editor__pm .ProseMirror h1  { font-size: 1.55rem; font-weight: 700; margin: 1.2em 0 0.4em; line-height: 1.2; }
+.editor__pm .ProseMirror h2  { font-size: 1.25rem; font-weight: 600; margin: 1.1em 0 0.4em; }
+.editor__pm .ProseMirror h3  { font-size: 1.05rem; font-weight: 600; margin: 1em 0 0.35em; }
+.editor__pm .ProseMirror h4,
+.editor__pm .ProseMirror h5,
+.editor__pm .ProseMirror h6  { font-size: 0.95rem; font-weight: 600; margin: 0.9em 0 0.3em; }
+
+.editor__pm .ProseMirror blockquote {
+  border-left: 3px solid var(--edge);
+  margin: 0 0 0.55em;
+  padding-left: 1rem;
+  color: var(--muted);
+}
+
+.editor__pm .ProseMirror pre {
+  background: #1a1d2a;
+  border-radius: 0.35rem;
+  padding: 0.85rem 1rem;
+  overflow-x: auto;
+  margin: 0 0 0.55em;
+}
+
+.editor__pm .ProseMirror pre code {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.875rem;
+  background: none;
+  padding: 0;
+}
+
+.editor__pm .ProseMirror code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.875em;
+  background: #1a1d2a;
+  padding: 0.15em 0.35em;
+  border-radius: 0.2rem;
+}
+
+.editor__pm .ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--edge);
+  margin: 1.2em 0;
+}
+
+.editor__pm .ProseMirror ul,
+.editor__pm .ProseMirror ol {
+  margin: 0 0 0.55em;
+  padding-left: 1.5rem;
+}
+
+.editor__pm .ProseMirror li { margin-bottom: 0.2em; }
+
+/* Todo items */
+.editor__pm .ProseMirror [data-type="todo"] {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.editor__pm .ProseMirror [data-type="todo"]::before {
+  content: '☐';
+  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+}
+.editor__pm .ProseMirror [data-type="todo"][data-checked="true"]::before {
+  content: '☑';
+}
+.editor__pm .ProseMirror [data-type="todo"][data-checked="true"] {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+/* Plugin island placeholder */
+.editor-plugin-island--unknown {
+  border: 1px dashed var(--edge);
+  border-radius: 0.3rem;
+  padding: 0.5rem 0.75rem;
+  margin: 0.3em 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  user-select: none;
+}
+
+/* ProseMirror — selection + cursor */
+.editor__pm .ProseMirror-selectednode { outline: 2px solid #4e7dff; }
+.editor__pm .ProseMirror-gapcursor:after {
+  border-top: 1.5px solid #fff;
 }

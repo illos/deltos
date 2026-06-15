@@ -151,3 +151,105 @@ Join runs `enrollExisting(mnemonic)`.
 4. **Challenge store**: D1 row with atomic single-use consume (proposed) vs a Durable Object — any
    concern with D1 for the freshness/single-use guarantee at v1 scale?
 5. Anything in the **key hierarchy / derivation** (§1) that weakens domain separation.
+
+---
+
+# Revision 1 — resolving secSys early-read findings (bounce-back before lock)
+
+Resolves `stream-a-auth-secSys-review.md`. Nothing is locked into `@deltos/shared` yet — this is
+the second-pass target. secSys ruling requested on the F1 decision + the final shapes below.
+
+## F1 (HIGH design call) — DECISION: account-level signing key for v1, with the seam shaped for per-device keys
+**Call: option (a) — one mnemonic-derived account signing key for v1**, honoring PIN-ID-2/PIN-ID-5
+(planner pinned account-level as acceptable for v1) and the 5–7d budget. **Recorded limitation,
+stated precisely** (and surfaced in the UI per PIN-ID-7's threat-model discipline):
+
+> "Revoke device" revokes the device's **cached grant token + registry handle** — it takes effect
+> immediately for that token (registry-resolved, F6). It is **NOT** cryptographic device lockout:
+> because every device derives the same signing key from the mnemonic, a holder of the **mnemonic**
+> can `enrollExisting` and mint a fresh token. Recovery from a **compromised mnemonic/device** is
+> **account re-key (rotate the mnemonic)** — the irreducible floor for any mnemonic-rooted system.
+
+**Seam shaped so option (b) is a non-breaking add later:** `DeviceRegistry` rows carry a
+`deviceSigningPublicKey` column from day one (v1 stores the account pubkey there); the enrollment
+endpoint already takes a per-device authorization signature slot. Upgrading to per-device
+non-extractable keys later changes *what fills those columns*, not the frozen contract (the
+verification union is model-agnostic). **Flagging up to pilot/planSys:** secSys rates (b) the
+stronger model and "expensive to change later," and it touches PIN-ID-2's "account key signs the
+challenge" wording + the user-facing meaning of "revoke device" (a product dimension) — so this
+v1=(a) call wants a conscious confirm, not just my say-so.
+
+## Lock-blocker resolutions
+- **F2 (CRITICAL) — fingerprint↔key binding enforced server-side.** The registration endpoint does
+  NOT trust a client-supplied fingerprint: it **computes** `accountFingerprint =
+  base64url(SHA-256(signingPublicKey))` from the submitted pubkey and uses that. If the client also
+  sends one, it must equal the computed value or the request is **rejected**. → an attacker can only
+  ever register under their OWN fingerprint; the §3 mint-binding guarantee now actually holds.
+  **Tested** (registration rejects a mismatched fingerprint).
+- **F4 — unambiguous canonicalization.** The signed message is a **length-prefixed TLV**: for each
+  field, `uint32-BE(len) || bytes`, concatenated in fixed field order, then Ed25519-signed directly.
+  No raw `||`; a variable-length field (scope, label) can never shift bytes across a boundary.
+- **F5 — scope clamped at mint.** `granted = intersection(requestedScope, entitlement)`, never
+  `requestedScope` verbatim. Entitlement upper bound: a **device** principal under its own account =
+  full account scope on its own resources; a **capability** = exactly its granted scope.
+- **F6 — token stored hashed.** Registry persists `SHA-256(token)` (token is high-entropy → no
+  salt); lookup hashes the presented token and compares. Same for capability tokens. A DB/backup
+  read yields no usable bearer.
+
+## Other findings
+- **F7 — plugin/token isolation.** The device grant-token lives **in memory only** (never
+  localStorage/IndexedDB, so no in-page script — including a plugin — can read it). Plugins
+  authenticate with their **own** `method:'capability'` narrow grants, never the device token.
+- **F8 — audience binding.** The TLV signed payload includes an **`audience`** field = the canonical
+  deployment origin / RP-ID, so a signature for one deltos deployment can't be replayed at another.
+- **F9 — sensitive-op step-up.** Enumerated sensitive set: **device add/revoke, change recovery
+  phrase, delete account, export-all / bulk-read, create or widen a share/capability grant.** These
+  require a fresh **`signed-request`** (op + resource + fresh challenge + audience, signing key),
+  regardless of bearer scope. Implemented as a **4th union member** (below). Normal CRUD = bearer.
+- **F10 — can() switch.** Per-method `switch` ends in `default: assertNever(method)` (compile-time
+  exhaustiveness) **and** a runtime **default-DENY** in that branch.
+- **F12 — Ed25519 verified.** WebCrypto Ed25519 sign/verify confirmed present (Node 22; Safari
+  ≥17 / Workers per secSys). **Raw 32-byte private-key import is NOT supported by WebCrypto**
+  (verified: "Unsupported key usage"), so deterministic keygen+sign uses **`@noble/ed25519`**
+  (raw-seed private key; audited, zero-dep, browser+Workers); server verify via WebCrypto
+  raw-**public**-key import (supported) or noble. Empirical iOS-18 device confirm is a build-time
+  pre-lock gate. (`@noble/ed25519` is generic crypto, not full-beans — reuse-clean.)
+- **F13 — tripwire allowlist.** `unverified` allowed ONLY when `ENVIRONMENT` ∈ exact-match set
+  `{development, test, local}` (no substring/prefix); unset/unknown ⇒ refuse. Noted: a dev instance
+  on the tailnet = no auth → keep dev off real data.
+- **F11 / F3 / D1-consume / hierarchy / iOS-QR** — kept as endorsed; consume-before-verify ordering
+  retained; single-use enforced ONLY by rows-affected of the atomic conditional write, expiry
+  checked against stored `expiresAt` vs server-now; per-label SLIP-21 HMAC chaining (no joined path).
+
+## Final shapes for the lock (second-pass target)
+
+**(1) Server-set verification union** — what `can()` switches on (NOT read from the request body;
+set by auth middleware from what it actually verified):
+```ts
+export const PrincipalVerificationSchema = z.discriminatedUnion('method', [
+  z.object({ method: z.literal('grant-token'),    grantId: z.string().min(1) }), // resolved bearer
+  z.object({ method: z.literal('capability'),     grantId: z.string().min(1) }), // share-link / agent / plugin
+  z.object({ method: z.literal('signed-request'), keyId: z.string().min(1), challengeId: z.string().min(1) }), // step-up
+  z.object({ method: z.literal('unverified') }),                                  // dev-only (refused in prod)
+]);
+```
+- No `.passthrough()`; `grantId` is the resolved registry-row id, never the raw token. `can()`
+  requires a freshly-verified `signed-request` for the F9 sensitive set; `grant-token` for CRUD.
+
+**(2) Wire proof bodies** (separate request schemas — the actual proofs, validated at their endpoints):
+```ts
+// POST /api/auth/register  (F2: server computes the fingerprint; never trusts a client one)
+RegisterDeviceRequest = { signingPublicKey: bytes, deviceLabel: string,
+                          deviceAuthorization: bytes /* seam for option (b); = account self-sig in v1 */ }
+// POST /api/auth/challenge
+ChallengeRequest  = { keyId }                      → { challengeId, nonce, expiresAt }
+// POST /api/auth/session   (mint bearer)          signature over TLV(tag,audience,purpose='session',challengeId,nonce,keyId,requestedScope)
+SessionRequest    = { challengeId, keyId, signature, requestedScope }   → { token, expiresAt }
+// step-up for F9 sensitive ops                    signature over TLV(tag,audience,purpose='step-up',challengeId,nonce,keyId,op,resource)
+StepUpRequest     = { challengeId, keyId, op, resource, signature }
+```
+TLV = ordered `uint32-BE(len)||bytes` per field. `tag='deltos-auth-v1'`, `audience`=deployment origin.
+
+**Ready to lock pending your second-pass OK on:** (1) the union shape, (2) the TLV field sets for
+session vs step-up, (3) the F1 v1=(a) call. On your OK I lock the union into `@deltos/shared` +
+build `can()`'s exhaustive switch (with F2 registration enforcement + its test).
