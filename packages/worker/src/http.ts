@@ -1,10 +1,9 @@
-import type { Context } from 'hono';
 import type { z } from 'zod';
-import type { Op, Resource } from '@deltos/shared';
-import type { Env } from './env.js';
+import type { CanCheck, Op, Resource, RequestPrincipal } from '@deltos/shared';
 import { resolvePrincipal, can } from './auth.js';
+import type { AppContext } from './context.js';
 
-export type AppContext = Context<{ Bindings: Env }>;
+export type { AppContext };
 
 /** One error envelope for the whole API, so every client decodes failures the same way. */
 export interface ApiErrorBody {
@@ -13,7 +12,7 @@ export interface ApiErrorBody {
 
 export function apiError(
   c: AppContext,
-  status: 400 | 403 | 404 | 500 | 501,
+  status: 400 | 403 | 404 | 500 | 501 | 503,
   code: string,
   message: string,
   details?: unknown,
@@ -44,7 +43,18 @@ export interface GuardConfig<TReq> {
   handle: (req: TReq, c: AppContext) => Response | Promise<Response>;
 }
 
-export function guard<TReq>(cfg: GuardConfig<TReq>) {
+/**
+ * Authorization dependencies, injectable so the chokepoint ordering can be unit-tested against
+ * a stub `can`. Production code passes nothing and gets the real {@link can} / {@link resolvePrincipal}.
+ */
+export interface GuardDeps {
+  can?: CanCheck;
+  resolvePrincipal?: (c: AppContext) => RequestPrincipal;
+}
+
+export function guard<TReq>(cfg: GuardConfig<TReq>, deps: GuardDeps = {}) {
+  const resolve = deps.resolvePrincipal ?? resolvePrincipal;
+  const check = deps.can ?? can;
   return async (c: AppContext): Promise<Response> => {
     const raw = await cfg.input(c);
     const parsed = cfg.schema.safeParse(raw);
@@ -57,9 +67,20 @@ export function guard<TReq>(cfg: GuardConfig<TReq>) {
         parsed.error.format(),
       );
     }
-    const principal = resolvePrincipal(c);
+    const principal = resolve(c);
+    // Mechanical tripwire: the Phase-0 stub yields an `unverified` principal. In production that
+    // must NEVER be honored — refuse before authorization or any handler runs, so the allow-all
+    // stub cannot silently serve real traffic once Phase-1 handlers replace these stubs.
+    if (principal.verification.method === 'unverified' && c.env.ENVIRONMENT === 'production') {
+      return apiError(
+        c,
+        503,
+        'auth_not_configured',
+        'refusing an unverified principal in production',
+      );
+    }
     const resource = cfg.resource(parsed.data);
-    const allowed = await can(principal, cfg.op, resource);
+    const allowed = await check(principal, cfg.op, resource);
     if (!allowed) {
       return apiError(c, 403, 'forbidden', `principal not permitted to ${cfg.op} this resource`);
     }

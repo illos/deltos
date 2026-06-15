@@ -1,5 +1,5 @@
-import type { Context } from 'hono';
 import type { CanCheck, RequestPrincipal } from '@deltos/shared';
+import type { AppContext } from './context.js';
 
 /**
  * The two halves of the authorization chokepoint, both deliberately stubbed for Phase 0.
@@ -21,7 +21,7 @@ const LOCAL_OWNER: RequestPrincipal = {
   verification: { method: 'unverified' },
 };
 
-export function resolvePrincipal(_c: Context): RequestPrincipal {
+export function resolvePrincipal(_c: AppContext): RequestPrincipal {
   return LOCAL_OWNER;
 }
 

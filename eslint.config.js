@@ -1,5 +1,6 @@
 // @ts-check
 import js from '@eslint/js';
+import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
@@ -8,6 +9,11 @@ export default tseslint.config(
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    // Node-run build scripts and config files (plain JS) need Node globals.
+    files: ['**/*.mjs', '**/scripts/**', '**/*.config.{js,mjs}'],
+    languageOptions: { globals: globals.node },
+  },
   {
     rules: {
       // The spine deliberately stores plugin/block content opaquely; `unknown` is the

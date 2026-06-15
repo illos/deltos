@@ -88,8 +88,9 @@ app.patch(
   guard({
     op: API_ROUTES['note.update'].op,
     schema: UpdateNoteRequestSchema,
-    // Body carries { patch, expectedVersion? }; the note id comes from the path.
-    input: async (c) => ({ id: c.req.param('id'), ...asObject(await readBody(c)) }),
+    // Body carries { patch, expectedVersion? }; the note id comes from the path. Path params
+    // are overlaid LAST so the URL's addressing id always wins over any id smuggled in the body.
+    input: async (c) => ({ ...asObject(await readBody(c)), id: c.req.param('id') }),
     resource: (req): Resource => ({ kind: 'note', id: req.id }),
     handle: (_req, c) => notImplemented(c, 'note.update'),
   }),
@@ -135,8 +136,9 @@ app.post(
   guard({
     op: API_ROUTES['block.append'].op,
     schema: AppendBlockRequestSchema,
-    // Body carries { block, parentBlockId?, expectedVersion? }; the note id comes from the path.
-    input: async (c) => ({ noteId: c.req.param('id'), ...asObject(await readBody(c)) }),
+    // Body carries { block, parentBlockId?, expectedVersion? }; noteId comes from the path and
+    // is overlaid LAST so a body field can never override the URL's addressing.
+    input: async (c) => ({ ...asObject(await readBody(c)), noteId: c.req.param('id') }),
     resource: (req): Resource => ({ kind: 'note', id: req.noteId }),
     handle: (_req, c) => notImplemented(c, 'block.append'),
   }),
@@ -148,11 +150,12 @@ app.put(
   guard({
     op: API_ROUTES['property.set'].op,
     schema: SetPropertyRequestSchema,
-    // Body carries { value, expectedVersion? }; noteId + key come from the path.
+    // Body carries { value, expectedVersion? }; noteId + key come from the path and are overlaid
+    // LAST so body fields can never override the URL's addressing.
     input: async (c) => ({
+      ...asObject(await readBody(c)),
       noteId: c.req.param('id'),
       key: c.req.param('key'),
-      ...asObject(await readBody(c)),
     }),
     resource: (req): Resource => ({ kind: 'note', id: req.noteId }),
     handle: (_req, c) => notImplemented(c, 'property.set'),

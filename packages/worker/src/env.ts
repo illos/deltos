@@ -4,4 +4,10 @@
  */
 export interface Env {
   DB: D1Database;
+  /**
+   * Deployment environment. When set to 'production', the chokepoint REFUSES any unverified
+   * principal — the mechanical tripwire that stops the Phase-0 allow-all/unverified auth stub
+   * from ever serving real traffic. Unset/anything-else = development (stub allowed).
+   */
+  ENVIRONMENT?: string;
 }
