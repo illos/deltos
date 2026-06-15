@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Cloudflare / Wrangler local state
+.wrangler/
+.dev.vars
+.dev.vars.*
+
+# Vite / PWA build artifacts
+packages/client/dev-dist/
+
+# Editor / OS
+.DS_Store
+*.log

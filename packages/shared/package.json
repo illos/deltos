@@ -1,0 +1,27 @@
+{
+  "name": "@deltos/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "deltos spine schemas + API contract — the frozen substrate every surface and the worker build against.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
