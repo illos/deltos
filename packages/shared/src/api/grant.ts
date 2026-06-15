@@ -36,25 +36,78 @@ export const PrincipalSchema = z.object({
 export type Principal = z.infer<typeof PrincipalSchema>;
 
 /**
- * How the live caller proved its identity on THIS request. A Grant names *who* may act; this
- * names *how* the actor was authenticated right now. An `id` on its own is only a claimed
- * bearer username, so authorization (and the audit log) must be able to see the proof and
- * refuse, say, a write from an unproven principal.
- *
- * Phase 1 fills in real `passkey` assertions, `signed-request` HMACs, and `capability-token`
- * checks. Phase 0 ships only the deliberately-named `unverified` local-dev stub, so "no real
- * auth yet" can never be mistaken for the real thing. `passthrough()` lets each method carry
- * its own proof fields without reshaping this seam.
+ * Resources form a coarse-to-fine hierarchy. A discriminated union keeps the id strongly
+ * typed to the level it addresses — `workspace` carries none, `notebook`/`note` carry theirs.
  */
-export const VERIFICATION_METHODS = [
-  'unverified',
-  'passkey',
-  'signed-request',
-  'capability-token',
-] as const;
-export const PrincipalVerificationSchema = z
-  .object({ method: z.enum(VERIFICATION_METHODS) })
-  .passthrough();
+export const ResourceSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('workspace') }),
+  z.object({ kind: z.literal('notebook'), id: NotebookIdSchema }),
+  z.object({ kind: z.literal('note'), id: NoteIdSchema }),
+]);
+export type Resource = z.infer<typeof ResourceSchema>;
+
+/**
+ * Structural equality over the discriminated {@link Resource} union — same `kind`, and for
+ * `notebook`/`note` the same `id`. NEVER reference equality. `can()` uses this to bind a
+ * step-up `signed-request` to the exact resource its signature was verified for, so it cannot
+ * be presented against a different resource.
+ */
+export function resourceEquals(a: Resource, b: Resource): boolean {
+  switch (a.kind) {
+    case 'workspace':
+      return b.kind === 'workspace';
+    case 'notebook':
+      return b.kind === 'notebook' && a.id === b.id;
+    case 'note':
+      return b.kind === 'note' && a.id === b.id;
+    default: {
+      const _exhaustive: never = a;
+      return false;
+    }
+  }
+}
+
+/** The verbs a grant can authorize. An `Op` passed to `can()` is exactly one of these. */
+export const SCOPES = ['read', 'write', 'create', 'delete', 'share', 'search'] as const;
+export const ScopeSchema = z.enum(SCOPES);
+export type Scope = z.infer<typeof ScopeSchema>;
+
+/** The single operation kind checked at the chokepoint. */
+export const OpSchema = ScopeSchema;
+export type Op = z.infer<typeof OpSchema>;
+
+/**
+ * How the live caller proved its identity on THIS request, and the verified proof `can()`
+ * switches on. A discriminated union keyed on `method`: authority keys STRICTLY on the `method`
+ * literal plus that member's validated proof. There is no `.passthrough()`, so an unrecognized
+ * field can never ride along and confer authority (the P0 passthrough seam was left open
+ * precisely so Stream A could close it here — this is a tightening, not a regression). The auth
+ * middleware SETS this from what it actually verified; it is never read from the request body,
+ * and a client cannot select `unverified` (which is additionally refused in production by the
+ * chokepoint tripwire).
+ *
+ * Members:
+ * - `grant-token` — a steady-state opaque bearer resolved to a grant row server-side; `grantId`
+ *   is the resolved row id, never the raw token (which is persisted only as a hash).
+ * - `capability` — a share-link / agent / plugin capability grant (same resolved shape).
+ * - `signed-request` — a fresh per-request signed intent for the enumerated SENSITIVE ops
+ *   (device add/revoke, change recovery, delete account, export-all, widen a share). It carries
+ *   the `op` + `resource` the signature was VERIFIED for, so `can()` asserts them against its
+ *   own arguments — the step-up is bound to exactly this request, checkable at the chokepoint.
+ * - `unverified` — the dev-only local stub; carries no proof and is refused in production.
+ */
+export const PrincipalVerificationSchema = z.discriminatedUnion('method', [
+  z.object({ method: z.literal('grant-token'), grantId: z.string().min(1) }),
+  z.object({ method: z.literal('capability'), grantId: z.string().min(1) }),
+  z.object({
+    method: z.literal('signed-request'),
+    keyId: z.string().min(1),
+    challengeId: z.string().min(1),
+    op: OpSchema,
+    resource: ResourceSchema,
+  }),
+  z.object({ method: z.literal('unverified') }),
+]);
 export type PrincipalVerification = z.infer<typeof PrincipalVerificationSchema>;
 
 /**
@@ -71,26 +124,6 @@ export const RequestPrincipalSchema = PrincipalSchema.extend({
   verification: PrincipalVerificationSchema,
 });
 export type RequestPrincipal = z.infer<typeof RequestPrincipalSchema>;
-
-/**
- * Resources form a coarse-to-fine hierarchy. A discriminated union keeps the id strongly
- * typed to the level it addresses — `workspace` carries none, `notebook`/`note` carry theirs.
- */
-export const ResourceSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('workspace') }),
-  z.object({ kind: z.literal('notebook'), id: NotebookIdSchema }),
-  z.object({ kind: z.literal('note'), id: NoteIdSchema }),
-]);
-export type Resource = z.infer<typeof ResourceSchema>;
-
-/** The verbs a grant can authorize. An `Op` passed to `can()` is exactly one of these. */
-export const SCOPES = ['read', 'write', 'create', 'delete', 'share', 'search'] as const;
-export const ScopeSchema = z.enum(SCOPES);
-export type Scope = z.infer<typeof ScopeSchema>;
-
-/** The single operation kind checked at the chokepoint. */
-export const OpSchema = ScopeSchema;
-export type Op = z.infer<typeof OpSchema>;
 
 /**
  * Constraints narrow a grant beyond resource + scope (expiry today; rate, origin, and
