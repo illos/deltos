@@ -253,3 +253,61 @@ TLV = ordered `uint32-BE(len)||bytes` per field. `tag='deltos-auth-v1'`, `audien
 **Ready to lock pending your second-pass OK on:** (1) the union shape, (2) the TLV field sets for
 session vs step-up, (3) the F1 v1=(a) call. On your OK I lock the union into `@deltos/shared` +
 build `can()`'s exhaustive switch (with F2 registration enforcement + its test).
+
+---
+
+# Revision 2 — secSys second-pass pre-lock items (final pre-freeze)
+
+Second pass cleared the 4 blockers + TLV sets + F1(a); two pre-lock items remain, resolved here.
+
+## Pre-lock item 1 (touches the FROZEN union) — RESOLVED via option (A): bind op+resource into signed-request
+`signed-request` was a bare `{keyId, challengeId}` "a step-up happened" marker — `can()` could not
+verify the signature was for THIS request's op+resource without trusting the middleware (unstated
+authority, the chokepoint anti-pattern). Fix: the member now carries the **verified** `op` + `resource`,
+and `can()` asserts them against its own arguments. **FINAL union — the lock target:**
+```ts
+export const PrincipalVerificationSchema = z.discriminatedUnion('method', [
+  z.object({ method: z.literal('grant-token'), grantId: z.string().min(1) }),
+  z.object({ method: z.literal('capability'),  grantId: z.string().min(1) }),
+  z.object({ method: z.literal('signed-request'),
+    keyId: z.string().min(1), challengeId: z.string().min(1),
+    op: OpSchema, resource: ResourceSchema }),   // the (op,resource) the step-up signature was verified for
+  z.object({ method: z.literal('unverified') }),
+]);
+```
+`can()` for `signed-request`: **deny unless** `member.op === op` **and** `resourceEquals(member.resource,
+resource)` (its own chokepoint args). A step-up signed for `(opP, resourceP)` is structurally rejected
+on a request for `(opQ, resourceQ)` — checkable AT the chokepoint, no middleware trust. **Test:** that
+exact cross-(op,resource) rejection, alongside the assertNever + default-deny.
+
+## Pre-lock item 2 (F3 enrollment proof) — CONFIRMED: v1 SERVER-VERIFIES deviceAuthorization
+Not a reserved column — v1 verifies it as replay-resistant proof of key control (anti-squatting):
+- `POST /api/auth/challenge` with `purpose='register'` issues a fresh challenge.
+- `deviceAuthorization` = Ed25519 signature, by the **submitted signingPublicKey's** private key, over
+  `TLV(tag, audience, purpose='register', challengeId, nonce, signingPublicKey, deviceLabel)`.
+- Server: reconstruct the TLV from the STORED challenge (nonce/challengeId) + configured audience + fixed
+  tag + submitted (signingPublicKey, deviceLabel); **verify against the submitted signingPublicKey**;
+  atomically consume the challenge (rows-affected=1); **compute** `accountFingerprint =
+  base64url(SHA-256(signingPublicKey))` (F2). → proves the registrant holds the private key for the
+  pubkey being registered (you can only register a key you control); the fresh consumed challenge makes
+  it replay-resistant.
+
+## Explicit reconstruct-and-verify rule (secSys TLV ask)
+For challenge / session / step-up / register: the server **reconstructs the TLV from server-held values**
+(stored `nonce`/`challengeId`/`keyId`, its own configured `audience`, fixed `tag`, `purpose`) **plus the
+request-supplied fields** (`requestedScope` for session; `op`+`resource` for step-up; `signingPublicKey`+
+`deviceLabel` for register) and **rejects on signature mismatch**. The signature verification IS what
+validates those request-supplied fields — **no body field is trusted before the signature check**, and
+`nonce` is never client-sent (looked up by `challengeId`).
+
+## Build-time notes banked (not blockers, not contract)
+`@noble/ed25519`: pin a current audited version; wire the SHA-512 hook correctly (v2 API needs
+`etc.sha512Sync`/async); confirm noble-sign ↔ WebCrypto raw-public-verify agree on **pure** Ed25519
+(no prehash/ctx) in **Workers AND the iOS-18 device gate** before the device build ships.
+
+## Lock readiness
+F1(a) — both secSys conditions met: (i) the revoke≠lockout limitation goes into the UI copy honestly
+(DECISIONS D5), (ii) the product-meaning confirm landed (pilot + planSys, D5). On secSys's
+SECOND-PASS-CLEAR I lock this FINAL union into `@deltos/shared` + build `can()`'s exhaustive switch
+with the signed-request (op,resource) assertion, the F2 registration test, and the item-1
+cross-(op,resource) rejection test.
