@@ -1,0 +1,194 @@
+/**
+ * Conflict engine tests — RED before implementation, GREEN after.
+ *
+ * These test the atomic CAS + sync-cursor logic in db/mutate.ts using better-sqlite3
+ * (D1-compatible SQLite). Each test maps to a named acceptance criterion from the spec
+ * (phase-1-vertical-slice.md Stream B).
+ *
+ * secSys focus: PIN-SYNC-1 (CAS must raise conflict, not silently lose writes).
+ */
+
+import { describe, it, expect, beforeEach } from 'vitest';
+import Database from 'better-sqlite3';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { insertNote, updateNote, deleteNote, pullNotes } from '../src/db/mutate.js';
+import type { DbAdapter, NoteRow } from '../src/db/schema.js';
+import type { SyncPushEntry } from '@deltos/shared';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// ---------------------------------------------------------------------------
+// better-sqlite3 adapter (mirrors d1Adapter, synchronous API, same SQL dialect)
+// ---------------------------------------------------------------------------
+
+function sqliteAdapter(db: Database.Database): DbAdapter {
+  return {
+    async batch(stmts) {
+      const results: { rowsWritten: number }[] = [];
+      const txn = db.transaction(() => {
+        for (const s of stmts) {
+          const info = db.prepare(s.sql).run(...(s.params as Array<string | number | null>));
+          results.push({ rowsWritten: info.changes });
+        }
+      });
+      txn();
+      return results;
+    },
+    async first<T>(sql: string, params: unknown[]) {
+      const row = db.prepare(sql).get(...(params as Array<string | number | null>));
+      return (row ?? null) as T | null;
+    },
+    async all<T>(sql: string, params: unknown[]) {
+      return db.prepare(sql).all(...(params as Array<string | number | null>)) as T[];
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Schema setup: apply the same migration files the production D1 uses
+// ---------------------------------------------------------------------------
+
+const migrations = ['0000_baseline.sql', '0001_stream-b-sync.sql'].map((f) =>
+  readFileSync(join(__dirname, '../migrations', f), 'utf8'),
+);
+
+function freshDb(): { db: DbAdapter; raw: Database.Database } {
+  const raw = new Database(':memory:');
+  // db.exec() runs a full multi-statement SQL file, handling ';' inside comments correctly.
+  for (const migration of migrations) {
+    raw.exec(migration);
+  }
+  return { db: sqliteAdapter(raw), raw };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const NOW = '2026-06-15T12:00:00.000Z';
+const NB = '00000000-0000-4000-8000-000000000001' as const;
+
+function entry(id: string, baseVersion: number, title = 'Test'): SyncPushEntry & { notebookId: string } {
+  return {
+    id: id as SyncPushEntry['id'],
+    notebookId: NB as SyncPushEntry['notebookId'] & string,
+    baseVersion,
+    draft: {
+      title,
+      properties: {},
+      body: [],
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('conflict engine — server-side CAS (PIN-SYNC-1)', () => {
+  let db: DbAdapter;
+
+  beforeEach(() => {
+    ({ db } = freshDb());
+  });
+
+  /**
+   * Acceptance criterion: concurrent-push-raises-conflict
+   * Two pushes at the same baseVersion → first accepted, second raises conflict.
+   * Both copies must survive (the original at version 2, conflict result carries server state).
+   */
+  it('concurrent push on the same base version raises conflict and both copies survive', async () => {
+    const id = '00000000-0000-4000-8000-000000000002';
+
+    // Insert the note (baseVersion = 0 → new note)
+    const first = await insertNote(db, entry(id, 0, 'Original'), NOW);
+    expect(first.outcome).toBe('accepted');
+    if (first.outcome !== 'accepted') throw new Error('setup failed');
+    expect(first.version).toBe(1);
+
+    // Two concurrent UPDATE attempts at the same baseVersion = 1
+    const [aResult, bResult] = await Promise.all([
+      updateNote(db, entry(id, 1, 'Device A edit'), NOW),
+      updateNote(db, entry(id, 1, 'Device B edit'), NOW),
+    ]);
+
+    // Exactly one must succeed and one must raise a conflict
+    const outcomes = [aResult.outcome, bResult.outcome].sort();
+    expect(outcomes).toEqual(['accepted', 'conflict']);
+
+    // The accepted write bumped the version; the conflicting result returns the server row
+    const accepted = aResult.outcome === 'accepted' ? aResult : bResult;
+    const conflicted = aResult.outcome === 'conflict' ? aResult : bResult;
+
+    expect(accepted.outcome).toBe('accepted');
+    expect(accepted.version).toBe(2); // version incremented from 1 → 2
+
+    expect(conflicted.outcome).toBe('conflict');
+    // Server row returned so the client can fork — must exist and carry the committed title
+    const serverRow = (conflicted as { outcome: 'conflict'; serverRow: NoteRow | null }).serverRow;
+    expect(serverRow).not.toBeNull();
+    expect(serverRow!.version).toBe(2); // reflects the winning write
+  });
+
+  /**
+   * Acceptance criterion: delete-vs-edit (PIN-SYNC-3)
+   * The server tombstones a note; a concurrent push update sees conflict with
+   * serverNote.deletedAt non-null, signalling the client to apply the resurrection fork.
+   */
+  it('push to a tombstoned note returns conflict with serverNote.deletedAt set', async () => {
+    const id = '00000000-0000-4000-8000-000000000003';
+
+    // Create the note
+    await insertNote(db, entry(id, 0, 'Will be deleted'), NOW);
+
+    // Tombstone it (simulating a delete from another device)
+    const del = await deleteNote(db, id, NB, 1, NOW);
+    expect(del.outcome).toBe('accepted');
+
+    // Now push an update at the old baseVersion — should conflict
+    const conflict = await updateNote(db, entry(id, 1, 'Offline edit'), NOW);
+    expect(conflict.outcome).toBe('conflict');
+
+    const serverRow = (conflict as { outcome: 'conflict'; serverRow: NoteRow | null }).serverRow;
+    expect(serverRow).not.toBeNull();
+    // deletedAt must be non-null so the client knows this is a resurrection scenario
+    expect(serverRow!.deletedAt).not.toBeNull();
+  });
+
+  /**
+   * Pull cursor (PIN-SYNC-2): notes are returned in syncSeq order;
+   * the nextCursor advances correctly; a pull with the returned cursor yields no duplicates.
+   */
+  it('pull returns notes in syncSeq order and cursor advances without duplication', async () => {
+    const id1 = '00000000-0000-4000-8000-000000000004';
+    const id2 = '00000000-0000-4000-8000-000000000005';
+
+    await insertNote(db, entry(id1, 0, 'Note 1'), NOW);
+    await insertNote(db, entry(id2, 0, 'Note 2'), NOW);
+
+    // Full sync (cursor = 0)
+    const page1 = await pullNotes(db, NB, 0);
+    expect(page1.notes).toHaveLength(2);
+    expect(page1.hasMore).toBe(false);
+    // Monotone order
+    expect(page1.notes[0].syncSeq).toBeLessThan(page1.notes[1].syncSeq);
+
+    const cursor = page1.nextCursor;
+    expect(cursor).toBe(page1.notes[1].syncSeq);
+
+    // Incremental pull — nothing new
+    const page2 = await pullNotes(db, NB, cursor);
+    expect(page2.notes).toHaveLength(0);
+    expect(page2.nextCursor).toBe(cursor); // cursor unchanged when no results
+
+    // Update note 1 — it must now appear in a pull since cursor
+    await updateNote(db, entry(id1, 1, 'Note 1 updated'), NOW);
+    const page3 = await pullNotes(db, NB, cursor);
+    expect(page3.notes).toHaveLength(1);
+    expect(page3.notes[0].id).toBe(id1);
+    expect(page3.notes[0].title).toBe('Note 1 updated');
+    expect(page3.notes[0].syncSeq).toBeGreaterThan(cursor);
+  });
+});
