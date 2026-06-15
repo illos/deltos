@@ -67,6 +67,23 @@ export function ProseMirrorEditor({
     const view = new EditorView(containerRef.current, {
       state,
       nodeViews: buildPluginIslandNodeViews(deltoSchema),
+      // Strip scripts and on* event handlers from HTML pasted from external sources.
+      // PM's own parser handles structural sanitization; this removes the XSS surface.
+      // The uniqueBlockIdPlugin then re-mints any IDs that arrive null or duplicated.
+      transformPastedHTML(html: string): string {
+        const div = document.createElement('div');
+        div.innerHTML = html;
+        div.querySelectorAll('script, style, link, meta').forEach((el) => el.remove());
+        div.querySelectorAll('*').forEach((el) => {
+          const attrs = [...el.attributes];
+          for (const attr of attrs) {
+            if (attr.name.startsWith('on') || attr.name === 'style') {
+              el.removeAttribute(attr.name);
+            }
+          }
+        });
+        return div.innerHTML;
+      },
       dispatchTransaction(tr) {
         const newState = view.state.apply(tr);
         view.updateState(newState);

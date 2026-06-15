@@ -1,8 +1,11 @@
+import { useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
+import type { Note } from '@deltos/shared';
 import { NoteIdSchema } from '@deltos/shared';
 import { db } from '../db/schema.js';
 import { mutateNotes } from '../db/mutate.js';
+import { notifyQueueWrite } from '../lib/syncEngine.js';
 import { NoteEditor } from '../editor/NoteEditor.js';
 import { resolveNoteView } from '../editor/views.js';
 
@@ -18,6 +21,12 @@ import { resolveNoteView } from '../editor/views.js';
  */
 export function NoteRoute() {
   const { id } = useParams<{ id: string }>();
+
+  // Stable save handler: write to Dexie then kick Stream B's debounced sync.
+  const handleSave = useCallback(async (note: Note) => {
+    await mutateNotes.put(note);
+    notifyQueueWrite(note.notebookId);
+  }, []);
 
   const noteId = id ? NoteIdSchema.safeParse(id) : null;
 
@@ -45,5 +54,5 @@ export function NoteRoute() {
   }
 
   const ViewComponent = resolveNoteView(note, NoteEditor);
-  return <ViewComponent note={note} onSave={mutateNotes.put} />;
+  return <ViewComponent note={note} onSave={handleSave} />;
 }

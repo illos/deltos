@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { NewNote } from './routes/NewNote.js';
 import { NoteRoute } from './routes/NoteRoute.js';
+import { startSyncTriggers } from './lib/syncEngine.js';
+import { getDefaultNotebookId } from './lib/notebooks.js';
 
 /**
  * App shell — the host chrome that every surface mounts inside.
@@ -13,6 +15,10 @@ import { NoteRoute } from './routes/NoteRoute.js';
  */
 export function App() {
   const [online, setOnline] = useState(() => navigator.onLine);
+
+  useEffect(() => {
+    return startSyncTriggers(getDefaultNotebookId());
+  }, []);
 
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
