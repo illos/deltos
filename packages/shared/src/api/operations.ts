@@ -1,10 +1,21 @@
 import { z } from 'zod';
 import { NoteIdSchema, NotebookIdSchema, BlockIdSchema } from '../spine/ids.js';
+import { VersionSchema } from '../spine/identity.js';
 import { BlockSchema } from '../spine/block.js';
 import { PropertyValueSchema } from '../spine/property.js';
 import { NoteSchema, NoteDraftSchema, NoteSummarySchema } from '../spine/note.js';
 import { OpSchema } from './grant.js';
 import type { Op } from './grant.js';
+
+/**
+ * Optimistic-concurrency precondition shared by every mutating request: the version the caller
+ * believes it is editing. Optional, so a simple "last-write-from-this-client" caller need not
+ * supply it — but PRESENT in the frozen contract so the server can enforce the atomic
+ * compare-and-swap (`UPDATE … WHERE version = expectedVersion`) on the REST write path, exactly
+ * as the S2 sync flush does. When omitted, the server applies its own default reconciliation;
+ * when supplied, a mismatch forks rather than silently clobbering (no lost updates).
+ */
+export const ExpectedVersionSchema = VersionSchema;
 
 /**
  * The API *is* the product: every surface (PWA, MCP agent, Shortcut) is a client of these
@@ -35,6 +46,7 @@ export type CreateNoteRequest = z.infer<typeof CreateNoteRequestSchema>;
 export const UpdateNoteRequestSchema = z.object({
   id: NoteIdSchema,
   patch: NoteDraftSchema.omit({ id: true, notebookId: true }).partial(),
+  expectedVersion: ExpectedVersionSchema.optional(),
 });
 export type UpdateNoteRequest = z.infer<typeof UpdateNoteRequestSchema>;
 
@@ -43,6 +55,7 @@ export const AppendBlockRequestSchema = z.object({
   noteId: NoteIdSchema,
   parentBlockId: BlockIdSchema.optional(),
   block: BlockSchema,
+  expectedVersion: ExpectedVersionSchema.optional(),
 });
 export type AppendBlockRequest = z.infer<typeof AppendBlockRequestSchema>;
 
@@ -51,6 +64,7 @@ export const SetPropertyRequestSchema = z.object({
   noteId: NoteIdSchema,
   key: z.string().min(1),
   value: PropertyValueSchema,
+  expectedVersion: ExpectedVersionSchema.optional(),
 });
 export type SetPropertyRequest = z.infer<typeof SetPropertyRequestSchema>;
 

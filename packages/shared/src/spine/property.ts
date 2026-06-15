@@ -29,8 +29,20 @@ export const PropertyValueSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('boolean'), value: z.boolean() }),
   // `select` doubles as tags: an ordered set of string labels (single-select is a 1-element list).
   z.object({ type: z.literal('select'), value: z.array(z.string()) }),
-  // `relation` is a *core* property type — it carries references to other notes by id, which
-  // is what powers backlinks, the note graph, and relation-aware transport.
+  // `relation` is a *core* property type — references to other notes by id, powering backlinks,
+  // the note graph, and relation-aware transport. References are GLOBAL-BY-ID and intentionally
+  // NOT notebook-scoped (note ids are globally-unique UUIDs; the cross-notebook graph is a
+  // feature). Two frozen obligations come with that shape (PIN-MODEL-1):
+  //
+  //   1. Resolution is can()-gated. A relation NEVER confers access across a notebook,
+  //      capability, or encryption boundary. A target the caller cannot reach (cross-notebook
+  //      no-grant, E2EE no-key) resolves to dangling-but-safe — never a leak. Access is
+  //      enforced at RESOLUTION time, not at link time.
+  //   2. Relations are SOFT pointers — no foreign key, no referential integrity. They degrade
+  //      gracefully (show the cached target title if known, else a placeholder) when the target
+  //      is inaccessible, offline-uncached, forked to a new id, or moved. So there is no
+  //      relation-repair machinery: a cross-notebook move or a fork-to-new-id simply yields a
+  //      dangling-but-safe relation.
   z.object({ type: z.literal('relation'), value: z.array(NoteIdSchema) }),
   z.object({ type: z.literal('url'), value: z.string().url() }),
 ]);

@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import type { z } from 'zod';
 import { NoteIdentitySchema } from './identity.js';
 import { PropertyBagSchema } from './property.js';
 import { BlockBodySchema } from './block.js';
