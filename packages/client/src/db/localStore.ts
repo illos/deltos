@@ -1,5 +1,8 @@
 import type { Note, NoteId, NotebookId } from '@deltos/shared';
-import type { NotebookRow, SyncQueueEntry } from './schema.js';
+import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry } from './schema.js';
+
+/** Conflict resolution actions (UX-called) — values match the spec + UX button labels. */
+export type ConflictResolution = 'keep-mine' | 'keep-theirs' | 'keep-both';
 
 /**
  * LocalStore — the pluggable persistence + reactive-query seam for the client.
@@ -28,15 +31,32 @@ export type Unsubscribe = () => void;
 
 export interface LocalStore {
   // --- notes: single-row reads/writes used by surfaces + the sync engine ---
-  getNote(id: NoteId): Promise<Note | undefined>;
+  getNote(id: NoteId): Promise<ClientNote | undefined>;
   putNote(note: Note): Promise<void>;
   deleteNote(id: NoteId): Promise<void>;
 
   /** Reactive single-note read for a surface; `cb` gets the current note (or undefined) on each change. */
-  observeNote(id: NoteId, cb: (note: Note | undefined) => void): Unsubscribe;
+  observeNote(id: NoteId, cb: (note: ClientNote | undefined) => void): Unsubscribe;
 
   /** Reactive list of all notes in a notebook, sorted by updatedAt descending. */
-  observeNotes(notebookId: NotebookId, cb: (notes: Note[]) => void): Unsubscribe;
+  observeNotes(notebookId: NotebookId, cb: (notes: ClientNote[]) => void): Unsubscribe;
+
+  // --- conflict-as-version (Part 2) ---
+  /**
+   * Reactive list of a note's retained conflict-version snapshots — accountId-SCOPED (client-side
+   * D6, via the [noteId+accountId] index) so a multi-account-on-one-device case can never surface
+   * another account's versions.
+   */
+  observeNoteVersions(noteId: NoteId, accountId: string, cb: (versions: NoteVersion[]) => void): Unsubscribe;
+
+  /**
+   * Resolve a note's conflict (UX-called), atomic + accountId-scoped:
+   * - keep-mine: the divergent version becomes the note's live content, enqueued as a new edit at the
+   *   CURRENT server version (push CAS-updates on top); delete the versions; clear hasConflict.
+   * - keep-theirs: delete the versions; server content stays live; clear hasConflict.
+   * - keep-both: retain the version rows (Phase-3 browsable); clear hasConflict (no auto second note).
+   */
+  resolveConflict(noteId: NoteId, resolution: ConflictResolution, accountId: string): Promise<void>;
 
   // --- sync queue: the Stream-B drainer's domain ---
   /** All queue entries (the engine dedupes/filters per notebook itself). */

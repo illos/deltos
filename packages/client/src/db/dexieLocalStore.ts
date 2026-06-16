@@ -1,8 +1,8 @@
 import { liveQuery } from 'dexie';
 import type { Note, NoteId, NotebookId, SyncStatus } from '@deltos/shared';
 import { db } from './schema.js';
-import type { NotebookRow, SyncQueueEntry } from './schema.js';
-import type { LocalStore, Unsubscribe } from './localStore.js';
+import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry } from './schema.js';
+import type { ConflictResolution, LocalStore, Unsubscribe } from './localStore.js';
 
 /**
  * The Dexie/IndexedDB implementation of {@link LocalStore}. This is the ONE place Dexie types live;
@@ -41,12 +41,60 @@ export const dexieLocalStore: LocalStore = {
     return () => sub.unsubscribe();
   },
 
-  observeNotes(notebookId: NotebookId, cb: (notes: Note[]) => void): Unsubscribe {
+  observeNotes(notebookId: NotebookId, cb: (notes: ClientNote[]) => void): Unsubscribe {
     const sub = liveQuery(async () => {
       const notes = await db.notes.where('notebookId').equals(notebookId).toArray();
       return notes.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     }).subscribe({ next: cb });
     return () => sub.unsubscribe();
+  },
+
+  // --- conflict-as-version (Part 2) ---
+  observeNoteVersions(noteId: NoteId, accountId: string, cb: (versions: NoteVersion[]) => void): Unsubscribe {
+    // accountId-SCOPED via the [noteId+accountId] compound index (client-side D6).
+    const sub = liveQuery(() =>
+      db.noteVersions.where('[noteId+accountId]').equals([noteId, accountId]).toArray(),
+    ).subscribe({ next: cb });
+    return () => sub.unsubscribe();
+  },
+
+  async resolveConflict(noteId: NoteId, resolution: ConflictResolution, accountId: string): Promise<void> {
+    // Atomic over notes + noteVersions + syncQueue; all version ops are accountId-scoped.
+    await db.transaction('rw', db.notes, db.noteVersions, db.syncQueue, async () => {
+      if (resolution === 'keep-mine') {
+        const note = await db.notes.get(noteId);
+        const versions = await db.noteVersions.where('[noteId+accountId]').equals([noteId, accountId]).toArray();
+        const latest = versions.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+        if (note && latest) {
+          // The divergent version becomes the note's LIVE content, enqueued as a new edit at the
+          // CURRENT server version so the push CAS-updates on top (not a stale-base re-INSERT).
+          const live: ClientNote = {
+            ...note,
+            title: latest.title,
+            properties: latest.properties,
+            body: latest.body,
+            syncStatus: 'local-only' satisfies SyncStatus,
+            hasConflict: false,
+          };
+          await db.notes.put(live);
+          await db.syncQueue.add({
+            id: crypto.randomUUID(),
+            recordId: noteId,
+            payload: live,
+            baseVersion: note.version, // CAS on the current server version
+            createdAt: new Date().toISOString(),
+          });
+        }
+      }
+      if (resolution === 'keep-mine' || resolution === 'keep-theirs') {
+        // mine: the version is now live; theirs: discard the divergent. Either way drop the snapshots.
+        await db.noteVersions.where('[noteId+accountId]').equals([noteId, accountId]).delete();
+      }
+      // keep-both retains the version rows (Phase-3 browsable). ALL resolutions clear the unresolved flag.
+      await db.notes.where('id').equals(noteId).modify((n) => {
+        (n as ClientNote).hasConflict = false;
+      });
+    });
   },
 
   // --- sync queue ---
