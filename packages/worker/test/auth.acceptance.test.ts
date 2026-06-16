@@ -42,6 +42,12 @@ import {
 } from '@deltos/shared';
 import { guard, type GuardDeps, type AppContext } from '../src/http.js';
 import type { Env } from '../src/env.js';
+import * as ed from '@noble/ed25519';
+import { sha512 } from '@noble/hashes/sha2.js';
+import { computeFingerprint, hashToken, clampScope, verifySession, verifyRegister, verifyStepUp } from '../src/authCrypto.js';
+
+// noble Ed25519 needs its SHA-512 wired once (same pattern as authCrypto.ts and authCrypto.test.ts).
+if (!ed.hashes.sha512) ed.hashes.sha512 = sha512;
 
 // ---------------------------------------------------------------------------
 // D1/SQLite test infrastructure — mirrors conflict.test.ts pattern
@@ -310,18 +316,19 @@ describe('D1 auth schema — migration 0002', () => {
     expect(indexes.some((i) => i.name === 'grants_byMintedKey')).toBe(true);
   });
 
-  // --- authStore BEHAVIOR .todo()s — waiting on devSys2 authStore implementation ---
-
-  it.todo('insertChallenge: row inserted with consumed=0, expiresAtMs = issuedMs + TTL_MS')
-  it.todo('consumeChallenge: atomic UPDATE consumed=1 WHERE consumed=0 AND expiresAtMs>nowMs — rows-affected=1 on fresh, 0 on stale/spent (AUTH-PROP-1+2 CAS)')
-  it.todo('consumeChallenge: two concurrent calls for the same challengeId — exactly one succeeds (replay race)')
-  it.todo('registerDevice: inserts into devices; accountFingerprint = base64url(SHA-256(signingPublicKey)) — server-computed (F2)')
-  it.todo('registerDevice: duplicate keyId or signingPublicKey → appropriate rejection')
-  it.todo('mintGrant: tokenHash = base64url(SHA-256(token)); raw token NOT stored in any column (F6)')
-  it.todo('resolveGrant: hashes presented token, returns grant row; revokedAt IS NOT NULL → deny')
-  it.todo('resolveGrant: expiresAtMs IS NOT NULL AND < serverNowMs → deny (instant compare, not lexical)')
-  it.todo('revokeByKeyId: sets devices.revokedAt + all grants WHERE mintedByKeyId=keyId (PIN-ID-5 dual-sweep)')
-  it.todo('getDevice: revokedAt IS NOT NULL → device considered revoked; blocks future session mints')
+  // --- authStore BEHAVIOR — covered by devSys2 ---
+  // authStore.test.ts (d9e2dd7, 14 tests) and authStore.behavior.test.ts (c6b9176, 19 adversarial) own:
+  //   · createChallenge consumed=0, expiresAtMs = issuedMs + TTL_MS
+  //   · consumeChallenge atomic CAS (rows-affected=1 fresh, 0 stale/spent) — AUTH-PROP-1+2
+  //   · concurrent double-consume: exactly one wins (replay race)
+  //   · registerDevice: accountFingerprint = base64url(SHA-256(signingPublicKey)) — server-computed (F2)
+  //   · registerDevice: duplicate keyId → UNIQUE PK throws; shared signingPublicKey allowed (multi-device)
+  //   · mintGrant: tokenHash = base64url(SHA-256(token)); raw token never stored (F6)
+  //   · resolveGrant: returns row regardless of revoked/expired; revokedAt IS NOT NULL → row present
+  //   · resolveGrant: expiresAtMs instant-compare (chokepoint, not layer, decides deny)
+  //   · revokeByKeyId: device row + grants WHERE mintedByKeyId=keyId; capability grants untouched (PIN-ID-5)
+  //   · getDevice: revoked row still resolves; caller checks revokedAt
+  // Route-level integration covering all of the above (authorized/rejected/revoked) will flip §F todos.
 });
 
 // ---------------------------------------------------------------------------
@@ -469,6 +476,141 @@ describe('wire-schema crypto layer — canonical + Ed25519 signing (AUTH-PROP-3/
 });
 
 // ---------------------------------------------------------------------------
+// authCrypto layer acceptance — F2 fingerprint / F6 token-hash / TLV verify integration
+// (authCrypto.ts@3c29417)
+//
+// Tests the ACCEPTANCE-LEVEL security contracts exported by authCrypto.ts:
+//   F2 — computeFingerprint = base64url(SHA-256(signingPublicKey)); byte-identical to the client's
+//         Identity.id (PROP-3 cross-boundary invariant). The frozen vector asserted here MUST match
+//         what the client derives, so any impl drift breaks this test immediately.
+//   F6 — hashToken = base64url(SHA-256(token)); the at-rest grant hash. A raw token that ever
+//         appears in the DB breaks F6 — this test pins the deterministic function output.
+//   F5 — clampScope: server-enforced; a wider requestedScope is clamped to the entitlement, never
+//         passed verbatim (closes scope-escalation).
+//   TLV round-trip — verifySession reconstructs the canonical TLV from SERVER-HELD values and verifies
+//         the client-submitted signature: this is the core of AUTH-PROP-3/4 integration.
+//
+// Signing uses @noble/ed25519 (same lib authCrypto.ts verifies with — no cross-impl risk).
+// The authCrypto.test.ts unit layer covers per-function edge cases; this block covers CROSS-MODULE
+// integration (canonical.ts TLV + authCrypto verify) at the acceptance boundary.
+// ---------------------------------------------------------------------------
+
+// Deterministic keypair for TLV verify integration tests (same approach as authCrypto.test.ts).
+const AC_PRIV = new Uint8Array(32).fill(7);
+const AC_PUB = ed.getPublicKey(AC_PRIV);
+const AC_PUB_B64 = base64urlEncode(AC_PUB);
+const AC_AUD = 'deltos.acceptance-test';
+const AC_NONCE = new Uint8Array(32).fill(8);
+const AC_NONCE_B64 = base64urlEncode(AC_NONCE);
+const AC_CHALLENGE_ID = base64urlEncode(new Uint8Array(32).fill(2));
+const nobleSign = (msg: Uint8Array) => base64urlEncode(ed.sign(msg, AC_PRIV));
+
+describe('authCrypto layer acceptance — F2/F6/F5 + TLV verify integration (AUTH-PROP-3/4)', () => {
+
+  it('F2: computeFingerprint = base64url(SHA-256(signingPublicKey)) — PROP-3 cross-boundary vector pinned', () => {
+    // Same frozen pubkey used in authCrypto.test.ts — this is the client Identity.id cross-boundary pin.
+    // If either the client derivation or server computeFingerprint drifts, one of these vectors breaks.
+    const fromHex = (h: string) => new Uint8Array(h.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)));
+    const pubkey = fromHex('d72f09afbc5466596b386cc67c3e1e59baf30f21a329faf3c5ccd3cadac8f3ce');
+    expect(computeFingerprint(pubkey)).toBe('ZIqDVWjXSdI6CQ_HTSFmx0mRGM1LIzgEFMpspKdW11Q');
+  });
+
+  it('F6: hashToken is deterministic base64url(SHA-256(token)) — raw token never stored', () => {
+    const h = hashToken('tok-acceptance');
+    expect(h).toBe(hashToken('tok-acceptance'));        // deterministic
+    expect(h).not.toBe(hashToken('tok-acceptance-2'));  // distinct inputs → distinct hashes
+    // Length: SHA-256 = 32 bytes → 43 unpadded base64url chars.
+    expect(h.length).toBe(43);
+  });
+
+  it('F5: clampScope intersects requestedScope with entitlement in canonical SCOPES order (scope-escalation closed)', () => {
+    // read < write < delete < share (canonical SCOPES order)
+    expect(clampScope(['delete', 'write', 'read'], ['read', 'write'])).toEqual(['read', 'write']);
+    expect(clampScope(['delete', 'share'], ['read', 'write'])).toEqual([]);
+  });
+
+  it('F5: wider requestedScope than entitlement → granted scope is clamped, not requestedScope verbatim', () => {
+    const clamped = clampScope(['read', 'write', 'delete'], ['read']);
+    expect(clamped).toEqual(['read']);
+    expect(clamped).not.toContain('write');
+    expect(clamped).not.toContain('delete');
+  });
+
+  it('TLV round-trip — verifySession accepts signature signed over canonical session payload (AUTH-PROP-3/4 integration)', () => {
+    // This is the core integration: client signs canonical TLV; server reconstructs from server-held
+    // values (challengeId, nonce, keyId, audience) + request intent (requestedScope) and verifies.
+    // canonical.ts + authCrypto.ts must agree or this fails — no workaround.
+    const msg = canonicalAuthPayload({
+      purpose: 'session', audience: AC_AUD, challengeId: AC_CHALLENGE_ID,
+      nonce: AC_NONCE, keyId: 'KID-acc', requestedScope: ['read', 'write'],
+    });
+    expect(verifySession({
+      audience: AC_AUD, challengeId: AC_CHALLENGE_ID,
+      nonce: AC_NONCE_B64, keyId: 'KID-acc',
+      requestedScope: ['read', 'write'],
+      signature: nobleSign(msg),
+      signingPublicKey: AC_PUB_B64,
+    })).toBe(true);
+  });
+
+  it('TLV reconstruction fails on wrong audience — cross-deployment session replay blocked (F8)', () => {
+    const msg = canonicalAuthPayload({
+      purpose: 'session', audience: AC_AUD, challengeId: AC_CHALLENGE_ID,
+      nonce: AC_NONCE, keyId: 'KID-acc', requestedScope: ['read'],
+    });
+    expect(verifySession({
+      audience: 'evil.example.com', challengeId: AC_CHALLENGE_ID,
+      nonce: AC_NONCE_B64, keyId: 'KID-acc',
+      requestedScope: ['read'],
+      signature: nobleSign(msg),
+      signingPublicKey: AC_PUB_B64,
+    })).toBe(false);
+  });
+
+  it('TLV reconstruction fails on wrong keyId — keyId is inside the signed payload, not just the challenge', () => {
+    const msg = canonicalAuthPayload({
+      purpose: 'session', audience: AC_AUD, challengeId: AC_CHALLENGE_ID,
+      nonce: AC_NONCE, keyId: 'KID-acc', requestedScope: ['read'],
+    });
+    expect(verifySession({
+      audience: AC_AUD, challengeId: AC_CHALLENGE_ID,
+      nonce: AC_NONCE_B64, keyId: 'KID-DIFFERENT',
+      requestedScope: ['read'],
+      signature: nobleSign(msg),
+      signingPublicKey: AC_PUB_B64,
+    })).toBe(false);
+  });
+
+  it('verifyRegister: key-control proof — signature against the SUBMITTED pubkey proves private-key control (AUTH-PROP-3)', () => {
+    const msg = canonicalAuthPayload({
+      purpose: 'register', audience: AC_AUD, challengeId: AC_CHALLENGE_ID,
+      nonce: AC_NONCE, signingPublicKey: AC_PUB, deviceLabel: 'acceptance-phone',
+    });
+    expect(verifyRegister({
+      audience: AC_AUD, challengeId: AC_CHALLENGE_ID, nonce: AC_NONCE_B64,
+      signingPublicKey: AC_PUB_B64, deviceLabel: 'acceptance-phone', signature: nobleSign(msg),
+    })).toBe(true);
+  });
+
+  it('verifyStepUp: verified facts (keyId, op, resource) bound to the signed TLV — cannot be swapped at the chokepoint', () => {
+    const resource = ResourceSchema.parse({ kind: 'note', id: '00000000-0000-4000-8000-aaaaaaaaaaaa' });
+    const msg = canonicalAuthPayload({
+      purpose: 'step-up', audience: AC_AUD, challengeId: AC_CHALLENGE_ID,
+      nonce: AC_NONCE, keyId: 'KID-acc', op: 'delete', resource,
+    });
+    const verified = verifyStepUp({
+      audience: AC_AUD, challengeId: AC_CHALLENGE_ID, nonce: AC_NONCE_B64,
+      keyId: 'KID-acc', op: 'delete', resource, signature: nobleSign(msg),
+      signingPublicKey: AC_PUB_B64,
+    });
+    expect(verified).not.toBeNull();
+    expect(verified!.op).toBe('delete');
+    expect(verified!.resource).toEqual(resource);
+    expect(verified!.keyId).toBe('KID-acc');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // AUTH-PROP-1 — replay resistance
 // [strawman §3.2; PIN-ID-2; checklist §A]
 //
@@ -534,20 +676,39 @@ describe('AUTH-PROP-3 — pubkey↔account binding (F2 + PIN-ID-2)', () => {
 // ---------------------------------------------------------------------------
 
 describe('AUTH-PROP-4 — intent / scope / audience binding (F4, F5, F8)', () => {
-  // F8 — audience binding
+  // F8 — audience binding (route-level test: waits for routes/auth.ts handler bodies)
   it.todo('session signature with audience != server configured origin → 401 (cross-deployment replay fails)')
 
   // F4 — TLV canonicalization: no field-boundary confusion possible
-  it.todo('TLV round-trip: canonicalAuthPayload output for session matches server reconstruction')
+  // LIVE — covered by authCrypto layer acceptance block above (verifySession TLV round-trip tests)
+  it('TLV round-trip: canonicalAuthPayload output for session matches server reconstruction — authCrypto verify integration', () => {
+    const msg = canonicalAuthPayload({
+      purpose: 'session', audience: AC_AUD, challengeId: AC_CHALLENGE_ID,
+      nonce: AC_NONCE, keyId: 'KID-prop4', requestedScope: ['read'],
+    });
+    expect(verifySession({
+      audience: AC_AUD, challengeId: AC_CHALLENGE_ID,
+      nonce: AC_NONCE_B64, keyId: 'KID-prop4',
+      requestedScope: ['read'],
+      signature: nobleSign(msg),
+      signingPublicKey: AC_PUB_B64,
+    })).toBe(true);
+  });
   it.todo('session with a TLV signed for purpose=register → 401 (purpose field in TLV prevents cross-purpose reuse)')
   // planSys precision note: each endpoint must check the EXACT purpose string constant (e.g. "session",
   // "register", "step-up") from the TLV — a TLV signed for the right endpoint but with the WRONG
   // purpose literal (e.g. purpose="register" on /session, or a typo/variant) must reject.
   it.todo('signed request with the WRONG per-endpoint purpose string → 401 (constant-purpose binding — AUTH-PROP-4)')
 
-  // F5 — scope clamped at mint
-  it.todo('session requestedScope wider than device entitlement → granted scope is clamped, not verbatim requestedScope')
-  it.todo('granted scope returned in the session response matches intersection(requested, entitlement)')
+  // F5 — scope clamped at mint: LIVE — authCrypto.clampScope is available
+  it('session requestedScope wider than device entitlement → clampScope returns only the intersection (F5)', () => {
+    // Server clamps at mint: {read, write, delete} ∩ {read} = {read}
+    expect(clampScope(['read', 'write', 'delete'], ['read'])).toEqual(['read']);
+  });
+  it('clampScope output is in canonical SCOPES order, not requestedScope order (scope-ordering malleability closed)', () => {
+    // client sends write before read; canonical order is read < write
+    expect(clampScope(['write', 'read'], ['read', 'write'])).toEqual(['read', 'write']);
+  });
 });
 
 // ---------------------------------------------------------------------------
