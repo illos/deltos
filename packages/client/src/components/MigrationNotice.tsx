@@ -13,10 +13,12 @@ import { useState } from 'react';
 
 const STORAGE_KEY = 'deltos:migrationNoticeSeen';
 
+// planSys final (B) with residual-risk echo, secSys formality-confirm in progress. Wired verbatim.
 const BODY =
   "Heads up — we've changed how your notes are protected on this device. " +
   "They're now secured by your device's lock screen rather than your passkey. " +
-  "Day-to-day, your notes open instantly with no extra step; the trade is that the protection is your device lock, nothing more. " +
+  "Day-to-day, your notes open instantly with no extra step; the trade is that the protection is your device lock, nothing more — " +
+  "so anyone who can use this device while it is unlocked, or copy its storage, could read your notes. " +
   "Your notes and recovery phrase are unchanged.";
 
 export function MigrationNotice() {
