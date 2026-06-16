@@ -159,8 +159,8 @@ A `[CLI-device]` checklist is a numbered runbook (one tap-path per row) executed
 - **Tier A `[CLI-auto]`** — owner: **devSys2** (coordinating with gruntSys2 for enroll/storage). It is
   the client-side sibling of `v1.donegate.test.ts` and must be green in CI before the gate closes.
   Covers DG-1b / 2b / 2d / 3d / 3e.
-  - **Host package (scopeSys ruling):** the **worker** test package, with `@deltos/client` added as a
-    test-only devDep + `fake-indexeddb`. Safe — `client` and `worker` both depend only on
+  - **Host package (scopeSys ruling — wiring LIVE @b98bf3d):** the **worker** test package, with
+    `@deltos/client` added as a test-only devDep + `fake-indexeddb`. Safe — `client` and `worker` both depend only on
     `@deltos/shared`, neither on the other, so the worker→client devDep is no prod cycle; and it
     co-locates the automatable [CLI] suite with `v1.donegate.test.ts` (one harness, one package).
   - **The sync subset** (DG-3a round-trip / DG-3d auth header + token-never-persisted / DG-2c offline
