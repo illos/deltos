@@ -5,3 +5,5 @@
  * live here, alongside the spine and the grant primitive.
  */
 export * from './encoding.js';
+export * from './canonical.js';
+export * from './requests.js';

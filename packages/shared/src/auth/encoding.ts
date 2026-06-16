@@ -52,3 +52,33 @@ export function base64urlDecode(text: string): Uint8Array {
   }
   return new Uint8Array(out);
 }
+
+/** Thrown by {@link base64urlDecodeStrict} when input is not canonical unpadded base64url. */
+export class Base64urlError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'Base64urlError';
+  }
+}
+
+/**
+ * STRICT decode for the wire boundary (R3-4): accept ONLY canonical, unpadded base64url and throw on
+ * anything else — a non-URL-safe character, any `=` padding, a `mod 4 === 1` length, or non-canonical
+ * trailing bits (e.g. `Zh` for the byte `Zg` decodes to). The canonicality check is a round-trip:
+ * a value is canonical iff re-encoding its decoded bytes reproduces the exact input string. This
+ * forecloses a field having two distinct textual encodings that a signature would treat as different
+ * messages, and it lets the request schemas reject malformed/oversized blobs before they reach crypto.
+ */
+export function base64urlDecodeStrict(text: string): Uint8Array {
+  if (!/^[A-Za-z0-9_-]*$/.test(text)) {
+    throw new Base64urlError('base64url: illegal character or padding (URL-safe alphabet, no `=`)');
+  }
+  if (text.length % 4 === 1) {
+    throw new Base64urlError('base64url: invalid length (mod 4 === 1 is impossible)');
+  }
+  const bytes = base64urlDecode(text);
+  if (base64urlEncode(bytes) !== text) {
+    throw new Base64urlError('base64url: non-canonical encoding (trailing bits must be zero)');
+  }
+  return bytes;
+}
