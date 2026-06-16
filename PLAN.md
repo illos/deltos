@@ -381,6 +381,13 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   harness's sync round-trip + offline scenarios green = **step 3 (assembly) in progress.** Net: steps 1
   (cross-account, pending the one assertion + re-verify) + 2 (sync-auth) essentially done; step 3 active;
   remaining v1 unknown = the iPhone dogfood.
+- 2026-06-16 — **Client note-binding ruling: key on `accountId`, not `accountFingerprint`.** gruntSys2's
+  first cut bound local notes to the credential-derived fingerprint (deviation from strawman §4). Ruled
+  REBIND to accountId now (1 commit old) — fingerprint-binding would reintroduce the credential-coupling
+  on the client and force local-note migration when add/replace-credential ships (the exact pain accountId
+  removes; the user's whole reason). Server returns accountId in the session/identity response (non-secret,
+  §4); client uses it for LOCAL tagging only — server stays authoritative (stamps from
+  `principal.accountId`, never client-trusted, §5.3/F2). Consistency of secSys invariant-(i) across layers.
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
