@@ -149,11 +149,16 @@ describe('POST /api/auth/challenge', () => {
 
 describe('POST /api/auth/register', () => {
   it('valid register-TLV signature → 201, server-COMPUTED fingerprint (F2)', async () => {
-    const env = makeEnv(freshDb());
+    const raw = freshDb();
+    const env = makeEnv(raw);
     const kp = keypair(1);
     const body = await registerDevice(env, kp);
     expect(body.keyId).toBeTruthy();
     expect(body.accountFingerprint).toBe(computeFingerprint(kp.pub));
+    // v1 populates the per-device-key seam column with the account key (not NULL).
+    const row = raw.prepare('SELECT signingPublicKey, deviceSigningPublicKey FROM devices WHERE keyId = ?').get(body.keyId) as { signingPublicKey: string; deviceSigningPublicKey: string | null };
+    expect(row.deviceSigningPublicKey).toBe(kp.pubB64);
+    expect(row.signingPublicKey).toBe(kp.pubB64);
   });
   it('wrong-length pubkey → 400 at the boundary', async () => {
     const env = makeEnv(freshDb());

@@ -11,7 +11,7 @@ import {
 import type { Op, Resource, Scope } from '@deltos/shared';
 import * as authCrypto from '../authCrypto.js';
 import type { Env } from '../env.js';
-import { apiError, guard, type AppContext, type ApiErrorBody } from '../http.js';
+import { apiError, guard, type AppContext } from '../http.js';
 import { resolvePrincipal } from '../auth.js';
 import { d1Adapter } from '../db/schema.js';
 import { createAuthStore } from '../db/authStore.js';
@@ -72,16 +72,6 @@ function requireAudience(c: AppContext): string | Response {
 
 const UNAUTHORIZED = 'the challenge or signature is invalid, expired, or already used';
 
-/**
- * 401 for the auth bootstrap. `apiError`'s status union deliberately omits 401 (the REST layer never
- * needed it — it uses 403 for can() denials), so this builds the SAME {@link ApiErrorBody} envelope
- * with the 401 the credential-failure paths require. (A later infra nit: fold 401 into `apiError`.)
- */
-function unauthorized(c: AppContext): Response {
-  const body: ApiErrorBody = { error: { code: 'unauthorized', message: UNAUTHORIZED } };
-  return c.json(body, 401);
-}
-
 // ---------------------------------------------------------------------------
 // POST /api/auth/challenge  — { purpose, keyId? } → { challengeId, nonce, expiresAt, expiresAtMs }
 // Mints a short-TTL, single-use, server-held challenge. Unauthenticated by design.
@@ -134,7 +124,7 @@ auth.post('/register', async (c) => {
 
   // Single-use + freshness live entirely in the atomic consume (server-held nonce comes back here).
   const consumed = await store.consumeChallenge(challengeId, 'register', nowMs);
-  if (!consumed) return unauthorized(c);
+  if (!consumed) return apiError(c, 401, 'unauthorized', UNAUTHORIZED);
 
   const verified = authCrypto.verifyRegister({
     audience,
@@ -144,7 +134,7 @@ auth.post('/register', async (c) => {
     deviceLabel,
     signature,
   });
-  if (!verified) return unauthorized(c);
+  if (!verified) return apiError(c, 401, 'unauthorized', UNAUTHORIZED);
 
   // F2 — the server COMPUTES the fingerprint from the (signature-proven) pubkey; never trusts a body copy.
   const accountFingerprint = authCrypto.computeFingerprint(base64urlDecodeStrict(signingPublicKey));
@@ -152,6 +142,10 @@ auth.post('/register', async (c) => {
   await store.registerDevice({
     keyId,
     signingPublicKey,
+    // v1: device key == account key (strawman F1). Populate the option-(b)/D5 per-device-key seam
+    // column with the verified account key now so Phase-2 can fill it with a real device key
+    // non-breakingly; leaving it NULL would lose the seam.
+    deviceSigningPublicKey: signingPublicKey,
     accountFingerprint,
     deviceLabel,
     createdAt: new Date(nowMs).toISOString(),
@@ -176,15 +170,15 @@ auth.post('/session', async (c) => {
   const nowMs = Date.now();
 
   const consumed = await store.consumeChallenge(challengeId, 'session', nowMs);
-  if (!consumed) return unauthorized(c);
+  if (!consumed) return apiError(c, 401, 'unauthorized', UNAUTHORIZED);
   // CF-2 / R3-2: the challenge is bound to its keyId. Assert request==stored, then use the
   // SERVER-HELD keyId as the single source for BOTH the TLV and the pubkey resolution.
-  if (consumed.keyId === null || consumed.keyId !== keyId) return unauthorized(c);
+  if (consumed.keyId === null || consumed.keyId !== keyId) return apiError(c, 401, 'unauthorized', UNAUTHORIZED);
   const serverKeyId = consumed.keyId;
 
   // CF-1 / PROP-3: the pubkey is the SERVER-RESOLVED device key — never a request/body field.
   const device = await store.getDevice(serverKeyId);
-  if (!device || device.revokedAt !== null) return unauthorized(c);
+  if (!device || device.revokedAt !== null) return apiError(c, 401, 'unauthorized', UNAUTHORIZED);
 
   const verified = authCrypto.verifySession({
     audience,
@@ -195,7 +189,7 @@ auth.post('/session', async (c) => {
     signature,
     signingPublicKey: device.signingPublicKey, // SERVER-RESOLVED, never the body
   });
-  if (!verified) return unauthorized(c);
+  if (!verified) return apiError(c, 401, 'unauthorized', UNAUTHORIZED);
 
   const granted = authCrypto.clampScope(requestedScope, SESSION_ENTITLEMENT); // F5 — never verbatim
   const token = authCrypto.randomToken(32);
@@ -261,15 +255,15 @@ auth.post('/devices/:keyId/revoke', async (c) => {
   const nowMs = Date.now();
 
   const consumed = await store.consumeChallenge(challengeId, 'step-up', nowMs);
-  if (!consumed) return unauthorized(c);
+  if (!consumed) return apiError(c, 401, 'unauthorized', UNAUTHORIZED);
   // CF-2 / R3-2: assert request keyId == server-held, then use the SERVER-HELD keyId as the single source.
-  if (consumed.keyId === null || consumed.keyId !== keyId) return unauthorized(c);
+  if (consumed.keyId === null || consumed.keyId !== keyId) return apiError(c, 401, 'unauthorized', UNAUTHORIZED);
   const serverKeyId = consumed.keyId;
 
   // The AUTHENTICATING device proves account possession via its signing key; CF-1: resolve its pubkey
   // server-side from the server-held keyId — never a body field.
   const authDevice = await store.getDevice(serverKeyId);
-  if (!authDevice || authDevice.revokedAt !== null) return unauthorized(c);
+  if (!authDevice || authDevice.revokedAt !== null) return apiError(c, 401, 'unauthorized', UNAUTHORIZED);
 
   const verified = authCrypto.verifyStepUp({
     audience,
@@ -281,7 +275,7 @@ auth.post('/devices/:keyId/revoke', async (c) => {
     signature,
     signingPublicKey: authDevice.signingPublicKey, // SERVER-RESOLVED
   });
-  if (!verified) return unauthorized(c);
+  if (!verified) return apiError(c, 401, 'unauthorized', UNAUTHORIZED);
 
   // Target must exist — distinguishes an unknown device (404) from an already-revoked one (idempotent 200).
   const target = await store.getDevice(targetKeyId);
