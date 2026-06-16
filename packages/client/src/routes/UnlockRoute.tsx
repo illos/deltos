@@ -1,7 +1,9 @@
 /**
  * UnlockRoute — returning user passkey unlock.
  *
- * Flow: idle → [button click] → unlocking (WebAuthn get) → minting session → navigate to /
+ * Flow: idle → [button click] → unlocking (WebAuthn get) → minting →
+ *   if justMigratedToDeviceLocal → migrationNotice (one-time) → /
+ *   otherwise → /
  *
  * E4 belt: if keyId is absent from localStorage (iOS evicts localStorage more aggressively
  * than IndexedDB), init() recovers it from IDB. As a true fallback, if keyId is still null
@@ -9,8 +11,10 @@
  * public-key fingerprint and returns a fresh keyId tied to the same accountId (devSys validated).
  * This avoids the "not registered" dead-end without persisting the bearer token (F7 upheld).
  *
- * No security disclosure here — the pilot ruling is: disclosure only at credential-establishment
+ * No security disclosure here — pilot ruling: disclosure only at credential-establishment
  * (enroll / recovery / QR-join), never on the day-to-day launch/unlock path.
+ * Exception: migration notice — shown once when Option-A silently rewraps a PRF device to
+ * device-local custody; devSys sets justMigratedToDeviceLocal in the unlock() action.
  *
  * PIN-ID-9: the "Unlock" button calls unlock() synchronously (no preceding await) so that
  * WebAuthn get() is the first await within the gesture's transient activation window.
@@ -18,11 +22,12 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore, detectDeviceLabel } from '../auth/store.js';
+import { MigrationNotice } from '../components/MigrationNotice.js';
 
-type Step = 'idle' | 'unlocking' | 'minting' | 'error';
+type Step = 'idle' | 'unlocking' | 'minting' | 'migrationNotice' | 'error';
 
 export function UnlockRoute() {
-  const { unlock, mintSession, register, keyId } = useAuthStore();
+  const { unlock, mintSession, register, keyId, clearMigrationNotice } = useAuthStore();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>('idle');
   const [errorMsg, setErrorMsg] = useState('');
@@ -38,20 +43,30 @@ export function UnlockRoute() {
         }
         setStep('minting');
         // E4 belt: keyId may be null if iOS evicted localStorage and init()'s IDB recovery
-        // also came up empty (device was enrolled but never registered, or IDB was cleared).
-        // Re-register the same signing key — server reuses the account → fresh keyId.
+        // also came up empty. Re-register the same signing key — fresh keyId, same account.
         if (!keyId) {
           await register(detectDeviceLabel());
         }
         return mintSession();
       })
       .then(() => {
-        navigate('/', { replace: true });
+        // unlock() sets justMigratedToDeviceLocal when it detects a PRF→device-local rewrap.
+        // Show the notice once before navigating; clearMigrationNotice() clears the flag.
+        if (useAuthStore.getState().justMigratedToDeviceLocal) {
+          setStep('migrationNotice');
+        } else {
+          navigate('/', { replace: true });
+        }
       })
       .catch((e: Error) => {
         setErrorMsg(e.message);
         setStep('error');
       });
+  };
+
+  const handleMigrationDismiss = () => {
+    clearMigrationNotice();
+    navigate('/', { replace: true });
   };
 
   if (step === 'unlocking' || step === 'minting') {
@@ -61,6 +76,14 @@ export function UnlockRoute() {
         <p className="auth__subtitle">
           {step === 'unlocking' ? 'Verifying your passkey…' : 'Starting session…'}
         </p>
+      </div>
+    );
+  }
+
+  if (step === 'migrationNotice') {
+    return (
+      <div className="auth">
+        <MigrationNotice onDismiss={handleMigrationDismiss} />
       </div>
     );
   }

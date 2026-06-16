@@ -1,19 +1,13 @@
 /**
- * MigrationNotice — one-time dismissible banner shown when an existing user's at-rest
- * protection changes from passkey-bound (PRF) to device-local lock-screen (Option-A).
+ * MigrationNotice — one-time notice shown when at-rest protection transitions from
+ * passkey-bound (PRF) to device-local lock-screen (Option-A silent rewrap).
  *
- * Copy: planSys-approved, secSys honesty-recheck in progress.
- * Placement: devSys mounts at the migration unlock point (first unlock after the change).
- *
- * Self-contained show-once: uses localStorage key 'deltos:migrationNoticeSeen' so the
- * banner renders exactly once and never again after dismissal. This is a UI preference
- * flag, not security state — localStorage is safe here (F7 is about the bearer token only).
+ * Copy: planSys final (B) with residual-risk echo, secSys PASSED.
+ * Mounting + show-once logic: caller's responsibility (UnlockRoute reads
+ * useAuthStore().justMigratedToDeviceLocal and calls clearMigrationNotice() on dismiss).
  */
-import { useState } from 'react';
 
-const STORAGE_KEY = 'deltos:migrationNoticeSeen';
-
-// planSys final (B) with residual-risk echo, secSys formality-confirm in progress. Wired verbatim.
+// planSys final (B), secSys PASSED. Wired verbatim.
 const BODY =
   "Heads up — we've changed how your notes are protected on this device. " +
   "They're now secured by your device's lock screen rather than your passkey. " +
@@ -21,33 +15,18 @@ const BODY =
   "so anyone who can use this device while it is unlocked, or copy its storage, could read your notes. " +
   "Your notes and recovery phrase are unchanged.";
 
-export function MigrationNotice() {
-  const [visible, setVisible] = useState(() => {
-    try {
-      return !localStorage.getItem(STORAGE_KEY);
-    } catch {
-      return false;
-    }
-  });
+interface MigrationNoticeProps {
+  onDismiss: () => void;
+}
 
-  const dismiss = () => {
-    try {
-      localStorage.setItem(STORAGE_KEY, '1');
-    } catch {
-      // ignore storage failure — just hide for this session
-    }
-    setVisible(false);
-  };
-
-  if (!visible) return null;
-
+export function MigrationNotice({ onDismiss }: MigrationNoticeProps) {
   return (
     <div className="migration-notice" role="note" aria-label="Change notice">
       <div className="migration-notice__body">{BODY}</div>
       <button
         className="migration-notice__dismiss"
         aria-label="Dismiss"
-        onClick={dismiss}
+        onClick={onDismiss}
       >
         Got it
       </button>
