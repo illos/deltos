@@ -26,7 +26,15 @@ const PULL_PAGE = 100;
 // protocol ever carries a client createdAt/updatedAt, reinstate a `min(client, serverNow)` clamp
 // at the write boundary (the PIN-SYNC timestamp-clamp landmine) before persisting it.
 
-/** Bump the per-notebook syncSeq counter and return it. Batched with note writes. */
+/**
+ * Bump the per-notebook syncSeq counter and return it. Batched with note writes.
+ *
+ * NOTE (secSys v1 conscious-accept): the counter is keyed on notebookId ALONE, so two accounts
+ * sharing a notebookId string share this seq row. Note rows stay account-isolated (all queries
+ * filter accountId), but the sequence SPACE is shared — a weak write-activity side-channel + row
+ * contention. ACCEPTED for v1; re-key to (accountId, notebookId) when notebooks go first-class.
+ * Full rationale at migration 0001_stream-b-sync.sql (the notebookSyncSeq PK comment).
+ */
 const BUMP_SEQ_SQL = `
   INSERT INTO notebookSyncSeq (notebookId, seq)
   VALUES (?, 1)
