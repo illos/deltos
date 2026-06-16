@@ -36,7 +36,7 @@ class. **Not** formal capstone verdicts.
 | E1 | **Editor not autosaving** — the editor→store persistence wiring is broken: typed notes never reach the store, so they don't list / sync / recover. (Navigation is fine — swipe-back + note list both work; the earlier "nav gap" read was WRONG.) | The suites drove the **store programmatically** (`mutateNotes.put` + everything downstream green) and **structurally bypassed the editor→store wiring** — the seam where the UI writes what the user typed. Store/sync/auth all correct; the editor silently didn't persist. | gruntSys2 — fix **addressed `@a7d32e2`** (per planSys); durable coverage **essentially CLOSED `@3d26228`** (9 navList tests, suite 145/145). The 3 new PM-pipeline tests cover the editor→store **data path**: text-insert → `docChanged` → title-extract → `onSave` → `mutateNotes.put` → list emission. **Only uncovered link = PM's own `EditorView`→`dispatchTransaction`** (ProseMirror-internal, correctly trusted, not our code — exercised by the on-device test). **TEST-BAR MET.** ✅ **CLOSED** — user on-device confirmed (note persists + lists, survives re-open) + durable PM-pipeline test `@3d26228`. |
 | E2 | **Dynamic Island safe-area occlusion** — content occluded by the Dynamic Island / safe-area inset on device. | Headless jsdom has no device viewport / safe-area insets — no notion of the Dynamic Island. | gruntSys2 — **FIXED `@329eb17`**: `env(safe-area-inset-top)` padding on `.shell__bar` (inline critical CSS + `styles.css`) + `.auth` container; `viewport-fit=cover` + `black-translucent` already present. Deployed `:8451`. 🟡 **likely-good — awaiting EXPLICIT user confirm** (user focused on autosave, didn't re-flag it). |
 | E3 | **Notes-list lag (~1s)** backing out of a fresh note — the debounced store write hadn't flushed on navigate-away. **NOT data-loss** (the write lands ~1s later). | Timing/flush behavior on navigate-away — invisible to a headless suite that awaits the write directly. | gruntSys2 — ✅ **CLOSED `@41f3465`** (blur-flush the debounce on unmount/blur; 2 durable tests, suite 147/147, `:8451`). Was LOW-priority formal-run polish. |
-| **E4** | 🔴 **COLD-RELOAD IDENTITY LOSS — v1-BLOCKING.** On `:8451` PROD: user enrolls + creates notes, then a **plain browser reload → "device not registered."** (F7 in-memory token being gone on reload is EXPECTED/correct; the bug is **cold-start not re-authing from the persisted KeyStore device key**.) | A reload/cold-start path — the automated suites never simulate a real browser cold-start + SW boot + KeyStore rehydration. | **OPEN — under investigation.** gruntSys2 (client cold-start / SW) + devSys (prod KeyStore / rehydration); **secSys guarding the F7 / at-rest invariant** (the fix must re-auth from the at-rest-wrapped device key **without** persisting the F7 token, per [[session-token-in-memory-only]]). **This is the HARD formal-run blocker.** |
+| **E4** | 🔴 **COLD-RELOAD IDENTITY LOSS — v1-BLOCKING.** On `:8451` PROD: enroll + create notes, then a **plain browser reload → "device not registered" dead-end.** **Root cause (devSys):** `keyId` was persisted **only in `localStorage`** (iOS ITP / PWA-eviction-prone), **separate** from the durable IndexedDB credential blob — so after a reload the IDB blob survives (`isEnrolled=true`) but `keyId` is gone → `UnlockRoute` disables Unlock + shows "use recovery phrase." Token-gone is expected (F7); **`keyId`-gone is the bug.** | A reload/cold-start path — the automated suites never simulate a real browser cold-start + SW boot + KeyStore rehydration, and never noticed `keyId` lived in eviction-prone `localStorage`. | **DESIGN-RULED** (secSys: option A approved on 6 conditions — see E4 detail below), **fix-in-progress.** This is the HARD formal-run blocker. |
 | _…_ | _(append findings as the squash surfaces them)_ | | |
 
 ### Durable lesson (the sharpest example yet of why the on-device capstone exists)
@@ -47,6 +47,38 @@ Tier-A proved the data/sync/auth journey perfectly while the editor silently fai
 type→store→list component test), which **narrows** the gap; but full end-to-end on-device reachability
 (real WebAuthn, install, device viewport/safe-area, the whole nav flow) is **only** provable by the
 Tier-B capstone. This log is that backstop's record.
+
+### E4 detail — cold-reload identity loss (design-ruled, fix-in-progress)
+
+**Root cause (devSys):** `keyId` persisted **only in `localStorage`** (iOS ITP / PWA-eviction-prone),
+separate from the durable IndexedDB credential blob. After a plain reload the IDB blob survives
+(`isEnrolled=true`) but `keyId` is gone → `UnlockRoute` disables Unlock and shows "not registered, use
+recovery phrase" — a dead-end. The F7 in-memory token being gone on reload is **expected**; the bug is
+**`keyId` gone**.
+
+**Design ruling (secSys): option A APPROVED** — *zero-gesture, device-local-for-all silent
+cold-reload* — on **6 conditions** (all required):
+
+1. **Universal honest D5-style disclosure** — lock-screen-grade (not biometric); shown for everyone,
+   generalizing the prior no-PRF-only disclosure ([[keystore-noprf-ui-disclosure]]).
+2. **F7 token never persisted** — hard-fail invariant ([[session-token-in-memory-only]]).
+3. **Keep AES-GCM at-rest wrapping + a fresh challenge** on the silent re-auth.
+4. **Mnemonic stays OUT of the silent auto-unwrap path** — the silent cold-reload uses the **device
+   signing key only**, never the recovery phrase.
+5. **Optional future passphrase** — a non-v1 enhancement seam.
+6. **Re-examine if data sensitivity grows** — the zero-gesture posture is scoped to v1's threat model.
+
+**Fix (token stays F7), all silent:** (1) **devSys** — persist `keyId` **durably in IDB**, co-located
+with the credential blob; (2) **gruntSys2 belt** — on `isEnrolled && !keyId`, `unlock()` →
+re-register the **same** key (→ same `accountId`) → `mintSession`; (3) **gruntSys2** — the universal
+disclosure (condition #1).
+
+**Demoted by this ruling:** the unlock-gesture **A-vs-B** choice is now SECONDARY — a UX refinement
+under secSys's ruling, **non-blocking** for v1.
+
+**secSys forward flag (post-v1 custody direction):** a **per-device revocable key** is preferable to
+the mnemonic-derived account key for at-rest — revisit post-v1 (aligns with the pre-shaped DeviceRegistry
+seam, [[account-identity-model]]).
 
 ---
 
