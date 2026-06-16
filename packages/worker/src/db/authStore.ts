@@ -63,10 +63,9 @@ export interface AuthStore {
   registerDevice(row: {
     keyId: string;
     signingPublicKey: string; // ACCOUNT-level key (v1: shared across the account's devices)
-    // option-(b)/D5 per-device-key seam: NULLABLE, UNUSED in v1. The store stores exactly what is
-    // passed (no fabrication) — the v1 route supplies the account signingPublicKey (strawman F1);
-    // omit/null leaves the column NULL. Phase-2 fills it with the device's own key (non-breaking).
-    deviceSigningPublicKey?: string | null;
+    // option-(b)/D5 per-device-key seam — REQUIRED (NOT NULL), always populated. The v1 route supplies
+    // the account signingPublicKey (strawman F1); Phase-2 supplies the device's own key. No null state.
+    deviceSigningPublicKey: string;
     accountFingerprint: string;
     deviceLabel: string;
     createdAt: string; // ISO-8601 Z
@@ -157,7 +156,7 @@ export function createAuthStore(db: DbAdapter): AuthStore {
           params: [
             row.keyId,
             row.signingPublicKey,
-            row.deviceSigningPublicKey ?? null, // v1 seam: NULL unless the route supplies it (no fabrication)
+            row.deviceSigningPublicKey, // NOT NULL: v1 = signingPublicKey (route), Phase-2 = device key
             row.accountFingerprint,
             row.deviceLabel,
             row.createdAt,

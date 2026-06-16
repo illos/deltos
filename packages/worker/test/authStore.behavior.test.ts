@@ -17,7 +17,7 @@
  * - revokeByKeyId unknown keyId: no-op, no throw
  * - revokeGrant idempotency: second call preserves the first revokedAt
  * - sweepExpiredChallenges boundary: exactly-at-boundary (expiresAtMs===serverNowMs) is NOT swept
- * - deviceSigningPublicKey D5 seam: nullable, not fabricated in v1, accepts a per-device key (Phase-2)
+ * - deviceSigningPublicKey D5 seam: NOT NULL, stores the supplied key (v1=signingPublicKey, Phase-2=device key); NULL rejected
  * - schema CHECK constraints reject out-of-set purpose / consumed at the DB boundary (finding 4)
  *
  * DO NOT duplicate devSys2's cases.  Imports and adapter are intentionally identical so the
@@ -168,12 +168,12 @@ describe('consumeChallenge — adversarial boundary (secSys)', () => {
 describe('registerDevice / getDevice — adversarial (secSys)', () => {
   it('duplicate keyId → throws UNIQUE PRIMARY KEY constraint (registry integrity)', async () => {
     await store.registerDevice({
-      keyId: 'k-dupe', signingPublicKey: 'pubkey-A', accountFingerprint: FP_A,
+      keyId: 'k-dupe', signingPublicKey: 'pubkey-A', deviceSigningPublicKey: 'pubkey-A', accountFingerprint: FP_A,
       deviceLabel: 'First', createdAt: '2025-01-01T00:00:00Z',
     });
     await expect(
       store.registerDevice({
-        keyId: 'k-dupe', signingPublicKey: 'pubkey-B', accountFingerprint: FP_A,
+        keyId: 'k-dupe', signingPublicKey: 'pubkey-B', deviceSigningPublicKey: 'pubkey-B', accountFingerprint: FP_A,
         deviceLabel: 'Second', createdAt: '2025-01-01T00:00:01Z',
       }),
     ).rejects.toThrow();
@@ -182,11 +182,11 @@ describe('registerDevice / getDevice — adversarial (secSys)', () => {
   it('two devices sharing the same signingPublicKey under different keyIds are both stored (v1 multi-device model)', async () => {
     const sharedPubkey = 'shared-pubkey';
     await store.registerDevice({
-      keyId: 'k-dev1', signingPublicKey: sharedPubkey, accountFingerprint: FP_A,
+      keyId: 'k-dev1', signingPublicKey: sharedPubkey, deviceSigningPublicKey: sharedPubkey, accountFingerprint: FP_A,
       deviceLabel: 'Device 1', createdAt: '2025-01-01T00:00:00Z',
     });
     await store.registerDevice({
-      keyId: 'k-dev2', signingPublicKey: sharedPubkey, accountFingerprint: FP_A,
+      keyId: 'k-dev2', signingPublicKey: sharedPubkey, deviceSigningPublicKey: sharedPubkey, accountFingerprint: FP_A,
       deviceLabel: 'Device 2', createdAt: '2025-01-01T00:00:01Z',
     });
     const d1 = await store.getDevice('k-dev1');
@@ -199,7 +199,7 @@ describe('registerDevice / getDevice — adversarial (secSys)', () => {
 
   it('getDevice returns the row for a revoked device — revokedAt IS NOT NULL; caller decides the deny', async () => {
     await store.registerDevice({
-      keyId: 'k-tobe-revoked', signingPublicKey: 'pk-rev', accountFingerprint: FP_A,
+      keyId: 'k-tobe-revoked', signingPublicKey: 'pk-rev', deviceSigningPublicKey: 'pk-rev', accountFingerprint: FP_A,
       deviceLabel: 'To revoke', createdAt: '2025-01-01T00:00:00Z',
     });
     await store.revokeByKeyId('k-tobe-revoked');
@@ -308,11 +308,11 @@ describe('mintGrant / resolveGrantByTokenHash — adversarial (secSys)', () => {
 describe('revokeByKeyId — scope adversarial (secSys)', () => {
   async function seedTwoDevicesAndGrants() {
     await store.registerDevice({
-      keyId: 'k-alpha', signingPublicKey: 'pk-alpha', accountFingerprint: FP_A,
+      keyId: 'k-alpha', signingPublicKey: 'pk-alpha', deviceSigningPublicKey: 'pk-alpha', accountFingerprint: FP_A,
       deviceLabel: 'Alpha', createdAt: '2025-01-01T00:00:00Z',
     });
     await store.registerDevice({
-      keyId: 'k-beta', signingPublicKey: 'pk-beta', accountFingerprint: FP_A,
+      keyId: 'k-beta', signingPublicKey: 'pk-beta', deviceSigningPublicKey: 'pk-beta', accountFingerprint: FP_A,
       deviceLabel: 'Beta', createdAt: '2025-01-01T00:00:01Z',
     });
     await store.mintGrant({
@@ -423,31 +423,29 @@ describe('sweepExpiredChallenges — boundary adversarial (secSys)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// deviceSigningPublicKey — option-(b)/D5 per-device-key seam (planSys path-a, NULLABLE)
+// deviceSigningPublicKey — option-(b)/D5 per-device-key seam (planSys: NOT NULL, always populated)
 // ---------------------------------------------------------------------------
 
-describe('deviceSigningPublicKey seam (D5 path-a)', () => {
-  it('registerDevice does NOT fabricate the seam column — omitted → stored NULL (unused in v1)', async () => {
-    await store.registerDevice({
-      keyId: 'k-seam-null', signingPublicKey: 'ACCT-PUB', accountFingerprint: FP_A,
-      deviceLabel: 'v1 device', createdAt: '2025-01-01T00:00:00Z',
-    });
-    const row = raw
-      .prepare('SELECT deviceSigningPublicKey FROM devices WHERE keyId = ?')
-      .get('k-seam-null') as { deviceSigningPublicKey: string | null };
-    expect(row.deviceSigningPublicKey).toBeNull();
-  });
-
-  it('the seam column ACCEPTS a per-device key when supplied — the Phase-2 drop-in is non-breaking', async () => {
-    // v1 route supplies signingPublicKey here (strawman F1); Phase-2 supplies the device's own key.
+describe('deviceSigningPublicKey seam (D5, NOT NULL)', () => {
+  it('stores the supplied per-device key — v1 supplies signingPublicKey, Phase-2 the device key (round-trip)', async () => {
+    // v1 route supplies the account signingPublicKey (strawman F1); Phase-2 supplies the device's own key.
     await store.registerDevice({
       keyId: 'k-seam-set', signingPublicKey: 'ACCT-PUB', deviceSigningPublicKey: 'DEVICE-PUB',
       accountFingerprint: FP_A, deviceLabel: 'seamed device', createdAt: '2025-01-01T00:00:00Z',
     });
     const row = raw
       .prepare('SELECT deviceSigningPublicKey FROM devices WHERE keyId = ?')
-      .get('k-seam-set') as { deviceSigningPublicKey: string | null };
+      .get('k-seam-set') as { deviceSigningPublicKey: string };
     expect(row.deviceSigningPublicKey).toBe('DEVICE-PUB');
+  });
+
+  it('a device row with NULL deviceSigningPublicKey is rejected — NOT NULL integrity (every device has a signing key)', () => {
+    expect(() =>
+      raw.exec(
+        `INSERT INTO devices (keyId, signingPublicKey, accountFingerprint, deviceLabel, createdAt)
+         VALUES ('k-no-seam', 'PUB', 'fp', 'd', '2025-01-01T00:00:00Z')`,
+      ),
+    ).toThrow();
   });
 });
 

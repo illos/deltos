@@ -154,6 +154,7 @@ describe('devices — register / get / list', () => {
     await store.registerDevice({
       keyId: 'k1',
       signingPublicKey: 'PUB1',
+      deviceSigningPublicKey: 'PUB1',
       accountFingerprint: 'ACC',
       deviceLabel: 'phone',
       createdAt: '2026-06-16T00:00:00.000Z',
@@ -167,9 +168,9 @@ describe('devices — register / get / list', () => {
   });
 
   it('lists all devices for an account, not other accounts', async () => {
-    await store.registerDevice({ keyId: 'k1', signingPublicKey: 'P1', accountFingerprint: 'ACC', deviceLabel: 'a', createdAt: '2026-06-16T00:00:01.000Z' });
-    await store.registerDevice({ keyId: 'k2', signingPublicKey: 'P1', accountFingerprint: 'ACC', deviceLabel: 'b', createdAt: '2026-06-16T00:00:02.000Z' });
-    await store.registerDevice({ keyId: 'k3', signingPublicKey: 'P9', accountFingerprint: 'OTHER', deviceLabel: 'c', createdAt: '2026-06-16T00:00:03.000Z' });
+    await store.registerDevice({ keyId: 'k1', signingPublicKey: 'P1', deviceSigningPublicKey: 'P1', accountFingerprint: 'ACC', deviceLabel: 'a', createdAt: '2026-06-16T00:00:01.000Z' });
+    await store.registerDevice({ keyId: 'k2', signingPublicKey: 'P1', deviceSigningPublicKey: 'P1', accountFingerprint: 'ACC', deviceLabel: 'b', createdAt: '2026-06-16T00:00:02.000Z' });
+    await store.registerDevice({ keyId: 'k3', signingPublicKey: 'P9', deviceSigningPublicKey: 'P9', accountFingerprint: 'OTHER', deviceLabel: 'c', createdAt: '2026-06-16T00:00:03.000Z' });
 
     const devices = await store.listDevices('ACC');
     expect(devices.map((d) => d.keyId)).toEqual(['k1', 'k2']);
@@ -235,7 +236,7 @@ describe('revocation', () => {
   });
 
   it('revokeByKeyId revokes the device AND that device\'s outstanding grants — scoped by mintedByKeyId', async () => {
-    await store.registerDevice({ keyId: 'k1', signingPublicKey: 'P', accountFingerprint: 'ACC', deviceLabel: 'a', createdAt: 'c' });
+    await store.registerDevice({ keyId: 'k1', signingPublicKey: 'P', deviceSigningPublicKey: 'P', accountFingerprint: 'ACC', deviceLabel: 'a', createdAt: 'c' });
 
     // Two grants minted by k1, one minted by a different device, one capability grant (null).
     await store.mintGrant({ grantId: 'g1', tokenHash: 'H1', principal: owner('ACC'), mintedByKeyId: 'k1', resource: workspaceResource(), scope: scopes('read'), expiresAtMs: FUTURE, createdAt: 'c' });
@@ -256,7 +257,7 @@ describe('revocation', () => {
   });
 
   it('revokeByKeyId is idempotent — re-revoking preserves the first revoke time', async () => {
-    await store.registerDevice({ keyId: 'k1', signingPublicKey: 'P', accountFingerprint: 'ACC', deviceLabel: 'a', createdAt: 'c' });
+    await store.registerDevice({ keyId: 'k1', signingPublicKey: 'P', deviceSigningPublicKey: 'P', accountFingerprint: 'ACC', deviceLabel: 'a', createdAt: 'c' });
     await store.mintGrant({ grantId: 'g1', tokenHash: 'H1', principal: owner('ACC'), mintedByKeyId: 'k1', resource: workspaceResource(), scope: scopes('read'), expiresAtMs: FUTURE, createdAt: 'c' });
 
     await store.revokeByKeyId('k1');

@@ -25,12 +25,12 @@
 -- wire + storage (encoding.ts is the single codec; accountFingerprint is a base64url string compared
 -- byte-for-byte per F2). Volumes are tiny, so BLOB's ~33% saving isn't worth the repr split (ruling 1).
 --
--- PER-DEVICE-KEY SEAM (D5, planSys path-a): `devices.deviceSigningPublicKey` is a NULLABLE column
--- carried from day one and UNUSED in v1 (registerDevice leaves it NULL unless the route supplies it;
--- the v1 route passes the account `signingPublicKey` per strawman F1). Phase-2 per-device-lockout fills
--- it with each device's own key — a non-breaking drop-in. It cannot be collapsed into `signingPublicKey`:
--- `accountFingerprint` must stay = SHA-256(signingPublicKey) shared across an account's devices (PIN-ID-3
--- same-id-across-devices), so the per-device key needs its own column.
+-- PER-DEVICE-KEY SEAM (D5, planSys): `devices.deviceSigningPublicKey` is carried from day one and ALWAYS
+-- populated (NOT NULL): v1 stores the account `signingPublicKey` (strawman F1), Phase-2 per-device-lockout
+-- stores each device's OWN key — a non-breaking drop-in. NOT NULL encodes the true integrity invariant
+-- (every device row has a signing key); there is no legitimate null state since both v1 and Phase-2 always
+-- populate it. It cannot be collapsed into `signingPublicKey`: `accountFingerprint` must stay =
+-- SHA-256(signingPublicKey) shared across an account's devices (PIN-ID-3), so the per-device key needs its own column.
 --
 -- DEFENSE-IN-DEPTH (secSys finding 4): CHECK constraints reject an out-of-set `purpose` or a `consumed`
 -- value outside {0,1} at the DB boundary, independent of the application layer.
@@ -48,11 +48,13 @@
 CREATE TABLE devices (
   keyId                  TEXT NOT NULL PRIMARY KEY,  -- server-ASSIGNED random handle (>=16B base64url)
   signingPublicKey       TEXT NOT NULL,              -- ACCOUNT-level Ed25519 pubkey, base64url 32B (v1: shared across the account's devices)
-  deviceSigningPublicKey TEXT,                       -- option-(b)/D5 per-device-key SEAM: NULLABLE + UNUSED in v1, left NULL
-                                                     -- by registerDevice. Phase-2 fills it per device so per-device-lockout
-                                                     -- drops in NON-BREAKING (no schema change). One column can't seam it:
-                                                     -- accountFingerprint must stay = SHA-256(signingPublicKey) shared across
-                                                     -- devices (PIN-ID-3), so the per-device key needs its own column.
+  deviceSigningPublicKey TEXT NOT NULL,              -- option-(b)/D5 per-device-key SEAM, ALWAYS populated. v1 stores the
+                                                     -- account signingPublicKey here (strawman F1); Phase-2 per-device-lockout
+                                                     -- stores each device's OWN key — a non-breaking drop-in (column exists).
+                                                     -- NOT NULL encodes the integrity invariant that every device row has a
+                                                     -- signing key (both v1 and Phase-2 always populate it — no null state).
+                                                     -- Can't collapse into signingPublicKey: accountFingerprint must stay =
+                                                     -- SHA-256(signingPublicKey) shared across devices (PIN-ID-3).
   accountFingerprint     TEXT NOT NULL,              -- base64url(SHA-256(signingPublicKey)) — server-COMPUTED (F2), = Identity.id
   deviceLabel            TEXT NOT NULL,
   createdAt              TEXT NOT NULL,              -- ISO-8601 Z, audit-only
