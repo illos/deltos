@@ -327,6 +327,17 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   self-sovereign). Expected additive to the frozen `PrincipalVerification` union — devSys/secSys
   confirm. **Design-first → build on accountId.** Gates devSys2's Stream-D too. Tracked:
   `[[account-identity-model]]`. D5 copy approved (ship with the PRF-claim accuracy tweak).
+- 2026-06-16 — **Account-identity strawman SIGNED OFF (planSys); build wave authorized.** Strawman
+  (`docs/design/account-identity-strawman.md` + secSys sweep) honors the user goal + all 4 assumptions;
+  frozen contract ratified ADDITIVE (`PrincipalVerification` union untouched; `PrincipalSchema` gains one
+  **required** server-resolved `accountId`). Rulings: keep `accountFingerprint` as credential id
+  (additive-only); accountId required-not-optional (fail-closed); username rename v1 OFF; enumeration-oracle
+  mitigation a build requirement (prefer authenticated-claim-only); HARD invariants — ownership keys on
+  accountId/signing-key never username, and any credential/username (re)bind to an existing account needs
+  possession proof; S5 migration atomic 1:1 + code-together, back-fill dev notes to the single account,
+  must precede any multi-account deploy; document username-loss ≠ data-loss. Build = data dimension on
+  accountId + cross-account fix + accounts/accountCredentials/usernames + grants.accountId + sync scoping
+  (unblocks devSys2 Stream-D) + two-account negative test class; fresh secSys build-audits.
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
