@@ -85,16 +85,11 @@ describe('CAV-1 — push cadence: debounced server push (2s idle-settle, 5s max-
   });
 
   it('an edit does not push immediately — respects the idle-settle window', async () => {
-    vi.useFakeTimers();
     setSession();
-    const fetchSpy = vi
-      .spyOn(global, 'fetch')
-      .mockResolvedValue(new Response(JSON.stringify({ results: [] }), { status: 200 }));
-
     const { db } = await import('../src/db/schema.js');
-    const { startSyncTriggers } = await import('../src/lib/syncEngine.js');
-    stopTriggers = startSyncTriggers(NB, 'cav12-tok');
+    const { startSyncTriggers, notifyQueueWrite } = await import('../src/lib/syncEngine.js');
 
+    // IDB write with real timers — keeps Dexie's reactivity setTimeout(0)s out of the fake pool.
     const note = makeNote(NOTE_ID, 0, 'Typing...');
     await db.notes.put(note);
     await db.syncQueue.add({
@@ -104,24 +99,26 @@ describe('CAV-1 — push cadence: debounced server push (2s idle-settle, 5s max-
       baseVersion: 0,
       createdAt: NOW,
     });
-    await vi.advanceTimersByTimeAsync(0); // let liveQuery observer schedule
+
+    vi.useFakeTimers(); // switch AFTER writes; fake pool starts clean
+    stopTriggers = startSyncTriggers(NB, 'cav12-tok');
+    const fetchSpy = vi
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ results: [] }), { status: 200 }));
+    notifyQueueWrite(NB, 'cav12-tok'); // arm the 2s idle-settle debounce timer
 
     // 1.5s elapsed — still inside the 2s settle window; no push yet.
-    await vi.advanceTimersByTimeAsync(1500);
+    vi.advanceTimersByTime(1500); // synchronous: only pending timer is debounce at 2000ms
     const pushCalls = fetchSpy.mock.calls.filter(([url]) => String(url).includes('/sync/push'));
     expect(pushCalls).toHaveLength(0);
   });
 
   it('an edit DOES push after the 2s idle-settle window elapses', async () => {
-    vi.useFakeTimers();
     setSession();
-    mockFetchAccepted();
-    const fetchSpy = vi.spyOn(global, 'fetch');
-
     const { db } = await import('../src/db/schema.js');
-    const { startSyncTriggers } = await import('../src/lib/syncEngine.js');
-    stopTriggers = startSyncTriggers(NB, 'cav12-tok');
+    const { startSyncTriggers, notifyQueueWrite } = await import('../src/lib/syncEngine.js');
 
+    // IDB write with real timers.
     const note = makeNote(NOTE_ID, 0, 'Settled edit');
     await db.notes.put(note);
     await db.syncQueue.add({
@@ -131,8 +128,14 @@ describe('CAV-1 — push cadence: debounced server push (2s idle-settle, 5s max-
       baseVersion: 0,
       createdAt: NOW,
     });
-    await vi.advanceTimersByTimeAsync(0); // let liveQuery observer schedule
 
+    vi.useFakeTimers(); // switch AFTER writes
+    mockFetchAccepted();
+    const fetchSpy = vi.spyOn(global, 'fetch');
+    stopTriggers = startSyncTriggers(NB, 'cav12-tok');
+    notifyQueueWrite(NB, 'cav12-tok'); // arm the 2s idle-settle debounce timer
+
+    // Async advance: fires the 2000ms debounce and flushes syncNow's sequential IDB-read chain.
     await vi.advanceTimersByTimeAsync(2100);
 
     const pushed = fetchSpy.mock.calls.some(([url]) => String(url).includes('/sync/push'));
@@ -140,16 +143,11 @@ describe('CAV-1 — push cadence: debounced server push (2s idle-settle, 5s max-
   });
 
   it('continuous typing flushes at most once per 5s max-wait cap (never per-keystroke)', async () => {
-    vi.useFakeTimers();
     setSession();
-    mockFetchAccepted();
-    const fetchSpy = vi.spyOn(global, 'fetch');
-
     const { db } = await import('../src/db/schema.js');
-    const { startSyncTriggers } = await import('../src/lib/syncEngine.js');
-    stopTriggers = startSyncTriggers(NB, 'cav12-tok');
+    const { startSyncTriggers, notifyQueueWrite } = await import('../src/lib/syncEngine.js');
 
-    // Keystroke every 500ms for 4500ms — never idle 2s, so settle never fires on its own.
+    // Pre-populate 9 edits with real timers so no Dexie reactivity timers enter the fake pool.
     for (let i = 0; i < 9; i++) {
       const note = makeNote(NOTE_ID, i, `Keystroke ${i}`);
       await db.notes.put(note);
@@ -160,10 +158,20 @@ describe('CAV-1 — push cadence: debounced server push (2s idle-settle, 5s max-
         baseVersion: i,
         createdAt: NOW,
       });
-      await vi.advanceTimersByTimeAsync(500);
     }
 
-    // Max-wait cap forces at most 1 flush (at the 5s boundary).
+    vi.useFakeTimers(); // switch AFTER writes; fake pool starts clean
+    mockFetchAccepted();
+    const fetchSpy = vi.spyOn(global, 'fetch');
+    stopTriggers = startSyncTriggers(NB, 'cav12-tok');
+
+    // Simulate 9 keystrokes at 500ms intervals — total 4500ms, below the 5000ms max-wait cap.
+    for (let i = 0; i < 9; i++) {
+      notifyQueueWrite(NB, 'cav12-tok'); // (re)arm idle timer; max-wait armed once on first call
+      vi.advanceTimersByTime(500); // synchronous: no user timer fires (idle resets, max-wait at 5000ms)
+    }
+
+    // At 4500ms: idle was last reset, max-wait (5000ms) hasn't fired. 0 pushes is ≤1.
     const pushCount = fetchSpy.mock.calls.filter(([url]) =>
       String(url).includes('/sync/push'),
     ).length;
