@@ -25,6 +25,16 @@
 -- wire + storage (encoding.ts is the single codec; accountFingerprint is a base64url string compared
 -- byte-for-byte per F2). Volumes are tiny, so BLOB's ~33% saving isn't worth the repr split (ruling 1).
 --
+-- PER-DEVICE-KEY SEAM (D5, planSys path-a): `devices.deviceSigningPublicKey` is a NULLABLE column
+-- carried from day one and UNUSED in v1 (registerDevice leaves it NULL unless the route supplies it;
+-- the v1 route passes the account `signingPublicKey` per strawman F1). Phase-2 per-device-lockout fills
+-- it with each device's own key — a non-breaking drop-in. It cannot be collapsed into `signingPublicKey`:
+-- `accountFingerprint` must stay = SHA-256(signingPublicKey) shared across an account's devices (PIN-ID-3
+-- same-id-across-devices), so the per-device key needs its own column.
+--
+-- DEFENSE-IN-DEPTH (secSys finding 4): CHECK constraints reject an out-of-set `purpose` or a `consumed`
+-- value outside {0,1} at the DB boundary, independent of the application layer.
+--
 -- REVOCATION (PIN-ID-5, contract ruling 2): `grants.mintedByKeyId` records the device handle that
 -- minted each grant (NULL for capability grants). revokeByKeyId(keyId) revokes the device row
 -- (devices.revokedAt — blocks future session mints via getDevice's revoked-check) AND that device's
@@ -36,12 +46,17 @@
 -- devices (DeviceRegistry). v1 = account-level signing key (F1 option a): every device of an account
 -- shares signingPublicKey + accountFingerprint; keyId is the per-device handle used for revocation.
 CREATE TABLE devices (
-  keyId              TEXT NOT NULL PRIMARY KEY,  -- server-ASSIGNED random handle (>=16B base64url)
-  signingPublicKey   TEXT NOT NULL,              -- base64url(Ed25519 pubkey, 32B)
-  accountFingerprint TEXT NOT NULL,              -- base64url(SHA-256(signingPublicKey)) — server-COMPUTED (F2), = Identity.id
-  deviceLabel        TEXT NOT NULL,
-  createdAt          TEXT NOT NULL,              -- ISO-8601 Z, audit-only
-  revokedAt          TEXT                        -- ISO-8601 Z, audit-only; IS NOT NULL = revoked (PIN-ID-5)
+  keyId                  TEXT NOT NULL PRIMARY KEY,  -- server-ASSIGNED random handle (>=16B base64url)
+  signingPublicKey       TEXT NOT NULL,              -- ACCOUNT-level Ed25519 pubkey, base64url 32B (v1: shared across the account's devices)
+  deviceSigningPublicKey TEXT,                       -- option-(b)/D5 per-device-key SEAM: NULLABLE + UNUSED in v1, left NULL
+                                                     -- by registerDevice. Phase-2 fills it per device so per-device-lockout
+                                                     -- drops in NON-BREAKING (no schema change). One column can't seam it:
+                                                     -- accountFingerprint must stay = SHA-256(signingPublicKey) shared across
+                                                     -- devices (PIN-ID-3), so the per-device key needs its own column.
+  accountFingerprint     TEXT NOT NULL,              -- base64url(SHA-256(signingPublicKey)) — server-COMPUTED (F2), = Identity.id
+  deviceLabel            TEXT NOT NULL,
+  createdAt              TEXT NOT NULL,              -- ISO-8601 Z, audit-only
+  revokedAt              TEXT                        -- ISO-8601 Z, audit-only; IS NOT NULL = revoked (PIN-ID-5)
 );
 
 -- List a device's siblings for the device-management route; revocation resolves by keyId (the PK).
@@ -58,10 +73,10 @@ CREATE TABLE authChallenges (
   challengeId TEXT    NOT NULL PRIMARY KEY,       -- random, >=32B base64url
   nonce       TEXT    NOT NULL,                   -- random, >=32B base64url; server-held
   keyId       TEXT,                               -- NULL for purpose='register' (no key yet)
-  purpose     TEXT    NOT NULL,                   -- 'register' | 'session' | 'step-up'
+  purpose     TEXT    NOT NULL CHECK (purpose IN ('register', 'session', 'step-up')),  -- defense-in-depth: closed set
   issuedAt    TEXT    NOT NULL,                   -- ISO-8601 Z, audit-only
   expiresAtMs INTEGER NOT NULL,                   -- epoch-millis — THE freshness gate (instant integer compare)
-  consumed    INTEGER NOT NULL DEFAULT 0
+  consumed    INTEGER NOT NULL DEFAULT 0 CHECK (consumed IN (0, 1))  -- boolean-as-int; reject any other value at the DB edge
 );
 
 -- Supports sweepExpiredChallenges(serverNowMs): DELETE WHERE expiresAtMs < serverNowMs.

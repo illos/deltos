@@ -17,6 +17,8 @@
  * - revokeByKeyId unknown keyId: no-op, no throw
  * - revokeGrant idempotency: second call preserves the first revokedAt
  * - sweepExpiredChallenges boundary: exactly-at-boundary (expiresAtMs===serverNowMs) is NOT swept
+ * - deviceSigningPublicKey D5 seam: nullable, not fabricated in v1, accepts a per-device key (Phase-2)
+ * - schema CHECK constraints reject out-of-set purpose / consumed at the DB boundary (finding 4)
  *
  * DO NOT duplicate devSys2's cases.  Imports and adapter are intentionally identical so the
  * harness is self-contained (no shared fixture module to coordinate).
@@ -417,5 +419,58 @@ describe('sweepExpiredChallenges — boundary adversarial (secSys)', () => {
     await store.sweepExpiredChallenges(PAST_TTL + 1);
     const row = raw.prepare('SELECT * FROM authChallenges WHERE challengeId = ?').get('c-spent-expired');
     expect(row).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deviceSigningPublicKey — option-(b)/D5 per-device-key seam (planSys path-a, NULLABLE)
+// ---------------------------------------------------------------------------
+
+describe('deviceSigningPublicKey seam (D5 path-a)', () => {
+  it('registerDevice does NOT fabricate the seam column — omitted → stored NULL (unused in v1)', async () => {
+    await store.registerDevice({
+      keyId: 'k-seam-null', signingPublicKey: 'ACCT-PUB', accountFingerprint: FP_A,
+      deviceLabel: 'v1 device', createdAt: '2025-01-01T00:00:00Z',
+    });
+    const row = raw
+      .prepare('SELECT deviceSigningPublicKey FROM devices WHERE keyId = ?')
+      .get('k-seam-null') as { deviceSigningPublicKey: string | null };
+    expect(row.deviceSigningPublicKey).toBeNull();
+  });
+
+  it('the seam column ACCEPTS a per-device key when supplied — the Phase-2 drop-in is non-breaking', async () => {
+    // v1 route supplies signingPublicKey here (strawman F1); Phase-2 supplies the device's own key.
+    await store.registerDevice({
+      keyId: 'k-seam-set', signingPublicKey: 'ACCT-PUB', deviceSigningPublicKey: 'DEVICE-PUB',
+      accountFingerprint: FP_A, deviceLabel: 'seamed device', createdAt: '2025-01-01T00:00:00Z',
+    });
+    const row = raw
+      .prepare('SELECT deviceSigningPublicKey FROM devices WHERE keyId = ?')
+      .get('k-seam-set') as { deviceSigningPublicKey: string | null };
+    expect(row.deviceSigningPublicKey).toBe('DEVICE-PUB');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// schema CHECK constraints — defense-in-depth (secSys finding 4)
+// ---------------------------------------------------------------------------
+
+describe('schema CHECK constraints (finding 4)', () => {
+  it('rejects an out-of-set purpose at the DB boundary', () => {
+    expect(() =>
+      raw.exec(
+        `INSERT INTO authChallenges (challengeId, nonce, purpose, issuedAt, expiresAtMs, consumed)
+         VALUES ('c-bad-purpose', 'n', 'elevate', 'i', 999, 0)`,
+      ),
+    ).toThrow();
+  });
+
+  it('rejects a consumed value outside {0,1}', () => {
+    expect(() =>
+      raw.exec(
+        `INSERT INTO authChallenges (challengeId, nonce, purpose, issuedAt, expiresAtMs, consumed)
+         VALUES ('c-bad-consumed', 'n', 'session', 'i', 999, 2)`,
+      ),
+    ).toThrow();
   });
 });
