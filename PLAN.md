@@ -360,6 +360,13 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   authenticated-synced-notes critical path): (a) client Authorization header on push/pull now; (b) retire
   the Phase-0 unverified `resolvePrincipal` stub after the username chunk (avoid auth.ts contention) —
   **keep the F13 prod tripwire as defense-in-depth post-retirement.**
+- 2026-06-16 — **CONVERGENCE phase begun — spare hands on proving/assembling the simple-v1.** As the
+  server build wraps, 3 spare hands directed at distance-to-v1: **gruntSys → the e2e done-gate test
+  harness** (full loop enroll→note→authed sync→recover→present, + offline path; written now as the target
+  spec, RED ok); **gruntSys2 → client note↔account binding** (ungated) then the **username-claim UI** at
+  enroll (F-acct-4 authed-claim, no availability oracle; gated on devSys's endpoint contract); **scopeSys
+  → the v1 done-gate acceptance checklist.** Username surface = pilot's rec, scoped/sequenced. All
+  contention-free. The e2e harness is now the executable definition of "simple v1 done."
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
