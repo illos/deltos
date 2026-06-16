@@ -33,8 +33,10 @@ Android, for full surface control + sideload freedom — the own-your-software v
 - **Constraints in force:** PIN-SYNC-1 atomic-CAS, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations
   (global-by-id), PIN-STORAGE-1 (SW never runtime-caches `/api` into shared Cache), S3 one-clip-per-
   notebook + PIN-ID PRF floor — see `docs/specs/phase-1-constraints.md`.
-- **1 open user decision:** **D6 — server tenancy model** (single-account-per-deployment vs shared
-  multi-account) — gates the cross-account data-layer finding's severity + fix scope. See `DECISIONS.md` D6.
+- **No open user decisions.** D6 RESOLVED (user 2026-06-16): **build the account dimension + add
+  usernames** (account-vs-credential separation; data keys on a stable `accountId`, not
+  `accountFingerprint`). See `DECISIONS.md` D6 + `[[account-identity-model]]`. D5 copy approved
+  (risk accepted) — ship with the PRF-claim accuracy tweak; iOS dogfood still pending.
 
 ## Status legend
 `PLANNED` → spec not yet written · `SPEC-READY` → written to docs/specs, not handed off ·
@@ -315,6 +317,16 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   the follow-through; **the fix MUST precede any multi-account deploy.** Same BOLA class as revoke but
   data-layer-wide, and no owner column exists for the per-route 404 pattern. Tracked:
   `[[cross-account-data-layer-finding]]`.
+- 2026-06-16 — **D6 RESOLVED (user): BUILD the account dimension + ADD usernames.** Coupled decision:
+  usernames are for future auth-method flexibility, which requires a **stable, credential-INDEPENDENT
+  account identity** → the data dimension keys on a random **accountId**, NOT `accountFingerprint`
+  (credential-derived). **Rescopes** the `tenancy-grant-account-relative` fix. Model = separate
+  ACCOUNT (immutable accountId + unique username alias → accountId) from CREDENTIAL (v1 = signing
+  key/fingerprint; future add/replace). Notes/notebooks/grants key on accountId; every data+sync query
+  filters by it. Tradeoff: username namespace = server-arbitrated uniqueness (slight move from pure
+  self-sovereign). Expected additive to the frozen `PrincipalVerification` union — devSys/secSys
+  confirm. **Design-first → build on accountId.** Gates devSys2's Stream-D too. Tracked:
+  `[[account-identity-model]]`. D5 copy approved (ship with the PRF-claim accuracy tweak).
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the

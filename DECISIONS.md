@@ -7,7 +7,7 @@ leave the not-yet-ripe ones — they'll keep. Resolved items move to the bottom 
 
 ---
 
-## D6 · Server tenancy model — does the backend ever hold more than one account? → ⏳ OPEN (sets a security-finding's severity + fix scope)
+## D6 · Server tenancy + account identity — ✅ RESOLVED: BUILD the account dimension; ADD usernames (account-vs-credential separation)
 
 A systemic finding (secSys lead-sweep, pilot-verified, I confirmed first-hand): the server's **data
 layer has no account dimension.** The `notes` table is `id/notebookId/title/body/version/timestamps`
@@ -45,7 +45,29 @@ for the follow-through. (Stream A auth done-gate is otherwise GREEN; BOLA revoke
 
 ### My response
 
-_____________________________________________
+**BUILD it — YES (shared-multi-account-safe), AND add usernames.** User (2026-06-16): *"D6 yes build
+it. … I'm fine with that risk [D5], but let's build usernames in as well. That way if we ever want to
+change authentication methods, we can."*
+
+Planner read + **critical coupling:** the usernames rationale (future auth-method flexibility) requires
+the account identity to be **stable + credential-INDEPENDENT** — so the data dimension must key on a
+stable random **accountId**, NOT on `accountFingerprint` (= hash(signingPublicKey), credential-derived;
+keying notes on it would force a data migration the day auth changes — the exact pain usernames avoid).
+This **rescopes** the `tenancy-grant-account-relative` scoped fix (which keyed on `accountFingerprint`).
+
+Model — separate **ACCOUNT** from **CREDENTIAL**: immutable random **accountId** (the data-ownership
+key) + unique **username** (human alias → accountId, server-arbitrated namespace) + **credentials**
+attached to the account (v1 = signing key / `accountFingerprint`; future methods add OR replace without
+changing accountId). Notes/notebooks key on accountId; every data + sync query filters by the
+principal's accountId; grants account-relative.
+
+Tradeoff (proceeding unless overruled): a unique-username namespace = server-arbitrated uniqueness — a
+deliberate step from pure seed-only self-sovereign identity toward an account handle. Assumptions:
+username = stable account handle + anchor; **local passkey/phrase unlock UNCHANGED**; built
+credential-independent so methods add OR replace. Expected **ADDITIVE** to the frozen
+`PrincipalVerification` union (proof stays signed-challenge → grant; principal gains accountId) —
+**devSys/secSys CONFIRM no reopen.** Design-first → then build the data dimension on accountId.
+Tracked: `[[account-identity-model]]`; handed to pilot as expanded task 12.
 
 ---
 
