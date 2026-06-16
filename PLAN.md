@@ -26,9 +26,10 @@ Android, for full surface control + sideload freedom — the own-your-software v
   (ProseMirror, title unified into the document, iOS-Safari functional gate passed); server (Worker +
   Hono + D1). P0 done + on remote.
 - **Now building:** **Stream A — identity** (passkey/recovery/QR signed-challenge auth — server
-  endpoints + client unlock, on the frozen contract) — **design gate CLOSED, fan-out underway
-  (all 6 subordinates active), 2026-06-16** — the Phase-1 critical path. Then client
-  storage/persistence (IndexedDB + pluggable store seam) + Stream-D integration/e2e.
+  endpoints + client unlock, on the frozen contract) — **auth CORE COMPLETE 2026-06-16**: chokepoint
+  landed (real `resolvePrincipal` + `can()` enforcement, 150/150 worker green); green end-to-end auth
+  path imminent (pending scopeSys CF-gated handlers + secSys CF-1..5 sign-off). Then client
+  storage/persistence (IndexedDB + pluggable store seam) + Stream-D sync-auth integration.
 - **Constraints in force:** PIN-SYNC-1 atomic-CAS, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations
   (global-by-id), PIN-STORAGE-1 (SW never runtime-caches `/api` into shared Cache), S3 one-clip-per-
   notebook + PIN-ID PRF floor — see `docs/specs/phase-1-constraints.md`.
@@ -62,7 +63,7 @@ fix, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations, PIN-STORAGE/SUBSTRATE p
 
 | Stream | Scope | Owner | Status |
 |--------|-------|-------|--------|
-| A | Identity (passkey/recovery/QR, signed-challenge auth) | devSys (opus) | auth contract + `can()` **FROZEN** (closed union survives in-tree); server endpoints + client unlock = **design gate CLOSED 2026-06-16, fan-out building** (auth assembly rebuilt fresh from design) |
+| A | Identity (passkey/recovery/QR, signed-challenge auth) | devSys (opus) | auth contract + `can()` **FROZEN** (closed union survives in-tree); server endpoints + client unlock = **auth CORE COMPLETE 2026-06-16** (chokepoint `df26f6d`, 150/150 worker green); e2e auth path imminent (scopeSys CF handlers + secSys CF pass); front-door UI building (gruntSys2) |
 | B | Substrate + sync (atomic-CAS conflict engine) | devSys2 (opus) | server CAS + client queue-drain **verified correct** (trip-wire fired + closed); sync foundation solid |
 | C | Capture surface + editor (ProseMirror) | gruntSys2 (sonnet) | iOS-Safari functional gate **PASSED** (IME/paste/nested-selection); title unified into the document; left-aligned |
 | D | Integration / e2e | pilot | pending A + storage |
@@ -294,3 +295,10 @@ criterion of gruntSys2's enroll/unlock/recovery UI surface (closes condition (i)
   tracking:** (a) the D5 disclosure COPY → I bring the drafted wording to the user for a quick approve
   (security-honesty / own-your-software voice); (b) a real-iPhone dogfood pass of this surface, like the
   earlier probes — I coordinate both. Neither blocks the build start.
+- 2026-06-16 — **Stream A AUTH CORE COMPLETE** (chokepoint `df26f6d`): real async `resolvePrincipal`
+  (Bearer → hashToken → grant) + `can()` enforcement, CF-5 satisfied (numeric `expiresAtMs` +
+  `revokedAt`), 150/150 worker green. devSys's entire keep lane (canonical/requests + authCrypto +
+  chokepoint) done + green. secSys running end-to-end CF-1..CF-5 verification; scopeSys finishing the
+  CF-gated route handlers; **green end-to-end AUTH PATH imminent.** Consequence: **devSys2's Stream-D
+  gate (chokepoint green) is now effectively open** — it finishes its tail → client storage → Stream D.
+  Next milestone: first green e2e auth path + secSys CF sign-off.
