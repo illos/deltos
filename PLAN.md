@@ -421,6 +421,14 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   RETURNING/installed device survives the Dexie-v3 migration + SW (not just fresh install). scopeSys to
   add the prod-representative requirement to the runbook preamble. User held until pilot's GO with the
   prod URL/SHA + which-steps-ready.
+- 2026-06-16 — **POST-v1 slice planned (user req): Cloudflare deploy for live testing.** Worker API +
+  prod D1 (create + migrations 0000-0003) + PWA hosting, **same-origin recommended**, **prod-mode**
+  (`ENVIRONMENT=production`, F13 active, no unverified fallback), `AUTH_AUDIENCE` = live origin. WebAuthn
+  **RP ID = the live domain** (Tailscale-domain passkeys don't carry over → fresh enroll, expected;
+  PIN-ID-9). PIN-STORAGE-1 holds; `workers.dev` for first testing (custom domain later). D6 makes it
+  multi-account-safe. **Sequence: AFTER v1 closes.** Box has a wrangler key; standing-auth covers the
+  deploy. **Cheap-now prep** (folds into the capstone's prod-client build): confirm the client API base
+  URL is env-configurable, so the deploy is near-turnkey. Tracked: `[[cloudflare-deploy-plan]]`.
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
