@@ -66,10 +66,14 @@ CREATE INDEX notes_byAccount ON notes (accountId, notebookId);
 -- in THIS migration, deployed together with the accountId-aware resolvePrincipal (no wrong-account window).
 --
 -- GUARD (planSys binding): assert <=1 distinct account in existing data; FAIL LOUD otherwise — never
--- silently back-fill an ambiguous owner. The temp-table CHECK aborts the WHOLE migration if violated.
+-- silently back-fill an ambiguous owner. The CHECK aborts the WHOLE migration if violated.
 -- (Pre-deploy reality is empty / single dev account; >1 means RESET dev data or assign owners by hand.)
+-- NOTE: a REGULAR (non-TEMP) scratch table, created + dropped within this migration. D1's migration
+-- authorizer REJECTS `CREATE TEMP TABLE` (SQLITE_AUTH) — wrangler d1 migrations apply, local AND remote,
+-- would abort here. A permanent scratch table has identical abort semantics (the CHECK fires on INSERT)
+-- and applies cleanly on D1; better-sqlite3 (the test path) is unaffected.
 -- ============================================================================
-CREATE TEMP TABLE _migration_0003_guard (n INTEGER NOT NULL CHECK (n <= 1));
+CREATE TABLE _migration_0003_guard (n INTEGER NOT NULL CHECK (n <= 1));
 INSERT INTO _migration_0003_guard (n)
   SELECT COUNT(DISTINCT accountFingerprint) FROM devices;
 DROP TABLE _migration_0003_guard;
