@@ -31,8 +31,9 @@ Android, for full surface control + sideload freedom — the own-your-software v
   same `accountId`) → note present + content-match (v1 done-gate **14/14**; worker suite **231**;
   cross-account isolation **11/11** incl §J false-green closed). Identity + cross-account + sync-auth all
   landed/audited. **Remaining to a USABLE v1:** the CLIENT/device half (client rebind to `accountId`,
-  real-PWA enroll/offline/sync) + the **iPhone dogfood** (the user-only unknown) + small in-flight
-  re-verifies (§J / `UNIQUE(accountId)` / accountId-exposure).
+  real-PWA enroll/offline/sync) + the **iPhone dogfood** (the user-only unknown — now the LAST v1 gate,
+  8-step runbook ready) + small in-flight re-verifies (§J **CLOSED**; `UNIQUE(accountId)` +
+  accountId-exposure spot-checks finishing).
 - **Constraints in force:** PIN-SYNC-1 atomic-CAS, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations
   (global-by-id), PIN-STORAGE-1 (SW never runtime-caches `/api` into shared Cache), S3 one-clip-per-
   notebook + PIN-ID PRF floor — see `docs/specs/phase-1-constraints.md`.
@@ -399,6 +400,17 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   FOUNDATION's accountId re-point holding (shipped `d9d6803`), not a late patch — devSys ground-truthed it;
   gruntSys confirms the DGT-2 assertion is STRICT, secSys spot-confirms the harness exercises the real path
   (anti-false-green). **Remaining v1 = the client/device half + the iPhone dogfood + the re-verifies.**
+- 2026-06-16 — **Cross-account done-gate CLOSED (secSys §J) — task 12 fully done; DGT-1..5 all green.**
+  Integrity: DGT-2 was **never observed-RED** — gruntSys mis-PREDICTED the gap (misread same-key re-enroll
+  as unimplemented); the foundation (`d9d6803`) worked from the first real run. Now airtight: strict
+  assertions + an explicit `COUNT(accounts)=1` + secSys real-path audit. **v1 finish line:** [SRV] CLOSED;
+  client Tier-A auto-suite (devSys2) building; **Tier-B iPhone dogfood (mine) is the LAST v1 gate** —
+  scopeSys 8-step runbook ready (`282cca7`). **Spare-hands ruling — REINFORCE v1, don't open new scope:**
+  devSys → pre-dogfood readiness-harden (iOS WebAuthn legs per PIN-ID-9 + no-PRF render + graceful
+  WebAuthn error-handling + confirm :8449 = current build); scopeSys → DG-CAP gate-record scaffold +
+  records reconciliation. **HELD to post-v1:** stub-retirement, add/replace-credential (needs my
+  AUTH_PURPOSE sign-off), all post-v1 features. Next substantive slice = post-close, with a user steer on
+  Phase-2 priority.
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
