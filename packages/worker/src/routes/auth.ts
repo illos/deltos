@@ -5,16 +5,16 @@ import {
   RegisterDeviceRequestSchema,
   SessionRequestSchema,
   StepUpRequestSchema,
-  SCOPES,
   base64urlDecodeStrict,
 } from '@deltos/shared';
-import type { Op, Resource, Scope } from '@deltos/shared';
+import type { Resource } from '@deltos/shared';
 import * as authCrypto from '../authCrypto.js';
 import type { Env } from '../env.js';
 import { apiError, guard, type AppContext } from '../http.js';
 import { resolvePrincipal } from '../auth.js';
 import { d1Adapter } from '../db/schema.js';
 import { createAuthStore } from '../db/authStore.js';
+import { entitlementFor, SESSION_GRANT_RESOURCE, SESSION_TTL_MS, DEVICE_REVOKE_STEP_UP } from '../authPolicy.js';
 
 /**
  * Stream A — identity auth routes (the unauthenticated bootstrap that MINTS request auth).
@@ -39,20 +39,8 @@ const auth = new Hono<{ Bindings: Env }>();
 
 const CHALLENGE_TTL_MS = 60_000; // 60s — short freshness window (contract §3 / AUTH-PROP-2).
 
-/**
- * v1 SESSION-GRANT policy. The contract assigns `entitlementFor` + the session resource to devSys as
- * a helper, but none shipped yet, so the v1 rule is inlined here and FLAGGED for secSys/devSys to
- * lift into a shared helper. Contract F5/Rev1: a device under its own account = full account scope on
- * its own resources, so v1 entitlement = all SCOPES on the workspace; `clampScope` still runs (never
- * verbatim requestedScope), it just doesn't reduce in v1. The bounded TTL is defence-in-depth atop
- * instant (revocation-row) revocation — a leaked token self-expires; secSys to confirm the duration.
- */
-const SESSION_GRANT_RESOURCE: Resource = { kind: 'workspace' };
-const SESSION_ENTITLEMENT: readonly Scope[] = SCOPES;
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — v1 default, FLAGGED for secSys confirmation.
-
-/** v1 F9 binding: device revocation is authorized only by a step-up signed for exactly (delete, workspace). */
-const REVOKE_STEPUP_OP: Op = 'delete';
+// Session-grant + device-revoke policy lives in ../authPolicy.ts (single source — devSys 1d0a2e7):
+// entitlementFor(device), SESSION_GRANT_RESOURCE, SESSION_TTL_MS, DEVICE_REVOKE_STEP_UP.
 
 /** Read a JSON body without throwing on empty/invalid input — schema validation reports the 400. */
 async function readBody(c: AppContext): Promise<unknown> {
@@ -191,7 +179,7 @@ auth.post('/session', async (c) => {
   });
   if (!verified) return apiError(c, 401, 'unauthorized', UNAUTHORIZED);
 
-  const granted = authCrypto.clampScope(requestedScope, SESSION_ENTITLEMENT); // F5 — never verbatim
+  const granted = authCrypto.clampScope(requestedScope, entitlementFor(device)); // F5 — never verbatim
   const token = authCrypto.randomToken(32);
   const expiresAtMs = nowMs + SESSION_TTL_MS;
   await store.mintGrant({
@@ -247,7 +235,7 @@ auth.post('/devices/:keyId/revoke', async (c) => {
 
   // v1 F9 binding: device-revoke is authorized ONLY by a step-up signed for exactly (delete, workspace).
   // A step-up signed for any other (op, resource) cannot be replayed to revoke a device.
-  if (op !== REVOKE_STEPUP_OP || resource.kind !== 'workspace') {
+  if (op !== DEVICE_REVOKE_STEP_UP.op || resource.kind !== DEVICE_REVOKE_STEP_UP.resource.kind) {
     return apiError(c, 403, 'forbidden', 'step-up is not authorized for device revocation');
   }
 
