@@ -10,6 +10,7 @@ import { uniqueBlockIdPlugin } from './plugins/blockId.js';
 import { buildKeymapPlugin } from './keymap.js';
 import { spineToPmDoc, pmDocToSpine } from './serializer.js';
 import { buildPluginIslandNodeViews } from './nodeviews/PluginIsland.js';
+import { TodoItemView } from './nodeviews/TodoItem.js';
 
 interface ProseMirrorEditorProps {
   noteId: string;
@@ -66,7 +67,11 @@ export function ProseMirrorEditor({
 
     const view = new EditorView(containerRef.current, {
       state,
-      nodeViews: buildPluginIslandNodeViews(deltoSchema),
+      nodeViews: {
+        ...buildPluginIslandNodeViews(deltoSchema),
+        todo_item: (node, view, getPos) =>
+          new TodoItemView(node, view, getPos as () => number | undefined),
+      },
       // Strip scripts and on* event handlers from HTML pasted from external sources.
       // PM's own parser handles structural sanitization; this removes the XSS surface.
       // The uniqueBlockIdPlugin then re-mints any IDs that arrive null or duplicated.

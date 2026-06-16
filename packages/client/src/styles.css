@@ -194,22 +194,27 @@
 
 .editor__pm .ProseMirror li { margin-bottom: 0.2em; }
 
-/* Todo items */
+/* Todo items — toggle rendered as a real button (works on iOS unlike ::before) */
 .editor__pm .ProseMirror [data-type="todo"] {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
 }
-.editor__pm .ProseMirror [data-type="todo"]::before {
-  content: '☐';
-  flex-shrink: 0;
+.editor__pm .ProseMirror [data-type="todo"] .todo__check {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
   cursor: pointer;
+  font-size: 1em;
+  line-height: 1;
+  color: inherit;
+  flex-shrink: 0;
   user-select: none;
+  -webkit-user-select: none;
 }
-.editor__pm .ProseMirror [data-type="todo"][data-checked="true"]::before {
-  content: '☑';
-}
-.editor__pm .ProseMirror [data-type="todo"][data-checked="true"] {
+.editor__pm .ProseMirror [data-type="todo"] .todo__content { flex: 1; }
+.editor__pm .ProseMirror [data-type="todo"][data-checked="true"] .todo__content {
   color: var(--muted);
   text-decoration: line-through;
 }
