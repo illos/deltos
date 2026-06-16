@@ -35,8 +35,11 @@ import Database from 'better-sqlite3';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { NoteRefSchema } from '@deltos/shared';
-import type { Resource } from '@deltos/shared';
+import {
+  NoteRefSchema, ResourceSchema,
+  canonicalAuthPayload, base64urlEncode,
+  type Resource,
+} from '@deltos/shared';
 import { guard, type GuardDeps, type AppContext } from '../src/http.js';
 import type { Env } from '../src/env.js';
 
@@ -319,6 +322,150 @@ describe('D1 auth schema — migration 0002', () => {
   it.todo('resolveGrant: expiresAtMs IS NOT NULL AND < serverNowMs → deny (instant compare, not lexical)')
   it.todo('revokeByKeyId: sets devices.revokedAt + all grants WHERE mintedByKeyId=keyId (PIN-ID-5 dual-sweep)')
   it.todo('getDevice: revokedAt IS NOT NULL → device considered revoked; blocks future session mints')
+});
+
+// ---------------------------------------------------------------------------
+// Wire-schema crypto layer — canonical.ts + Ed25519 signing (AUTH-PROP-3/4)
+//
+// Tests the SECURITY PROPERTIES that emerge from combining canonicalAuthPayload with an Ed25519
+// signature. The shared canonical.test.ts covers TLV byte-structure; here we cover the SIGNING
+// invariants — whether the bound fields actually prevent cross-purpose / cross-audience /
+// cross-keypair reuse of a captured signature.
+//
+// AUTH-PROP-3: pubkey↔account binding — signature from keypair A cannot verify with keypair B.
+// AUTH-PROP-4: purpose / audience / op / resource binding — the TLV field set for each purpose
+//   makes same-nonce/same-challengeId signatures non-transferable across endpoints or deployments.
+//
+// LIVE — requires only canonical.ts (c803e54) + WebCrypto Ed25519 (Node 22 / Workers native).
+// Route-handler .todo()s (the "→ 401" variants) remain below; they flip when routes/auth.ts lands.
+// ---------------------------------------------------------------------------
+
+const AUDIENCE = 'https://deltos.test';
+const AUDIENCE_B = 'https://deltos-b.test';
+// 32-byte floor for challengeId and nonce (min: 32 requirement from ChallengeIdSchema / NonceSchema)
+const CHALLENGE_ID = base64urlEncode(new Uint8Array(32).fill(0xcc));
+const NONCE_BYTES = new Uint8Array(32).fill(0xdd);
+const PUBKEY_32 = new Uint8Array(32).fill(0xee);
+const KEY_ID = 'device-key-1';
+const NOTE_1 = ResourceSchema.parse({ kind: 'note', id: '00000000-0000-4000-8000-000000000001' });
+const NOTE_2 = ResourceSchema.parse({ kind: 'note', id: '00000000-0000-4000-8000-000000000002' });
+
+async function freshKeypair(): Promise<CryptoKeyPair> {
+  // Node 22 WebCrypto natively supports Ed25519 generateKey + sign + verify.
+  return crypto.subtle.generateKey(
+    { name: 'Ed25519' } as EcKeyGenParams,
+    true,
+    ['sign', 'verify'],
+  ) as Promise<CryptoKeyPair>;
+}
+async function edSign(key: CryptoKey, payload: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' } as Algorithm, key, payload));
+}
+async function edVerify(key: CryptoKey, sig: Uint8Array, payload: Uint8Array): Promise<boolean> {
+  return crypto.subtle.verify({ name: 'Ed25519' } as Algorithm, key, sig, payload);
+}
+
+describe('wire-schema crypto layer — canonical + Ed25519 signing (AUTH-PROP-3/4)', () => {
+
+  it('sign + verify round-trip: canonicalAuthPayload session payload verifies with the correct public key', async () => {
+    const kp = await freshKeypair();
+    const payload = canonicalAuthPayload({
+      purpose: 'session', audience: AUDIENCE, challengeId: CHALLENGE_ID,
+      nonce: NONCE_BYTES, keyId: KEY_ID, requestedScope: ['read'],
+    });
+    const sig = await edSign(kp.privateKey, payload);
+    expect(await edVerify(kp.publicKey, sig, payload)).toBe(true);
+  });
+
+  it('AUTH-PROP-4 purpose-binding: session signature fails to verify against a register payload (cross-purpose reuse blocked)', async () => {
+    const kp = await freshKeypair();
+    const sessionPayload = canonicalAuthPayload({
+      purpose: 'session', audience: AUDIENCE, challengeId: CHALLENGE_ID,
+      nonce: NONCE_BYTES, keyId: KEY_ID, requestedScope: ['read'],
+    });
+    const registerPayload = canonicalAuthPayload({
+      purpose: 'register', audience: AUDIENCE, challengeId: CHALLENGE_ID,
+      nonce: NONCE_BYTES, signingPublicKey: PUBKEY_32, deviceLabel: 'my-device',
+    });
+    const sessionSig = await edSign(kp.privateKey, sessionPayload);
+    expect(await edVerify(kp.publicKey, sessionSig, sessionPayload)).toBe(true);
+    expect(await edVerify(kp.publicKey, sessionSig, registerPayload)).toBe(false);
+  });
+
+  it('AUTH-PROP-4 purpose-binding: step-up signature fails to verify against a session payload', async () => {
+    const kp = await freshKeypair();
+    const stepUpPayload = canonicalAuthPayload({
+      purpose: 'step-up', audience: AUDIENCE, challengeId: CHALLENGE_ID,
+      nonce: NONCE_BYTES, keyId: KEY_ID, op: 'delete', resource: NOTE_1,
+    });
+    const sessionPayload = canonicalAuthPayload({
+      purpose: 'session', audience: AUDIENCE, challengeId: CHALLENGE_ID,
+      nonce: NONCE_BYTES, keyId: KEY_ID, requestedScope: ['delete'],
+    });
+    const stepUpSig = await edSign(kp.privateKey, stepUpPayload);
+    expect(await edVerify(kp.publicKey, stepUpSig, stepUpPayload)).toBe(true);
+    expect(await edVerify(kp.publicKey, stepUpSig, sessionPayload)).toBe(false);
+  });
+
+  it('AUTH-PROP-4 audience-binding: session sig for audience A fails to verify against audience B — cross-deployment replay blocked (F8)', async () => {
+    const kp = await freshKeypair();
+    const payloadA = canonicalAuthPayload({
+      purpose: 'session', audience: AUDIENCE, challengeId: CHALLENGE_ID,
+      nonce: NONCE_BYTES, keyId: KEY_ID, requestedScope: ['read'],
+    });
+    const payloadB = canonicalAuthPayload({
+      purpose: 'session', audience: AUDIENCE_B, challengeId: CHALLENGE_ID,
+      nonce: NONCE_BYTES, keyId: KEY_ID, requestedScope: ['read'],
+    });
+    const sigA = await edSign(kp.privateKey, payloadA);
+    expect(await edVerify(kp.publicKey, sigA, payloadA)).toBe(true);
+    expect(await edVerify(kp.publicKey, sigA, payloadB)).toBe(false);
+  });
+
+  it('AUTH-PROP-3 pubkey-binding: session sig from keypair A fails to verify against keypair B — no confused-deputy (PIN-ID-2/F2)', async () => {
+    const kpA = await freshKeypair();
+    const kpB = await freshKeypair();
+    const payload = canonicalAuthPayload({
+      purpose: 'session', audience: AUDIENCE, challengeId: CHALLENGE_ID,
+      nonce: NONCE_BYTES, keyId: KEY_ID, requestedScope: ['read'],
+    });
+    const sigA = await edSign(kpA.privateKey, payload);
+    expect(await edVerify(kpA.publicKey, sigA, payload)).toBe(true);
+    expect(await edVerify(kpB.publicKey, sigA, payload)).toBe(false);
+  });
+
+  it('AUTH-PROP-4 step-up resource-binding: step-up for (delete, note-1) fails to verify against (delete, note-2)', async () => {
+    const kp = await freshKeypair();
+    const payload1 = canonicalAuthPayload({
+      purpose: 'step-up', audience: AUDIENCE, challengeId: CHALLENGE_ID,
+      nonce: NONCE_BYTES, keyId: KEY_ID, op: 'delete', resource: NOTE_1,
+    });
+    const payload2 = canonicalAuthPayload({
+      purpose: 'step-up', audience: AUDIENCE, challengeId: CHALLENGE_ID,
+      nonce: NONCE_BYTES, keyId: KEY_ID, op: 'delete', resource: NOTE_2,
+    });
+    const sig1 = await edSign(kp.privateKey, payload1);
+    expect(await edVerify(kp.publicKey, sig1, payload1)).toBe(true);
+    expect(await edVerify(kp.publicKey, sig1, payload2)).toBe(false);
+  });
+
+  it('AUTH-PROP-4 scope-binding: {read,write} and {write,read} produce byte-identical payloads (canonical scope — R3-3)', () => {
+    const base = { audience: AUDIENCE, challengeId: CHALLENGE_ID, nonce: NONCE_BYTES, keyId: KEY_ID };
+    const p1 = canonicalAuthPayload({ purpose: 'session', ...base, requestedScope: ['read', 'write'] });
+    const p2 = canonicalAuthPayload({ purpose: 'session', ...base, requestedScope: ['write', 'read'] });
+    expect(p1).toEqual(p2);
+  });
+
+  it('tampered single byte in signature → verification fails (AUTH-PROP-1/3 combined)', async () => {
+    const kp = await freshKeypair();
+    const payload = canonicalAuthPayload({
+      purpose: 'session', audience: AUDIENCE, challengeId: CHALLENGE_ID,
+      nonce: NONCE_BYTES, keyId: KEY_ID, requestedScope: ['read'],
+    });
+    const sig = await edSign(kp.privateKey, payload);
+    sig[0] ^= 0xff;
+    expect(await edVerify(kp.publicKey, sig, payload)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
