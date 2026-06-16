@@ -20,10 +20,11 @@ const PULL_PAGE = 100;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Clamp client-supplied timestamps: the server never lets a future timestamp in (PIN-SYNC). */
-function clamp(clientIso: string, serverNow: string): string {
-  return clientIso <= serverNow ? clientIso : serverNow;
-}
+// Timestamps are server-authoritative in v1: the sync wire (NoteDraftSchema) carries NO client
+// timestamps — the server stamps createdAt/updatedAt itself, and the pull cursor is the monotonic
+// syncSeq (PIN-SYNC-2), not time. So there is nothing client-supplied to clamp here. If a future
+// protocol ever carries a client createdAt/updatedAt, reinstate a `min(client, serverNow)` clamp
+// at the write boundary (the PIN-SYNC timestamp-clamp landmine) before persisting it.
 
 /** Bump the per-notebook syncSeq counter and return it. Batched with note writes. */
 const BUMP_SEQ_SQL = `
@@ -58,10 +59,10 @@ export async function insertNote(
   entry: SyncPushEntry & { notebookId: string },
   serverNow: string,
 ): Promise<InsertOutcome> {
-  const createdAt = clamp(
-    (entry.draft as { createdAt?: string }).createdAt ?? serverNow,
-    serverNow,
-  );
+  // The client never sends createdAt: NoteDraftSchema deliberately omits it because the server
+  // owns createdAt/updatedAt/version (the client owns syncStatus). New notes are server-stamped
+  // at first sync — so there is no client timestamp to clamp here.
+  const createdAt = serverNow;
 
   // Three-statement batch: bump seq counter → insert note with seq from counter → read back row.
   // All three run in one atomic D1 transaction.
@@ -183,8 +184,10 @@ export async function deleteNote(
   expectedVersion: number | undefined,
   serverNow: string,
 ): Promise<DeleteOutcome> {
-  const versionClause =
-    expectedVersion !== undefined ? `AND version = ${Number(expectedVersion)}` : '';
+  // CAS on expectedVersion when supplied — bound as a parameter (consistent with patchNote),
+  // never string-interpolated into the SQL.
+  const versionClause = expectedVersion !== undefined ? `AND version = ?` : '';
+  const versionParam = expectedVersion !== undefined ? [expectedVersion] : [];
 
   const deleteBatch = await db.batch([
     { sql: BUMP_SEQ_SQL, params: [notebookId] },
@@ -200,7 +203,7 @@ export async function deleteNote(
           AND deletedAt  IS NULL
           ${versionClause}
       `,
-      params: [serverNow, serverNow, notebookId, id, notebookId],
+      params: [serverNow, serverNow, notebookId, id, notebookId, ...versionParam],
     },
   ]);
   const deleteResult = deleteBatch[1]!;

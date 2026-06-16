@@ -158,6 +158,31 @@ describe('conflict engine — server-side CAS (PIN-SYNC-1)', () => {
   });
 
   /**
+   * deleteNote CAS: when expectedVersion is supplied it gates on the version (PIN-SYNC-1).
+   * A delete at a STALE expectedVersion must conflict — not tombstone the moved-on note.
+   */
+  it('deleteNote with a stale expectedVersion raises conflict, leaving the note live', async () => {
+    const id = '00000000-0000-4000-8000-000000000009';
+
+    // Create (version 1), then a concurrent edit moves it to version 2.
+    await insertNote(db, entry(id, 0, 'Original'), NOW);
+    const edit = await updateNote(db, entry(id, 1, 'Edited elsewhere'), NOW);
+    expect(edit.outcome).toBe('accepted');
+
+    // Delete still believing the note is at version 1 — must CAS-miss → conflict.
+    const del = await deleteNote(db, id, NB, 1, NOW);
+    expect(del.outcome).toBe('conflict');
+    const serverRow = (del as { outcome: 'conflict'; serverRow: NoteRow | null }).serverRow;
+    expect(serverRow).not.toBeNull();
+    expect(serverRow!.version).toBe(2);
+    expect(serverRow!.deletedAt).toBeNull(); // not tombstoned — the stale delete was refused
+
+    // A delete at the correct version still succeeds (the clause gates, it doesn't block).
+    const ok = await deleteNote(db, id, NB, 2, NOW);
+    expect(ok.outcome).toBe('accepted');
+  });
+
+  /**
    * Pull cursor (PIN-SYNC-2): notes are returned in syncSeq order;
    * the nextCursor advances correctly; a pull with the returned cursor yields no duplicates.
    */
