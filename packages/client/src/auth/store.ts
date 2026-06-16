@@ -28,6 +28,10 @@ function storeKeyId(id: string): void {
   try { localStorage.setItem(KEY_ID_STORAGE_KEY, id); } catch { /* ignore */ }
 }
 
+export type ClaimUsernameResult =
+  | { ok: true; username: string }
+  | { ok: false; code: 'name-taken' | 'account-has-username' | 'invalid' | 'not-authed' | 'network' };
+
 export interface AuthState {
   /** null = not yet checked (initial loading). false = not enrolled. true = enrolled. */
   isEnrolled: boolean | null;
@@ -81,6 +85,12 @@ interface AuthActions {
    * The token is stored in-memory (bearerToken). Requires isUnlocked + keyId.
    */
   mintSession(): Promise<void>;
+
+  /**
+   * Claim a username for this account via POST /api/auth/username.
+   * F-acct-4: availability is revealed ONLY through this authenticated claim, never an oracle.
+   */
+  claimUsername(username: string): Promise<ClaimUsernameResult>;
 
   lock(): void;
   clearError(): void;
@@ -170,6 +180,33 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     }
     const { token } = (await resp.json()) as { token: string; expiresAt: string };
     set({ bearerToken: token });
+  },
+
+  async claimUsername(username: string): Promise<ClaimUsernameResult> {
+    const { bearerToken } = get();
+    if (!bearerToken) return { ok: false, code: 'not-authed' };
+    const resp = await fetch('/api/auth/username', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${bearerToken}`,
+      },
+      body: JSON.stringify({ username }),
+    });
+    if (resp.status === 201 || resp.status === 200) {
+      const body = await resp.json() as { username: string };
+      return { ok: true, username: body.username };
+    }
+    const raw = await resp.json().catch(() => ({ error: { code: 'unknown' } })) as {
+      error?: { code?: string };
+    };
+    const code = raw.error?.code ?? 'unknown';
+    if (resp.status === 409 && code === 'username_exists') {
+      return { ok: false, code: 'account-has-username' };
+    }
+    if (resp.status === 409) return { ok: false, code: 'name-taken' };
+    if (resp.status === 400) return { ok: false, code: 'invalid' };
+    return { ok: false, code: 'network' };
   },
 
   lock() {
