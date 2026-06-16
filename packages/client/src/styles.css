@@ -228,3 +228,245 @@
 .editor__pm .ProseMirror-gapcursor:after {
   border-top: 1.5px solid #fff;
 }
+
+/* ── Auth surfaces (enroll / unlock / recover / qr-receive) ──────────────────── */
+
+.auth {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100dvh;
+  padding: 3rem 1.5rem 4rem;
+  box-sizing: border-box;
+  max-width: 420px;
+  margin: 0 auto;
+  gap: 1rem;
+}
+
+.auth__logo {
+  font-size: 2.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.25rem;
+}
+
+.auth__title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-align: center;
+}
+
+.auth__subtitle {
+  margin: 0;
+  font-size: 0.925rem;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.55;
+}
+
+.auth__hint {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* Primary action button */
+.auth__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0.75rem 1.25rem;
+  border-radius: 0.5rem;
+  border: none;
+  background: var(--edge);
+  color: inherit;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.1s, opacity 0.1s;
+  /* 1rem: keeps touch target from triggering iOS focus-zoom (≥16px) */
+}
+.auth__btn--primary {
+  background: #4e7dff;
+  color: #fff;
+}
+.auth__btn--primary:hover { background: #3b6de8; }
+.auth__btn:not(.auth__btn--primary):hover { background: #2a2d3a; }
+.auth__btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Secondary text links */
+.auth__link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: color 0.1s, text-decoration-color 0.1s;
+}
+.auth__link:hover {
+  color: inherit;
+  text-decoration-color: currentColor;
+}
+a.auth__link { display: inline; }
+
+.auth__links {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.25rem;
+}
+
+/* Error message */
+.auth__error {
+  margin: 0;
+  padding: 0.65rem 1rem;
+  border-radius: 0.4rem;
+  background: rgba(200, 60, 60, 0.15);
+  border: 1px solid rgba(200, 60, 60, 0.35);
+  color: #f87a7a;
+  font-size: 0.875rem;
+  width: 100%;
+  box-sizing: border-box;
+  line-height: 1.5;
+}
+
+/* Spinner */
+.auth__spinner {
+  width: 2rem;
+  height: 2rem;
+  border: 2px solid var(--edge);
+  border-top-color: #4e7dff;
+  border-radius: 50%;
+  animation: auth-spin 0.75s linear infinite;
+}
+@keyframes auth-spin { to { transform: rotate(360deg); } }
+
+/* 24-word recovery phrase grid */
+.auth__phrase {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.4rem;
+  width: 100%;
+  padding: 1rem;
+  box-sizing: border-box;
+  background: #1a1d2a;
+  border: 1px solid var(--edge);
+  border-radius: 0.5rem;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.8rem;
+}
+
+.auth__phrase-word {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0.3rem 0.4rem;
+  background: rgba(255,255,255,0.04);
+  border-radius: 0.25rem;
+}
+
+.auth__phrase-num {
+  font-size: 0.7rem;
+  color: var(--muted);
+  min-width: 1.2rem;
+  flex-shrink: 0;
+}
+
+/* QR code container */
+.auth__qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  background: #1a1d2a;
+  border: 1px solid var(--edge);
+  border-radius: 0.5rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.auth__qr svg { display: block; }
+
+.auth__qr-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.4;
+}
+
+/* Confirmation code — 6-digit PIN-ID-7 display */
+.auth__confirm-code {
+  font-size: 2.75rem;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  padding: 1rem 1.5rem;
+  background: #1a1d2a;
+  border: 1px solid var(--edge);
+  border-radius: 0.5rem;
+}
+
+/* Mnemonic textarea / text input */
+.auth__input {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1a1d2a;
+  border: 1px solid var(--edge);
+  border-radius: 0.5rem;
+  color: inherit;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 1rem; /* ≥16px: avoids iOS focus-zoom */
+  padding: 0.85rem 1rem;
+  resize: vertical;
+  line-height: 1.5;
+}
+.auth__input:focus {
+  outline: 2px solid #4e7dff;
+  outline-offset: 1px;
+}
+
+/* Saved-phrase checkbox label */
+.auth__checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  width: 100%;
+}
+
+/* D5 no-PRF disclosure banner */
+.disclosure {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.9rem 1.1rem;
+  background: rgba(180, 120, 0, 0.12);
+  border: 1px solid rgba(180, 120, 0, 0.4);
+  border-radius: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.disclosure__title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #d4a800;
+}
+
+.disclosure__body {
+  font-size: 0.825rem;
+  line-height: 1.55;
+  color: var(--muted);
+}

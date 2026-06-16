@@ -54,5 +54,6 @@ export function decodeQrPayload(content: string): string | null {
  */
 export function generateConfirmationCode(): string {
   const buf = crypto.getRandomValues(new Uint32Array(1));
-  return (buf[0] % 1_000_000).toString().padStart(6, '0');
+  const n = buf[0] ?? 0;
+  return (n % 1_000_000).toString().padStart(6, '0');
 }
