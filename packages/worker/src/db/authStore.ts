@@ -116,6 +116,33 @@ export interface AuthStore {
     Array<{ keyId: string; deviceLabel: string; createdAt: string; revokedAt: string | null }>
   >;
 
+  /**
+   * Atomically claim `usernameNormalized` for `accountId` (the DIRECTORY layer, D6). The UNIQUE PK on
+   * `usernameNormalized` is the SOLE arbiter: ONE statement — INSERT … ON CONFLICT(usernameNormalized)
+   * DO NOTHING RETURNING — so a row returns IFF this call won the claim (rows-affected = 1), null if the
+   * name was already held. There is deliberately NO check-then-insert (the registration-race TOCTOU
+   * secSys S1 forbids): two callers racing the SAME name both run this one statement and exactly one
+   * wins. `ownerAccountId` is who holds the name AFTER the attempt — the winner on success, the existing
+   * holder on conflict — so the route distinguishes a same-account idempotent re-claim from a real
+   * cross-account 409 WITHOUT trusting a body field. The caller has already normalized via the shared
+   * `normalizeUsername`; this layer never re-decides the key.
+   */
+  claimUsername(row: {
+    usernameNormalized: string;
+    accountId: string;
+    usernameDisplay: string;
+    createdAt: string;
+  }): Promise<{ claimed: boolean; ownerAccountId: string | null }>;
+
+  /**
+   * The username an account currently holds (v1: at most one — rename OFF, one-per-account enforced by
+   * the route), or null. Returns both the display + normalized forms so the route can serve an
+   * idempotent re-claim and tell "already has a different name" from "first claim".
+   */
+  getUsernameByAccount(
+    accountId: string,
+  ): Promise<{ usernameDisplay: string; usernameNormalized: string } | null>;
+
   /** Persist a minted grant. The token is already HASHED by the caller (F6). */
   mintGrant(row: {
     grantId: string;
@@ -255,6 +282,36 @@ export function createAuthStore(db: DbAdapter): AuthStore {
           ORDER BY createdAt`,
         [accountId],
       );
+    },
+
+    async claimUsername(row) {
+      // ONE atomic statement: the PK on usernameNormalized arbitrates. A returned row = we won the
+      // claim; null = the name was already taken (DO NOTHING suppressed the insert). No prior SELECT.
+      const won = await db.first<{ accountId: string }>(
+        `INSERT INTO usernames (usernameNormalized, accountId, usernameDisplay, createdAt)
+              VALUES (?, ?, ?, ?)
+         ON CONFLICT(usernameNormalized) DO NOTHING
+         RETURNING accountId`,
+        [row.usernameNormalized, row.accountId, row.usernameDisplay, row.createdAt],
+      );
+      if (won) return { claimed: true, ownerAccountId: won.accountId };
+      // Taken — read the current holder. This SELECT runs AFTER the atomic claim already failed, so it
+      // is NOT a TOCTOU on the claim; it only tells the route WHO holds the name (same account ⇒
+      // idempotent, different account ⇒ 409). Indistinguishable timing either way (no oracle leak).
+      const holder = await db.first<{ accountId: string }>(
+        `SELECT accountId FROM usernames WHERE usernameNormalized = ?`,
+        [row.usernameNormalized],
+      );
+      return { claimed: false, ownerAccountId: holder?.accountId ?? null };
+    },
+
+    async getUsernameByAccount(accountId) {
+      const row = await db.first<{ usernameDisplay: string; usernameNormalized: string }>(
+        `SELECT usernameDisplay, usernameNormalized FROM usernames
+          WHERE accountId = ? ORDER BY createdAt, usernameNormalized LIMIT 1`,
+        [accountId],
+      );
+      return row ?? null;
     },
 
     async mintGrant(row) {

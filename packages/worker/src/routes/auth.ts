@@ -5,9 +5,13 @@ import {
   RegisterDeviceRequestSchema,
   SessionRequestSchema,
   StepUpRequestSchema,
+  UsernameClaimRequestSchema,
+  normalizeUsername,
+  USERNAME_MIN_LENGTH,
+  USERNAME_MAX_LENGTH,
   base64urlDecodeStrict,
 } from '@deltos/shared';
-import type { Resource } from '@deltos/shared';
+import type { Resource, UsernameRejectReason } from '@deltos/shared';
 import * as authCrypto from '../authCrypto.js';
 import type { Env } from '../env.js';
 import { apiError, guard, type AppContext } from '../http.js';
@@ -219,6 +223,89 @@ auth.post('/session', async (c) => {
   });
   return c.json({ token, expiresAt: new Date(expiresAtMs).toISOString() }); // raw token leaves the server once
 });
+
+// A username reject reason → a stable, user-helpful 400 message. The charset/length hints HELP the
+// caller and reveal nothing about the account namespace (no holder identity, no taken/free signal —
+// that lives ONLY in the authenticated claim below, F-acct-4). `reserved` is a flat message, not a
+// reserved-vs-confusable distinction.
+function usernameRejectMessage(reason: UsernameRejectReason): string {
+  switch (reason) {
+    case 'empty':
+      return 'username is required';
+    case 'too-short':
+      return `username must be at least ${USERNAME_MIN_LENGTH} characters`;
+    case 'too-long':
+      return `username must be at most ${USERNAME_MAX_LENGTH} characters`;
+    case 'charset':
+      return 'username may use only a-z, 0-9, underscore and hyphen';
+    case 'leading':
+      return 'username must start with a letter or digit';
+    case 'control':
+      return 'username contains invalid characters';
+    case 'reserved':
+      return 'that username is not available';
+    default: {
+      const _exhaustive: never = reason;
+      return 'invalid username';
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/auth/username  — claim a unique DIRECTORY alias for the caller's ACCOUNT (D6).
+//
+// DIRECTORY layer: username → accountId. Behind guard() so it is AUTHENTICATED-CLAIM-ONLY (F-acct-4):
+// there is deliberately NO standalone availability endpoint / existence oracle — "taken" is revealed
+// ONLY inside this authenticated claim (409). INVARIANT (i): the alias binds to the AUTHENTICATED
+// `principal.id` (= accountId, the re-point), NEVER a body field — the `.strict` schema rejects a body
+// accountId and we read `principal.id` server-side. The username is a LABEL, never an authenticator:
+// nothing here keys authorization on it; a re-claimed name inherits nothing (everything resolves via
+// accountId). Atomic-unique claim lives in the store (INSERT-or-fail, no check-then-insert TOCTOU).
+// ---------------------------------------------------------------------------
+auth.post(
+  '/username',
+  guard({
+    op: 'create',
+    schema: UsernameClaimRequestSchema,
+    input: (c) => readBody(c),
+    resource: (): Resource => ({ kind: 'workspace' }),
+    handle: async (req, c, principal) => {
+      // ONE normalization rule — the SHARED `normalizeUsername` (NFKC + casefold + conservative charset
+      // + reserved denylist). The client hints with the same function, so "taken" can never diverge.
+      const norm = normalizeUsername(req.username);
+      if (!norm.ok) return apiError(c, 400, 'invalid_username', usernameRejectMessage(norm.reason));
+
+      const accountId = principal.id; // = accountId; the ONLY account a claim can bind to (invariant i).
+      const store = createAuthStore(d1Adapter(c.env.DB));
+
+      // v1: one username per account (rename OFF). A same-account re-claim of the SAME name is
+      // idempotent (200); a different existing name → 409. This is an account-vs-ITSELF check, never a
+      // cross-account security boundary — that boundary is the store's atomic-unique claim below.
+      const existing = await store.getUsernameByAccount(accountId);
+      if (existing) {
+        if (existing.usernameNormalized === norm.value.normalized) {
+          return c.json({ username: existing.usernameDisplay });
+        }
+        return apiError(c, 409, 'username_exists', 'this account already has a username');
+      }
+
+      const result = await store.claimUsername({
+        usernameNormalized: norm.value.normalized,
+        accountId,
+        usernameDisplay: norm.value.display,
+        createdAt: new Date(Date.now()).toISOString(),
+      });
+      if (!result.claimed) {
+        // The store's atomic claim lost. If WE already hold it (a racing duplicate of our own first
+        // claim), that is idempotent success; otherwise another account holds it → 409. F-acct-4: the
+        // 409 carries NO holder identity, so it is not a cross-account existence oracle.
+        if (result.ownerAccountId === accountId) return c.json({ username: norm.value.display });
+        return apiError(c, 409, 'username_taken', 'that username is taken');
+      }
+      return c.json({ username: norm.value.display }, 201);
+    },
+  }),
+);
 
 // ---------------------------------------------------------------------------
 // GET /api/auth/devices  — list the caller's account devices (authStore-backed READ).

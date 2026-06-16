@@ -7,3 +7,4 @@
 export * from './encoding.js';
 export * from './canonical.js';
 export * from './requests.js';
+export * from './username.js';
