@@ -180,7 +180,9 @@ A `[CLI-device]` checklist is a numbered runbook (one tap-path per row) executed
 ### Tier B `[CLI-device]` runbook (for planSys's iPhone dogfood)
 
 One scripted pass on a real installed PWA over Tailscale HTTPS (hostname RP ID per PIN-ID-9). Record
-pass/fail + build SHA + device/iOS version per step. This run **is** the DG-CAP capstone.
+pass/fail + build SHA + device/iOS version per step in the **gate-record capture template**
+(`v1-dg-cap-gate-record.md`, scopeSys scaffold — one fillable block per attempt). This run **is** the
+DG-CAP capstone.
 
 1. **Install / A2HS** — open the Tailscale HTTPS URL in Safari → Add to Home Screen → launch
    standalone; the service-worker shell loads. *(install criterion)*
