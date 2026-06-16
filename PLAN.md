@@ -25,9 +25,10 @@ Android, for full surface control + sideload freedom — the own-your-software v
   data-loss/CAS correctness fix verified (Stream-B trip-wire fired + closed); **editor** Stream C
   (ProseMirror, title unified into the document, iOS-Safari functional gate passed); server (Worker +
   Hono + D1). P0 done + on remote.
-- **Next to build:** **identity** (passkey/recovery/QR signed-challenge auth — server endpoints +
-  client unlock, on the frozen contract) and **client storage/persistence** (IndexedDB + a pluggable
-  store seam) + Stream-D integration/e2e. I issue the build re-sequence to pilot next.
+- **Now building:** **Stream A — identity** (passkey/recovery/QR signed-challenge auth — server
+  endpoints + client unlock, on the frozen contract) — **HANDED OFF to pilot 2026-06-16**, the
+  Phase-1 critical path. Then client storage/persistence (IndexedDB + pluggable store seam) +
+  Stream-D integration/e2e.
 - **Constraints in force:** PIN-SYNC-1 atomic-CAS, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations
   (global-by-id), PIN-STORAGE-1 (SW never runtime-caches `/api` into shared Cache), S3 one-clip-per-
   notebook + PIN-ID PRF floor — see `docs/specs/phase-1-constraints.md`.
@@ -61,7 +62,7 @@ fix, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations, PIN-STORAGE/SUBSTRATE p
 
 | Stream | Scope | Owner | Status |
 |--------|-------|-------|--------|
-| A | Identity (passkey/recovery/QR, signed-challenge auth) | devSys (opus) | auth contract + `can()` **FROZEN**; server endpoints + client unlock = **next to build** |
+| A | Identity (passkey/recovery/QR, signed-challenge auth) | devSys (opus) | auth contract + `can()` **FROZEN** (closed union survives in-tree); server endpoints + client unlock = **HANDED-OFF 2026-06-16, building** (auth assembly rebuilt fresh from design) |
 | B | Substrate + sync (atomic-CAS conflict engine) | devSys2 (opus) | server CAS + client queue-drain **verified correct** (trip-wire fired + closed); sync foundation solid |
 | C | Capture surface + editor (ProseMirror) | gruntSys2 (sonnet) | iOS-Safari functional gate **PASSED** (IME/paste/nested-selection); title unified into the document; left-aligned |
 | D | Integration / e2e | pilot | pending A + storage |
@@ -219,3 +220,13 @@ promote to devSys/opus if first audit finds a CAS/single-flight/race defect.
 - 2026-06-16 — **Stream-B trip-wire CLOSED** (secSys): the queue-drain data-loss race is genuinely
   fixed AND the test genuinely reproduces it — **opus promotion (devSys2) vindicated; sync
   foundation VERIFIED correct.**
+- 2026-06-16 — **Stream A HANDED OFF to pilot — Phase-1 critical path building.** Pre-handoff
+  tree reconciliation (planner due-diligence): the surviving foundation = frozen contract incl. the
+  already-closed discriminated-union `PrincipalVerificationSchema`, base64url codec, crypto core
+  (keyDerivation/blob/keyStore), worker chokepoint stub. The full server-side **auth assembly is
+  rebuilt FRESH from the approved design** (canonical TLV payloads + SignedRequest, worker
+  authCrypto/authStore/D1 auth schema/routes/auth.ts, real `resolvePrincipal`, can() registry
+  resolution, F13 hardening; client stepUp + KeyStore WebAuthn provider + recovery + QR). Corrected
+  the stale "already built" framing in the stream-a-identity-plan memory; flagged stale `dist/auth/*`
+  artifacts for purge. Sequencing: devSys's first move = secSys strawman of the per-method proof
+  shapes (replay / freshness / pubkey-account binding) before locking outward.
