@@ -11,9 +11,12 @@ import { apiError, notImplemented, type AppContext } from '../http.js';
  * step below becomes a delegated call and the 501 is removed:
  *   - devSys  `authCrypto` (Ed25519 verify, F2 fingerprint COMPUTE, TLV reconstruct, RNG, token
  *             hashing, scope clamp) + `requests.ts` Zod wire schemas (strict base64url + exact
- *             lengths — R3-4) + `canonical.ts` (TLV). [path TBD — confirm import at flip]
+ *             lengths — R3-4) + `canonical.ts` (TLV). [specifier TBD — confirm import at flip]
  *   - devSys2 `authStore` (pure-D1 over the 0002_stream-a-auth migration: devices / authChallenges /
- *             grants). [path TBD — confirm import at flip]
+ *             grants). CONFIRMED by devSys2: `import { createAuthStore } from '../db/authStore.js'`,
+ *             constructed `const store = createAuthStore(d1Adapter(c.env.DB))` (same DbAdapter as
+ *             db/mutate.ts). Methods = contract §1 EXACTLY, PLUS `revokeByKeyId(keyId)` for the
+ *             revoke route (signature pending devSys's ruling — see /devices/:keyId/revoke).
  *
  * SEAM DISCIPLINE (contract §2): routes own request PARSING + HTTP STATUS only. Every crypto and
  * policy decision is DELEGATED — no key handling, signature verification, fingerprint computation,
@@ -128,11 +131,11 @@ auth.get('/devices', async (c) => {
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/devices/:keyId/revoke  — revoke a device (F9 SENSITIVE ⇒ step-up required).
-// PATH PROPOSED by scopeSys: the contract heading says "POST /api/auth/devices — list/revoke" but
-// does not pin the revoke path or its keyId→grant resolution. RESTful default chosen; flagged to
-// devSys/pilot for confirmation (see ACK). Revoking a device must (a) verify a fresh step-up bound
-// to this op+resource and (b) revoke the device's grant(s) — the keyId→grantId resolution seam is
-// UNSPECIFIED in the contract (authStore exposes revokeGrant(grantId), not revokeByKeyId).
+// PATH CONFIRMED (devSys, via pilot): RESTful POST /api/auth/devices/:keyId/revoke stands. The
+// keyId→grant resolution gap is resolved by devSys2 adding `authStore.revokeByKeyId(keyId)` — exact
+// semantics (grants revoked + whether devices.revokedAt is set) pending devSys's ruling; devSys2
+// confirms the signature when it lands. Revoking a device must (a) verify a fresh step-up bound to
+// this op+resource and (b) call revokeByKeyId for the target device.
 // ---------------------------------------------------------------------------
 auth.post('/devices/:keyId/revoke', async (c) => {
   await readBody(c);
@@ -142,8 +145,8 @@ auth.post('/devices/:keyId/revoke', async (c) => {
   //    the 'step-up' challenge, reconstructs+verifies the step-up TLV against the server-resolved
   //    pubkey; returns { method:'signed-request', keyId, challengeId, op, resource } or throws → 401.
   //    can() then asserts member.op===op && resourceEquals(member.resource, resource) (LOCKED switch).
-  // 3. Resolve the target device's grant(s) for `:keyId` and revokeGrant(grantId).  ← keyId→grantId
-  //    resolution seam UNSPECIFIED — confirm with devSys before flip.
+  // 3. await store.revokeByKeyId(c.req.param('keyId'))  (devSys2 — resolves the keyId→grant gap;
+  //    exact semantics pending devSys's ruling).
   // 4. return c.json({ keyId, revoked: true });
   if (!c.req.param('keyId')) return apiError(c, 400, 'invalid_request', 'missing device keyId');
   return notImplemented(c, 'auth.devices.revoke');
