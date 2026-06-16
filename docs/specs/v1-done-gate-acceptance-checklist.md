@@ -133,15 +133,16 @@ lives in the browser/PWA — so it is proven in **two tiers**, both required for
 > the UI reaches the engine.** Automated green ≠ usable. This is the sharpest case of why the on-device
 > **Tier B** capstone exists (it caught exactly this — finding E1 in `v1-dg-cap-gate-record.md`).
 >
-> **Gap-narrowing (post-dogfood) — PARTIAL, mind the layer:** gruntSys2 landed durable tests
-> (`@86afece`, 6 navList tests, suite 142/142) that prove the **store→list reactive layer**
-> (`mutateNotes.put` → renders in list) headlessly. **But that is not the bug locus.** The actual
-> failing seam was the editor `onChange → onSave → put` **wiring** — the UI writing into the store —
-> and the landed tests **still bypass it** (they call `mutateNotes.put` directly). So that exact chain
-> is **still validated only by the on-device dogfood**; full headless closure needs a **PM-editor-render
-> test** (type-into-the-editor → assert the store receives it), which gruntSys2 will add. Net: the
-> store→list half is now covered; the **editor→store half remains dogfood-only** until that render test
-> lands. Lesson stands — a test that calls `put` directly never proves the editor calls `put`.
+> **Gap-narrowing (post-dogfood) — now closed to the sensible limit:** gruntSys2's durable coverage
+> landed in two steps — first the store→list reactive layer (`@86afece`), then the **editor→store data
+> path** (`@3d26228`, 9 navList tests, suite 145/145): the 3 PM-pipeline tests assert text-insert →
+> `docChanged` → title-extract → `onSave` → `mutateNotes.put` → list emission. So the seam that
+> actually broke is now **headless-covered**. The **only** link still outside the suite is ProseMirror's
+> own `EditorView → dispatchTransaction` (PM-internal, correctly trusted as a dependency — not our
+> code), which the on-device dogfood exercises. Net: the editor→store wiring is covered to the sensible
+> limit; the residual dogfood-only bit is third-party-internal, not a coverage hole in our code. Lesson
+> stands — a test that calls `put` directly never proves the editor calls `put`, so we now test the
+> editor calling `put`.
 
 ### Tier A — `[CLI-auto]`: headless client test suite (the regression floor)
 
