@@ -6,8 +6,8 @@
  * Matrix:  docs/specs/v1-shell-conflict-acceptance-matrix.md (scopeSys canonical CAV-* IDs)
  *
  * ─── CANONICAL CAV-* LANES (scopeSys matrix — 2026-06-16) ───────────────────────
- * CAV-1  push cadence (2s settle/5s max-wait, fake timers)        ← CLAIMED (this file)
- * CAV-2  offline buffer → flush-on-reconnect                      ← CLAIMED (this file)
+ * CAV-1  push cadence (2s settle/5s max-wait, fake timers)        ← CLAIMED (cav12PushCadence.render.test.tsx — jsdom)
+ * CAV-2  offline buffer → flush-on-reconnect                      ← CLAIMED (cav12PushCadence.render.test.tsx — jsdom)
  * CAV-3  fast-forward: no hasConflict, no noteVersions row
  * CAV-4  conflict → noteVersions row, hasConflict=true, server live, same note ID (contract anchor)
  * CAV-5  no second note ever after conflict (no fork)
@@ -30,7 +30,7 @@
  *   NoteVersion { id, noteId, accountId, kind:'conflict', title, properties, body,
  *                 baseVersion, createdAt }  — flat snapshot, no nested Note object
  *   Note.hasConflict: boolean (client-only, default false)
- *   resolveConflict(noteId, 'keep-mine'|'keep-theirs'|'keep-both'): Promise<void>
+ *   resolveConflict(noteId, 'keep-mine'|'keep-theirs'|'keep-both'): Promise<void>  — from '../src/db/conflict.js'
  *     keep-mine   → divergent content live; enqueued for push; versions deleted; badge cleared
  *     keep-theirs → versions deleted; server content stays; badge cleared
  *     keep-both   → version rows KEPT (Phase-3); hasConflict=false (badge cleared)
@@ -45,7 +45,9 @@
  *   WILL go RED when devSys2 implements conflict-as-version — flagged to pilot.
  *
  * All CAV-3..11 tests are RED until devSys2 implements conflict-as-version. Going GREEN = v1 done.
- * CAV-1 and CAV-2 go GREEN once devSys2's debounced-push surface is wired.
+ * CAV-1 and CAV-2 live in cav12PushCadence.render.test.tsx (jsdom env) — separated because
+ * startSyncTriggers wires window events (requires jsdom) and vi.useFakeTimers() in jsdom leaks
+ * into Dexie's fake-indexeddb IDB operations, causing beforeEach timeouts in this node-env file.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -61,7 +63,6 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -164,160 +165,7 @@ async function setupConflict(localTitle: string, serverTitle: string | null) {
   await new Promise((r) => setTimeout(r, 100));
 }
 
-// ---------------------------------------------------------------------------
-// CAV-1 — push cadence: debounced push respects 2s idle-settle + 5s max-wait cap
-//
-// These tests call startSyncTriggers(NB, token) to OPT-IN to the debounced-push observer.
-// NOT module-load auto-observe: always-on would fire pushes in the controlled syncEngine.test.ts
-// trip-wire tests (CAV-12) and break them. Teardown is called in afterEach via the returned fn.
-//
-// Fake-timer note: liveQuery emits async — after a queue write, await
-// vi.advanceTimersByTimeAsync(0) to let the observer schedule before advancing timers.
-// ---------------------------------------------------------------------------
-
-describe('CAV-1 — push cadence: debounced server push (2s idle-settle, 5s max-wait cap)', () => {
-  let stopTriggers: (() => void) | undefined;
-
-  afterEach(() => {
-    stopTriggers?.();
-    stopTriggers = undefined;
-  });
-
-  it('an edit does not push immediately — respects the idle-settle window', async () => {
-    vi.useFakeTimers();
-    setSession();
-    const fetchSpy = vi
-      .spyOn(global, 'fetch')
-      .mockResolvedValue(
-        new Response(JSON.stringify({ results: [] }), { status: 200 }),
-      );
-
-    const { db } = await import('../src/db/schema.js');
-    const { startSyncTriggers } = await import('../src/lib/syncEngine.js');
-    stopTriggers = startSyncTriggers(NB, 'cav-test-tok');
-
-    const note = makeNote(NOTE_ID, 0, 'Typing...');
-    await db.notes.put(note);
-    await db.syncQueue.add({
-      id: crypto.randomUUID(),
-      recordId: NOTE_ID,
-      payload: note,
-      baseVersion: 0,
-      createdAt: NOW,
-    });
-    await vi.advanceTimersByTimeAsync(0); // let liveQuery observer schedule
-
-    // 1.5s elapsed — still inside the 2s settle window; no push yet.
-    await vi.advanceTimersByTimeAsync(1500);
-    const pushCalls = fetchSpy.mock.calls.filter(([url]) =>
-      String(url).includes('/sync/push'),
-    );
-    expect(pushCalls).toHaveLength(0);
-  });
-
-  it('an edit DOES push after the 2s idle-settle window elapses', async () => {
-    vi.useFakeTimers();
-    setSession();
-    mockFetch({ id: NOTE_ID, outcome: 'accepted', version: 1, syncSeq: 1 });
-    const fetchSpy = vi.spyOn(global, 'fetch');
-
-    const { db } = await import('../src/db/schema.js');
-    const { startSyncTriggers } = await import('../src/lib/syncEngine.js');
-    stopTriggers = startSyncTriggers(NB, 'cav-test-tok');
-
-    const note = makeNote(NOTE_ID, 0, 'Settled edit');
-    await db.notes.put(note);
-    await db.syncQueue.add({
-      id: crypto.randomUUID(),
-      recordId: NOTE_ID,
-      payload: note,
-      baseVersion: 0,
-      createdAt: NOW,
-    });
-    await vi.advanceTimersByTimeAsync(0); // let liveQuery observer schedule
-
-    await vi.advanceTimersByTimeAsync(2100);
-
-    const pushed = fetchSpy.mock.calls.some(([url]) =>
-      String(url).includes('/sync/push'),
-    );
-    expect(pushed).toBe(true);
-  });
-
-  it('continuous typing flushes at most once per 5s max-wait cap (never per-keystroke)', async () => {
-    vi.useFakeTimers();
-    setSession();
-    mockFetch({ id: NOTE_ID, outcome: 'accepted', version: 1, syncSeq: 1 });
-    const fetchSpy = vi.spyOn(global, 'fetch');
-
-    const { db } = await import('../src/db/schema.js');
-    const { startSyncTriggers } = await import('../src/lib/syncEngine.js');
-    stopTriggers = startSyncTriggers(NB, 'cav-test-tok');
-
-    // Keystroke every 500ms for 4500ms — never idle 2s, so settle never fires on its own.
-    for (let i = 0; i < 9; i++) {
-      const note = makeNote(NOTE_ID, i, `Keystroke ${i}`);
-      await db.notes.put(note);
-      await db.syncQueue.add({
-        id: crypto.randomUUID(),
-        recordId: NOTE_ID,
-        payload: note,
-        baseVersion: i,
-        createdAt: NOW,
-      });
-      await vi.advanceTimersByTimeAsync(500);
-    }
-
-    // Max-wait cap forces at most 1 flush (at the 5s boundary).
-    const pushCount = fetchSpy.mock.calls.filter(([url]) =>
-      String(url).includes('/sync/push'),
-    ).length;
-    expect(pushCount).toBeLessThanOrEqual(1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// CAV-2 — offline buffer → flush on reconnect
-// ---------------------------------------------------------------------------
-
-describe('CAV-2 — offline buffer: edits queued offline are flushed when back online', () => {
-  it('edits made while offline accumulate in syncQueue and push once the online event fires', async () => {
-    setSession();
-
-    // Simulate offline: fetch always rejects.
-    global.fetch = vi.fn(() =>
-      Promise.reject(new TypeError('Network error')),
-    ) as typeof fetch;
-
-    const { db } = await import('../src/db/schema.js');
-    const { startSyncTriggers } = await import('../src/lib/syncEngine.js');
-    // startSyncTriggers wires the 'online' event flush (among others); call before queuing.
-    const stop = startSyncTriggers(NB, 'cav-test-tok');
-
-    const note = makeNote(NOTE_ID, 0, 'Offline edit');
-    await db.notes.put(note);
-    await db.syncQueue.add({
-      id: crypto.randomUUID(),
-      recordId: NOTE_ID,
-      payload: note,
-      baseVersion: 0,
-      createdAt: NOW,
-    });
-
-    // Still queued — not flushed while offline.
-    expect(await db.syncQueue.where('recordId').equals(NOTE_ID).count()).toBe(1);
-
-    // Come back online: wire a successful push and fire the browser 'online' event.
-    mockFetch({ id: NOTE_ID, outcome: 'accepted', version: 1, syncSeq: 1 });
-    window.dispatchEvent(new Event('online'));
-    await new Promise((r) => setTimeout(r, 200));
-
-    stop();
-
-    // Queue should be drained after reconnect.
-    expect(await db.syncQueue.where('recordId').equals(NOTE_ID).count()).toBe(0);
-  });
-});
+// CAV-1 and CAV-2: see cav12PushCadence.render.test.tsx (jsdom env — needs window + no Dexie fake-timer leak)
 
 // ---------------------------------------------------------------------------
 // CAV-3 — fast-forward: accepted push leaves no conflict state behind
@@ -507,7 +355,7 @@ describe('CAV-9 — resolve keep-mine: divergent edit becomes live', () => {
     await setupConflict('My divergent offline edit', 'Server content');
 
     const { db } = await import('../src/db/schema.js');
-    const { resolveConflict } = await import('../src/lib/syncEngine.js');
+    const { resolveConflict } = await import('../src/db/conflict.js');
 
     const conflicted = (await db.notes.get(NOTE_ID)) as NoteWithConflict | undefined;
     expect(conflicted!.hasConflict).toBe(true);
@@ -528,7 +376,7 @@ describe('CAV-9 — resolve keep-mine: divergent edit becomes live', () => {
     await setupConflict('My divergent offline edit', 'Server content');
 
     const { db } = await import('../src/db/schema.js');
-    const { resolveConflict } = await import('../src/lib/syncEngine.js');
+    const { resolveConflict } = await import('../src/db/conflict.js');
     await resolveConflict(NOTE_ID, 'keep-mine');
 
     const queued = await db.syncQueue.where('recordId').equals(NOTE_ID).toArray();
@@ -545,7 +393,7 @@ describe('CAV-10 — resolve keep-theirs: server version stays live', () => {
     await setupConflict('My divergent offline edit', 'Server content — I prefer this');
 
     const { db } = await import('../src/db/schema.js');
-    const { resolveConflict } = await import('../src/lib/syncEngine.js');
+    const { resolveConflict } = await import('../src/db/conflict.js');
     await resolveConflict(NOTE_ID, 'keep-theirs');
 
     const resolved = (await db.notes.get(NOTE_ID)) as NoteWithConflict | undefined;
@@ -562,7 +410,7 @@ describe('CAV-10 — resolve keep-theirs: server version stays live', () => {
     await setupConflict('My divergent edit', 'Server content');
 
     const { db } = await import('../src/db/schema.js');
-    const { resolveConflict } = await import('../src/lib/syncEngine.js');
+    const { resolveConflict } = await import('../src/db/conflict.js');
 
     await db.syncQueue.where('recordId').equals(NOTE_ID).delete();
     await resolveConflict(NOTE_ID, 'keep-theirs');
@@ -582,7 +430,7 @@ describe('CAV-11 — resolve keep-both: both retained as versions of ONE note; b
   it('after keep-both: db.notes has exactly 1 note (no auto second note)', async () => {
     await setupConflict('My divergent content', 'Server content');
 
-    const { resolveConflict } = await import('../src/lib/syncEngine.js');
+    const { resolveConflict } = await import('../src/db/conflict.js');
     await resolveConflict(NOTE_ID, 'keep-both');
 
     const { db } = await import('../src/db/schema.js');
@@ -594,7 +442,7 @@ describe('CAV-11 — resolve keep-both: both retained as versions of ONE note; b
     await setupConflict('My divergent content', 'Server content');
 
     const { db } = await import('../src/db/schema.js');
-    const { resolveConflict } = await import('../src/lib/syncEngine.js');
+    const { resolveConflict } = await import('../src/db/conflict.js');
     await resolveConflict(NOTE_ID, 'keep-both');
 
     const note = (await db.notes.get(NOTE_ID)) as NoteWithConflict | undefined;
@@ -610,7 +458,7 @@ describe('CAV-11 — resolve keep-both: both retained as versions of ONE note; b
     await setupConflict('My divergent content', 'Server content — stays live');
 
     const { db } = await import('../src/db/schema.js');
-    const { resolveConflict } = await import('../src/lib/syncEngine.js');
+    const { resolveConflict } = await import('../src/db/conflict.js');
     await resolveConflict(NOTE_ID, 'keep-both');
 
     const note = await db.notes.get(NOTE_ID);
