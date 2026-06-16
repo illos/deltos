@@ -123,21 +123,22 @@ handled). Source: `phase-1-vertical-slice.md` §Out of scope.
 [SRV] is gruntSys's automated worker harness. The **[CLI] half has no server-runnable proof** — it
 lives in the browser/PWA — so it is proven in **two tiers**, both required for the gate:
 
-> **Scope limit the two tiers must respect (learned from Run-1 of the capstone):** the automated gates
-> ([SRV] `v1.donegate.test.ts` + Tier-A `[CLI-auto]`) drive the store and sync engine
-> **programmatically** — they prove the **data / sync / auth** journey but **structurally cannot catch
-> UI-navigation / shell affordance gaps** (a missing exit/save button, no note list, an unreachable
-> screen), because they never render or navigate the actual shell. Automated green ≠ usable. Real-user
-> reachability of the journey through the UI is **only** provable by the on-device **Tier B** capstone
-> — that is precisely the class it exists to catch (Run-1 caught exactly this: see
-> `v1-dg-cap-gate-record.md`).
+> **Scope limit the two tiers must respect (learned from the exploratory dogfood):** the automated gates
+> ([SRV] `v1.donegate.test.ts` + Tier-A `[CLI-auto]`) drive the **store programmatically**
+> (`mutateNotes.put` and everything downstream of it) — they prove the **data / sync / auth** journey
+> but **structurally bypass the editor→store wiring**: the seam where the UI actually writes what the
+> user typed into the store. The exploratory dogfood caught the suites staying green while the
+> **editor silently didn't persist** — store/sync/auth all correct, but typed notes never reached the
+> store, so nothing listed, synced, or recovered. A suite that calls the engine directly **never proves
+> the UI reaches the engine.** Automated green ≠ usable. This is the sharpest case of why the on-device
+> **Tier B** capstone exists (it caught exactly this — finding E1 in `v1-dg-cap-gate-record.md`).
 >
-> **Gap-narrowing (post-Run-1):** the specific affordances Run-1 exposed now get **Tier-A-style
-> component coverage** (gruntSys2 `a7d32e2` fix + a jsdom render test: HomeView renders the note-list
-> from the store, NoteRoute has the "← Notes" back link — no WebAuthn). So a *regression* of
-> editor-exit/note-list nav would now fail an automated row rather than wait for a dogfood. This
-> **narrows** the gap (named rendered affordances become testable headless); it does **not close** it —
-> full end-to-end on-device reachability (navigation flow, real WebAuthn, install) still needs Tier B.
+> **Gap-narrowing (post-dogfood):** gruntSys2's autosave fix ships a **mandatory Tier-A-style component
+> test** that exercises that exact seam headlessly — **type-in-editor → note in store → renders in
+> list** (jsdom, no WebAuthn). So a *regression* of editor-persistence would now fail an automated row
+> rather than wait for a dogfood. This **narrows** the gap (the editor→store seam becomes headless-
+> testable); it does **not close** it — full end-to-end on-device reachability (real WebAuthn, install,
+> the whole nav flow) still needs Tier B.
 
 ### Tier A — `[CLI-auto]`: headless client test suite (the regression floor)
 
