@@ -1,19 +1,19 @@
 import { useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { useLiveQuery } from 'dexie-react-hooks';
 import type { Note } from '@deltos/shared';
 import { NoteIdSchema } from '@deltos/shared';
-import { db } from '../db/schema.js';
+import { useNote } from '../db/storeHooks.js';
 import { mutateNotes } from '../db/mutate.js';
 import { notifyQueueWrite } from '../lib/syncEngine.js';
 import { NoteEditor } from '../editor/NoteEditor.js';
 import { resolveNoteView } from '../editor/views.js';
 
 /**
- * Loads a note by ID from the local Dexie store and renders the appropriate view.
+ * Loads a note by ID through the LocalStore seam and renders the appropriate view.
  *
- * useLiveQuery is reactive: when Stream B's sync engine writes an incoming server update to
- * db.notes, this component re-renders automatically — without polling or manual refresh.
+ * useNote is reactive: when Stream B's sync engine writes an incoming server update via the store,
+ * this component re-renders automatically — without polling or manual refresh. It reads through the
+ * store hook, never Dexie directly, so the persistence engine stays swappable.
  *
  * View resolution: note → resolveNoteView(note) → render. Phase 1 always resolves to the
  * block editor (NoteEditor / ProseMirror). Phase 2 can register full-view descriptors for
@@ -30,14 +30,8 @@ export function NoteRoute() {
 
   const noteId = id ? NoteIdSchema.safeParse(id) : null;
 
-  // async querier keeps the return type as Promise<T>, avoiding PromiseExtended inference issues.
-  const note = useLiveQuery(
-    async () => {
-      if (!noteId?.success) return undefined;
-      return db.notes.get(noteId.data);
-    },
-    [noteId?.success ? noteId.data : null],
-  );
+  // Reactive read through the store seam; undefined for an invalid id (guarded below) or while loading.
+  const note = useNote(noteId?.success ? noteId.data : undefined);
 
   if (!noteId?.success) {
     return (
