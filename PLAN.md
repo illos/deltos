@@ -33,7 +33,8 @@ Android, for full surface control + sideload freedom — the own-your-software v
 - **Constraints in force:** PIN-SYNC-1 atomic-CAS, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations
   (global-by-id), PIN-STORAGE-1 (SW never runtime-caches `/api` into shared Cache), S3 one-clip-per-
   notebook + PIN-ID PRF floor — see `docs/specs/phase-1-constraints.md`.
-- **No open user decisions.**
+- **1 open user decision:** **D6 — server tenancy model** (single-account-per-deployment vs shared
+  multi-account) — gates the cross-account data-layer finding's severity + fix scope. See `DECISIONS.md` D6.
 
 ## Status legend
 `PLANNED` → spec not yet written · `SPEC-READY` → written to docs/specs, not handed off ·
@@ -63,7 +64,7 @@ fix, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations, PIN-STORAGE/SUBSTRATE p
 
 | Stream | Scope | Owner | Status |
 |--------|-------|-------|--------|
-| A | Identity (passkey/recovery/QR, signed-challenge auth) | devSys (opus) | auth contract + `can()` **FROZEN** (closed union survives in-tree); server endpoints + client unlock = **auth CORE COMPLETE 2026-06-16** (chokepoint `df26f6d`, 150/150 worker green); e2e auth path imminent (scopeSys CF handlers + secSys CF pass); front-door UI building (gruntSys2) |
+| A | Identity (passkey/recovery/QR, signed-challenge auth) | devSys (opus) | auth contract + `can()` **FROZEN** (closed union survives in-tree); server endpoints + client unlock = **DONE-GATE GREEN 2026-06-16** (chokepoint + 4 CF-gated routes + UI front door `b42737d`; secSys CF-1..5 verified; BOLA revoke fixed 21/21). Pending user passes: D5 copy + iOS dogfood |
 | B | Substrate + sync (atomic-CAS conflict engine) | devSys2 (opus) | server CAS + client queue-drain **verified correct** (trip-wire fired + closed); sync foundation solid |
 | C | Capture surface + editor (ProseMirror) | gruntSys2 (sonnet) | iOS-Safari functional gate **PASSED** (IME/paste/nested-selection); title unified into the document; left-aligned |
 | D | Integration / e2e | pilot | pending A + storage |
@@ -305,6 +306,15 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   Two user-facing passes now OPEN with the user: (1) D5 disclosure COPY approval (draft delivered,
   my 2 tweaks recommended), (2) real-iPhone dogfood of the front door. **Stream A = one BOLA fix from
   done-gate-green.**
+- 2026-06-16 — **Stream A auth DONE-GATE GREEN** (BOLA revoke fixed `9fee9f8`, 21/21; secSys
+  re-verified). **BUT a new systemic finding → `DECISIONS.md` D6:** the data layer has **no account
+  dimension** — `notes` has no `accountFingerprint`, data + sync routes don't isolate by account, and
+  whole-workspace `note.search` returns all accounts' notes. Confirmed first-hand. Severity hinges on
+  tenancy (single-account-per-deploy ⇒ non-issue; shared multi-account ⇒ CRITICAL). Taken to the user
+  as **D6** with my recommendation (build the account dimension regardless). secSys + devSys held for
+  the follow-through; **the fix MUST precede any multi-account deploy.** Same BOLA class as revoke but
+  data-layer-wide, and no owner column exists for the per-route 404 pattern. Tracked:
+  `[[cross-account-data-layer-finding]]`.
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the

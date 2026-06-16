@@ -7,6 +7,43 @@ leave the not-yet-ripe ones — they'll keep. Resolved items move to the bottom 
 
 ---
 
+## D6 · Server tenancy model — does the backend ever hold more than one account? → ⏳ OPEN (sets a security-finding's severity + fix scope)
+
+A systemic finding (secSys lead-sweep, pilot-verified, I confirmed first-hand): the server's **data
+layer has no account dimension.** The `notes` table is `id/notebookId/title/body/version/timestamps`
+with **no `accountFingerprint`**; `notebookId` is a bare client string never bound to an account. So
+the data routes (note get/update/delete, block/property mutate, **search**, and sync push/pull) — all
+now live behind the `guard()`+`can()` chokepoint — query by id/notebookId with **zero account
+filter**, and a workspace-wide `note.search` returns *every* account's note titles + bodies. Device
+records *are* account-scoped; note data is not, and there's no owner column for the per-route 404
+pattern (that fixed the revoke BOLA) to compare against.
+
+**This is not an active breach** — nothing real is deployed multi-account; it's the dev backend. But
+it's structural, so it must be settled before the data model solidifies or any second account touches
+the backend. **Severity hinges entirely on tenancy:**
+- **Shared multi-account** (one backend serves you + others — family, friends, future public) ⇒
+  **CRITICAL**: any authenticated account can read/write/delete/search every other account's notes.
+  Fix = add the account dimension (notes/notebooks carry their owning account; every data query filters
+  by the authenticated `principal.accountFingerprint`; notebook bound to its account; grants
+  account-relative). Bounded, but architectural; must land before any multi-account deploy.
+- **Strictly single-account-per-deployment** (deltos is self-hosted; each person runs their own
+  instance; the DB only ever holds your one account) ⇒ **non-issue by construction** — no other account
+  to leak to. Documented as such; no data-layer change forced.
+
+**My recommendation: build the account dimension now, regardless of intent.** It's the correct data
+model, it's cheap insurance, and it permanently closes this risk class whether you stay solo or ever add
+a second account — versus a silent critical hole the day a second account appears. I do *not* recommend
+isolated-DB-per-account (operationally heavy / overkill on Cloudflare). I only skip the build on a hard,
+permanent commitment to one-account-per-instance — and even then I'd add the column for defense in depth.
+Write-up: `docs/design/secSys-cross-account-sweep.md`. secSys (audit) + devSys (grant/can domain) held
+for the follow-through. (Stream A auth done-gate is otherwise GREEN; BOLA revoke fixed 21/21.)
+
+### My response
+
+_____________________________________________
+
+---
+
 ## D1 · Editor engine — ✅ RESOLVED: ProseMirror (direct), confirmed, no veto
 
 S2 has reported and secSys endorsed its analysis, so this is now a real recommendation, not a
