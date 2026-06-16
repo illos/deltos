@@ -119,9 +119,21 @@ export const dexieLocalStore: LocalStore = {
   async putNoteAndEnqueue(note: Note, entry: SyncQueueEntry): Promise<void> {
     // Both the row and the queue entry land in one transaction (all-or-nothing) — no window where a
     // mutation exists locally but is not yet queued.
+    //
+    // The `version` field is DATA-LAYER-OWNED (sync-authoritative): a local CONTENT write must never
+    // regress it, nor enqueue a stale CAS baseVersion. So use the CURRENT persisted version (kept
+    // fresh by applyAccepted / pull) as BOTH the stored version and the entry's baseVersion — a
+    // caller's possibly-stale `note.version` (e.g. an editor still holding the pre-sync version) is
+    // ignored. This kills the phantom-conflict loop: without it, a same-content save at a stale base
+    // CAS-misses the server on every sync tick (a single device, no second device, conflict ~every
+    // cadence). A brand-new note (no existing row) keeps `note.version` (0 → INSERT). An in-flight
+    // edit's base is still reconciled forward by applyAccepted, so edit-while-syncing is unaffected.
     await db.transaction('rw', db.notes, db.syncQueue, async () => {
-      await db.notes.put(note);
-      await db.syncQueue.add(entry);
+      const existing = await db.notes.get(note.id);
+      const version = existing ? existing.version : note.version;
+      const synced: Note = { ...note, version };
+      await db.notes.put(synced);
+      await db.syncQueue.add({ ...entry, payload: synced, baseVersion: version });
     });
   },
 
