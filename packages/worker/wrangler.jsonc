@@ -22,8 +22,10 @@
     // F13 fail-CLOSED tripwire: prod refuses the dev-only unverified principal.
     "ENVIRONMENT": "production",
     // F8/PROP-4: the auth audience bound into every signed payload. MUST equal the served hostname
-    // (= WebAuthn RP ID = client location.hostname). Same-origin deploy on the workers.dev subdomain.
-    "AUTH_AUDIENCE": "deltos.rdxx.workers.dev",
+    // (= WebAuthn RP ID = client location.hostname). CANONICAL domain = the custom domain
+    // deltos.blackgate.studio (user switch 2026-06-16); the workers.dev origin's auth now 401s by
+    // design (passkeys are RP-bound per domain → enroll fresh on the canonical domain).
+    "AUTH_AUDIENCE": "deltos.blackgate.studio",
   },
   // Same-origin PWA hosting: serve the client build as static assets; SPA-fallback unmatched routes
   // to index.html; run the Worker FIRST only for /api/* so the API is never shadowed by the shell.
