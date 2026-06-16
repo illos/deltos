@@ -537,3 +537,16 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   `docs/specs/v1-shell-and-conflict-versions.md` (SPEC-READY → pilot). Team re-plans off this spec; the
   PRF/disclosure/Option-A-B/autoUnlock work is re-scoped under it (disclosure stays at enroll, out of the
   launch path; secSys re-confirms; planSys still owes the disclosure copy-approval).
+- 2026-06-16 — **✅ OPTION-A CONFIRMED (user) + the auth-friction NORTH STAR.** User affirmed Option-A for
+  v1: device-local signing key on ALL devices (incl. PRF-capable), no-gesture unlock (lock-screen-grade at
+  rest), uniform honest disclosure at EVERY credential-establishment path (enroll/recovery/QR-join),
+  **PRF-at-launch RETIRED** (seam kept dormant for v2 E2EE/export). Unlocks **1b** (silent background
+  re-auth). secSys: PRF retirement is a HARD PROTOCOL FACT (WebAuthn UV gesture required to derive a
+  PRF-bound key → incompatible with silent re-auth), not a preference; full v1 retirement safe (no at-rest
+  secret needs it — mnemonic shown-once-never-stored). **🌟 GUIDING PRINCIPLE (user, quotable, governs all
+  future auth/onboarding decisions):** *"Auth is for syncing between devices and signing in on a new
+  device. Day-to-day can't be locked behind a password. This is a Notes app, not a password manager."* →
+  auth/friction belongs ONLY at sync-trust + new-device onboarding; day-to-day open-and-use is ZERO
+  friction. Validates 1a (`cd61fae`, local-first shell — E4 closed properly) + the conflict-as-version
+  direction. Tracked: `[[auth-friction-philosophy]]`. **Part 1a DONE; 1b greenlit; disclosure copy redraft
+  (uniform lock-screen-grade) routes to planSys for approval.**
