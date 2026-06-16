@@ -968,6 +968,32 @@ describe('REJECTED — fail-closed under adversarial input', () => {
     expect(res.status).toBe(401);
   });
 
+  it('BOLA: A cannot step-up-revoke B (different account) → 404; B.revokedAt stays NULL (cross-tenant object isolation)', async () => {
+    // Two distinct seeds → two distinct keypairs → two distinct accountFingerprints (different accounts).
+    // A's valid step-up cannot touch B's device: the ownership guard collapses cross-account keyIds
+    // with non-existent ones (both → 404) so there is no cross-account existence oracle.
+    const raw = new Database(':memory:');
+    for (const sql of ALL_MIGRATIONS) raw.exec(sql);
+    const env = makeAcceptanceEnv(raw);
+    const kpA = accKeypair(29);
+    const kpB = accKeypair(30); // different seed → different pubkey → different accountFingerprint
+    const { keyId: keyIdA } = await accRegisterDevice(env, kpA, 'account-A-device');
+    const { keyId: keyIdB } = await accRegisterDevice(env, kpB, 'account-B-device');
+    // A mints a valid step-up for its own account and targets B's keyId.
+    const ch = await accMintChallenge(env, { purpose: 'step-up', keyId: keyIdA });
+    const signature = accSignB64(kpA.priv, canonicalAuthPayload({
+      purpose: 'step-up', audience: ACC_AUD, challengeId: ch.challengeId,
+      nonce: base64urlDecodeStrict(ch.nonce), keyId: keyIdA, op: 'delete', resource: { kind: 'workspace' },
+    }));
+    const res = await accPost(env, `/api/auth/devices/${keyIdB}/revoke`, {
+      challengeId: ch.challengeId, keyId: keyIdA, op: 'delete', resource: { kind: 'workspace' }, signature,
+    });
+    expect(res.status).toBe(404);
+    // B's device row must be untouched — no partial mutation allowed.
+    const bRow = raw.prepare('SELECT revokedAt FROM devices WHERE keyId = ?').get(keyIdB) as { revokedAt: string | null };
+    expect(bRow.revokedAt).toBeNull();
+  });
+
   // F2 note: "register with client-supplied fingerprint that disagrees" is not testable as a rejection
   // because RegisterDeviceRequestSchema has NO accountFingerprint field — the server always computes it.
   // The anti-spoofing invariant is proved by auth.routes.test.ts "201, server-COMPUTED fingerprint (F2)".
@@ -1016,6 +1042,55 @@ describe('REVOKED — device revocation denies the old bearer immediately (PIN-I
   });
 
   it.todo('PIN-ID-5/F1 limitation: enrollExisting(mnemonic) produces a fresh device → new token works after revoke')
+});
+
+// ---------------------------------------------------------------------------
+// §I — Cross-tenant isolation standing bar (BOLA guard)
+//
+// One cross-tenant NEGATIVE per object-scoped route so a future route that adds an
+// object-id param cannot silently miss the ownership check.  Each route here must:
+//   · confirm a cross-account operation is REJECTED (404 / 403 / list-absent), AND
+//   · confirm the target object is NOT mutated (no partial write).
+//
+// Auth routes with object-id params:
+//   POST /api/auth/devices/:keyId/revoke  → BOLA guard (71bad3c); live test in §F REJECTED above.
+//   GET  /api/auth/devices                → filtered by principal.id (accountFingerprint); live below.
+//
+// Sync routes (object-id in body/query, not path param):
+//   POST /api/sync/push  → v1 workspace grant covers ALL notebookIds (resourceCovers: workspace →
+//   GET  /api/sync/pull    any notebook = true). No server-side ownership ties notebookId to an
+//                          accountFingerprint in Phase 1 (local-first: client owns its own UUID).
+//                          When Phase 2 adds per-notebook ACL rows, add cross-notebook negatives here.
+// ---------------------------------------------------------------------------
+
+describe('§I — cross-tenant isolation (BOLA standing bar — one negative per object-scoped route)', () => {
+
+  // Device revoke — primary BOLA case. Full end-state proof lives in §F REJECTED above.
+  // Catalogued here as the anchor for this standing bar.
+  // (No duplicate test body — refer to "BOLA: A cannot step-up-revoke B" in §F REJECTED.)
+
+  it("GET /api/auth/devices: A's token returns only A's devices — B's keyId is absent (cross-account list isolation)", async () => {
+    // listDevices(principal.id) is keyed by accountFingerprint — an inter-account bearer cannot
+    // enumerate another account's devices. Two different seeds → two accounts; A's token must not
+    // expose B's keyId.
+    const raw = new Database(':memory:');
+    for (const sql of ALL_MIGRATIONS) raw.exec(sql);
+    const env = makeAcceptanceEnv(raw);
+    const kpA = accKeypair(31);
+    const kpB = accKeypair(32);
+    const { keyId: keyIdA } = await accRegisterDevice(env, kpA, 'isolation-A');
+    const { keyId: keyIdB } = await accRegisterDevice(env, kpB, 'isolation-B');
+    const { token: tokenA } = await accMintSession(env, kpA, keyIdA);
+    const res = await app.request('/api/auth/devices', { headers: { Authorization: `Bearer ${tokenA}` } }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { devices: Array<{ keyId: string }> };
+    expect(body.devices.some((d) => d.keyId === keyIdA)).toBe(true);   // own device present
+    expect(body.devices.some((d) => d.keyId === keyIdB)).toBe(false);  // B's device absent
+  });
+
+  // Sync routes — v1 workspace grant model; per-notebook ACL is Phase 2.
+  it.todo('sync/push cross-notebook: account A cannot write to account B notebook (Phase 2 — per-notebook ACL required)')
+  it.todo('sync/pull cross-notebook: account A cannot read account B notebook (Phase 2 — per-notebook ACL required)')
 });
 
 // ---------------------------------------------------------------------------
