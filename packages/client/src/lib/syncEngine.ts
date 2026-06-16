@@ -287,48 +287,81 @@ export async function mergePull(notes: SyncNote[], _notebookId: NotebookId): Pro
 // Trigger wiring — call from the app boot
 // ---------------------------------------------------------------------------
 
-let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * Server-push cadence (planSys-blessed; tunable — do not bury the literals). The radio-bearing PUSH
+ * debounces on THIS; local write/list stay tight (post-put + blur-flush) — rider (a), decoupled.
+ * idleSettleMs: push this long after the last queue write. maxWaitMs: under continuous typing the
+ * idle timer keeps resetting, so a one-shot cap from the first pending write flushes within this.
+ */
+export const SYNC_PUSH_CADENCE = { idleSettleMs: 2000, maxWaitMs: 5000 } as const;
+
+let _idleTimer: ReturnType<typeof setTimeout> | null = null;
+let _maxWaitTimer: ReturnType<typeof setTimeout> | null = null;
 let _pollTimer: ReturnType<typeof setInterval> | null = null;
 
+function flushPush(notebookId: NotebookId, apiBase: string): void {
+  if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
+  if (_maxWaitTimer) { clearTimeout(_maxWaitTimer); _maxWaitTimer = null; }
+  syncNow(notebookId, apiBase);
+}
+
 /**
- * Start the sync triggers: 1s debounce on queue writes, 30s poll, and online-event.
- * All funnelled through `syncNow()` so the single-flight guard applies to all three.
+ * (Re)arm the debounced push: reset the idle-settle timer on every queue write, and arm a one-shot
+ * max-wait cap from the FIRST pending write (so continuous typing still flushes within maxWaitMs).
+ * Either timer firing flushes and clears both.
+ */
+function schedulePush(notebookId: NotebookId, apiBase: string): void {
+  setState('pending');
+  if (_idleTimer) clearTimeout(_idleTimer);
+  _idleTimer = setTimeout(() => flushPush(notebookId, apiBase), SYNC_PUSH_CADENCE.idleSettleMs);
+  if (!_maxWaitTimer) {
+    _maxWaitTimer = setTimeout(() => flushPush(notebookId, apiBase), SYNC_PUSH_CADENCE.maxWaitMs);
+  }
+}
+
+/**
+ * Start the sync triggers: a reactive queue observer that arms the debounced push, a 30s poll, and
+ * flush-now events (online recovery + mobile backgrounding via visibilitychange→hidden / pagehide —
+ * rider (b), bounding the unsynced window on app-switch). OPT-IN (not module-load) so controlled-sync
+ * tests that drive syncNow directly are unaffected. The observer is interface-only (via the store's
+ * observeQueueCount), so the engine never imports Dexie.
  */
 export function startSyncTriggers(notebookId: NotebookId, apiBase = '/api'): () => void {
-  // Debounce: on any queue write, wait 1s then sync
-  const onQueueWrite = () => {
-    setState('pending');
-    if (_debounceTimer) clearTimeout(_debounceTimer);
-    _debounceTimer = setTimeout(() => syncNow(notebookId, apiBase), 1000);
-  };
+  // Reactive: any queued work (re)arms the debounced push.
+  const unsubQueue = getStore().observeQueueCount((count) => {
+    if (count > 0) schedulePush(notebookId, apiBase);
+  });
 
-  // 30s poll
   _pollTimer = setInterval(() => syncNow(notebookId, apiBase), 30_000);
 
-  // Online recovery
-  const onOnline = () => syncNow(notebookId, apiBase);
+  const onOnline = () => flushPush(notebookId, apiBase); // reconnect → flush buffered edits now
+  const onOffline = () => setState('offline');
+  const onVisibility = () => { if (document.visibilityState === 'hidden') flushPush(notebookId, apiBase); };
+  const onPageHide = () => flushPush(notebookId, apiBase); // mobile backgrounding — bound the unsynced window
   window.addEventListener('online', onOnline);
-  window.addEventListener('offline', () => setState('offline'));
-
-  // Subscribe to syncQueue table changes via Dexie live query is not straightforward —
-  // callers should call onQueueWrite() from mutateNotes.put() via the exported hook below.
-  void onQueueWrite; // reference to prevent lint warnings; real wire-up in mutateNotes
+  window.addEventListener('offline', onOffline);
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility);
+  window.addEventListener('pagehide', onPageHide);
 
   return () => {
-    if (_debounceTimer) clearTimeout(_debounceTimer);
-    if (_pollTimer) clearInterval(_pollTimer);
+    unsubQueue();
+    if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
+    if (_maxWaitTimer) { clearTimeout(_maxWaitTimer); _maxWaitTimer = null; }
+    if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
     window.removeEventListener('online', onOnline);
+    window.removeEventListener('offline', onOffline);
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
+    window.removeEventListener('pagehide', onPageHide);
   };
 }
 
 /**
- * Call this after every `mutateNotes.put()` to trigger the debounced sync.
- * Decoupled so mutate.ts doesn't import syncEngine (avoids a circular dep chain).
+ * Call after every `mutateNotes.put()` to (re)arm the debounced push. Decoupled so mutate.ts doesn't
+ * import syncEngine (avoids a circular dep). The startSyncTriggers queue observer covers callers that
+ * write the queue directly; this is the explicit caller nudge for the same debounced push.
  */
 export function notifyQueueWrite(notebookId: NotebookId, apiBase = '/api'): void {
-  setState('pending');
-  if (_debounceTimer) clearTimeout(_debounceTimer);
-  _debounceTimer = setTimeout(() => syncNow(notebookId, apiBase), 1000);
+  schedulePush(notebookId, apiBase);
 }
 
 // Re-export for callers that need the NoteResponseSchema (used in pull)
