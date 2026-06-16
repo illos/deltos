@@ -44,6 +44,7 @@ export interface StepUpParams {
 export async function buildStepUpRequest(
   { keyStore, keyId, op, resource, audience }: StepUpParams,
   fetchFn: typeof fetch = globalThis.fetch,
+  nowMs: () => number = () => Date.now(),
 ): Promise<StepUpRequest> {
   const aud = audience ?? (typeof location !== 'undefined' ? location.hostname : 'localhost');
 
@@ -64,6 +65,12 @@ export async function buildStepUpRequest(
   }
 
   const challengeResp = ChallengeResponseSchema.parse(await resp.json());
+
+  // AUTH-1: use expiresAtMs (epoch number) for freshness — expiresAt (string) is display-only,
+  // never lexically compared. Client-side pre-check catches expired challenges before signing.
+  if (nowMs() >= challengeResp.expiresAtMs) {
+    throw new Error('step-up challenge already expired — retry to obtain a fresh challenge');
+  }
 
   // ── 2. Decode nonce to bytes (signs over raw entropy, not the base64url form) ─────────────────
   const nonce = base64urlDecodeStrict(challengeResp.nonce);

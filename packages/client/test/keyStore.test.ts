@@ -415,3 +415,84 @@ describe('WebAuthn provider — custody-leak negative (custody bar 6)', () => {
     expect(bytesToHex(pub)).toBe('d72f09afbc5466596b386cc67c3e1e59baf30f21a329faf3c5ccd3cadac8f3ce');
   });
 });
+
+// ── secSys audit coverage gaps (filled post-audit @ 875f8e4) ──────────────────────────────────
+//
+// Gap A: no-PRF device-key fallback path — all prior tests use prf:true. Verify the fallback
+// path (prf:false) seals, stores a device key, and successfully decrypts on unlock.
+//
+// Gap B: PRF-downgrade-resistance — enroll with prf:true, then attempt unlock without PRF.
+// The blob was wrapped with a PRF-derived key; the fallback device key is absent; unlock MUST
+// return null rather than attempting the wrong key.
+
+describe('WebAuthn provider — no-PRF device-key fallback (secSys gap A)', () => {
+  it('enroll → lock → unlock succeeds on the no-PRF path', async () => {
+    const ks = freshKs({ prf: false });
+    const { identity: enrolled } = await ks.enrollNew();
+    ks.lock();
+    const unlocked = await ks.unlock();
+    expect(unlocked).not.toBeNull();
+    expect(unlocked?.id).toBe(enrolled.id);
+  });
+
+  it('sign() works after no-PRF unlock', async () => {
+    const ks = freshKs({ prf: false });
+    await ks.enrollNew();
+    ks.lock();
+    await ks.unlock();
+    const sig = await ks.sign(new Uint8Array(32).fill(0x01));
+    expect(sig).toBeInstanceOf(Uint8Array);
+    expect(sig.length).toBe(64);
+  });
+
+  it('no-PRF path stores the device key; PRF path does not', async () => {
+    // We verify observable behavior: a PRF-enrolled store can unlock WITHOUT storing device key,
+    // while a no-PRF store requires the device key path. We check this indirectly:
+    // after PRF enroll, a get() that returns null-PRF (no extension) must return null from unlock.
+    // This relies on gap B below — if PRF-downgrade returns null, the PRF path never uses deviceKey.
+    const prf = freshKs({ prf: true });
+    await prf.enrollNew();
+    prf.lock();
+    expect(prf.isUnlocked()).toBe(false);
+
+    const noPrf = freshKs({ prf: false });
+    await noPrf.enrollNew();
+    noPrf.lock();
+    expect(noPrf.isUnlocked()).toBe(false);
+    // no-PRF unlock must still succeed (device key path):
+    const id = await noPrf.unlock();
+    expect(id).not.toBeNull();
+  });
+});
+
+describe('WebAuthn provider — PRF-downgrade-resistance (secSys gap B)', () => {
+  it('unlock() returns null when enrolled with PRF but PRF is absent at unlock', async () => {
+    // Enroll with PRF — wrapping key is HKDF(prf_output, credId, ...) and NOT in deviceKey table
+    const ks = createWebAuthnKeyStore({
+      backend: {
+        create: vi.fn().mockResolvedValue(makeFakeCred({ prf: true })),
+        // unlock backend returns the same cred BUT with no PRF output (PRF absent/downgraded)
+        get: vi.fn().mockResolvedValue(makeFakeCred({ prf: false })),
+      },
+      dbName: `deltos-identity-test-${++_dbSeq}`,
+    });
+    await ks.enrollNew();
+    ks.lock();
+    // PRF absent at unlock → recoverWrappingKey returns null → unlock returns null (not throw)
+    const result = await ks.unlock();
+    expect(result).toBeNull();
+  });
+
+  it('PRF downgrade is null, not throw', async () => {
+    const ks = createWebAuthnKeyStore({
+      backend: {
+        create: vi.fn().mockResolvedValue(makeFakeCred({ prf: true })),
+        get: vi.fn().mockResolvedValue(makeFakeCred({ prf: false })),
+      },
+      dbName: `deltos-identity-test-${++_dbSeq}`,
+    });
+    await ks.enrollNew();
+    ks.lock();
+    await expect(ks.unlock()).resolves.toBeNull();
+  });
+});

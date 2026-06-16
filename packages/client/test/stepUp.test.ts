@@ -103,6 +103,44 @@ describe('buildStepUpRequest — locked KeyStore', () => {
 
 // ── Tests: challenge fetch ───────────────────────────────────────────────────────────────────────
 
+// ── Tests: AUTH-1 freshness (expiresAtMs, never expiresAt string) ───────────────────────────────
+
+describe('buildStepUpRequest — freshness guard (AUTH-1)', () => {
+  it('throws when the challenge has already expired (expiresAtMs in the past)', async () => {
+    const expiredResp = { ...FAKE_CHALLENGE_RESP, expiresAtMs: 1 }; // epoch 1ms — always past
+    await expect(
+      buildStepUpRequest(
+        { keyStore: makeUnlockedStub(), keyId: TEST_KEY_ID, op: STEP_UP_OP, resource: STEP_UP_RESOURCE, audience: TEST_AUDIENCE },
+        mockChallengeOk(expiredResp),
+        () => 1000, // nowMs = 1 000ms > expiresAtMs = 1ms
+      ),
+    ).rejects.toMatchObject({ message: expect.stringMatching(/expired/i) });
+  });
+
+  it('proceeds when expiresAtMs is in the future', async () => {
+    const futureResp = { ...FAKE_CHALLENGE_RESP, expiresAtMs: 9_000_000_000_000 };
+    await expect(
+      buildStepUpRequest(
+        { keyStore: makeUnlockedStub(), keyId: TEST_KEY_ID, op: STEP_UP_OP, resource: STEP_UP_RESOURCE, audience: TEST_AUDIENCE },
+        mockChallengeOk(futureResp),
+        () => 1000,
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it('does NOT compare expiresAt (string) — only expiresAtMs triggers expiry', async () => {
+    // expiresAt is a past-looking string but expiresAtMs is far future — must NOT expire
+    const mixedResp = { ...FAKE_CHALLENGE_RESP, expiresAt: '2000-01-01T00:00:00.000Z', expiresAtMs: 9_000_000_000_000 };
+    await expect(
+      buildStepUpRequest(
+        { keyStore: makeUnlockedStub(), keyId: TEST_KEY_ID, op: STEP_UP_OP, resource: STEP_UP_RESOURCE, audience: TEST_AUDIENCE },
+        mockChallengeOk(mixedResp),
+        () => 1000,
+      ),
+    ).resolves.toBeDefined();
+  });
+});
+
 describe('buildStepUpRequest — challenge fetch', () => {
   it('POSTs to /api/auth/challenge with purpose:step-up and the keyId', async () => {
     const fetchFn = mockChallengeOk();

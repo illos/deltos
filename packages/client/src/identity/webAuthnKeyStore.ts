@@ -8,7 +8,10 @@
  * Wrapping-key strategy (PIN-ID-6):
  *   PRF available  → wrappingKey = HKDF(prf_output, credId_bytes, 'deltos-at-rest-v1')
  *   PRF absent     → wrappingKey = random 32-byte key stored device-locally in IndexedDB
- *                    (security = same-origin + UV ceremony; a pending secSys ruling may harden this)
+ *                    (security = same-origin + UV ceremony; secSys RULED acceptable as PIN-ID-6
+ *                    baseline on two conditions: (i) surface the plaintext-key-in-IDB limitation in
+ *                    the UI (D5-style disclosure when PRF is unavailable), (ii) code is PRF-first so
+ *                    the no-PRF path is a degraded fallback, not the default.)
  *
  * WebAuthn-first-await (PIN-ID-9):
  *   enrollNew / enrollExisting: generateMnemonic() is sync; WebAuthn create() is the FIRST await.
