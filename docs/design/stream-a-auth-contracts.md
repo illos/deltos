@@ -52,8 +52,9 @@ binary = base64url TEXT (ruling 1). Comparison-critical expiry = epoch-millis IN
 CREATE TABLE devices (
   keyId                  TEXT PRIMARY KEY,         -- server-ASSIGNED handle (random, >=16B base64url)
   signingPublicKey       TEXT NOT NULL,            -- ACCOUNT key; base64url(Ed25519 pubkey, 32B). -> accountFingerprint
-  deviceSigningPublicKey TEXT NOT NULL,            -- per-device verification key (F1 option-(b) seam, day-one per
-                                                   --   strawman Rev-1 §F1). v1 = signingPublicKey; option-(b) differs.
+  deviceSigningPublicKey TEXT,                     -- per-device verification key (F1 option-(b) seam, day-one per
+                                                   --   strawman Rev-1 §F1). NULLABLE (planSys ruling); the v1 route
+                                                   --   populates it = signingPublicKey, option-(b) differs.
   accountFingerprint     TEXT NOT NULL,            -- base64url(SHA-256(signingPublicKey)) — server-COMPUTED (F2)
   deviceLabel            TEXT NOT NULL,
   createdAt              TEXT NOT NULL,            -- ISO-Z, audit-only
@@ -113,7 +114,7 @@ createChallenge(row: { challengeId, nonce, keyId: string|null, purpose, issuedAt
 // the SERVER clock; no client timestamp ever enters. Do NOT add a getChallenge() that reads these.
 consumeChallenge(challengeId: string, purpose: AuthPurpose, serverNowMs: number): Promise<{ nonce: string, keyId: string|null } | null>
 
-registerDevice(row: { keyId, signingPublicKey, deviceSigningPublicKey, accountFingerprint, deviceLabel, createdAt }): Promise<void>  // v1: deviceSigningPublicKey = signingPublicKey
+registerDevice(row: { keyId, signingPublicKey, deviceSigningPublicKey?, accountFingerprint, deviceLabel, createdAt }): Promise<void>  // optional, omit->NULL; v1 route passes = signingPublicKey
 getDevice(keyId: string): Promise<{ signingPublicKey, accountFingerprint, revokedAt: string|null } | null>
 listDevices(accountFingerprint: string): Promise<Array<{ keyId, deviceLabel, createdAt, revokedAt }>>
 
