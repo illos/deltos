@@ -16,6 +16,13 @@ guess it was lifted?). See `KICKOFF.md` §Reuse discipline.
 ---
 
 ## ⏯ CURRENT STATE (2026-06-16 — resume here)
+> 🧭 **COURSE-CORRECTION IN PROGRESS (team PAUSED).** Mid-v1-dogfood the user halted to re-anchor to the
+> locked arch: (1) SHELL — render-before-data, auth/sync in background, recovery-phrase ≠ boot gate (proper
+> E4 fix); (2) SYNC — option A conflict-as-version (divergent offline edit kept as a VERSION of the same
+> note, not a sibling fork; revises PIN-SYNC-3/4; full history UI → Phase 3). Reuses the audited Stream-B
+> no-lost-edit core. See the latest **Decision log** entry. Team HELD until planner finalizes the spec
+> (open: reconcile UX) + hands pilot. The dogfood/finish-line state below is PRE-correction context.
+
 Design complete; **Phase 1 building.** Delivery vehicle = the **local-first PWA** (desktop + mobile,
 surfaces pinnable as home-screen webclips). Long-term native target is framed in *Later* (native
 Android, for full surface control + sideload freedom — the own-your-software values).
@@ -500,3 +507,33 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   CF-gated route handlers; **green end-to-end AUTH PATH imminent.** Consequence: **devSys2's Stream-D
   gate (chokepoint green) is now effectively open** — it finishes its tail → client storage → Stream D.
   Next milestone: first green e2e auth path + secSys CF sign-off.
+- 2026-06-16 — **🧭 COURSE-CORRECTION (user-led; team PAUSED).** Mid-dogfood, the user called a halt:
+  the recent E4 thread had drifted into piling auth machinery (PRF / disclosure-copy / Option-A/B /
+  session-re-auth) **into the launch path**, which violates the LOCKED architecture (`KICKOFF` §Locked:
+  *"Render-before-data"*, *"Offline auth must not block launch"*, *"stale-while-revalidate reads"*).
+  Confirmed against the roadmap: the user's recalled model (online-first, local-first quick load, sync
+  in background, fork/duplicate on conflict) tracks the locked arch **verbatim** — so the build drifted,
+  the doc didn't. Corrected direction has TWO coupled parts:
+  **(1) SHELL/LOAD (drift-correction):** render notes from the local store IMMEDIATELY on launch; auth +
+  sync run in the BACKGROUND after the UI is up; recovery-phrase screen = a non-blocking nudge / sync
+  status, NOT a boot gate. ONLY genuine first-run (no local data) or post-clear-browsing-data (no local
+  key) is a blocking auth screen. This is the PROPER E4 fix; the durable-keyId fix (`2d629a6`) stays as a
+  correctness fix underneath but is no longer "the answer."
+  **(2) SYNC/CONFLICT = option A (user-decided), conflict-as-version:** online → changes sync near-real-time
+  (debounced push per edit); offline → edits buffer + sync on reconnect; on reconnect, if the server copy
+  (source) advanced beyond the base version this device last synced → the divergent offline edit is
+  **RETAINED as a conflict VERSION of the SAME note** (same note ID), never lost. **Revises PIN-SYNC-4**
+  (no more new-ID sibling fork → kills the contrived duplicate-note AND fixes the relation-orphan problem,
+  since the note keeps its ID so inbound relations stay valid) **and PIN-SYNC-3** (offline edit vs
+  server-delete → retained conflict version, same non-loss principle). v1 surface = MINIMAL non-blocking:
+  a conflict indicator on the note + view-the-other-version + resolve (keep-mine / keep-theirs / keep-both);
+  **full version-history timeline/browse UI DEFERRED to Phase 3** (whole-note-snapshot grain per S2;
+  per-block history stays Phase 3, block-IDs already preserved for it). **Reuses the audited Stream-B
+  no-lost-edit core** (both sides already retained correctly — the hard half is done) + the
+  version-counter/`expectedVersion` CAS for conflict detection. **Reconcile UX RESOLVED (user):**
+  non-blocking **toast on conflict** + **persistent badge** on the note + open→view→resolve
+  (keep-mine/keep-theirs/keep-both; keep-both = both retained as versions of the one note, explicit
+  "duplicate to new note" for a true split). **SPEC WRITTEN + HANDED OFF:**
+  `docs/specs/v1-shell-and-conflict-versions.md` (SPEC-READY → pilot). Team re-plans off this spec; the
+  PRF/disclosure/Option-A-B/autoUnlock work is re-scoped under it (disclosure stays at enroll, out of the
+  launch path; secSys re-confirms; planSys still owes the disclosure copy-approval).
