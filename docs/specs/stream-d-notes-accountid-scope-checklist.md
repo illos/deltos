@@ -86,13 +86,18 @@ serverNote SELECT is the no-leak behavior it wants; no other sync notes query ex
 when the signature lands. Those tests seed a SINGLE account/notebook today (the root-cause blind
 spot).
 
-### ⚠ OWNERSHIP DISCREPANCY (routed to pilot 2026-06-16) — who edits index.ts notes call sites?
+### OWNERSHIP — RULED (pilot, 2026-06-16): scopeSys owns index.ts notes routes + mutate.ts
 
-Pilot's fresh-start message assigned scopeSys the **index.ts notes data routes**
-(note.get/update/delete, block.append, property.set, note.search) + mutate.ts. devSys2's memory
-records the index.ts call sites as devSys2's (devSys2 = "index.ts call-sites + sync.ts"). These
-conflict on index.ts. **Resolution pending pilot.** Until ruled: scopeSys holds index.ts edits to
-avoid a collision; signature + mutate.ts ownership are unaffected (both confirmed mine).
+Split CONFIRMED by pilot:
+- **scopeSys** = the index.ts NOTES routes — the 5 inline SELECTs (`:147/:170/:201/:260/:297`) +
+  the notes-route mutate call sites (note.create→insertNote, note.search→searchNotes, patch/delete)
+  — PLUS `mutate.ts` single-editor (all 7 helper defs + the 19 `conflict.test.ts` call-site fixes).
+- **devSys2** = `sync.ts` ONLY (its pullNotes/insertNote/updateNote surfaces are sync.ts call sites
+  hitting scopeSys's mutate.ts helpers; it never edits index.ts). devSys2's earlier index.ts claim
+  was stale from the original broad Stream-D framing; pilot has had it corrected.
+
+No remaining ownership ambiguity. Proceed on every index.ts notes-route + mutate.ts edit the moment
+devSys's `http.ts` principal-surfacing seam lands.
 
 ---
 
