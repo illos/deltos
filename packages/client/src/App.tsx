@@ -24,9 +24,10 @@ import { useNotes } from './db/storeHooks.js';
  *   - `init()` reads only the LOCAL durable identity (isEnrolled + keyId from IndexedDB, no network),
  *     then kicks a background session re-mint it does NOT await — so the shell paints before any
  *     auth round-trip (render-before-data).
- *   - The boot view is chosen purely by {@link selectBootView}(isEnrolled): a local key present →
- *     the notes shell, regardless of session/unlock state; no local key → the ONE blocking gate
- *     (enroll, with recover / QR links). Session/unlock state never gates the UI.
+ *   - The boot view is chosen purely by {@link selectBootView}(isEnrolled, enrolling): a local key
+ *     present → the notes shell, regardless of session/unlock state; no local key → the ONE blocking
+ *     gate (enroll, with recover / QR links). Session/unlock state never gates the UI. The `enrolling`
+ *     latch pins the enroll surface through a live ceremony so the gate can't short-circuit it.
  *   - A failed / pending background session is a quiet, non-blocking nudge ({@link SessionStatus}),
  *     never an eviction to a recovery screen. This is what closes E4 properly — there is no
  *     "device hasn't been registered" boot gate; it survives only as the no-local-key recovery path.
@@ -55,8 +56,12 @@ export function App() {
 
 function AppRoutes() {
   const isEnrolled = useAuthStore((s) => s.isEnrolled);
+  // A live enroll/recover/QR ceremony pins the enroll surface end-to-end (shellGate) so the gate
+  // can't unmount it after the credential is created but before the phrase is shown + the device is
+  // registered + a session is minted (the P0 mid-ceremony-unmount bug).
+  const enrolling = useAuthStore((s) => s.enrolling);
 
-  switch (selectBootView(isEnrolled)) {
+  switch (selectBootView(isEnrolled, enrolling)) {
     // Boot: the ONLY thing gating first paint is the LOCAL durable-identity read (no network, works
     // offline). The static index.html skeleton has already painted; this is a brief neutral hold.
     case 'boot':

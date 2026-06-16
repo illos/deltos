@@ -85,8 +85,23 @@ export type ClaimUsernameResult =
   | { ok: false; code: 'name-taken' | 'account-has-username' | 'invalid' | 'not-authed' | 'network' };
 
 export interface AuthState {
-  /** null = not yet checked (initial loading). false = not enrolled. true = enrolled. */
+  /**
+   * null = not yet checked (initial loading). false = no completed identity. true = a completed
+   * identity exists. DURING a live enroll ceremony this stays false until {@link AuthActions.finalizeEnroll}
+   * flips it at completion (planSys fix-shape invariant: isEnrolled means CEREMONY COMPLETE — recovery
+   * phrase shown+acknowledged + register + mintSession done — NOT credential-created-at-passkey-step).
+   * On a cold {@link AuthActions.init} it is derived from blob-existence; the {@link enrolling} latch
+   * is what distinguishes a mid-ceremony session from a completed-then-reloaded one (see shellGate).
+   */
   isEnrolled: boolean | null;
+  /**
+   * A live enroll / recover / QR-join ceremony is in progress in THIS session. Pins the enroll
+   * surface end-to-end (shellGate) so the boot gate can NOT unmount a ceremony that has created a
+   * credential but not yet shown+acknowledged the phrase, registered, and minted (the P0). In-memory
+   * only (reset on reload — a cold load then keys on blob-existence). Set by {@link AuthActions.enroll}
+   * / {@link AuthActions.enrollExisting}; cleared by {@link AuthActions.finalizeEnroll}.
+   */
+  enrolling: boolean;
   isUnlocked: boolean;
   identity: Identity | null;
   /** Server-issued device handle, persisted to localStorage. null = not registered yet. */
@@ -171,6 +186,18 @@ interface AuthActions {
    */
   claimUsername(username: string): Promise<ClaimUsernameResult>;
 
+  /**
+   * Mark the enroll ceremony COMPLETE: clear the {@link AuthState.enrolling} latch and flip
+   * {@link AuthState.isEnrolled} true in one atomic update, releasing the boot gate to the shell.
+   *
+   * The enroll / recover / QR-join routes MUST call this immediately BEFORE their terminal
+   * navigate('/') (every success AND skip path), in the same tick — so the gate is already 'shell'
+   * when '/' is hit (otherwise the still-latched enroll-gate's catch-all bounces '/' back to /enroll).
+   * It is the ONLY place isEnrolled flips true during a live ceremony, which is what upholds the
+   * fix-shape invariant (phrase shown+acknowledged + register + mint all precede the call).
+   */
+  finalizeEnroll(): void;
+
   lock(): void;
   clearError(): void;
   /** Dismiss the one-time device-local migration notice (after it has been shown once). */
@@ -179,6 +206,7 @@ interface AuthActions {
 
 export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   isEnrolled: null,
+  enrolling: false,
   isUnlocked: false,
   identity: null,
   keyId: getStoredKeyId(),
@@ -259,20 +287,26 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   },
 
   async enroll() {
-    set({ error: null });
+    // Latch the ceremony BEFORE the WebAuthn await — pins the enroll surface so the gate can't
+    // unmount it once the blob is sealed. isEnrolled is NOT set here (deferred to finalizeEnroll at
+    // ceremony completion — the fix-shape invariant). set() is synchronous, so this does not break
+    // PIN-ID-9 (no await precedes the keyStore call).
+    set({ error: null, enrolling: true });
     const result = await keyStore.enrollNew(); // WebAuthn create() is the FIRST await (PIN-ID-9)
     const prfStatus = await getEnrollmentPrfStatus();
     const usesPrf = prfStatus?.usesPrf ?? false;
-    set({ isEnrolled: true, isUnlocked: true, identity: result.identity, usesPrf });
+    set({ isUnlocked: true, identity: result.identity, usesPrf });
     return { mnemonic: result.mnemonic, usesPrf };
   },
 
   async enrollExisting(mnemonic: string) {
-    set({ error: null });
+    // Same latch as enroll() — RecoverRoute + QrReceiveRoute share the credential→register→mint
+    // sequence and the identical mid-ceremony unmount race. isEnrolled deferred to finalizeEnroll.
+    set({ error: null, enrolling: true });
     const identity = await keyStore.enrollExisting(mnemonic); // WebAuthn create() first await (PIN-ID-9)
     const prfStatus = await getEnrollmentPrfStatus();
     const usesPrf = prfStatus?.usesPrf ?? false;
-    set({ isEnrolled: true, isUnlocked: true, identity, usesPrf });
+    set({ isUnlocked: true, identity, usesPrf });
     return { usesPrf };
   },
 
@@ -357,6 +391,12 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     if (resp.status === 409) return { ok: false, code: 'name-taken' };
     if (resp.status === 400) return { ok: false, code: 'invalid' };
     return { ok: false, code: 'network' };
+  },
+
+  finalizeEnroll() {
+    // Atomic: release the latch AND flip isEnrolled in one update so the gate transitions straight
+    // enroll-gate → shell with no intermediate frame (the routes call this just before navigate('/')).
+    set({ enrolling: false, isEnrolled: true });
   },
 
   lock() {
