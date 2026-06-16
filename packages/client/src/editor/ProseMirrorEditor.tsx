@@ -126,12 +126,28 @@ export function ProseMirrorEditor({
           onChangeRef.current(title, body);
         }, SAVE_DEBOUNCE_MS);
       },
+      // Flush the pending debounce on blur so the Dexie write starts before the route
+      // change (iOS fires blur during the swipe-back gesture, ~300ms before navigation
+      // completes — enough lead time for IndexedDB to finish before the list mounts).
+      handleDOMEvents: {
+        blur: () => {
+          if (saveTimerRef.current !== null) {
+            clearTimeout(saveTimerRef.current);
+            saveTimerRef.current = null;
+            const title = extractTitleFromDoc(view.state.doc);
+            const body = pmDocToSpine(view.state.doc);
+            onChangeRef.current(title, body);
+          }
+          return false;
+        },
+      },
     });
 
     viewRef.current = view;
     if (autoFocus) view.focus();
 
     return () => {
+      // Cleanup flush: covers programmatic unmounts where blur may not have fired.
       if (saveTimerRef.current !== null) {
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
