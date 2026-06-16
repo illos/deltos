@@ -25,6 +25,89 @@ export interface TodoContent      { checked: boolean; segments: TextSegment[] }
 export interface ListContent      { ordered: boolean }
 // divider: no content (undefined)
 
+// ── Runtime content guards (schema-first interpretation boundary) ────────────────────────────
+//
+// Notes body crosses the sync boundary (device → device, version → version). Unchecked casts
+// on block.content would crash spineBlockToPmNode on malformed/cross-version data. These guards
+// validate at the editor's interpretation point so that bad content degrades to an empty block
+// rather than throwing and breaking the entire note for the user.
+
+function isString(x: unknown): x is string { return typeof x === 'string'; }
+function isBool(x: unknown): x is boolean   { return typeof x === 'boolean'; }
+
+function isTextSegment(x: unknown): x is TextSegment {
+  if (!x || typeof x !== 'object') return false;
+  const o = x as Record<string, unknown>;
+  if (!isString(o['text'])) return false;
+  if ('bold' in o && o['bold'] !== true) return false;
+  if ('italic' in o && o['italic'] !== true) return false;
+  if ('code' in o && o['code'] !== true) return false;
+  if ('link' in o && !isString(o['link'])) return false;
+  return true;
+}
+
+function parseSegments(raw: unknown): TextSegment[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isTextSegment);
+}
+
+function parseLevel(raw: unknown): 1|2|3|4|5|6 {
+  if (raw === 1 || raw === 2 || raw === 3 || raw === 4 || raw === 5 || raw === 6) return raw;
+  return 1;
+}
+
+function parseParagraphContent(raw: unknown): ParagraphContent {
+  if (raw && typeof raw === 'object') {
+    return { segments: parseSegments((raw as Record<string, unknown>)['segments']) };
+  }
+  return { segments: [] };
+}
+
+function parseHeadingContent(raw: unknown): HeadingContent {
+  if (raw && typeof raw === 'object') {
+    const o = raw as Record<string, unknown>;
+    return { level: parseLevel(o['level']), segments: parseSegments(o['segments']) };
+  }
+  return { level: 1, segments: [] };
+}
+
+function parseQuoteContent(raw: unknown): QuoteContent {
+  if (raw && typeof raw === 'object') {
+    return { segments: parseSegments((raw as Record<string, unknown>)['segments']) };
+  }
+  return { segments: [] };
+}
+
+function parseCodeContent(raw: unknown): CodeContent {
+  if (raw && typeof raw === 'object') {
+    const o = raw as Record<string, unknown>;
+    return {
+      code: isString(o['code']) ? o['code'] : '',
+      ...(isString(o['language']) ? { language: o['language'] } : {}),
+    };
+  }
+  return { code: '' };
+}
+
+function parseTodoContent(raw: unknown): TodoContent {
+  if (raw && typeof raw === 'object') {
+    const o = raw as Record<string, unknown>;
+    return {
+      checked: isBool(o['checked']) ? o['checked'] : false,
+      segments: parseSegments(o['segments']),
+    };
+  }
+  return { checked: false, segments: [] };
+}
+
+function parseListContent(raw: unknown): ListContent {
+  if (raw && typeof raw === 'object') {
+    const o = raw as Record<string, unknown>;
+    return { ordered: isBool(o['ordered']) ? o['ordered'] : false };
+  }
+  return { ordered: false };
+}
+
 // ── PM doc → spine ────────────────────────────────────────────────────────────────────────
 
 function inlineToSegments(node: PmNode): TextSegment[] {
@@ -194,23 +277,23 @@ function spineBlockToPmNode(schema: Schema, block: Block): PmNode | PmNode[] | n
 
   switch (block.type) {
     case 'paragraph': {
-      const c = block.content as ParagraphContent | undefined;
-      const inline = c ? segmentsToPmInline(schema, c.segments) : [];
-      return schema.nodes['paragraph']!.create({ id }, inline);
+      const c = parseParagraphContent(block.content);
+      return schema.nodes['paragraph']!.create({ id }, segmentsToPmInline(schema, c.segments));
     }
 
     case 'heading': {
-      const c = block.content as HeadingContent | undefined;
-      const inline = c ? segmentsToPmInline(schema, c.segments) : [];
-      return schema.nodes['heading']!.create({ id, level: c?.level ?? 1 }, inline);
+      const c = parseHeadingContent(block.content);
+      return schema.nodes['heading']!.create({ id, level: c.level }, segmentsToPmInline(schema, c.segments));
     }
 
     case 'quote': {
-      const c = block.content as QuoteContent | undefined;
+      const c = parseQuoteContent(block.content);
       const inner: PmNode[] = [];
-      if (c && c.segments.length > 0) {
-        const freshId = newBlockId() as string;
-        inner.push(schema.nodes['paragraph']!.create({ id: freshId }, segmentsToPmInline(schema, c.segments)));
+      if (c.segments.length > 0) {
+        inner.push(schema.nodes['paragraph']!.create(
+          { id: newBlockId() as string },
+          segmentsToPmInline(schema, c.segments),
+        ));
       }
       for (const child of block.children ?? []) {
         const converted = spineBlockToPmNode(schema, child);
@@ -219,34 +302,33 @@ function spineBlockToPmNode(schema: Schema, block: Block): PmNode | PmNode[] | n
           else inner.push(converted);
         }
       }
-      // blockquote requires at least one block child
       const content = inner.length > 0 ? inner : [schema.nodes['paragraph']!.create({ id: newBlockId() as string })];
       return schema.nodes['blockquote']!.create({ id }, content);
     }
 
     case 'code': {
-      const c = block.content as CodeContent | undefined;
-      const textNode = c?.code ? [schema.text(c.code)] : [];
-      return schema.nodes['code_block']!.create({ id, language: c?.language ?? null }, textNode);
+      const c = parseCodeContent(block.content);
+      const textNode = c.code ? [schema.text(c.code)] : [];
+      return schema.nodes['code_block']!.create({ id, language: c.language ?? null }, textNode);
     }
 
     case 'todo': {
-      const c = block.content as TodoContent | undefined;
-      const inline = c ? segmentsToPmInline(schema, c.segments) : [];
-      return schema.nodes['todo_item']!.create({ id, checked: c?.checked ?? false }, inline);
+      const c = parseTodoContent(block.content);
+      return schema.nodes['todo_item']!.create(
+        { id, checked: c.checked },
+        segmentsToPmInline(schema, c.segments),
+      );
     }
 
     case 'divider':
       return schema.nodes['horizontal_rule']!.create({ id });
 
     case 'list': {
-      const c = block.content as ListContent | undefined;
-      const ordered = c?.ordered ?? false;
-      const listNodeType = ordered ? schema.nodes['ordered_list']! : schema.nodes['bullet_list']!;
+      const c = parseListContent(block.content);
+      const listNodeType = c.ordered ? schema.nodes['ordered_list']! : schema.nodes['bullet_list']!;
 
       const items: PmNode[] = (block.children ?? []).map((child) => {
         const itemId = child.id as string;
-        // Nested list children become list items with nested lists
         const nestedLists: PmNode[] = [];
         for (const subChild of child.children ?? []) {
           const nested = spineBlockToPmNode(schema, subChild);
@@ -258,37 +340,34 @@ function spineBlockToPmNode(schema: Schema, block: Block): PmNode | PmNode[] | n
 
         let innerNode: PmNode;
         if (child.type === 'todo') {
-          const tc = child.content as TodoContent | undefined;
-          const inline = tc ? segmentsToPmInline(schema, tc.segments) : [];
+          const tc = parseTodoContent(child.content);
           innerNode = schema.nodes['todo_item']!.create(
-            { id: newBlockId() as string, checked: tc?.checked ?? false },
-            inline,
+            { id: newBlockId() as string, checked: tc.checked },
+            segmentsToPmInline(schema, tc.segments),
           );
         } else {
-          // paragraph (or unknown → paragraph fallback)
-          const pc = child.content as ParagraphContent | undefined;
-          const inline = pc ? segmentsToPmInline(schema, pc.segments) : [];
-          innerNode = schema.nodes['paragraph']!.create({ id: newBlockId() as string }, inline);
+          const pc = parseParagraphContent(child.content);
+          innerNode = schema.nodes['paragraph']!.create(
+            { id: newBlockId() as string },
+            segmentsToPmInline(schema, pc.segments),
+          );
         }
 
         return schema.nodes['list_item']!.create({ id: itemId }, [innerNode, ...nestedLists]);
       });
 
-      // list requires at least one list_item
       if (items.length === 0) {
-        items.push(
-          schema.nodes['list_item']!.create(
-            { id: newBlockId() as string },
-            [schema.nodes['paragraph']!.create({ id: newBlockId() as string })],
-          ),
-        );
+        items.push(schema.nodes['list_item']!.create(
+          { id: newBlockId() as string },
+          [schema.nodes['paragraph']!.create({ id: newBlockId() as string })],
+        ));
       }
 
       return listNodeType.create({ id }, items);
     }
 
     default:
-      // Unknown or plugin block: represent as plugin_block atom
+      // Unknown or plugin block: represent as plugin_block atom.
       return schema.nodes['plugin_block']!.create({
         id,
         pluginType: block.type,
@@ -307,7 +386,6 @@ export function spineToPmDoc(schema: Schema, blocks: BlockBody): PmNode {
       else nodes.push(converted);
     }
   }
-  // doc must have at least one block
   if (nodes.length === 0) {
     nodes.push(schema.nodes['paragraph']!.create({ id: null }));
   }
