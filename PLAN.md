@@ -459,6 +459,14 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   Team validated + standing by per-area (devSys2 client/sync/offline/recover fixes, gruntSys regression
   pins, devSys live-worker/safety-net, secSys security, scopeSys gate-record → `v1-dg-cap-gate-record.md`,
   prod-MODE=YES). Capstone GO sent (smoke `:8449` + recorded capstone `:8451`).
+- 2026-06-16 — **DOGFOOD found a v1-BLOCKING UI gap (the capstone earning its keep):** no way to **exit
+  or save a note** from the editor — user stuck in the editor, can't navigate steps 4→8. Need an editor
+  EXIT (done/back) → a note LIST/home (save = autosave via the reactive store; the gap is navigation + a
+  list, not persistence). Routed to gruntSys2 (HMR); fix must reach the `:8451` prod client build for the
+  recorded run. **Lesson:** the automated gate (14/14 + 13/13) drives the store programmatically, so it
+  CANNOT catch a missing UI-navigation affordance — "automatable gate proven" ≠ "usable"; the on-device
+  capstone is the only thing that catches shell-completeness gaps. v1 NOT done until this lands + the
+  capstone re-runs.
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
