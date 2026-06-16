@@ -116,6 +116,56 @@ describe('single-flight guard (PIN-SYNC-1 client gate)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Test 1b: sync requests carry the in-memory grant token (Stream-D auth header, F7)
+// ---------------------------------------------------------------------------
+
+describe('Authorization header (Stream-D, F7 in-memory token)', () => {
+  it('attaches Authorization: Bearer <token> to push AND pull, read from the in-memory auth store', async () => {
+    const { useAuthStore } = await import('../src/auth/store.js');
+    useAuthStore.setState({ bearerToken: 'grant-tok-abc' });
+
+    const seedId = 'note-auth-00000000-0000-4000-8000-000000000001';
+    const seen: { push?: string; pull?: string } = {};
+
+    global.fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      const auth = (init?.headers as Record<string, string> | undefined)?.['Authorization'];
+      if (u.includes('/sync/push')) {
+        seen.push = auth;
+        return new Response(
+          JSON.stringify({ results: [{ id: seedId, outcome: 'accepted', version: 1, syncSeq: 1 }] }),
+          { status: 200 },
+        );
+      }
+      seen.pull = auth;
+      return new Response(JSON.stringify({ notes: [], nextCursor: 0, hasMore: false }), { status: 200 });
+    }) as typeof fetch;
+
+    const storage: Record<string, string> = {};
+    global.localStorage = {
+      getItem: (k: string) => storage[k] ?? null,
+      setItem: (k: string, v: string) => { storage[k] = v; },
+      removeItem: (k: string) => { delete storage[k]; },
+    } as unknown as Storage;
+
+    const { syncNow } = await import('../src/lib/syncEngine.js');
+    const { db } = await import('../src/db/schema.js');
+    const seedNote = makeNote(seedId, 0, 'auth header seed');
+    await db.notes.put(seedNote);
+    await db.syncQueue.add({ id: crypto.randomUUID(), recordId: seedId, payload: seedNote, baseVersion: 0, createdAt: NOW });
+
+    syncNow(NB, '');
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(seen.push).toBe('Bearer grant-tok-abc');
+    expect(seen.pull).toBe('Bearer grant-tok-abc');
+
+    // F7 + test isolation: clear the in-memory token so it can't leak into other tests.
+    useAuthStore.setState({ bearerToken: null });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Test 2: pending-edit pull guard — pull must not stomp a note with a local edit
 // ---------------------------------------------------------------------------
 

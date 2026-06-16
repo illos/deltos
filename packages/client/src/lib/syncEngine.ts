@@ -1,4 +1,5 @@
 import { getStore } from '../db/store.js';
+import { useAuthStore } from '../auth/store.js';
 import type { SyncQueueEntry } from '../db/schema.js';
 import type { Note, NoteId, NotebookId, SyncStatus } from '@deltos/shared';
 import { NoteResponseSchema } from '@deltos/shared';
@@ -8,6 +9,18 @@ import type {
   SyncPullResponse,
   SyncNote,
 } from '@deltos/shared';
+
+/**
+ * The `Authorization: Bearer <grant-token>` header for sync requests. The token is read FRESH from
+ * the in-memory auth store at request time (F7: the grant token lives ONLY in memory — Zustand —
+ * never persisted at rest; reading it here keeps it that way and picks up a re-unlock's new token).
+ * When locked / not yet unlocked the token is null and the header is omitted — the server then
+ * resolves no real principal and the F13 tripwire denies in production (sync needs an authed client).
+ */
+function authHeader(): Record<string, string> {
+  const token = useAuthStore.getState().bearerToken;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 /**
  * Stream B sync engine: offline-first write buffer + server-authoritative pull.
@@ -152,7 +165,7 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
 
     const res = await fetch(`${apiBase}/sync/push`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`push ${res.status}`);
@@ -223,6 +236,7 @@ async function pullUpdates(notebookId: NotebookId, apiBase: string): Promise<voi
   while (hasMore) {
     const res = await fetch(
       `${apiBase}/sync/pull?notebookId=${encodeURIComponent(notebookId)}&cursor=${next}`,
+      { headers: authHeader() },
     );
     if (!res.ok) throw new Error(`pull ${res.status}`);
 
