@@ -311,3 +311,101 @@ F1(a) — both secSys conditions met: (i) the revoke≠lockout limitation goes i
 SECOND-PASS-CLEAR I lock this FINAL union into `@deltos/shared` + build `can()`'s exhaustive switch
 with the signed-request (op,resource) assertion, the F2 registration test, and the item-1
 cross-(op,resource) rejection test.
+
+---
+
+# Revision 3 — WIRE proof-bodies strawman (pre-build, for secSys) — wire-vs-verified-output split made explicit
+
+**Status:** the FINAL union of Rev 2 is **LOCKED** — committed at `1cfaf3e` and live in
+`packages/shared/src/api/grant.ts` (byte-identical to Rev 2's lock target; `can()` switch landed
+with it). So `PrincipalVerification` is **closed; not reopened here.** What is **still absent in
+source** (only stale `dist/auth/canonical.*` + `requests.*` orphans exist — being purged, src
+deleted) and is the **next build surface** is the pair of WIRE proof-body modules:
+`packages/shared/src/auth/canonical.ts` (the TLV codec) + `requests.ts` (the signed wire requests).
+Per pilot's sequencing this Revision is the **concrete strawman secSys pressure-tests BEFORE I
+build those two files** — replay-resistance, challenge-freshness, pubkey↔account binding all live in
+*these* shapes, not in the (already-closed) union.
+
+## The boundary secSys asked to see explicit: WIRE request ≠ verified-OUTPUT principal
+
+There are **two distinct schema families** and signature material crosses **exactly one** of them:
+
+| Layer | Module | What it carries | Signature bytes? | Trust |
+|---|---|---|---|---|
+| **WIRE request** (input, pre-verify) | `auth/requests.ts` + `auth/canonical.ts` | the raw proof a caller presents: pubkey, challengeId, requestedScope/op/resource, **and the Ed25519 `signature`** over the canonical TLV | **YES — lives ONLY here** | **untrusted** until the signature verifies |
+| **Verified OUTPUT** (post-verify) | `api/grant.ts` → `PrincipalVerification` (LOCKED) | only the **facts the server already verified**: `method`, resolved `grantId` **or** `{keyId, challengeId, op, resource}` | **NEVER** — no `signature`, no `nonce`, no payload bytes | the auth middleware SETS it from what it verified; `can()` switches on it |
+
+**The rule (secSys's note, made structural):** the auth middleware verifies a WIRE request, and on
+success **constructs** a `PrincipalVerification` carrying *only the verified facts* — it copies the
+`keyId/challengeId/op/resource` it checked, and **drops the signature on the floor.** Signature
+material can never ride into `can()` because the verified-output schema has nowhere to put it. The
+locked union already honours this (no `signature` field anywhere) — Rev 3 just makes the
+*why* explicit so the lock review reads clean and the wire modules can't accidentally leak signature
+bytes back onto the principal.
+
+## Per-method proof shapes — verified-output member ⇐ wire proof ⇐ canonical signed payload
+
+| `method` (verified output, LOCKED) | Wire proof presented (`requests.ts`) | Canonical payload signed (`canonical.ts` TLV) |
+|---|---|---|
+| `grant-token` `{grantId}` | `Authorization: Bearer <opaque token>`; resolved by **hashed** lookup (F6) to the registry row → `grantId`. **No per-request signature** (bearer capability). | none |
+| `capability` `{grantId}` | `Authorization: Bearer <capability token>` (share-link / agent / plugin); same hashed-lookup resolution. **No per-request signature.** | none |
+| `signed-request` `{keyId, challengeId, op, resource}` | **`StepUpRequest`** `{challengeId, keyId, op, resource, signature}` — the `signature` is the proof; the 4 verified facts are echoed into the union only AFTER it verifies. | `TLV(tag, audience, 'step-up', challengeId, nonce, keyId, op, resourceCanonical)` |
+| `unverified` `{}` | none — dev-only stub; F13 fail-CLOSED env allowlist. | none |
+
+Session **mint** is the third signed flow but it is **not a `can()` method** — it is the input to
+`POST /api/auth/session` that *produces* a `grant-token`. Its signature lives on the wire
+`SessionRequest`, is verified once at the mint endpoint, and never appears on any principal.
+
+## Concrete shapes — the secSys pre-build target
+
+**`auth/canonical.ts`** — the one TLV codec both sides share (client signs over it, server
+**reconstructs** it from server-held values + request-supplied variable fields, then verifies):
+```ts
+const TAG = 'deltos-auth-v1';                 // version tag, NOT an audience (F8 keeps them separate)
+type AuthPurpose = 'register' | 'session' | 'step-up';
+// TLV framing (F4): each field => uint32-BE(byteLength) || bytes, concatenated in FIXED order.
+// NEVER a raw `||` join — no variable-length field (scope, label, resource id) can shift a boundary.
+// Fixed field order per purpose (purpose is itself a TLV field, so cross-purpose reuse is impossible):
+//   register : TAG, audience, 'register', challengeId, nonce, signingPublicKey, deviceLabel
+//   session  : TAG, audience, 'session',  challengeId, nonce, keyId,            requestedScopeCanonical
+//   step-up  : TAG, audience, 'step-up',  challengeId, nonce, keyId,            op, resourceCanonical
+// `nonce` and `audience` are SERVER-held — never sent in the request body; the server supplies them
+// from the stored challenge + its own config when reconstructing. Signature verifies over THAT.
+export function canonicalAuthPayload(purpose: AuthPurpose, fields: {...}): Uint8Array
+```
+
+**`auth/requests.ts`** — the WIRE bodies (Zod schemas, validated at their endpoints). A shared
+`SignedRequest` base carries the signature material; **none of this is ever copied onto
+`PrincipalVerification`:**
+```ts
+// base: every signed auth request carries the challenge handle + the signature over the TLV.
+SignedRequestBase = { challengeId: z.string().min(1), signature: base64urlBytes /* Ed25519 over canonical TLV */ }
+
+RegisterDeviceRequest = SignedRequestBase.extend({
+  signingPublicKey: base64urlBytes, deviceLabel: z.string().min(1),
+})                                              // deviceAuthorization === the SignedRequestBase.signature (Rev2 item-2: v1 server-VERIFIES it)
+ChallengeRequest = { keyId?: z.string().min(1), purpose: AuthPurposeSchema }   // keyId omitted for 'register' (no key yet)
+                                                // → { challengeId, nonce, expiresAt }
+SessionRequest = SignedRequestBase.extend({ keyId: z.string().min(1), requestedScope: z.array(ScopeSchema) })
+                                                // → { token, expiresAt };  mint CLAMPs scope to entitlement (F5)
+StepUpRequest  = SignedRequestBase.extend({ keyId: z.string().min(1), op: OpSchema, resource: ResourceSchema })
+```
+Carried-forward invariants these shapes must keep (already secSys-cleared, restated so the wire build
+can't regress them): **AUTH/F2** server COMPUTES `accountFingerprint = base64url(SHA-256(signingPublicKey))`,
+never trusts a client one; **AUTH/F-consume** atomic single-use challenge consume by rows-affected +
+freshness vs **stored** `expiresAt` on UTC-Z; **AUTH/F6** tokens stored hashed; **nonces/tokens ≥ 32
+bytes**; the server **reconstructs** every TLV from server-held values and rejects on signature
+mismatch — **no body field is trusted before the signature check.**
+
+## secSys asks for Rev 3 (the pre-build pressure-test)
+1. **Wire-vs-verified split** — is the boundary above the one you wanted explicit? Anything on the
+   WIRE side that must NOT survive onto the verified-output principal beyond `signature`/`nonce`?
+2. **`SignedRequest` base shape** — `{challengeId, signature}` shared, purpose-specific fields in the
+   extension, signature always over the matching canonical TLV. Sound, or do you want the `purpose`
+   echoed in the body (it is already a TLV field, so the signature binds it regardless)?
+3. **canonical.ts field sets** — register/session/step-up orders above: anything mis-ordered,
+   missing, or that should be server-held-only that I've shown as request-supplied?
+
+On secSys's Rev-3 OK I build `canonical.ts` + `requests.ts` to these shapes (TDD), then outward:
+authCrypto → authStore (D1 challenges/devices/grants) → routes/auth.ts → real `resolvePrincipal` +
+the `grant-token`/`capability` branches of the already-locked `can()` switch.
