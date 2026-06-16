@@ -30,7 +30,7 @@ function _notify(): void {
 /** Show a generic toast. Returns the generated id (for testing / manual dismiss). */
 export function showToast(message: string, noteId?: string): string {
   const id = crypto.randomUUID();
-  _toasts = [..._toasts, { id, message, noteId }];
+  _toasts = [..._toasts, { id, message, ...(noteId !== undefined ? { noteId } : {}) }];
   _notify();
   setTimeout(() => dismissToast(id), TOAST_TTL_MS);
   return id;
