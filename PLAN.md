@@ -79,7 +79,8 @@ baseline is *conditional* on this shipping; dropping it voids the clearance. **O
 (hard acceptance condition on its client-identity lane). Trigger-bound to the enroll/unlock UI
 surface (not dated). Tracked in `[[keystore-noprf-ui-disclosure]]`. **Seam COMPLETE**
 (`getEnrollmentPrfStatus()`, `47f018b`); the **render is now IN PROGRESS** as a hard acceptance
-criterion of gruntSys2's enroll/unlock/recovery UI surface (closes condition (i) when it ships).
+criterion of gruntSys2's enroll/unlock/recovery UI surface. **Render BUILT** (`b42737d`,
+`Disclosure.tsx`); remaining to close (i): user-approved copy + iOS dogfood verify.
 
 **Acceptance condition (security-clearance, OPEN):** the **session token stays in-memory-only (F7).**
 secSys's v1 30-day session-TTL clearance holds ONLY if the client never persists the session/grant
@@ -297,6 +298,13 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   routes for account-ownership, and made **cross-tenant negative tests a STANDING bar** (gruntSys
   harness + scopeSys's Stream-D acceptance-gate checklist must include account-B-can't-touch-account-A
   → 404). **New acceptance condition tracked:** session token in-memory-only (see done-gate above).
+- 2026-06-16 — **AUTH UI FRONT DOOR COMPLETE + dogfood-ready** (`b42737d`, gruntSys2): enroll / unlock
+  / recover / qr-receive, the D5 disclosure render, F7 in-memory token (Zustand), PIN-ID-9 (RP-ID =
+  hostname), 131/131. Dev server live for iOS dogfood at the Tailscale `:8449` URL. can()-routing
+  restructure secSys-DEFERRED (secure direct-gate v1 + dead-code note — NOT a done-gate blocker).
+  Two user-facing passes now OPEN with the user: (1) D5 disclosure COPY approval (draft delivered,
+  my 2 tweaks recommended), (2) real-iPhone dogfood of the front door. **Stream A = one BOLA fix from
+  done-gate-green.**
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
