@@ -239,7 +239,7 @@ export async function patchNote(
   patch: { title?: string; properties?: string; body?: string },
   expectedVersion: number | undefined,
   serverNow: string,
-): Promise<{ outcome: 'accepted'; row: NoteRow } | { outcome: 'conflict' | 'not_found' }> {
+): Promise<{ outcome: 'accepted'; row: NoteRow } | { outcome: 'conflict' } | { outcome: 'not_found' }> {
   const setParts: string[] = ['updatedAt = ?', 'version = version + 1', `syncSeq = (${READ_SEQ_SQL})`];
   const setParams: unknown[] = [serverNow, notebookId];
   if (patch.title !== undefined) { setParts.unshift('title = ?'); setParams.unshift(patch.title); }

@@ -8,9 +8,18 @@ import {
   SearchQuerySchema,
   API_ROUTES,
 } from '@deltos/shared';
-import type { Resource } from '@deltos/shared';
+import type { Resource, NoteResponse } from '@deltos/shared';
 import type { Env } from './env.js';
-import { guard, apiError, notImplemented, type AppContext } from './http.js';
+import { guard, apiError, type AppContext } from './http.js';
+import { d1Adapter } from './db/schema.js';
+import type { NoteRow } from './db/schema.js';
+import {
+  insertNote,
+  patchNote,
+  deleteNote,
+  searchNotes,
+} from './db/mutate.js';
+import { sync } from './routes/sync.js';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -42,6 +51,16 @@ app.get('/api/health', async (c) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Sync substrate routes — mounted before the REST layer (PIN-SYNC-1/2)
+// ---------------------------------------------------------------------------
+
+app.route('/api/sync', sync);
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 /** Read a JSON body without throwing on empty/invalid input — schema validation reports the 400. */
 async function readBody(c: AppContext): Promise<unknown> {
   try {
@@ -58,6 +77,28 @@ function asObject(v: unknown): Record<string, unknown> {
     : {};
 }
 
+/**
+ * Convert a DB row to the NoteResponse wire shape.
+ * The server always returns `syncStatus: 'synced'` — it is client-side-only state.
+ */
+function rowToResponse(row: NoteRow): NoteResponse {
+  return {
+    id: row.id as NoteResponse['id'],
+    notebookId: row.notebookId as NoteResponse['notebookId'],
+    title: row.title,
+    properties: JSON.parse(row.properties) as NoteResponse['properties'],
+    body: JSON.parse(row.body) as NoteResponse['body'],
+    version: row.version,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    syncStatus: 'synced',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// REST operations
+// ---------------------------------------------------------------------------
+
 // note.create — authorized against the destination notebook.
 app.post(
   API_ROUTES['note.create'].path,
@@ -66,7 +107,21 @@ app.post(
     schema: CreateNoteRequestSchema,
     input: (c) => readBody(c),
     resource: (req): Resource => ({ kind: 'notebook', id: req.notebookId }),
-    handle: (_req, c) => notImplemented(c, 'note.create'),
+    handle: async (req, c) => {
+      const db = d1Adapter(c.env.DB);
+      const now = new Date().toISOString();
+      const entry = {
+        id: req.id,
+        notebookId: req.notebookId,
+        baseVersion: 0 as const,
+        draft: { title: req.title, properties: req.properties, body: req.body },
+      };
+      const outcome = await insertNote(db, entry, now);
+      if (outcome.outcome === 'conflict') {
+        return apiError(c, 400, 'conflict', 'a note with this id already exists');
+      }
+      return c.json(rowToResponse(outcome.row), 201);
+    },
   }),
 );
 
@@ -78,7 +133,16 @@ app.get(
     schema: NoteRefSchema,
     input: (c) => ({ id: c.req.param('id') }),
     resource: (req): Resource => ({ kind: 'note', id: req.id }),
-    handle: (_req, c) => notImplemented(c, 'note.get'),
+    handle: async (req, c) => {
+      const db = d1Adapter(c.env.DB);
+      // Note id is globally unique (UUID); notebookId scoping is in the auth layer.
+      const row = await db.first<NoteRow>(
+        `SELECT * FROM notes WHERE id = ? AND deletedAt IS NULL`,
+        [req.id],
+      );
+      if (!row) return apiError(c, 404, 'not_found', 'note not found');
+      return c.json(rowToResponse(row));
+    },
   }),
 );
 
@@ -88,11 +152,29 @@ app.patch(
   guard({
     op: API_ROUTES['note.update'].op,
     schema: UpdateNoteRequestSchema,
-    // Body carries { patch, expectedVersion? }; the note id comes from the path. Path params
-    // are overlaid LAST so the URL's addressing id always wins over any id smuggled in the body.
     input: async (c) => ({ ...asObject(await readBody(c)), id: c.req.param('id') }),
     resource: (req): Resource => ({ kind: 'note', id: req.id }),
-    handle: (_req, c) => notImplemented(c, 'note.update'),
+    handle: async (req, c) => {
+      const db = d1Adapter(c.env.DB);
+      const now = new Date().toISOString();
+
+      // Pre-fetch notebookId — it's not in the update request, but patchNote needs it for CAS.
+      const lookup = await db.first<{ notebookId: string }>(
+        `SELECT notebookId FROM notes WHERE id = ? AND deletedAt IS NULL`,
+        [req.id],
+      );
+      if (!lookup) return apiError(c, 404, 'not_found', 'note not found');
+
+      const patch: { title?: string; properties?: string; body?: string } = {};
+      if (req.patch.title !== undefined) patch.title = req.patch.title;
+      if (req.patch.properties !== undefined) patch.properties = JSON.stringify(req.patch.properties);
+      if (req.patch.body !== undefined) patch.body = JSON.stringify(req.patch.body);
+
+      const outcome = await patchNote(db, req.id, lookup.notebookId, patch, req.expectedVersion, now);
+      if (outcome.outcome === 'not_found') return apiError(c, 404, 'not_found', 'note not found');
+      if (outcome.outcome === 'conflict') return apiError(c, 409, 'conflict', 'version mismatch — note was modified concurrently');
+      return c.json(rowToResponse(outcome.row));
+    },
   }),
 );
 
@@ -104,7 +186,21 @@ app.delete(
     schema: NoteRefSchema,
     input: (c) => ({ id: c.req.param('id') }),
     resource: (req): Resource => ({ kind: 'note', id: req.id }),
-    handle: (_req, c) => notImplemented(c, 'note.delete'),
+    handle: async (req, c) => {
+      const db = d1Adapter(c.env.DB);
+      const now = new Date().toISOString();
+
+      const lookup = await db.first<{ notebookId: string }>(
+        `SELECT notebookId FROM notes WHERE id = ?`,
+        [req.id],
+      );
+      if (!lookup) return apiError(c, 404, 'not_found', 'note not found');
+
+      const outcome = await deleteNote(db, req.id, lookup.notebookId, undefined, now);
+      if (outcome.outcome === 'not_found') return apiError(c, 404, 'not_found', 'note not found');
+      if (outcome.outcome === 'conflict') return apiError(c, 409, 'conflict', 'note was modified concurrently');
+      return c.json({ id: req.id, deleted: true });
+    },
   }),
 );
 
@@ -126,39 +222,88 @@ app.get(
       req.notebookId === undefined
         ? { kind: 'workspace' }
         : { kind: 'notebook', id: req.notebookId },
-    handle: (_req, c) => notImplemented(c, 'note.search'),
+    handle: async (req, c) => {
+      const db = d1Adapter(c.env.DB);
+      const rows = await searchNotes(db, req.notebookId, req.text);
+      const results = rows.map((row) => ({
+        id: row.id,
+        notebookId: row.notebookId,
+        title: row.title,
+        updatedAt: row.updatedAt,
+        syncStatus: 'synced' as const,
+      }));
+      return c.json({ results });
+    },
   }),
 );
 
-// block.append
+// block.append — fetch current note body, append, then patch the whole body.
 app.post(
   API_ROUTES['block.append'].path,
   guard({
     op: API_ROUTES['block.append'].op,
     schema: AppendBlockRequestSchema,
-    // Body carries { block, parentBlockId?, expectedVersion? }; noteId comes from the path and
-    // is overlaid LAST so a body field can never override the URL's addressing.
     input: async (c) => ({ ...asObject(await readBody(c)), noteId: c.req.param('id') }),
     resource: (req): Resource => ({ kind: 'note', id: req.noteId }),
-    handle: (_req, c) => notImplemented(c, 'block.append'),
+    handle: async (req, c) => {
+      const db = d1Adapter(c.env.DB);
+      const now = new Date().toISOString();
+
+      const rawRow = await db.first<NoteRow>(
+        `SELECT * FROM notes WHERE id = ? AND deletedAt IS NULL`,
+        [req.noteId],
+      );
+      if (!rawRow) return apiError(c, 404, 'not_found', 'note not found');
+
+      const currentBody = JSON.parse(rawRow.body) as unknown[];
+      const newBody = [...currentBody, req.block];
+
+      const outcome = await patchNote(
+        db, req.noteId, rawRow.notebookId,
+        { body: JSON.stringify(newBody) },
+        req.expectedVersion, now,
+      );
+      if (outcome.outcome === 'not_found') return apiError(c, 404, 'not_found', 'note not found');
+      if (outcome.outcome === 'conflict') return apiError(c, 409, 'conflict', 'version mismatch');
+      return c.json(rowToResponse(outcome.row));
+    },
   }),
 );
 
-// property.set
+// property.set — fetch current properties, merge key, then patch.
 app.put(
   API_ROUTES['property.set'].path,
   guard({
     op: API_ROUTES['property.set'].op,
     schema: SetPropertyRequestSchema,
-    // Body carries { value, expectedVersion? }; noteId + key come from the path and are overlaid
-    // LAST so body fields can never override the URL's addressing.
     input: async (c) => ({
       ...asObject(await readBody(c)),
       noteId: c.req.param('id'),
       key: c.req.param('key'),
     }),
     resource: (req): Resource => ({ kind: 'note', id: req.noteId }),
-    handle: (_req, c) => notImplemented(c, 'property.set'),
+    handle: async (req, c) => {
+      const db = d1Adapter(c.env.DB);
+      const now = new Date().toISOString();
+
+      const rawRow = await db.first<NoteRow>(
+        `SELECT * FROM notes WHERE id = ? AND deletedAt IS NULL`,
+        [req.noteId],
+      );
+      if (!rawRow) return apiError(c, 404, 'not_found', 'note not found');
+
+      const currentProps = JSON.parse(rawRow.properties) as Record<string, unknown>;
+      const newProps = { ...currentProps, [req.key]: req.value };
+
+      const outcome = await patchNote(
+        db, req.noteId, rawRow.notebookId,
+        { properties: JSON.stringify(newProps) },
+        req.expectedVersion, now,
+      );
+      if (outcome.outcome === 'not_found') return apiError(c, 404, 'not_found', 'note not found');
+      if (outcome.outcome === 'conflict') return apiError(c, 409, 'conflict', 'version mismatch');
+      return c.json(rowToResponse(outcome.row));
+    },
   }),
 );
 
