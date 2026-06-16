@@ -41,8 +41,6 @@ export interface LocalStore {
   /** Count of queued entries; reactive variant powers the sync indicator. */
   queueCount(): Promise<number>;
   observeQueueCount(cb: (count: number) => void): Unsubscribe;
-  /** Record ids that currently have a pending queue entry (the pending-edit pull guard). */
-  pendingRecordIds(): Promise<Set<string>>;
 
   /**
    * The atomic write path (mutate.ts): put the note AND enqueue its sync entry in ONE transaction,
@@ -70,11 +68,15 @@ export interface LocalStore {
   applyConflict(recordId: NoteId, serverNote: Note | null, makeFork: (local: Note) => Note): Promise<boolean>;
 
   /**
-   * Pull MERGE (PIN-SYNC-2 + pending-edit guard), atomic: apply `liveNotes` (put) and `tombstones`
-   * (delete), skipping any id in `pendingIds` — an id with a pending local edit is reconciled by the
-   * push path, never stomped by pull.
+   * Pull MERGE (PIN-SYNC-2 + pending-edit guard), atomic over BOTH notes AND the sync queue: compute
+   * the pending-edit record ids INSIDE this transaction, then apply `liveNotes` (put) / `tombstones`
+   * (delete), skipping any pending id. Computing pendingIds in-transaction (NOT as a prior separate
+   * read) closes a TOCTOU silent-loss window: a concurrent putNoteAndEnqueue — which also locks
+   * notes+queue — serializes against this, so its edit is either seen as pending (guarded) or applied
+   * strictly AFTER the merge (note not stomped). An id with a pending edit is reconciled by the push
+   * path, never stomped by pull.
    */
-  mergeServerNotes(liveNotes: Note[], tombstones: NoteId[], pendingIds: Set<string>): Promise<void>;
+  mergeServerNotes(liveNotes: Note[], tombstones: NoteId[]): Promise<void>;
 
   // --- notebooks: the read-only server mirror ---
   getNotebook(id: NotebookId): Promise<NotebookRow | undefined>;

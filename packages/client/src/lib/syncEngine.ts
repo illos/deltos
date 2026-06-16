@@ -247,11 +247,9 @@ async function pullUpdates(notebookId: NotebookId, apiBase: string): Promise<voi
  * Exported for direct testing (syncEngine.test.ts).
  */
 export async function mergePull(notes: SyncNote[], _notebookId: NotebookId): Promise<void> {
-  // Note IDs with a pending local edit — the store skips these (push reconciles them, pull never
-  // stomps them). The engine splits the wire notes into live puts vs tombstone deletes; the store's
-  // mergeServerNotes applies both atomically with the pending-edit guard.
-  const pendingIds = await getStore().pendingRecordIds();
-
+  // The engine splits the wire notes into live puts vs tombstone deletes; the store's
+  // mergeServerNotes applies both atomically AND computes the pending-edit guard inside its own
+  // notes+queue transaction (closing the TOCTOU window — see dexieLocalStore.mergeServerNotes).
   const liveNotes: Note[] = [];
   const tombstones: NoteId[] = [];
   for (const serverNote of notes) {
@@ -272,7 +270,7 @@ export async function mergePull(notes: SyncNote[], _notebookId: NotebookId): Pro
     }
   }
 
-  await getStore().mergeServerNotes(liveNotes, tombstones, pendingIds);
+  await getStore().mergeServerNotes(liveNotes, tombstones);
 }
 
 // ---------------------------------------------------------------------------

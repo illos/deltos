@@ -55,10 +55,6 @@ export const dexieLocalStore: LocalStore = {
     return () => sub.unsubscribe();
   },
 
-  async pendingRecordIds(): Promise<Set<string>> {
-    return new Set((await db.syncQueue.toArray()).map((e) => e.recordId));
-  },
-
   async putNoteAndEnqueue(note: Note, entry: SyncQueueEntry): Promise<void> {
     // Both the row and the queue entry land in one transaction (all-or-nothing) — no window where a
     // mutation exists locally but is not yet queued.
@@ -128,12 +124,15 @@ export const dexieLocalStore: LocalStore = {
     return forked;
   },
 
-  async mergeServerNotes(
-    liveNotes: Note[],
-    tombstones: NoteId[],
-    pendingIds: Set<string>,
-  ): Promise<void> {
-    await db.transaction('rw', db.notes, async () => {
+  async mergeServerNotes(liveNotes: Note[], tombstones: NoteId[]): Promise<void> {
+    // Transaction over BOTH notes AND syncQueue, with pendingIds computed INSIDE it. This closes the
+    // TOCTOU silent-loss window (secSys): a concurrent putNoteAndEnqueue also locks notes+queue, so it
+    // serializes against this merge — its edit is either visible in pendingIds here (guarded) or
+    // applied strictly after (note not stomped). Reading pendingIds as a prior separate query (the old
+    // shape) let an edit slip into the gap, get stomped, then be silently dropped if the next push
+    // conflict-forked the stomped state and blanket-drained the edit's queue entry.
+    await db.transaction('rw', db.notes, db.syncQueue, async () => {
+      const pendingIds = new Set((await db.syncQueue.toArray()).map((e) => e.recordId));
       for (const id of tombstones) {
         // Pending-edit pull guard: never stomp a note with an unsent local edit (push reconciles it).
         if (pendingIds.has(id)) continue;

@@ -228,6 +228,69 @@ describe('delete-vs-edit resurrection (PIN-SYNC-3)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Test 3c: pending edit survives a server conflict as fork content (secSys data-loss audit)
+//
+// The TOCTOU silent-loss chain secSys flagged: a pull stomps a pending-edit note, then the next
+// push conflict-forks the STOMPED state (not the edit) and blanket-drains the edit's queue entry =>
+// edit lost. The fix computes the pending guard INSIDE mergeServerNotes' notes+queue transaction so
+// a pending note is never stomped; this locks the observable property — a pending edit hit by a
+// (non-tombstone) server conflict is preserved as the conflict-copy fork, never silently dropped.
+// ---------------------------------------------------------------------------
+
+describe('pending edit preserved on conflict (secSys TOCTOU audit)', () => {
+  it('a pending local edit survives a non-tombstone server conflict as the fork content', async () => {
+    const { db } = await import('../src/db/schema.js');
+
+    const noteId = 'note-toctou-000000000-0000-4000-8000-000000000001';
+    const localEdit = makeNote(noteId, 1, 'My unsent edit');
+    await db.notes.put(localEdit);
+    await db.syncQueue.add({
+      id: crypto.randomUUID(),
+      recordId: noteId,
+      payload: localEdit,
+      baseVersion: 0,
+      createdAt: NOW,
+    });
+
+    const serverNote = makeNote(noteId, 5, 'Server state from another device');
+
+    global.fetch = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes('/sync/push')) {
+        return new Response(
+          JSON.stringify({ results: [{ id: noteId, outcome: 'conflict', serverNote }] }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ notes: [], nextCursor: 0, hasMore: false }), { status: 200 });
+    }) as typeof fetch;
+
+    const storage: Record<string, string> = {};
+    global.localStorage = {
+      getItem: (k: string) => storage[k] ?? null,
+      setItem: (k: string, v: string) => { storage[k] = v; },
+      removeItem: (k: string) => { delete storage[k]; },
+    } as unknown as Storage;
+
+    const { syncNow } = await import('../src/lib/syncEngine.js');
+    syncNow(NB, '');
+    await new Promise((r) => setTimeout(r, 100));
+
+    const all = await db.notes.toArray();
+    // The original id adopts server state...
+    const original = all.find((n) => n.id === noteId);
+    expect(original?.title).toBe('Server state from another device');
+    // ...and the unsent edit survives as a conflict-copy fork — NOT silently lost.
+    const fork = all.find((n) => n.title.startsWith('(conflict copy)'));
+    expect(fork).toBeDefined();
+    expect(fork!.title).toContain('My unsent edit');
+    expect(fork!.id).not.toBe(noteId);
+    // The edit's queue entry was blanket-drained (its content now lives in the fork).
+    expect(await db.syncQueue.where('recordId').equals(noteId).count()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Test 3b: stale superseded queue entries are drained on accept (not re-pushed)
 // ---------------------------------------------------------------------------
 
