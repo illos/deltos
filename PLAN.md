@@ -77,7 +77,8 @@ enroll/unlock UI MUST render an honest D5-style limitation disclosure. secSys's 
 baseline is *conditional* on this shipping; dropping it voids the clearance. **Owner: gruntSys2**
 (hard acceptance condition on its client-identity lane). Trigger-bound to the enroll/unlock UI
 surface (not dated). Tracked in `[[keystore-noprf-ui-disclosure]]`. **Seam COMPLETE**
-(`getEnrollmentPrfStatus()`, `47f018b` — exposes `usesPrf`/`blobRow.prf`); remaining = the UI render.
+(`getEnrollmentPrfStatus()`, `47f018b`); the **render is now IN PROGRESS** as a hard acceptance
+criterion of gruntSys2's enroll/unlock/recovery UI surface (closes condition (i) when it ships).
 
 ## Later (framed, not yet specced)
 - **Phase 2** — second surface (proves decoupling) + notebooks + universal search + plugin
@@ -283,3 +284,13 @@ surface (not dated). Tracked in `[[keystore-noprf-ui-disclosure]]`. **Seam COMPL
   /api/sync to the real grant token + authorized/rejected/revoked gate) is devSys2's NEXT chunk AFTER
   client storage, GATED on devSys's chokepoint being green** (resolvePrincipal still the stub in-tree
   today). Net: devSys + devSys2 run in parallel without collision, converge on Stream D at the lock.
+- 2026-06-16 — **gruntSys2 → enroll/unlock/recovery UI surface (Phase-1 done-gate front door).**
+  gruntSys2 completed the client identity logic lane (`12401b1`, ceremonies + QR-join + D5 seam,
+  131/131 green). Next chunk confirmed: the user-facing enroll/unlock/recovery screens — wires the
+  ceremonies to real UI, hits the auth endpoints (built against the LOCKED contract; e2e-green still
+  gated on the chokepoint), and **discharges the D5 disclosure RENDER as a hard acceptance criterion**
+  (device-local binding ⇒ honest-limitation disclosure). iOS dogfood is load-bearing here (PIN-ID-9:
+  hostname RP ID, WebAuthn = first await, Safari↔PWA RP-ID match). **Two user-facing items I'm
+  tracking:** (a) the D5 disclosure COPY → I bring the drafted wording to the user for a quick approve
+  (security-honesty / own-your-software voice); (b) a real-iPhone dogfood pass of this surface, like the
+  earlier probes — I coordinate both. Neither blocks the build start.
