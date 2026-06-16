@@ -119,4 +119,27 @@ describe('canonicalAuthPayload', () => {
     expect(new DataView(bytes.buffer, bytes.byteOffset, 4).getUint32(0, false)).toBe(tagBytes.length);
     expect(bytes.slice(4, 4 + tagBytes.length)).toEqual(tagBytes);
   });
+
+  it('AUTH-3: binds the purpose literal as the third field (after tag, audience)', () => {
+    // header order is [tag, audience, purpose, ...]; walk the length-prefixed fields to field 3.
+    const enc = new TextEncoder();
+    const bytes = canonicalAuthPayload({
+      purpose: 'step-up',
+      ...base,
+      keyId: 'KID-1',
+      op: 'read',
+      resource: { kind: 'note', id: uuid(1) },
+    });
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let off = 0;
+    const nextField = () => {
+      const len = view.getUint32(off, false);
+      const body = bytes.slice(off + 4, off + 4 + len);
+      off += 4 + len;
+      return body;
+    };
+    nextField(); // tag
+    nextField(); // audience
+    expect(nextField()).toEqual(enc.encode('step-up')); // purpose — exact literal, bound in the signature
+  });
 });

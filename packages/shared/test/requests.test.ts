@@ -94,12 +94,24 @@ describe('StepUpRequestSchema', () => {
   });
 });
 
-describe('ChallengeRequestSchema', () => {
-  it('accepts a session challenge with a keyId', () => {
+describe('ChallengeRequestSchema (discriminated on purpose — R3-2 keyId binding)', () => {
+  it('accepts a session challenge WITH a keyId', () => {
     expect(ChallengeRequestSchema.safeParse({ keyId: 'KID-1', purpose: 'session' }).success).toBe(true);
   });
-  it('accepts a register challenge with no keyId (none exists yet)', () => {
+  it('accepts a step-up challenge WITH a keyId', () => {
+    expect(ChallengeRequestSchema.safeParse({ keyId: 'KID-1', purpose: 'step-up' }).success).toBe(true);
+  });
+  it('accepts a register challenge with NO keyId (none exists yet)', () => {
     expect(ChallengeRequestSchema.safeParse({ purpose: 'register' }).success).toBe(true);
+  });
+  it('REJECTS a session challenge with no keyId (R3-2 cannot hold without it)', () => {
+    expect(ChallengeRequestSchema.safeParse({ purpose: 'session' }).success).toBe(false);
+  });
+  it('REJECTS a step-up challenge with no keyId', () => {
+    expect(ChallengeRequestSchema.safeParse({ purpose: 'step-up' }).success).toBe(false);
+  });
+  it('REJECTS a register challenge carrying a stray keyId (.strict per member)', () => {
+    expect(ChallengeRequestSchema.safeParse({ purpose: 'register', keyId: 'KID-1' }).success).toBe(false);
   });
   it('rejects an unknown purpose', () => {
     expect(ChallengeRequestSchema.safeParse({ purpose: 'elevate' }).success).toBe(false);

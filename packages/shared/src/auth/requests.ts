@@ -59,10 +59,19 @@ const signedRequestShape = {
   signature: SignatureSchema,
 } as const;
 
-/** `POST /api/auth/challenge` — mint a challenge of `purpose`. `keyId` is absent for `register`. */
-export const ChallengeRequestSchema = z
-  .object({ keyId: KeyIdSchema.optional(), purpose: AuthPurposeSchema })
-  .strict();
+/**
+ * `POST /api/auth/challenge` — mint a challenge of `purpose`. A discriminated union on `purpose`
+ * binds the keyId requirement to the kind of challenge (secSys Rev-3 finding 1, R3-2): `register`
+ * carries NO keyId (no device handle exists yet), while `session`/`step-up` REQUIRE one — the
+ * challenge is minted keyId-bound so `consumeChallenge` can later assert `challenge.keyId ===
+ * request.keyId`. `.strict()` per member rejects a stray keyId on register. Closed at the schema,
+ * never route-trusted.
+ */
+export const ChallengeRequestSchema = z.discriminatedUnion('purpose', [
+  z.object({ purpose: z.literal('register') }).strict(),
+  z.object({ purpose: z.literal('session'), keyId: KeyIdSchema }).strict(),
+  z.object({ purpose: z.literal('step-up'), keyId: KeyIdSchema }).strict(),
+]);
 export type ChallengeRequest = z.infer<typeof ChallengeRequestSchema>;
 
 export const ChallengeResponseSchema = z
