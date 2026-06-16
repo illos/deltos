@@ -174,10 +174,31 @@ assertion that scope resolves through `principal.id == accountId` (planSys condi
 of the original blind spot: every prior test seeded ONE account ([[cross-account-data-layer-finding]]).
 
 **Complementary (OPTIONAL, scopeSys's lane):** helper-level unit tests for the required-accountId
-param belong in/near `conflict.test.ts` (already mine — mutate.ts tests). Before adding, **coordinate
-file/scope with gruntSys** so I don't re-cover its route-level ground. Likely shape: assert each
-mutate.ts helper filters/stamps accountId (e.g. insertNote stamps; patchNote/deleteNote/searchNotes/
+param belong in/near `conflict.test.ts` (already mine — mutate.ts tests). gruntSys CONFIRMED no
+duplication with its route file, so these are clear to add. Likely shape: assert each mutate.ts
+helper filters/stamps accountId (e.g. insertNote stamps; patchNote/deleteNote/searchNotes/
 pullNotes/updateNote 0-row or empty on a foreign accountId) at the helper boundary, not via HTTP.
+
+### ACCEPTANCE BAR — gruntSys's exact per-op expectations (isolation.acceptance.test.ts @ 9a42f6d)
+
+Committed + parsing clean. A's token acting on B's object. My S-1..S-9 must make these 8 RED tests
+green (device tests 2/10 already green). Exact asserts:
+
+| Op | Route | Expect |
+|----|-------|--------|
+| note.get | `GET /api/notes/:id` (B's noteId) | **404** (not 403, not 200) → S-1 |
+| note.update | `PATCH /api/notes/:id` | **404** → S-2 |
+| note.delete | `DELETE /api/notes/:id` | **404**; DB guard: B's `deletedAt` stays NULL → S-3 |
+| block.append | `POST /api/notes/:id/blocks` | **404**; DB guard: B's `body.length` stays 1 → S-4 |
+| property.set | `PUT /api/notes/:id/properties/:key` | **404** → S-5 |
+| note.search | `GET /api/search?text=b-account-exclusive-secret-note` (NO notebookId) | **200, `results.length === 0`** (B's note absent) → S-6 |
+| sync.pull | `GET /api/sync/pull?notebookId=B_NOTEBOOK&cursor=0` | **200, `notes.length === 0`** → mutate `pullNotes` scope (mine) + devSys2 passes accountId from sync.ts |
+| sync.push | `POST /api/sync/push` (B's notebookId, B's note @ baseVersion=1) | **200, `results[0].outcome === 'conflict'`** (not 'accepted') → mutate `updateNote` scope (mine) + devSys2 sync.ts |
+
+**Split note for the 2 sync rows:** the SQL scope lives in my `mutate.ts` (`pullNotes`/`updateNote`),
+but they only go green once **devSys2** passes `accountId` from the `sync.ts` call sites. The 6 notes
+rows are fully mine (index.ts + mutate.ts). The cross-account push → 0-row CAS → conflict (not a
+leak) is the no-leak behavior devSys2 confirmed.
 
 ## Shared-helper coordination (mutate.ts is shared with the sync lane)
 
