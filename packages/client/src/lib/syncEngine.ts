@@ -33,7 +33,7 @@ function authHeader(): Record<string, string> {
  *   - Edit-while-syncing: edits during an in-flight push land in the queue; local serverVersion
  *     updates synchronously on push success before the next cycle
  *   - Pending-edit pull guard: pull does NOT stomp a note with a pending local edit
- *   - Delete-vs-edit (PIN-SYNC-3): conflict with a tombstone → fork with resurrection label
+ *   - Delete-vs-edit (PIN-SYNC-3): conflict with a tombstone → divergent edit retained as a version (resurrectable via keep-mine)
  */
 
 // ---------------------------------------------------------------------------
@@ -191,23 +191,26 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
         // (No `pushed` is structurally impossible — results only come for entries we sent. If it
         // ever occurred there'd be nothing to drain; the note reconciles on the next pull/cycle.)
       } else {
-        // Conflict: handleConflict forks the CURRENT local note (reflecting any in-flight edit),
-        // adopts server state for the original id, and BLANKET-drains the queue — all atomic in
-        // applyConflict. Blanket is correct ONLY here; keeping the in-flight entry would re-push
-        // the now-server state and double-fork.
-        await handleConflict(result.id as NoteId, result.serverNote);
+        // Conflict: retain-as-version (Part 2). handleConflict retains the CURRENT local note
+        // (reflecting any in-flight edit) as a conflict VERSION on the SAME id, adopts server state
+        // as live, and BLANKET-drains the queue — all atomic in applyConflict. Blanket is correct
+        // ONLY here; keeping the in-flight entry would re-push the now-server state. The retained
+        // version records the baseVersion the divergent edit was authored against = the pushed
+        // entry's CAS precondition (NOT the note's current version field).
+        await handleConflict(result.id as NoteId, result.serverNote, pushed?.baseVersion ?? 0);
       }
     }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Conflict resolution — fork-on-conflict (PIN-SYNC-3/4)
+// Conflict reconcile — retain-as-version (PIN-SYNC-3/4: no fork; same note id)
 // ---------------------------------------------------------------------------
 
 async function handleConflict(
   localId: NoteId,
   serverNote: Note | null,
+  baseVersion: number, // the CAS precondition the divergent edit was pushed at — recorded on the version
 ): Promise<void> {
   // conflict-as-version (Part 2): retain the divergent local edit as a version of the SAME note id
   // (no fork). accountId comes from the session principal (client D6 scope), never a body.
@@ -216,7 +219,7 @@ async function handleConflict(
 
   // Read the live title BEFORE applyConflict adopts server state, for the conflict toast.
   const local = await getStore().getNote(localId);
-  await getStore().applyConflict(localId, serverNote, accountId);
+  await getStore().applyConflict(localId, serverNote, accountId, baseVersion);
   if (local) showConflictToast(localId, local.title); // non-blocking "your version was kept" toast
 }
 

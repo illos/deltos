@@ -152,7 +152,7 @@ export const dexieLocalStore: LocalStore = {
     });
   },
 
-  async applyConflict(recordId: NoteId, serverNote: Note | null, accountId: string): Promise<void> {
+  async applyConflict(recordId: NoteId, serverNote: Note | null, accountId: string, baseVersion: number): Promise<void> {
     // conflict-as-version (Part 2): retain the divergent edit as a version of the SAME note id,
     // adopt server state as live, flag the conflict — never a new-id fork.
     await db.transaction('rw', db.notes, db.noteVersions, db.syncQueue, async () => {
@@ -169,7 +169,7 @@ export const dexieLocalStore: LocalStore = {
         title: local.title,
         properties: local.properties,
         body: local.body,
-        baseVersion: local.version,
+        baseVersion, // the CAS precondition the divergent edit was authored against (pushed entry's baseVersion)
         createdAt: new Date().toISOString(),
       });
 

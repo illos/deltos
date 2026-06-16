@@ -90,7 +90,7 @@ export interface LocalStore {
    * resurrect; (3) set `hasConflict`; (4) BLANKET-drain the record's queue entries (asymmetry
    * preserved — never unify with applyAccepted's selective drain). No-op if no local note exists.
    */
-  applyConflict(recordId: NoteId, serverNote: Note | null, accountId: string): Promise<void>;
+  applyConflict(recordId: NoteId, serverNote: Note | null, accountId: string, baseVersion: number): Promise<void>;
 
   /**
    * Pull MERGE (PIN-SYNC-2 + pending-edit guard), atomic over BOTH notes AND the sync queue: compute
