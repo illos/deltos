@@ -192,8 +192,17 @@ The per-device-key model is the forward custody improvement — flag when that c
 5. Disclosure mount audit at QR-join (§3).
 6. Verify dogfood device prf flag (§1c) → document its one-time unlock.
 
-**Open questions for pilot/secSys pre-review:**
-- (a) Confirm rewrap-on-next-unlock (A) over re-enroll (B) as the migration approach.
-- (b) `OPTION_A` as a build/launch constant vs a persisted setting — preference?
-- (c) Should an un-migrated PRF device ever be force-migrated, or is ride-the-next-unlock sufficient
-  for v1? (recommend: ride-the-next-unlock; no forced path that could touch the launch gesture.)
+**Open questions — RESOLVED by pilot rulings (CONTINGENT on secSys security pre-review + the user
+Option-A "yes"; NO code until BOTH land):**
+- (a) **CONFIRMED: rewrap-on-next-unlock (A)** over re-enroll (B). A is the only option consistent
+  with the user's model (the only logout is clearing browsing data); B mints a new `keyId` and reads
+  as a surprise logout. Pure re-encryption riding the existing gesture is right.
+- (b) **CONFIRMED: `OPTION_A` is a BUILD/LAUNCH CONSTANT, not a persisted setting** — for v1 it is a
+  permanent posture, no user-configurable custody surface; the PRF seam stays dormant behind the
+  constant for v2.
+- (c) **CONFIRMED: ride-the-next-unlock, NO forced migration** — a forced path near the launch
+  gesture would violate the launch-path-no-unwrap line + secSys's one-time-gesture-not-per-reload
+  condition.
+
+**Final go = (1) secSys security pre-review of this plan + (2) planSys relaying the user's Option-A
+yes. Both pending — execution-ready, on HOLD until then.**
