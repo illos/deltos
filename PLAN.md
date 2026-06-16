@@ -25,15 +25,23 @@ Android, for full surface control + sideload freedom — the own-your-software v
   data-loss/CAS correctness fix verified (Stream-B trip-wire fired + closed); **editor** Stream C
   (ProseMirror, title unified into the document, iOS-Safari functional gate passed); server (Worker +
   Hono + D1). P0 done + on remote.
-- **Now building:** **Stream A — identity** (passkey/recovery/QR signed-challenge auth — server
-  endpoints + client unlock, on the frozen contract) — **v1 SERVER SLICE PROVEN 2026-06-16:** the full
-  journey is green in tests — enroll → create note → authenticated sync → 2nd-device recover (same seed →
-  same `accountId`) → note present + content-match (v1 done-gate **14/14**; worker suite **231**;
-  cross-account isolation **11/11** incl §J false-green closed). Identity + cross-account + sync-auth all
-  landed/audited. **Remaining to a USABLE v1:** the CLIENT/device half (client rebind to `accountId`,
-  real-PWA enroll/offline/sync) + the **iPhone dogfood** (the user-only unknown — now the LAST v1 gate,
-  8-step runbook ready) + small in-flight re-verifies (§J **CLOSED**; `UNIQUE(accountId)` +
-  accountId-exposure spot-checks finishing).
+- **v1: IN ON-DEVICE DOGFOOD — the LAST gate (2026-06-16).** The AUTOMATABLE gate is FULLY PROVEN
+  (server done-gate **14/14** + Tier-A client **13/13** + ALL security closed (secSys) + live prod worker
+  validated end-to-end: real enroll/session/recover/replay/audience). v1 now hinges SOLELY on the
+  **iPhone dogfood** (8-step runbook; smoke `https://devbox.tail41404c.ts.net:8449/`, recorded capstone
+  `:8451` = prod-representative prod client + prod-mode worker, F13 active).
+  **⚠️ LIVE THREAD (resume here):** the user is dogfooding NOW; it's flushing real UI gaps the automated
+  gate structurally CANNOT see (it drives the store, not the editor UI). **Bugs in flight:** (1) **autosave
+  NOT real-time** — the editor never persisted to the store, so typed notes vanish from the list; THE
+  real blocker (also blocks offline/sync/recover steps 5/6/8); gruntSys2 fixing **with a MANDATORY
+  editor→store verification test before the user resumes** (it assumed persistence worked twice, wrong
+  both times — no 3rd disruption). (2) **top bar occluded by the iPhone Dynamic Island** — safe-area fix
+  (`viewport-fit=cover` + `env(safe-area-inset-top)` on the top chrome) routed to gruntSys2.
+  **Product decision (user):** exit = native Safari swipe-back + the reactive Notes list (NO custom back
+  button). **Resume pattern:** user reports bug → planner relays to gruntSys2 (client-shell lane, HMR) →
+  fix + verify → rebuild `:8451` → resume. Formal recorded Run-2 once obvious bugs settle + verified.
+  Foundation (identity/cross-account/sync-auth) all landed + audited. **Post-v1:** Cloudflare deploy
+  (`[[cloudflare-deploy-plan]]`).
 - **Constraints in force:** PIN-SYNC-1 atomic-CAS, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations
   (global-by-id), PIN-STORAGE-1 (SW never runtime-caches `/api` into shared Cache), S3 one-clip-per-
   notebook + PIN-ID PRF floor — see `docs/specs/phase-1-constraints.md`.
