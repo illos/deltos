@@ -43,9 +43,9 @@ fix, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations, PIN-STORAGE/SUBSTRATE p
 
 | Stream | Scope | Owner | Status |
 |--------|-------|-------|--------|
-| A | Identity (passkey/recovery/QR, signed-challenge auth) | devSys (opus, cleared fresh at boundary) | IN-FLIGHT |
-| B | Substrate + sync (atomic-CAS conflict engine) | gruntSys (sonnet) — **TDD-first + opus-promotion trip-wire** | IN-FLIGHT |
-| C | Capture surface + editor (PM) | gruntSys2 (sonnet) — engine-agnostic shell first | IN-FLIGHT |
+| A | Identity (passkey/recovery/QR, signed-challenge auth) | devSys (opus, re-tasked fresh post-clear) | auth union + `can()` **LOCKED** (`1cfaf3e`); bulk backend build |
+| B | Substrate + sync (atomic-CAS conflict engine) | **devSys2 (opus, online)** — gruntSys on a non-correctness peripheral meanwhile | 🔔 trip-wire fired → opus; server CAS endorsed-correct; fixing client queue-drain race + false test |
+| C | Capture surface + editor (ProseMirror) | gruntSys2 (sonnet) | built + golden-path local; **iOS on-device gate pending** (user dogfood) + findings-fixes |
 | D | Integration / e2e | pilot | pending A+B+C |
 
 **Done-gate:** install PWA → unlock w/ passkey → create/edit offline → sync; recover/QR-join 2nd
@@ -173,3 +173,17 @@ promote to devSys/opus if first audit finds a CAS/single-flight/race defect.
   planner clear. **Ops caveat (deltos not coord-opted-in):** clear-teammate's clean-tree gate sees
   the WHOLE shared tree → before any subordinate clear, all active streams commit WIP by path first,
   never `--force`. Clean baseline means only live stream WIP needs flushing at a clear boundary.
+- 2026-06-16 — **🔔 Stream-B TRIP-WIRE FIRED — the safeguard worked.** secSys's FIRST conflict-engine
+  audit found a REAL silent-data-loss race: client `syncEngine.ts` queue-drain deletes by `recordId`,
+  wiping an edit that arrives DURING the in-flight push (→ note marked synced → next pull overwrites
+  the local edit); and test 4 'edit-while-syncing' was **false-green** (asserted only `version>=1`).
+  **Server CAS endorsed-correct by secSys** (PIN-SYNC-1/2 closed) — defect is entirely **client-side**.
+  Per the standing trip-wire → **promoted Stream-B sync-correctness to opus.** devSys (only opus impl)
+  was on the locked Stream-A bulk build, so the user approved a **NEW opus hand: `devSys2`** (online
+  2026-06-16) — planner-endorsed. gruntSys committed a handoff checkpoint + moved to a non-correctness
+  peripheral; secSys held warm for re-audit. **Fix scope:** client queue-drain + rewrite test 4 to
+  assert *no-lost-edit* (not `version>=1`). **Validates the TDD-first + escalation-wire design
+  (2026-06-15)** — the bug was caught at audit, before shipping, on the worst failure surface.
+- 2026-06-16 — **devSys2 online** (opus) — Stream-B sync-correctness owner. Roster now pilot + 5:
+  devSys (Stream A), devSys2 (Stream B), gruntSys (peripheral/handoff), gruntSys2 (Stream C),
+  secSys (audit). See [[team-and-process]].
