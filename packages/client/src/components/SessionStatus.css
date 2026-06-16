@@ -1,0 +1,22 @@
+/* Background-session auth nudge — a quiet, tappable pill in the shell header bar.
+   Sits left of the SyncIndicator (which keeps its own `margin-left: auto`). */
+
+.session-status {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  white-space: nowrap;
+  text-decoration: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* needs-unlock — actionable, so a touch warmer than the muted sync pill, but still quiet. */
+.session-status--needs-unlock {
+  margin-left: auto;
+  color: #c8b46e;
+  border-color: #3b321f;
+}
