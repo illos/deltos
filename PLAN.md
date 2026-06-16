@@ -411,6 +411,16 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   records reconciliation. **HELD to post-v1:** stub-retirement, add/replace-credential (needs my
   AUTH_PURPOSE sign-off), all post-v1 features. Next substantive slice = post-close, with a user steer on
   Phase-2 priority.
+- 2026-06-16 — **Capstone FIDELITY ruling: the RECORDED DG-CAP runs against a PROD-REPRESENTATIVE build,
+  not the dev server.** Readiness check found `:8449` was a stale dev server (predated the accountId
+  rebind / session-exposure / Dexie-v3 / SW changes) AND dev-mode allows the unverified `LOCAL_OWNER`
+  fallback — so the auth / F13-gating / QR-block legs would **false-pass on dev** (same false-green class,
+  deployment level). Split: refreshed dev build (HEAD `b98bf3d`) = early iOS-WebAuthn-UX smoke test
+  (de-risk, NOT recorded); the **recorded capstone = a prod-MODE worker (`ENVIRONMENT=production`, F13
+  active, no unverified fallback) + prod client, all 8 steps on one build.** Pre-capstone gate: confirm a
+  RETURNING/installed device survives the Dexie-v3 migration + SW (not just fresh install). scopeSys to
+  add the prod-representative requirement to the runbook preamble. User held until pilot's GO with the
+  prod URL/SHA + which-steps-ready.
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
