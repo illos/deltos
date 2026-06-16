@@ -6,12 +6,10 @@
  *   adds AND accountId = principal.id so A's authenticated principal cannot reach B's objects
  *   even with a valid workspace grant).
  *
- * TEST STATUS:
- *   Note / sync tests — RED now (no accountId filter in DB queries today);
- *                       GREEN when D6 adds AND accountId = principal.id to each query.
- *   Device tests      — GREEN now (list filtered by accountFingerprint, BOLA fix in place);
- *                       standing regressions — must stay GREEN through D6's re-point from
- *                       accountFingerprint → accountId (listDevicesByAccount).
+ * TEST STATUS (as of D6 complete — scopeSys 303db9a notes, dd86704 sync, devSys d9d6803 foundation):
+ *   All tests GREEN. Note / sync tests flipped GREEN when scopeSys applied AND accountId = principal.id
+ *   to every object-scoped query (S-1..S-9). Device tests GREEN from the start (BOLA fix + D6 re-point).
+ *   §K (never-client-trusted) GREEN — server stamps accountId from principal, ignores body field.
  *
  * STANDING BAR: any future object-scoped route adds a row here before it ships.
  * Cross-refs:
@@ -203,7 +201,7 @@ async function buildFixture(): Promise<IsoFixture> {
 
 describe("D6 cross-account isolation (standing bar) — note CRUD", () => {
 
-  it("note.get: A cannot fetch B's note → 404 [RED: currently 200 — D6 adds AND accountId = principal.id]", async () => {
+  it("note.get: A cannot fetch B's note → 404", async () => {
     const { env, tokenA } = await buildFixture();
     const res = await app.request(`/api/notes/${B_NOTE}`, {
       headers: { Authorization: `Bearer ${tokenA}` },
@@ -211,7 +209,7 @@ describe("D6 cross-account isolation (standing bar) — note CRUD", () => {
     expect(res.status).toBe(404);
   });
 
-  it("note.update: A cannot patch B's note → 404; B's title unchanged [RED: currently 200]", async () => {
+  it("note.update: A cannot patch B's note → 404; B's title unchanged", async () => {
     const { raw, env, tokenA } = await buildFixture();
     const res = await app.request(`/api/notes/${B_NOTE}`, {
       method: 'PATCH',
@@ -223,7 +221,7 @@ describe("D6 cross-account isolation (standing bar) — note CRUD", () => {
     expect(row?.title).toBe(SEARCH_TERM); // no mutation
   });
 
-  it("note.delete: A cannot delete B's note → 404; soft-delete NOT applied [RED: currently 200]", async () => {
+  it("note.delete: A cannot delete B's note → 404; soft-delete NOT applied", async () => {
     const { raw, env, tokenA } = await buildFixture();
     const res = await app.request(`/api/notes/${B_NOTE}`, {
       method: 'DELETE',
@@ -234,7 +232,7 @@ describe("D6 cross-account isolation (standing bar) — note CRUD", () => {
     expect(row?.deletedAt).toBeNull();
   });
 
-  it("block.append: A cannot append to B's note → 404; B's body block count unchanged [RED: currently 200]", async () => {
+  it("block.append: A cannot append to B's note → 404; B's body block count unchanged", async () => {
     const { raw, env, tokenA } = await buildFixture();
     const res = await app.request(`/api/notes/${B_NOTE}/blocks`, {
       method: 'POST',
@@ -248,7 +246,7 @@ describe("D6 cross-account isolation (standing bar) — note CRUD", () => {
     expect((JSON.parse(row!.body) as unknown[]).length).toBe(1); // original single block, no injection
   });
 
-  it("property.set: A cannot set property on B's note → 404 [RED: currently 200]", async () => {
+  it("property.set: A cannot set property on B's note → 404", async () => {
     const { env, tokenA } = await buildFixture();
     const res = await app.request(`/api/notes/${B_NOTE}/properties/injected-key`, {
       method: 'PUT',
@@ -262,33 +260,31 @@ describe("D6 cross-account isolation (standing bar) — note CRUD", () => {
 
 describe("D6 cross-account isolation (standing bar) — note.search (primary leak vector)", () => {
 
-  it("workspace search (no notebookId): A's token returns empty; B's note with matching title absent [RED: currently returns B's note]", async () => {
+  it("workspace search (no notebookId): A's token returns empty; B's note with matching title absent", async () => {
     const { env, tokenA } = await buildFixture();
     const res = await app.request(`/api/search?text=${encodeURIComponent(SEARCH_TERM)}`, {
       headers: { Authorization: `Bearer ${tokenA}` },
     }, env);
     expect(res.status).toBe(200);
     const body = await res.json() as { results: unknown[] };
-    // Currently returns B's note (RED). After D6 adds AND accountId = principal.id: empty (GREEN).
     expect(body.results).toHaveLength(0);
   });
 
 });
 
-describe("D6 cross-account isolation (standing bar) — sync", () => {
+describe("D6 cross-account isolation (standing bar) — sync [GREEN: scopeSys dd86704]", () => {
 
-  it("sync.pull: A pulling B's notebookId returns empty, not B's notes [RED: currently returns B's notes]", async () => {
+  it("sync.pull: A pulling B's notebookId returns empty, not B's notes", async () => {
     const { env, tokenA } = await buildFixture();
     const res = await app.request(`/api/sync/pull?notebookId=${B_NOTEBOOK}&cursor=0`, {
       headers: { Authorization: `Bearer ${tokenA}` },
     }, env);
     expect(res.status).toBe(200);
     const body = await res.json() as { notes: unknown[] };
-    // Currently returns B's notes (RED). After D6 adds AND accountId = principal.id: empty (GREEN).
     expect(body.notes).toHaveLength(0);
   });
 
-  it("sync.push: A updating B's existing note gets conflict, not accepted [RED: currently accepted]", async () => {
+  it("sync.push: A updating B's existing note gets conflict, not accepted", async () => {
     const { env, tokenA } = await buildFixture();
     // B_SYNC_NOTE was inserted at baseVersion=0 → server assigned version=1 (FIRST_SERVER_VERSION).
     // A sends a valid CAS update for version=1: currently the WHERE id=? AND notebookId=? AND version=1
@@ -299,7 +295,7 @@ describe("D6 cross-account isolation (standing bar) — sync", () => {
     }, tokenA);
     expect(res.status).toBe(200);
     const body = await res.json() as { results: Array<{ outcome: string }> };
-    expect(body.results[0]!.outcome).toBe('conflict'); // not 'accepted'
+    expect(body.results[0]!.outcome).toBe('conflict');
   });
 
 });
@@ -356,6 +352,105 @@ describe("§J — principalId-stamp correctness: real route mint stamps accountI
     expect(grantRow!.principalId).not.toBe(deviceRow!.accountFingerprint);
     // Fingerprint is always 43 chars (base64url 32 bytes); accountId is shorter (randomToken(16) = ~22 chars).
     expect(grantRow!.principalId.length).toBeLessThan(deviceRow!.accountFingerprint.length);
+  });
+
+});
+
+// ---------------------------------------------------------------------------
+// §K — never-client-trusted accountId spot-check (devSys a62df7b + gruntSys2 2a4120e)
+//
+// The server stamps accountId server-side from the authenticated principal — it is NEVER
+// read from the request body. Proves two properties:
+//   (a) A mutating request that injects {accountId: B} in the body creates the row under A.
+//   (b) The injection does NOT grant A read access into B's data (isolation holds after attempt).
+//
+// Seeds 36 (A) and 37 (B) — outside all existing fixture ranges (20-35).
+// ---------------------------------------------------------------------------
+
+describe("§K — never-client-trusted accountId: body {accountId: B} is ignored; row lands under A; isolation holds", () => {
+
+  it("note.create with body.accountId=B stamps notes.accountId=A (server ignores body field)", async () => {
+    const raw = new Database(':memory:');
+    for (const sql of ALL_MIGRATIONS) raw.exec(sql);
+    const env = makeEnv(raw);
+
+    const kpA = isoKeypair(36);
+    const kpB = isoKeypair(37);
+    const { keyId: keyIdA } = await isoRegister(env, kpA, 'nct-A');
+    await isoRegister(env, kpB, 'nct-B');
+    const { token: tokenA } = await isoSession(env, kpA, keyIdA);
+
+    // A registered first → row 0; B registered second → row 1.
+    const accounts = raw
+      .prepare('SELECT accountId FROM accounts ORDER BY rowid')
+      .all() as Array<{ accountId: string }>;
+    const aAccountId = accounts[0]!.accountId;
+    const bAccountId = accounts[1]!.accountId;
+
+    // A creates a note and injects B's accountId in the body — server must ignore it.
+    const res = await app.request('/api/notes', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${tokenA}` },
+      body: JSON.stringify({
+        id: '00000000-0000-4000-c000-000000000001',
+        notebookId: '00000000-0000-4000-c000-000000000002',
+        title: 'nct-create-test',
+        properties: {},
+        body: [],
+        accountId: bAccountId, // injection attempt — server MUST ignore
+      }),
+    }, env);
+    expect(res.status).toBe(201);
+
+    const noteRow = raw
+      .prepare("SELECT accountId FROM notes WHERE id = '00000000-0000-4000-c000-000000000001'")
+      .get() as { accountId: string | null } | undefined;
+    expect(noteRow?.accountId).toBe(aAccountId);       // stamped from principal, not body
+    expect(noteRow?.accountId).not.toBe(bAccountId);   // body injection had no effect
+  });
+
+  it("sync.push with body.accountId=B stamps notes.accountId=A (server ignores body field)", async () => {
+    const raw = new Database(':memory:');
+    for (const sql of ALL_MIGRATIONS) raw.exec(sql);
+    const env = makeEnv(raw);
+
+    const kpA = isoKeypair(36);
+    const kpB = isoKeypair(37);
+    const { keyId: keyIdA } = await isoRegister(env, kpA, 'nct-sync-A');
+    await isoRegister(env, kpB, 'nct-sync-B');
+    const { token: tokenA } = await isoSession(env, kpA, keyIdA);
+
+    const accounts = raw
+      .prepare('SELECT accountId FROM accounts ORDER BY rowid')
+      .all() as Array<{ accountId: string }>;
+    const aAccountId = accounts[0]!.accountId;
+    const bAccountId = accounts[1]!.accountId;
+
+    // A pushes a note and injects B's accountId in the body — server must ignore it.
+    const pushRes = await isoPost(env, '/api/sync/push', {
+      notebookId: '00000000-0000-4000-c000-000000000003',
+      entries: [{ id: '00000000-0000-4000-c000-000000000004', baseVersion: 0, draft: { title: 'nct-sync-test', properties: {}, body: [] } }],
+      accountId: bAccountId, // injection attempt — server reads from principal, not body
+    }, tokenA);
+    expect(pushRes.status).toBe(200);
+    const pushBody = await pushRes.json() as { results: Array<{ outcome: string }> };
+    expect(pushBody.results[0]!.outcome).toBe('accepted');
+
+    const noteRow = raw
+      .prepare("SELECT accountId FROM notes WHERE id = '00000000-0000-4000-c000-000000000004'")
+      .get() as { accountId: string | null } | undefined;
+    expect(noteRow?.accountId).toBe(aAccountId);       // stamped from principal, not body
+    expect(noteRow?.accountId).not.toBe(bAccountId);   // body injection had no effect
+  });
+
+  it("after body.accountId=B injection attempt, A still cannot read B's pre-existing notes → 404", async () => {
+    // Even after a body injection attempt, isolation must hold on reads: A's token cannot
+    // retrieve B's notes regardless of any prior injection. D6 (scopeSys 303db9a) makes this GREEN.
+    const { env, tokenA } = await buildFixture();
+    const res = await app.request(`/api/notes/${B_NOTE}`, {
+      headers: { Authorization: `Bearer ${tokenA}` },
+    }, env);
+    expect(res.status).toBe(404);
   });
 
 });
