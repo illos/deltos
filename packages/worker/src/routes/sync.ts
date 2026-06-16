@@ -9,6 +9,7 @@ import { guard, apiError } from '../http.js';
 import { d1Adapter } from '../db/schema.js';
 import type { NoteRow } from '../db/schema.js';
 import { insertNote, updateNote, pullNotes } from '../db/mutate.js';
+import { requireAccountId } from '../db/accountScope.js';
 
 const sync = new Hono<AppEnv>();
 
@@ -53,6 +54,11 @@ sync.post(
     resource: (req) => ({ kind: 'notebook', id: req.notebookId }),
     handle: async (req, c) => {
       const db = d1Adapter(c.env.DB);
+      // accountId is the caller's verified account (principal.id post-D6 re-point), resolved
+      // server-side off the guard-set principal — NEVER from the request body. It scopes every write
+      // to this account: insert STAMPS it, update CAS + conflict-path SELECT filter on it (no
+      // cross-account write or leak). Fail-closed: requireAccountId throws if absent.
+      const accountId = requireAccountId(c);
       const now = new Date().toISOString();
       const results: SyncPushResult[] = [];
 
@@ -60,8 +66,8 @@ sync.post(
         const fullEntry = { ...entry, notebookId: req.notebookId };
 
         if (entry.baseVersion === 0) {
-          // New note — INSERT guarded on id uniqueness
-          const outcome = await insertNote(db, fullEntry, now);
+          // New note — INSERT guarded on id uniqueness, accountId stamped from the principal
+          const outcome = await insertNote(db, fullEntry, accountId, now);
           if (outcome.outcome === 'accepted') {
             results.push({ id: entry.id, outcome: 'accepted', version: outcome.version, syncSeq: outcome.syncSeq });
           } else {
@@ -69,8 +75,10 @@ sync.post(
             results.push({ id: entry.id, outcome: 'conflict', serverNote: null });
           }
         } else {
-          // Update — atomic CAS on (id, notebookId, version)
-          const outcome = await updateNote(db, fullEntry, now);
+          // Update — atomic CAS on (id, notebookId, version, accountId); the conflict-path serverNote
+          // SELECT is also accountId-scoped inside updateNote, so a cross-account push gets a 0-row CAS
+          // → conflict with a NULL serverNote (no leak), and the client forks under a new id.
+          const outcome = await updateNote(db, fullEntry, accountId, now);
           if (outcome.outcome === 'accepted') {
             results.push({ id: entry.id, outcome: 'accepted', version: outcome.version, syncSeq: outcome.syncSeq });
           } else {
@@ -103,7 +111,10 @@ sync.get(
     resource: (req) => ({ kind: 'notebook', id: req.notebookId }),
     handle: async (req, c) => {
       const db = d1Adapter(c.env.DB);
-      const { notes, nextCursor, hasMore } = await pullNotes(db, req.notebookId, req.cursor);
+      // Read isolation: pull returns ONLY the caller's account's notes for this notebook (accountId
+      // resolved server-side off the principal, never the body). Fail-closed if absent.
+      const accountId = requireAccountId(c);
+      const { notes, nextCursor, hasMore } = await pullNotes(db, req.notebookId, accountId, req.cursor);
       const syncNotes: SyncNote[] = notes.map(rowToSyncNote);
       return c.json({ notes: syncNotes, nextCursor, hasMore });
     },
