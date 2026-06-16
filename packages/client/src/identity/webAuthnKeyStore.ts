@@ -56,13 +56,26 @@ interface DeviceKeyRow {
   wrappingKey: string;      // base64url of 32 random bytes (no-PRF fallback only)
 }
 
+// The server-issued device handle (keyId from POST /api/auth/register). A NON-SECRET opaque
+// handle — NOT a bearer token, NOT key material — persisted here so cold-start session re-mint
+// survives a reload as durably as the sealed blob (localStorage is far more eviction-prone on iOS).
+// Co-located with the credential in this same IndexedDB; cleared whenever a new credential is sealed.
+interface ServerHandleRow {
+  key: 'v1';
+  keyId: string;
+}
+
 class IdentityDB extends Dexie {
   blob!: EntityTable<IdentityBlobRow, 'key'>;
   deviceKey!: EntityTable<DeviceKeyRow, 'key'>;
+  serverHandle!: EntityTable<ServerHandleRow, 'key'>;
 
   constructor(name: string) {
     super(name);
     this.version(1).stores({ blob: 'key', deviceKey: 'key' });
+    // v2 adds serverHandle (durable keyId). Additive store; Dexie upgrades existing DBs in place,
+    // leaving the blob + deviceKey rows untouched.
+    this.version(2).stores({ blob: 'key', deviceKey: 'key', serverHandle: 'key' });
   }
 }
 
@@ -175,6 +188,10 @@ async function sealAndPersist(
   } else {
     await db.deviceKey.put({ key: 'v1', wrappingKey: base64urlEncode(wrappingKey) });
   }
+  // A newly-sealed credential invalidates any prior server registration — clear the stale device
+  // handle so a recovery/re-bind never reuses a keyId that belonged to a different identity. The
+  // subsequent register() sets the fresh keyId via setServerKeyId.
+  await db.serverHandle.delete('v1');
 }
 
 // ── Enrollment info (for D5 UI disclosure) ──────────────────────────────────────────────────────
@@ -321,6 +338,17 @@ export function createWebAuthnKeyStore(opts?: {
     getSigningPublicKey(): Uint8Array {
       if (!_state) throw new Error('KeyStore is locked — call unlock() first');
       return _state.publicKey;
+    },
+
+    async setServerKeyId(keyId: string): Promise<void> {
+      // Durable, non-secret server device handle. NEVER store the bearer token here (F7 stays
+      // in-memory only) — only the opaque keyId, which carries no authority on its own.
+      await db.serverHandle.put({ key: 'v1', keyId });
+    },
+
+    async getServerKeyId(): Promise<string | null> {
+      const row = await db.serverHandle.get('v1');
+      return row?.keyId ?? null;
     },
   };
 }

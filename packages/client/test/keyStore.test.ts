@@ -53,6 +53,8 @@ describe('createStubKeyStore — interface shape', () => {
     expect(typeof ks.currentIdentity).toBe('function');
     expect(typeof ks.sign).toBe('function');
     expect(typeof ks.getSigningPublicKey).toBe('function');
+    expect(typeof ks.setServerKeyId).toBe('function');
+    expect(typeof ks.getServerKeyId).toBe('function');
   });
 });
 
@@ -523,5 +525,52 @@ describe('getEnrollmentPrfStatus — D5 disclosure helper', () => {
     });
     await ks.enrollNew();
     expect(await getEnrollmentPrfStatus(dbName)).toStrictEqual({ usesPrf: false });
+  });
+});
+
+// ── Durable server keyId — cold-reload fix (E4) ─────────────────────────────────────────────────
+//
+// The server device handle (keyId from POST /api/auth/register) must persist in IndexedDB
+// co-located with the credential, so a cold-start session re-mint survives a reload. Root cause of
+// E4: keyId was localStorage-only, which iOS evicts far more aggressively than IndexedDB → after
+// reload the blob survived (isEnrolled=true) but keyId was gone → "use your recovery phrase"
+// dead-end. keyId is a NON-SECRET handle; the F7 bearer token is NEVER persisted here.
+
+describe('WebAuthn provider — durable server keyId (E4 cold-reload fix)', () => {
+  it('getServerKeyId() is null before any registration', async () => {
+    const ks = freshKs();
+    expect(await ks.getServerKeyId()).toBeNull();
+  });
+
+  it('setServerKeyId() then getServerKeyId() round-trips the handle', async () => {
+    const ks = freshKs();
+    await ks.setServerKeyId('device-handle-abc');
+    expect(await ks.getServerKeyId()).toBe('device-handle-abc');
+  });
+
+  it('persists across a reload — a NEW KeyStore instance on the SAME db reads the keyId', async () => {
+    const dbName = `deltos-identity-test-${++_dbSeq}`;
+    const backend: WebAuthnBackend = { create: vi.fn().mockResolvedValue(makeFakeCred()), get: vi.fn() };
+    const first = createWebAuthnKeyStore({ backend, dbName });
+    await first.setServerKeyId('survives-reload');
+    // Simulate a page reload: a fresh factory instance (in-memory state gone) on the same IDB.
+    const afterReload = createWebAuthnKeyStore({ backend, dbName });
+    expect(await afterReload.getServerKeyId()).toBe('survives-reload');
+  });
+
+  it('sealing a NEW credential (enrollExisting re-bind) clears a stale keyId', async () => {
+    const ks = freshKs();
+    await ks.enrollNew();
+    await ks.setServerKeyId('stale-from-old-identity');
+    // Recovery / re-bind seals a new credential → the prior server registration is invalid.
+    await ks.enrollExisting(ABANDON);
+    expect(await ks.getServerKeyId()).toBeNull();
+  });
+
+  it('setServerKeyId overwrites a prior handle (re-register replaces, never appends)', async () => {
+    const ks = freshKs();
+    await ks.setServerKeyId('first');
+    await ks.setServerKeyId('second');
+    expect(await ks.getServerKeyId()).toBe('second');
   });
 });

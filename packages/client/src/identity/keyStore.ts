@@ -87,6 +87,24 @@ export interface KeyStore {
 
   /** The signing public key, for initial server device registration. THROWS if locked. */
   getSigningPublicKey(): Uint8Array;
+
+  /**
+   * Persist the server-issued device handle (the `keyId` returned by POST /api/auth/register)
+   * DURABLY in IndexedDB, co-located with the credential record — so a cold-start session
+   * re-mint (`/challenge` → `/session`) survives a reload as robustly as the at-rest blob.
+   *
+   * Why this lives in the KeyStore (not localStorage): on iOS, localStorage is far more
+   * eviction-prone than IndexedDB (ITP's 7-day script-writable cap; standalone-PWA eviction), so a
+   * keyId kept only in localStorage can vanish while the IndexedDB blob survives — stranding an
+   * otherwise-recoverable device on the "use your recovery phrase" dead-end. keyId is a NON-SECRET
+   * opaque server handle (NOT a bearer token, NOT key material — the F7 in-memory-only token is
+   * unaffected), so it is stored unencrypted alongside the credential. Sealing a new credential
+   * (enrollNew / enrollExisting) clears any stale handle; a fresh register re-sets it.
+   */
+  setServerKeyId(keyId: string): Promise<void>;
+
+  /** The persisted server device handle, or null if this device has not registered yet. */
+  getServerKeyId(): Promise<string | null>;
 }
 
 /** Thrown by every method of the stub until the real KeyStore lands. */
@@ -118,5 +136,7 @@ export function createStubKeyStore(): KeyStore {
     getSigningPublicKey: () => {
       throw new NotImplementedError('getSigningPublicKey');
     },
+    setServerKeyId: () => reject('setServerKeyId'),
+    getServerKeyId: () => reject('getServerKeyId'),
   };
 }
