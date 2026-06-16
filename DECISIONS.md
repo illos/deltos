@@ -35,7 +35,12 @@ model, it's cheap insurance, and it permanently closes this risk class whether y
 a second account — versus a silent critical hole the day a second account appears. I do *not* recommend
 isolated-DB-per-account (operationally heavy / overkill on Cloudflare). I only skip the build on a hard,
 permanent commitment to one-account-per-instance — and even then I'd add the column for defense in depth.
-Write-up: `docs/design/secSys-cross-account-sweep.md`. secSys (audit) + devSys (grant/can domain) held
+
+**Fix is BOUNDED if shared-multi-account (not a rebuild)** — secSys + devSys scoped it: one
+`notes.accountFingerprint` column + a per-query account-scope helper (the **PRIMARY fail-closed
+control** — can't be bypassed by a forgotten `can()` arg) + a server-side owner write-stamp + one
+`can()` ownership assertion (defense-in-depth) + the two-account test class. Modest, well-understood
+data-layer change. Write-up: `docs/design/secSys-cross-account-sweep.md`. secSys (audit) + devSys (grant/can domain) held
 for the follow-through. (Stream A auth done-gate is otherwise GREEN; BOLA revoke fixed 21/21.)
 
 ### My response
