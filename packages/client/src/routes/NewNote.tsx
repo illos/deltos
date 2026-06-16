@@ -18,7 +18,7 @@ import { useAuthStore } from '../auth/store.js';
 export function NewNote() {
   const navigate = useNavigate();
   const didCreate = useRef(false);
-  const identity = useAuthStore(s => s.identity);
+  const accountId = useAuthStore(s => s.accountId);
 
   useEffect(() => {
     if (didCreate.current) return;
@@ -35,13 +35,13 @@ export function NewNote() {
       title: '',
       properties: {},
       body: [],
-      accountFingerprint: identity?.id,
+      accountId: accountId ?? undefined,
     };
 
     mutateNotes.put(note).then(() => {
       navigate(`/note/${note.id}`, { replace: true });
     });
-  }, [navigate, identity]);
+  }, [navigate, accountId]);
 
   return <div className="route-loading" aria-label="Opening note…" />;
 }

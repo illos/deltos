@@ -43,8 +43,12 @@ class DeltosDB extends Dexie {
       notebooks: 'id',
     });
     this.version(2).stores({
-      // Add accountFingerprint index for per-account local query scoping.
+      // Intermediate — accountFingerprint index (superseded by v3 rebind to accountId).
       notes: 'id, notebookId, updatedAt, [notebookId+updatedAt], accountFingerprint',
+    });
+    this.version(3).stores({
+      // Rebind: swap credential-derived accountFingerprint for stable credential-independent accountId.
+      notes: 'id, notebookId, updatedAt, [notebookId+updatedAt], accountId',
     });
   }
 }

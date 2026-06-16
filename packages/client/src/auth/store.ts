@@ -41,6 +41,8 @@ export interface AuthState {
   keyId: string | null;
   /** In-memory bearer token (lost on refresh). null = no active session. */
   bearerToken: string | null;
+  /** Stable credential-independent account key from session response. Local note tagging only — never sent to server on writes. */
+  accountId: string | null;
   /** null = unknown; true = PRF bound; false = device-local (D5 disclosure required). */
   usesPrf: boolean | null;
   error: string | null;
@@ -102,6 +104,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   identity: null,
   keyId: getStoredKeyId(),
   bearerToken: null,
+  accountId: null,
   usesPrf: null,
   error: null,
 
@@ -178,8 +181,8 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
         ?? `session mint failed: HTTP ${resp.status}`;
       throw new Error(msg);
     }
-    const { token } = (await resp.json()) as { token: string; expiresAt: string };
-    set({ bearerToken: token });
+    const { token, accountId } = (await resp.json()) as { token: string; expiresAt: string; accountId: string };
+    set({ bearerToken: token, accountId });
   },
 
   async claimUsername(username: string): Promise<ClaimUsernameResult> {
@@ -211,7 +214,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
 
   lock() {
     keyStore.lock();
-    set({ isUnlocked: false, identity: null, bearerToken: null, usesPrf: null });
+    set({ isUnlocked: false, identity: null, bearerToken: null, accountId: null, usesPrf: null });
   },
 
   clearError() { set({ error: null }); },
