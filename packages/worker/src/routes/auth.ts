@@ -5,10 +5,13 @@ import {
   RegisterDeviceRequestSchema,
   SessionRequestSchema,
   StepUpRequestSchema,
+  SCOPES,
+  base64urlDecodeStrict,
 } from '@deltos/shared';
-import type { Resource } from '@deltos/shared';
+import type { Op, Resource, Scope } from '@deltos/shared';
+import * as authCrypto from '../authCrypto.js';
 import type { Env } from '../env.js';
-import { apiError, guard, notImplemented, type AppContext } from '../http.js';
+import { apiError, guard, type AppContext, type ApiErrorBody } from '../http.js';
 import { resolvePrincipal } from '../auth.js';
 import { d1Adapter } from '../db/schema.js';
 import { createAuthStore } from '../db/authStore.js';
@@ -16,41 +19,40 @@ import { createAuthStore } from '../db/authStore.js';
 /**
  * Stream A — identity auth routes (the unauthenticated bootstrap that MINTS request auth).
  *
- * SKELETON: routing surface + step-ordered orchestration is wired against the LOCKED per-route
- * contract (`docs/design/stream-a-auth-contracts.md` §2, committed by devSys at e3ebd75). Handler
- * bodies return `notImplemented` (501) until their two hard dependencies land, at which point each
- * step below becomes a delegated call and the 501 is removed:
- *   - devSys  `authCrypto` (Ed25519 verify, F2 fingerprint COMPUTE, TLV reconstruct, RNG, token
- *             hashing, scope clamp) + `requests.ts` Zod wire schemas (strict base64url + exact
- *             lengths — R3-4) + `canonical.ts` (TLV). CONFIRMED by devSys: `authCrypto` is
- *             WORKER-LOCAL → `import * as authCrypto from '../authCrypto.js'` (packages/worker/src/
- *             authCrypto.ts). The request schemas are re-exported from `@deltos/shared` (via
- *             auth/index.ts) → `import { ChallengeRequestSchema, RegisterDeviceRequestSchema,
- *             SessionRequestSchema, StepUpRequestSchema } from '@deltos/shared'`. (canonical/requests
- *             landing now; authCrypto next.)
- *   - devSys2 `authStore` (pure-D1 over the 0002_stream-a-auth migration: devices / authChallenges /
- *             grants). CONFIRMED by devSys2: `import { createAuthStore } from '../db/authStore.js'`,
- *             constructed `const store = createAuthStore(d1Adapter(c.env.DB))` (same DbAdapter as
- *             db/mutate.ts). Methods = contract §1 EXACTLY, PLUS `revokeByKeyId(keyId)` for the
- *             revoke route (signature pending devSys's ruling — see /devices/:keyId/revoke).
+ * Built against the LOCKED per-route contract (`docs/design/stream-a-auth-contracts.md` §2). Routes
+ * own request PARSING + HTTP STATUS only; every crypto decision is delegated to `authCrypto` (devSys)
+ * and every storage decision to `authStore` (devSys2). No key handling, signature verification,
+ * fingerprint computation, scope clamping, or freshness/single-use logic lives here.
  *
- * SEAM DISCIPLINE (contract §2): routes own request PARSING + HTTP STATUS only. Every crypto and
- * policy decision is DELEGATED — no key handling, signature verification, fingerprint computation,
- * scope clamping, or freshness/single-use logic lives here.
+ * THE RULE THAT OVERRIDES EVERYTHING: no request-body field is trusted before its signature verifies.
+ * Every verify RECONSTRUCTS the canonical TLV from SERVER-HELD values — the `nonce`/`keyId` returned
+ * by the atomic `consumeChallenge`, the configured `audience` (env.AUTH_AUDIENCE, never the Host
+ * header), the fixed tag + endpoint-constant `purpose` — plus only the request's INTENT fields.
+ * `accountFingerprint` is COMPUTED from the submitted pubkey (F2), never trusted from the body.
  *
- * THE RULE THAT OVERRIDES EVERYTHING (contract): no request-body field is trusted before its
- * signature verifies. The server RECONSTRUCTS every TLV from SERVER-HELD values (stored
- * `nonce`/`keyId`/`purpose`, configured `audience`, fixed `tag`) plus the genuinely
- * request-supplied INTENT fields only. `nonce`/`keyId`/`purpose`/`audience` are never read from the
- * body; `accountFingerprint` is COMPUTED (F2), never trusted.
- *
- * These routes are deliberately NOT behind `guard()`: `guard` resolves a principal and runs
- * `can()`, but the bootstrap endpoints have no principal yet — they are the primitives that PRODUCE
- * the grant token a principal is later resolved from. The device-management routes (§ devices) are
- * the exception and carry their own auth, noted inline.
+ * The challenge/register/session endpoints are deliberately NOT behind `guard()`: they have no
+ * principal yet — they are the primitives that PRODUCE the grant a principal is later resolved from.
+ * GET /devices and the device-revoke route carry their own auth (a guard, and a fresh F9 step-up).
  */
 
 const auth = new Hono<{ Bindings: Env }>();
+
+const CHALLENGE_TTL_MS = 60_000; // 60s — short freshness window (contract §3 / AUTH-PROP-2).
+
+/**
+ * v1 SESSION-GRANT policy. The contract assigns `entitlementFor` + the session resource to devSys as
+ * a helper, but none shipped yet, so the v1 rule is inlined here and FLAGGED for secSys/devSys to
+ * lift into a shared helper. Contract F5/Rev1: a device under its own account = full account scope on
+ * its own resources, so v1 entitlement = all SCOPES on the workspace; `clampScope` still runs (never
+ * verbatim requestedScope), it just doesn't reduce in v1. The bounded TTL is defence-in-depth atop
+ * instant (revocation-row) revocation — a leaked token self-expires; secSys to confirm the duration.
+ */
+const SESSION_GRANT_RESOURCE: Resource = { kind: 'workspace' };
+const SESSION_ENTITLEMENT: readonly Scope[] = SCOPES;
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — v1 default, FLAGGED for secSys confirmation.
+
+/** v1 F9 binding: device revocation is authorized only by a step-up signed for exactly (delete, workspace). */
+const REVOKE_STEPUP_OP: Op = 'delete';
 
 /** Read a JSON body without throwing on empty/invalid input — schema validation reports the 400. */
 async function readBody(c: AppContext): Promise<unknown> {
@@ -61,102 +63,161 @@ async function readBody(c: AppContext): Promise<unknown> {
   }
 }
 
+/** The configured signing audience, or a 503 if the deployment is misconfigured (fail-closed). */
+function requireAudience(c: AppContext): string | Response {
+  const audience = c.env.AUTH_AUDIENCE;
+  if (!audience) return apiError(c, 503, 'auth_not_configured', 'AUTH_AUDIENCE is not configured');
+  return audience;
+}
+
+const UNAUTHORIZED = 'the challenge or signature is invalid, expired, or already used';
+
+/**
+ * 401 for the auth bootstrap. `apiError`'s status union deliberately omits 401 (the REST layer never
+ * needed it — it uses 403 for can() denials), so this builds the SAME {@link ApiErrorBody} envelope
+ * with the 401 the credential-failure paths require. (A later infra nit: fold 401 into `apiError`.)
+ */
+function unauthorized(c: AppContext): Response {
+  const body: ApiErrorBody = { error: { code: 'unauthorized', message: UNAUTHORIZED } };
+  return c.json(body, 401);
+}
+
 // ---------------------------------------------------------------------------
-// POST /api/auth/challenge  — { keyId?, purpose } → { challengeId, nonce, expiresAt, expiresAtMs }
-// Unauthenticated row-creator. Mints a short-TTL, single-use, server-held challenge.
+// POST /api/auth/challenge  — { purpose, keyId? } → { challengeId, nonce, expiresAt, expiresAtMs }
+// Mints a short-TTL, single-use, server-held challenge. Unauthenticated by design.
 // ---------------------------------------------------------------------------
 auth.post('/challenge', async (c) => {
-  // SLICE (a) LIVE — boundary validation (R3-4). Crypto tail awaits authCrypto.
   const parsed = ChallengeRequestSchema.safeParse(await readBody(c));
   if (!parsed.success) {
     return apiError(c, 400, 'invalid_request', 'request failed validation', parsed.error.format());
   }
-  // Cross-field rule (contract §2 step 1): a non-register challenge must name the keyId it is for.
-  // (Field-presence only — the UNKNOWN-keyId anti-enumeration response is the crypto/store tail,
-  // which needs a device lookup.)
-  if (parsed.data.purpose !== 'register' && parsed.data.keyId === undefined) {
-    return apiError(c, 400, 'invalid_request', "keyId is required unless purpose is 'register'");
-  }
-  // FLIP (authCrypto) — contract §2 /challenge:
-  // 1. UNKNOWN keyId → still return a constant-shape challenge (NEVER a device-enumeration oracle —
-  //    issue regardless; do not branch the response on device existence). [secSys note]
-  // 2. challengeId = authCrypto.randomToken(32); nonce = authCrypto.randomToken(32);
-  //    expiresAtMs = serverNowMs() + 60_000 (SERVER clock; no client time ever enters);
-  //    await store.createChallenge({ challengeId, nonce, keyId: parsed.data.keyId ?? null,
-  //                                  purpose: parsed.data.purpose, issuedAt: nowIso, expiresAtMs });
-  //    return c.json({ challengeId, nonce, expiresAt: nowIso(+60s), expiresAtMs });
-  // 3. RATE-LIMIT + CAP this unauthenticated creator — the TTL bounds row lifetime, NOT creation
-  //    rate. [secSys note — mechanism TBD with devSys2; flagged so it is not dropped]
-  return notImplemented(c, 'auth.challenge');
+  // Discriminated union: keyId is present (required) on session/step-up, absent on register.
+  const keyId = parsed.data.purpose === 'register' ? null : parsed.data.keyId;
+
+  // Anti-enumeration (secSys): a session/step-up challenge issues for ANY keyId — we do NOT look the
+  // device up here, so the response is never a device-existence oracle. The session/step-up route
+  // fails later (getDevice) if the keyId is unknown.
+  // TODO(rate-limit, secSys): cap this unauthenticated row-creator — the TTL bounds row lifetime, not
+  // creation rate. Mechanism is scopeSys/devSys2's; flagged so it is not dropped.
+  const store = createAuthStore(d1Adapter(c.env.DB));
+  const nowMs = Date.now();
+  const expiresAtMs = nowMs + CHALLENGE_TTL_MS;
+  const challengeId = authCrypto.randomToken(32);
+  const nonce = authCrypto.randomToken(32);
+  await store.createChallenge({
+    challengeId,
+    nonce,
+    keyId,
+    purpose: parsed.data.purpose,
+    issuedAt: new Date(nowMs).toISOString(),
+    expiresAtMs,
+  });
+  return c.json({ challengeId, nonce, expiresAt: new Date(expiresAtMs).toISOString(), expiresAtMs });
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/auth/register  — RegisterDeviceRequest { challengeId, signingPublicKey, deviceLabel,
-//                            signature } → { keyId, accountFingerprint }
+// POST /api/auth/register  — { challengeId, signingPublicKey, deviceLabel, signature }
+//                          → { keyId, accountFingerprint }
 // Proof of key control (anti-squat): the submitted pubkey's own key must sign the register-TLV.
 // ---------------------------------------------------------------------------
 auth.post('/register', async (c) => {
-  // SLICE (a) LIVE — boundary validation: 32B pubkey / 64B sig / ≥32B challengeId, strict base64url
-  // (R3-4). Consume/verify/register tail awaits authCrypto.
   const parsed = RegisterDeviceRequestSchema.safeParse(await readBody(c));
   if (!parsed.success) {
     return apiError(c, 400, 'invalid_request', 'request failed validation', parsed.error.format());
   }
-  // FLIP (authCrypto + authStore) — contract §2 /register:
-  // 2. c = await store.consumeChallenge(challengeId, 'register', serverNowMs());
-  //    null → 401 (freshness + single-use are IN the consume — no separate expiry check).
-  // 3. authCrypto.verifyRegister({ challengeId, nonce: c.nonce, signingPublicKey, deviceLabel,
-  //    signature }) — reconstructs the register-TLV from SERVER-HELD nonce + configured audience +
-  //    fixed tag + purpose='register' + the INTENT fields signingPublicKey/deviceLabel; verifies
-  //    against the SUBMITTED pubkey. Fail → 401.
-  // 4. accountFingerprint = authCrypto.computeFingerprint(signingPublicKey)  (F2 — server COMPUTES;
-  //    a client-sent fingerprint is never trusted).
-  // 5. keyId = authCrypto.randomToken(16);
-  //    await authStore.registerDevice({ keyId, signingPublicKey, accountFingerprint, deviceLabel,
-  //                                     createdAt: nowIso });
-  //    return c.json({ keyId, accountFingerprint });
-  return notImplemented(c, 'auth.register');
+  const audience = requireAudience(c);
+  if (typeof audience !== 'string') return audience;
+
+  const { challengeId, signingPublicKey, deviceLabel, signature } = parsed.data;
+  const store = createAuthStore(d1Adapter(c.env.DB));
+  const nowMs = Date.now();
+
+  // Single-use + freshness live entirely in the atomic consume (server-held nonce comes back here).
+  const consumed = await store.consumeChallenge(challengeId, 'register', nowMs);
+  if (!consumed) return unauthorized(c);
+
+  const verified = authCrypto.verifyRegister({
+    audience,
+    challengeId,
+    nonce: consumed.nonce, // SERVER-HELD, never the body
+    signingPublicKey,
+    deviceLabel,
+    signature,
+  });
+  if (!verified) return unauthorized(c);
+
+  // F2 — the server COMPUTES the fingerprint from the (signature-proven) pubkey; never trusts a body copy.
+  const accountFingerprint = authCrypto.computeFingerprint(base64urlDecodeStrict(signingPublicKey));
+  const keyId = authCrypto.randomToken(16);
+  await store.registerDevice({
+    keyId,
+    signingPublicKey,
+    accountFingerprint,
+    deviceLabel,
+    createdAt: new Date(nowMs).toISOString(),
+  });
+  return c.json({ keyId, accountFingerprint }, 201);
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/auth/session  — SessionRequest { challengeId, keyId, requestedScope, signature }
-//                          → { token, expiresAt }   (raw token returned ONCE)
+// POST /api/auth/session  — { challengeId, keyId, requestedScope, signature } → { token, expiresAt }
 // Signed challenge → opaque grant token (PIN-ID-2). Token stored HASHED (F6); scope CLAMPED (F5).
 // ---------------------------------------------------------------------------
 auth.post('/session', async (c) => {
-  // SLICE (a) LIVE — boundary validation (R3-4): challengeId/signature/keyId + non-empty
-  // requestedScope. Consume/verify/clamp/mint tail awaits authCrypto.
   const parsed = SessionRequestSchema.safeParse(await readBody(c));
   if (!parsed.success) {
     return apiError(c, 400, 'invalid_request', 'request failed validation', parsed.error.format());
   }
-  // FLIP (authCrypto + authStore) — contract §2 /session:
-  // 1. c = await store.consumeChallenge(challengeId, 'session', serverNowMs()); null → 401.
-  //    ASSERT c.keyId === request.keyId (R3-2: challenge is bound to its keyId) else 401.
-  // 2. d = await authStore.getDevice(keyId); missing or d.revokedAt != null → 401.
-  // 3. authCrypto.verifySession({ challengeId, nonce: c.nonce, keyId: c.keyId, requestedScope,
-  //    signature, signingPublicKey: d.signingPublicKey }) — reconstruct from SERVER-HELD nonce/keyId
-  //    (stored, not body) + audience + tag + purpose='session'; the ONLY signed request-supplied
-  //    field is requestedScope; verify against the SERVER-RESOLVED pubkey. Fail → 401.
-  // 4. granted = authCrypto.clampScope(requestedScope, entitlementFor(d))  (F5 — never verbatim).
-  // 5. token = authCrypto.randomToken(32);
-  //    await store.mintGrant({ grantId: authCrypto.randomToken(16),
-  //      tokenHash: authCrypto.hashToken(token),
-  //      principal: { kind: 'owner', id: d.accountFingerprint }, resource, scope: granted,
-  //      mintedByKeyId: keyId,   // ← devSys2: scopes revokeByKeyId(keyId) to THIS device's tokens
-  //      expiresAtMs, createdAt: nowIso });
-  //    return c.json({ token, expiresAt });   // raw token leaves the server exactly once
-  return notImplemented(c, 'auth.session');
+  const audience = requireAudience(c);
+  if (typeof audience !== 'string') return audience;
+
+  const { challengeId, keyId, requestedScope, signature } = parsed.data;
+  const store = createAuthStore(d1Adapter(c.env.DB));
+  const nowMs = Date.now();
+
+  const consumed = await store.consumeChallenge(challengeId, 'session', nowMs);
+  if (!consumed) return unauthorized(c);
+  // CF-2 / R3-2: the challenge is bound to its keyId. Assert request==stored, then use the
+  // SERVER-HELD keyId as the single source for BOTH the TLV and the pubkey resolution.
+  if (consumed.keyId === null || consumed.keyId !== keyId) return unauthorized(c);
+  const serverKeyId = consumed.keyId;
+
+  // CF-1 / PROP-3: the pubkey is the SERVER-RESOLVED device key — never a request/body field.
+  const device = await store.getDevice(serverKeyId);
+  if (!device || device.revokedAt !== null) return unauthorized(c);
+
+  const verified = authCrypto.verifySession({
+    audience,
+    challengeId,
+    nonce: consumed.nonce, // SERVER-HELD
+    keyId: serverKeyId, // SERVER-HELD
+    requestedScope,
+    signature,
+    signingPublicKey: device.signingPublicKey, // SERVER-RESOLVED, never the body
+  });
+  if (!verified) return unauthorized(c);
+
+  const granted = authCrypto.clampScope(requestedScope, SESSION_ENTITLEMENT); // F5 — never verbatim
+  const token = authCrypto.randomToken(32);
+  const expiresAtMs = nowMs + SESSION_TTL_MS;
+  await store.mintGrant({
+    grantId: authCrypto.randomToken(16),
+    tokenHash: authCrypto.hashToken(token), // F6 — only the hash is stored
+    principal: { kind: 'owner', id: device.accountFingerprint },
+    mintedByKeyId: serverKeyId, // scopes revokeByKeyId to THIS device's tokens (devSys2)
+    resource: SESSION_GRANT_RESOURCE,
+    scope: granted,
+    expiresAtMs,
+    createdAt: new Date(nowMs).toISOString(),
+  });
+  return c.json({ token, expiresAt: new Date(expiresAtMs).toISOString() }); // raw token leaves the server once
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/auth/devices  — list the caller's account devices.
-// SLICE (c) LIVE — authStore-backed READ behind the standard chokepoint: guard runs the prod
-// tripwire (refuses the dev-only `unverified` stub in production, F13) + can(op:'read'), then the
-// handler lists for the resolved principal's accountFingerprint. Until devSys's grant-token
-// resolution lands in resolvePrincipal the principal is the dev stub (id 'local-owner'), so in a
-// non-prod env this returns the (empty) device set for that id; once grant-token principals resolve
-// it lists the real account devices with no further change here.
+// GET /api/auth/devices  — list the caller's account devices (authStore-backed READ).
+// Behind the chokepoint guard: prod tripwire (refuses the dev-only `unverified` stub, F13) +
+// can(op:'read'). Lists for the resolved principal's accountFingerprint; once grant-token resolution
+// lands in resolvePrincipal this lists the real account with no change here.
 // ---------------------------------------------------------------------------
 auth.get(
   '/devices',
@@ -166,7 +227,7 @@ auth.get(
     input: () => ({}),
     resource: (): Resource => ({ kind: 'workspace' }),
     handle: async (_req, c) => {
-      const principal = resolvePrincipal(c);
+      const principal = await resolvePrincipal(c);
       const store = createAuthStore(d1Adapter(c.env.DB));
       return c.json({ devices: await store.listDevices(principal.id) });
     },
@@ -174,35 +235,60 @@ auth.get(
 );
 
 // ---------------------------------------------------------------------------
-// POST /api/auth/devices/:keyId/revoke  — revoke a device (F9 SENSITIVE ⇒ step-up required).
-// PATH CONFIRMED (devSys): RESTful POST /api/auth/devices/:keyId/revoke. keyId→grant gap RESOLVED —
-// `grants` gains a `mintedByKeyId` column (devSys2, folded into 0002) and `authStore.revokeByKeyId(keyId)`
-// (a) sets `devices.revokedAt` (blocks future mints) AND (b) `UPDATE grants SET revokedAt WHERE
-// mintedByKeyId=keyId AND revokedAt IS NULL` (immediate deny — resolvePrincipal row-resolves every
-// request). It is `Promise<void>` and IDEMPOTENT (already-revoked stays revoked, no error — devSys2).
-// F9 STEP-UP binding (v1): the step-up signature must be for `op='delete'`,
-// `resource={kind:'workspace'}` (account-level destructive op); the `:keyId` path param selects the
-// target device. Tighter per-device-resource binding is a tracked follow-up, not v1.
+// POST /api/auth/devices/:keyId/revoke  — revoke a device. F9 SENSITIVE ⇒ a fresh step-up gates it.
+// The step-up (signed for op='delete', resource={kind:'workspace'}) proves account possession;
+// the :keyId path param is the target. revokeByKeyId sets devices.revokedAt (blocks future mints)
+// AND revokes that device's outstanding grants (mintedByKeyId) — immediate deny. Idempotent.
 // ---------------------------------------------------------------------------
 auth.post('/devices/:keyId/revoke', async (c) => {
-  // SLICE (a) LIVE — boundary validation (R3-4): step-up proof shape. verify/revoke tail awaits authCrypto.
   const parsed = StepUpRequestSchema.safeParse(await readBody(c));
   if (!parsed.success) {
     return apiError(c, 400, 'invalid_request', 'request failed validation', parsed.error.format());
   }
-  // FLIP (authCrypto + authStore) — contract §2 /devices (revoke), F9 step-up seam:
-  // 2. verified = authCrypto.verifyStepUp({ challengeId, keyId, op, resource, signature }) — consumes
-  //    the 'step-up' challenge, reconstructs+verifies the step-up TLV against the server-resolved
-  //    pubkey; returns { method:'signed-request', keyId, challengeId, op, resource } or throws → 401.
-  //    Assert the v1 binding: op === 'delete' && resource is { kind:'workspace' } (else 403); can()
-  //    then asserts member.op===op && resourceEquals(member.resource, resource) (LOCKED switch).
-  // 3. const store = createAuthStore(d1Adapter(c.env.DB));
-  //    if (!(await store.getDevice(keyId))) → 404 (unknown device; distinguishes from already-revoked).
-  //    await store.revokeByKeyId(keyId);   // void + idempotent (already-revoked → still 200)
-  // 4. return c.json({ keyId, revoked: true });   // boolean, NOT a revoked-grant count: idempotent +
-  //    no session-count info-leak (devSys2 ruling).
-  if (!c.req.param('keyId')) return apiError(c, 400, 'invalid_request', 'missing device keyId');
-  return notImplemented(c, 'auth.devices.revoke');
+  const audience = requireAudience(c);
+  if (typeof audience !== 'string') return audience;
+
+  const targetKeyId = c.req.param('keyId');
+  const { challengeId, keyId, op, resource, signature } = parsed.data;
+
+  // v1 F9 binding: device-revoke is authorized ONLY by a step-up signed for exactly (delete, workspace).
+  // A step-up signed for any other (op, resource) cannot be replayed to revoke a device.
+  if (op !== REVOKE_STEPUP_OP || resource.kind !== 'workspace') {
+    return apiError(c, 403, 'forbidden', 'step-up is not authorized for device revocation');
+  }
+
+  const store = createAuthStore(d1Adapter(c.env.DB));
+  const nowMs = Date.now();
+
+  const consumed = await store.consumeChallenge(challengeId, 'step-up', nowMs);
+  if (!consumed) return unauthorized(c);
+  // CF-2 / R3-2: assert request keyId == server-held, then use the SERVER-HELD keyId as the single source.
+  if (consumed.keyId === null || consumed.keyId !== keyId) return unauthorized(c);
+  const serverKeyId = consumed.keyId;
+
+  // The AUTHENTICATING device proves account possession via its signing key; CF-1: resolve its pubkey
+  // server-side from the server-held keyId — never a body field.
+  const authDevice = await store.getDevice(serverKeyId);
+  if (!authDevice || authDevice.revokedAt !== null) return unauthorized(c);
+
+  const verified = authCrypto.verifyStepUp({
+    audience,
+    challengeId,
+    nonce: consumed.nonce, // SERVER-HELD
+    keyId: serverKeyId, // SERVER-HELD
+    op,
+    resource,
+    signature,
+    signingPublicKey: authDevice.signingPublicKey, // SERVER-RESOLVED
+  });
+  if (!verified) return unauthorized(c);
+
+  // Target must exist — distinguishes an unknown device (404) from an already-revoked one (idempotent 200).
+  const target = await store.getDevice(targetKeyId);
+  if (!target) return apiError(c, 404, 'not_found', 'no such device');
+
+  await store.revokeByKeyId(targetKeyId);
+  return c.json({ keyId: targetKeyId, revoked: true });
 });
 
 export { auth };
