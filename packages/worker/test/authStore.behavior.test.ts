@@ -146,6 +146,17 @@ describe('consumeChallenge — adversarial boundary (secSys)', () => {
     expect(results.filter((r) => r !== null)).toHaveLength(1);
     expect(results.filter((r) => r === null)).toHaveLength(7);
   });
+
+  it('AUTH-1: expiresAtMs=9 consumed at serverNowMs=100 is REJECTED — proves INTEGER, not lexical, compare', async () => {
+    await store.createChallenge({
+      challengeId: 'c-int-defends', nonce: 'n', keyId: 'k1',
+      purpose: 'session', issuedAt: '2025-01-01T00:00:00Z', expiresAtMs: 9,
+    });
+    // 9 > 100 is FALSE for integers → reject (correct: stale). A TEXT expiresAt would compare '9' > '100'
+    // LEXICALLY = TRUE ('9' > '1') and WRONGLY accept this stale challenge. This is THE vector proving the
+    // epoch-millis INTEGER column defends AUTH-1 freshness at the storage layer.
+    expect(await store.consumeChallenge('c-int-defends', 'session', 100)).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -263,6 +274,16 @@ describe('mintGrant / resolveGrantByTokenHash — adversarial (secSys)', () => {
               'workspace', NULL, '["read"]', NULL, NULL, '2025-01-01T00:00:00Z')
     `);
     await expect(store.resolveGrantByTokenHash('h-bad-principal')).rejects.toThrow();
+  });
+
+  it('corrupted resourceKind in DB → resolveGrantByTokenHash throws (ResourceSchema.parse fail-closed)', async () => {
+    raw.exec(`
+      INSERT INTO grants (grantId, tokenHash, principalKind, principalId, mintedByKeyId,
+                          resourceKind, resourceId, scope, expiresAtMs, revokedAt, createdAt)
+      VALUES ('g-bad-resource', 'h-bad-resource', 'owner', '${FP_A}', NULL,
+              'not-a-resource-kind', NULL, '["read"]', NULL, NULL, '2025-01-01T00:00:00Z')
+    `);
+    await expect(store.resolveGrantByTokenHash('h-bad-resource')).rejects.toThrow();
   });
 
   it('round-trips a non-owner principalKind (agent) through mint → resolve — the kind column is not assumed owner', async () => {
