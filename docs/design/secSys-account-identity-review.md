@@ -31,8 +31,14 @@ semantics + `grants.principalId` + worker DB change + a docstring on `Principal.
 - **Confusables/homoglyphs:** v1 = conservative charset (e.g. `[a-z0-9_-]`), reject out-of-charset at the
   boundary. (Future: Unicode TR39 skeleton for the uniqueness key.)
 - **Reserved-name denylist** (admin/root/system/support/official/…).
-- **Enumeration:** an availability endpoint is inherently a taken/available oracle — acceptable (public
-  directory) but rate-limit it and leak nothing beyond taken/available (no `accountId`, no timing tell).
+- **Enumeration — F-acct-4 (planSys-ruled, secSys owns the exact shape):** PREFER an
+  **authenticated-claim-only** free/taken check — there is NO standalone unauthenticated availability
+  endpoint, so no public existence oracle; the free/taken signal is revealed ONLY inside an authenticated
+  claim attempt (the caller is already an authenticated account when claiming). If a pre-claim availability
+  hint is wanted for UX, gate it behind auth + **rate-limit + uniform timing** + return a BOOLEAN only (never
+  an `accountId`, never a reserved-vs-taken-vs-confusable distinction). Concrete v1 shape: fold availability
+  into the authenticated claim endpoint (claim returns taken → pick another); skip a separate `/available`
+  route unless UX forces it, and if so apply the gated form above.
 
 ## S2 — recovery + QR-join re-association (NO re-association attack surface)
 - Deterministic chain: mnemonic → signing key → `accountFingerprint` → (map) → `accountId` → username; the
