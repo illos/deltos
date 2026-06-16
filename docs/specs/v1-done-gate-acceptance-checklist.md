@@ -158,8 +158,10 @@ A `[CLI-device]` checklist is a numbered runbook (one tap-path per row) executed
 
 - **Tier A `[CLI-auto]`** — owner: **devSys2** (coordinating with gruntSys2 for enroll/storage). It is
   the client-side sibling of `v1.donegate.test.ts` and must be green in CI before the gate closes.
-  Covers DG-1b / 2b / 2d / 3d / 3e. **Status: 12/13 rows green + committed (`708d476`→`2e421cb`,
-  worker-pkg `v1.donegate.client.test.ts`); DG-2d is the lone open row (client-side, see split below).**
+  Covers DG-1b / 2b / 2d / 3d / 3e. **Status: ✅ 13/13 GREEN — COMPLETE.** Worker-pkg
+  `v1.donegate.client.test.ts` 12/13 (`708d476`→`2e421cb`) + client-pkg
+  `packages/client/test/blockId.donegate.test.ts` 3 green for DG-2d (`aa9e40c`). The automatable
+  [CLI] half of v1-done is closed.
   - **Tier-A spans two packages (scopeSys [CLI]-method ruling, pilot-ratified):** the split is **by
     what each row exercises.** App-coupled + identity/persistence rows (DG-1b/2b/3d/3e + the sync-bridge
     rows DG-3a/2c/5c-echo) live in the **worker** test pkg; the lone **pure-editor** row **DG-2d** lives
@@ -174,8 +176,10 @@ A `[CLI-device]` checklist is a numbered runbook (one tap-path per row) executed
     are pnpm-isolated to `client` and do **not** resolve from the worker pkg (`ERR_MODULE_NOT_FOUND`);
     adding the PM stack as worker devDeps would put editor deps in the backend test pkg (smell) + force
     another shared-tree install. So it hosts client-side with clean `../src/...` imports.
-    **Writer = devSys2** (owns the Tier-A suite + the criterion + offered) → lands Tier-A **13/13**.
-    NON-BLOCKING for the capstone.
+    **Writer = devSys2** (owns the Tier-A suite + the criterion + offered). ✅ **LANDED `aa9e40c`** —
+    `packages/client/test/blockId.donegate.test.ts`, 3 green (mints fresh ids for null-id blocks,
+    re-mints duplicate ids preserving the prior owner, leaves unique ids stable), test-only, no plugin
+    change → **Tier-A 13/13**.
   - **The sync subset** (DG-3a round-trip / DG-3d auth header + token-never-persisted / DG-2c offline
     reconcile / DG-5c client-side isolation echo) is proven by driving the **real** client
     `syncEngine` against the **real** worker Hono app via a `global.fetch → app.request` bridge over
