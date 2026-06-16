@@ -233,8 +233,10 @@ auth.post('/devices/:keyId/revoke', async (c) => {
   const targetKeyId = c.req.param('keyId');
   const { challengeId, keyId, op, resource, signature } = parsed.data;
 
-  // v1 F9 binding: device-revoke is authorized ONLY by a step-up signed for exactly (delete, workspace).
-  // A step-up signed for any other (op, resource) cannot be replayed to revoke a device.
+  // v1 F9 binding: device-revoke is authorized ONLY by a step-up signed for exactly (delete,
+  // workspace). A step-up signed for any other (op, resource) cannot be replayed to revoke a device.
+  // (Direct-gate is cryptographically sound for v1 — secSys-cleared. Routing this through can()'s
+  // signed-request branch is a tracked devSys follow-up; that branch stays unused in v1.)
   if (op !== DEVICE_REVOKE_STEP_UP.op || resource.kind !== DEVICE_REVOKE_STEP_UP.resource.kind) {
     return apiError(c, 403, 'forbidden', 'step-up is not authorized for device revocation');
   }
@@ -265,9 +267,14 @@ auth.post('/devices/:keyId/revoke', async (c) => {
   });
   if (!verified) return apiError(c, 401, 'unauthorized', UNAUTHORIZED);
 
-  // Target must exist — distinguishes an unknown device (404) from an already-revoked one (idempotent 200).
+  // BOLA guard: the target must EXIST and belong to the AUTHENTICATING account. Without this, any
+  // account holder with a valid step-up for THEIR account could revoke ANY device of ANY account
+  // (cross-tenant DoS). 404 — not 403 — so a cross-account keyId is indistinguishable from a
+  // non-existent one (no cross-account existence oracle); collapses with the unknown-target case.
   const target = await store.getDevice(targetKeyId);
-  if (!target) return apiError(c, 404, 'not_found', 'no such device');
+  if (!target || target.accountFingerprint !== authDevice.accountFingerprint) {
+    return apiError(c, 404, 'not_found', 'no such device');
+  }
 
   await store.revokeByKeyId(targetKeyId);
   return c.json({ keyId: targetKeyId, revoked: true });

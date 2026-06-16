@@ -301,13 +301,28 @@ describe('POST /api/auth/devices/:keyId/revoke (F9 step-up)', () => {
     const res = await postJson(env, `/api/auth/devices/no-such-device/revoke`, { challengeId: ch.challengeId, keyId, op: 'delete', resource: { kind: 'workspace' }, signature: stepUpSig(kp.priv, ch, keyId, 'delete', { kind: 'workspace' }) });
     await expectCode(res, 404, 'not_found');
   });
+
+  it('BOLA: account A cannot revoke account B device → 404, B stays un-revoked', async () => {
+    const raw = freshDb();
+    const env = makeEnv(raw);
+    const kpA = keypair(1);
+    const kpB = keypair(2); // distinct keypair ⇒ distinct accountFingerprint ⇒ distinct account
+    const a = await registerDevice(env, kpA, 'A phone');
+    const b = await registerDevice(env, kpB, 'B phone');
+    // A mints a VALID (delete, workspace) step-up for A's OWN account, then targets B's device.
+    const ch = await mintChallenge(env, { purpose: 'step-up', keyId: a.keyId });
+    const res = await postJson(env, `/api/auth/devices/${b.keyId}/revoke`, { challengeId: ch.challengeId, keyId: a.keyId, op: 'delete', resource: { kind: 'workspace' }, signature: stepUpSig(kpA.priv, ch, a.keyId, 'delete', { kind: 'workspace' }) });
+    await expectCode(res, 404, 'not_found'); // 404, not 403 — no cross-account existence oracle
+    // No partial mutation: B's device is untouched.
+    expect((raw.prepare('SELECT revokedAt FROM devices WHERE keyId = ?').get(b.keyId) as { revokedAt: string | null }).revokedAt).toBeNull();
+  });
 });
 
 describe('GET /api/auth/devices', () => {
   it("lists the resolved principal's devices and excludes other accounts", async () => {
     const raw = freshDb();
     const seed = (keyId: string, fp: string, label: string) =>
-      raw.prepare('INSERT INTO devices (keyId, signingPublicKey, accountFingerprint, deviceLabel, createdAt) VALUES (?,?,?,?,?)').run(keyId, b64(32), fp, label, '2026-06-16T00:00:00.000Z');
+      raw.prepare('INSERT INTO devices (keyId, signingPublicKey, deviceSigningPublicKey, accountFingerprint, deviceLabel, createdAt) VALUES (?,?,?,?,?,?)').run(keyId, b64(32), b64(32), fp, label, '2026-06-16T00:00:00.000Z');
     seed('dev-mine', 'local-owner', 'My phone'); // resolvePrincipal stub id
     seed('dev-other', 'someone-else', 'Their phone');
     const res = await app.request('/api/auth/devices', {}, makeEnv(raw));
