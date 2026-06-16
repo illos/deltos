@@ -29,12 +29,39 @@
  *   - F2 (fingerprint server-enforced), F13 (allowlist tripwire), PIN-ID-1/5 (id-not-authn, revoke)
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
+import Database from 'better-sqlite3';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { NoteRefSchema } from '@deltos/shared';
 import type { Resource } from '@deltos/shared';
 import { guard, type GuardDeps, type AppContext } from '../src/http.js';
 import type { Env } from '../src/env.js';
+
+// ---------------------------------------------------------------------------
+// D1/SQLite test infrastructure — mirrors conflict.test.ts pattern
+// ---------------------------------------------------------------------------
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const ALL_MIGRATIONS = [
+  '0000_baseline.sql',
+  '0001_stream-b-sync.sql',
+  '0002_stream-a-auth.sql',
+].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
+
+/**
+ * Fresh in-memory DB with all migrations applied. Returns `raw` (better-sqlite3 Database)
+ * for schema introspection tests; a `db` D1-compatible adapter will be added once authStore
+ * functions need it.
+ */
+function freshAuthDb(): Database.Database {
+  const raw = new Database(':memory:');
+  for (const sql of ALL_MIGRATIONS) raw.exec(sql);
+  return raw;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers shared across live sections
@@ -137,6 +164,161 @@ describe('F13 — tripwire env allowlist', () => {
     expect(res.status).toBe(200);
     expect(handle).toHaveBeenCalledOnce();
   });
+});
+
+// ---------------------------------------------------------------------------
+// D1 auth schema — migration 0002 (b835804)
+//
+// Schema-shape tests: table existence, column types, nullability, constraints, indexes.
+// These run against a fresh in-memory SQLite DB with all three migrations applied.
+// LIVE — no authStore or canonical.ts required.
+//
+// Key security invariants exercised at the schema level:
+//   AUTH-PROP-2 storage: expiresAtMs is INTEGER (epoch-millis instant compare, not lexical ISO)
+//   F6:              tokenHash UNIQUE — hashed-only storage, no raw bearer in DB
+//   PIN-ID-5:        mintedByKeyId nullable (device grants) + grants.revokedAt for immediate deny
+//   F2:              accountFingerprint NOT NULL (server-COMPUTED, always present in devices row)
+// ---------------------------------------------------------------------------
+
+describe('D1 auth schema — migration 0002', () => {
+  let db: Database.Database;
+  beforeEach(() => { db = freshAuthDb(); });
+
+  // --- meta sentinel ---
+
+  it('streamAAuthSchemaVersion meta row = "1" confirms migration applied', () => {
+    const row = db.prepare(`SELECT value FROM meta WHERE key = 'streamAAuthSchemaVersion'`).get() as { value: string } | undefined;
+    expect(row?.value).toBe('1');
+  });
+
+  // --- devices table ---
+
+  it('devices table: all columns present with correct types and nullability', () => {
+    const cols = db.prepare(`PRAGMA table_info(devices)`).all() as Array<{ name: string; type: string; notnull: number; pk: number }>;
+    const byName = Object.fromEntries(cols.map((c) => [c.name, c]));
+
+    expect(byName['keyId']?.pk).toBe(1);            // PRIMARY KEY
+    expect(byName['keyId']?.type).toBe('TEXT');
+    expect(byName['keyId']?.notnull).toBe(1);
+
+    expect(byName['signingPublicKey']?.type).toBe('TEXT');
+    expect(byName['signingPublicKey']?.notnull).toBe(1);
+
+    expect(byName['accountFingerprint']?.type).toBe('TEXT');
+    expect(byName['accountFingerprint']?.notnull).toBe(1); // F2: server-COMPUTED, always present
+
+    expect(byName['deviceLabel']?.type).toBe('TEXT');
+    expect(byName['deviceLabel']?.notnull).toBe(1);
+
+    expect(byName['createdAt']?.type).toBe('TEXT');
+    expect(byName['createdAt']?.notnull).toBe(1);
+
+    expect(byName['revokedAt']?.type).toBe('TEXT');
+    expect(byName['revokedAt']?.notnull).toBe(0); // nullable — IS NOT NULL = revoked (PIN-ID-5)
+  });
+
+  it('devices_byAccount index exists on (accountFingerprint) for per-account device listing', () => {
+    const indexes = db.prepare(`PRAGMA index_list(devices)`).all() as Array<{ name: string }>;
+    expect(indexes.some((i) => i.name === 'devices_byAccount')).toBe(true);
+  });
+
+  // --- authChallenges table ---
+
+  it('authChallenges.expiresAtMs is INTEGER — epoch-millis instant compare, not lexical ISO (AUTH-PROP-2 storage)', () => {
+    const cols = db.prepare(`PRAGMA table_info(authChallenges)`).all() as Array<{ name: string; type: string; notnull: number }>;
+    const byName = Object.fromEntries(cols.map((c) => [c.name, c]));
+    expect(byName['expiresAtMs']?.type).toBe('INTEGER');
+    expect(byName['expiresAtMs']?.notnull).toBe(1);
+  });
+
+  it('authChallenges.expiresAtMs integer compare correctly identifies fresh vs stale challenges', () => {
+    const nowMs = 1_000_000_000_000;
+    db.prepare(
+      `INSERT INTO authChallenges (challengeId, nonce, purpose, issuedAt, expiresAtMs, consumed)
+       VALUES ('c1','n1','session','2001-09-09T01:46:40.000Z', ?, 0)`,
+    ).run(nowMs + 60_000);
+
+    const fresh = db.prepare(`SELECT challengeId FROM authChallenges WHERE expiresAtMs > ?`).get(nowMs);
+    expect(fresh).not.toBeNull();
+
+    const stale = db.prepare(`SELECT challengeId FROM authChallenges WHERE expiresAtMs > ?`).get(nowMs + 120_000);
+    expect(stale).toBeUndefined();
+  });
+
+  it('authChallenges.keyId is nullable (NULL for purpose=register — no key exists yet at enrollment)', () => {
+    const cols = db.prepare(`PRAGMA table_info(authChallenges)`).all() as Array<{ name: string; notnull: number }>;
+    const byName = Object.fromEntries(cols.map((c) => [c.name, c]));
+    expect(byName['keyId']?.notnull).toBe(0);
+  });
+
+  it('authChallenges.consumed defaults to 0 (unconsumed on creation)', () => {
+    const cols = db.prepare(`PRAGMA table_info(authChallenges)`).all() as Array<{ name: string; dflt_value: string | null }>;
+    const byName = Object.fromEntries(cols.map((c) => [c.name, c]));
+    expect(byName['consumed']?.dflt_value).toBe('0');
+  });
+
+  it('authChallenges_byExpiry index exists on (expiresAtMs) for sweep-expired-challenges', () => {
+    const indexes = db.prepare(`PRAGMA index_list(authChallenges)`).all() as Array<{ name: string }>;
+    expect(indexes.some((i) => i.name === 'authChallenges_byExpiry')).toBe(true);
+  });
+
+  // --- grants table ---
+
+  it('grants.tokenHash UNIQUE — raw token never stored; lookup hashes the presented token (F6)', () => {
+    const insert = db.prepare(
+      `INSERT INTO grants (grantId, tokenHash, principalKind, principalId, mintedByKeyId,
+                           resourceKind, scope, createdAt)
+       VALUES (?, ?, 'device', 'k1', 'k1', 'workspace', '["read"]', '2026-01-01T00:00:00.000Z')`,
+    );
+    insert.run('g1', 'hash-aaa');
+    // Duplicate tokenHash with a different grantId must violate the UNIQUE constraint.
+    expect(() => insert.run('g2', 'hash-aaa')).toThrow(/UNIQUE/);
+  });
+
+  it('grants.expiresAtMs is INTEGER (nullable — NULL = no-expiry; instant compare at resolve)', () => {
+    const cols = db.prepare(`PRAGMA table_info(grants)`).all() as Array<{ name: string; type: string; notnull: number }>;
+    const byName = Object.fromEntries(cols.map((c) => [c.name, c]));
+    expect(byName['expiresAtMs']?.type).toBe('INTEGER');
+    expect(byName['expiresAtMs']?.notnull).toBe(0); // nullable
+  });
+
+  it('grants.mintedByKeyId nullable (NULL for capability grants; device grants carry keyId for revokeByKeyId)', () => {
+    const cols = db.prepare(`PRAGMA table_info(grants)`).all() as Array<{ name: string; notnull: number }>;
+    const byName = Object.fromEntries(cols.map((c) => [c.name, c]));
+    expect(byName['mintedByKeyId']?.notnull).toBe(0);
+  });
+
+  it('grants.revokedAt nullable TEXT — IS NOT NULL = immediate deny (PIN-ID-5)', () => {
+    const cols = db.prepare(`PRAGMA table_info(grants)`).all() as Array<{ name: string; type: string; notnull: number }>;
+    const byName = Object.fromEntries(cols.map((c) => [c.name, c]));
+    expect(byName['revokedAt']?.type).toBe('TEXT');
+    expect(byName['revokedAt']?.notnull).toBe(0);
+  });
+
+  it('grants.scope is TEXT (JSON Scope[] — clamped at mint per F5, stored as serialized array)', () => {
+    const cols = db.prepare(`PRAGMA table_info(grants)`).all() as Array<{ name: string; type: string; notnull: number }>;
+    const byName = Object.fromEntries(cols.map((c) => [c.name, c]));
+    expect(byName['scope']?.type).toBe('TEXT');
+    expect(byName['scope']?.notnull).toBe(1);
+  });
+
+  it('grants_byMintedKey index exists on (mintedByKeyId) for revokeByKeyId sweep (PIN-ID-5)', () => {
+    const indexes = db.prepare(`PRAGMA index_list(grants)`).all() as Array<{ name: string }>;
+    expect(indexes.some((i) => i.name === 'grants_byMintedKey')).toBe(true);
+  });
+
+  // --- authStore BEHAVIOR .todo()s — waiting on devSys2 authStore implementation ---
+
+  it.todo('insertChallenge: row inserted with consumed=0, expiresAtMs = issuedMs + TTL_MS')
+  it.todo('consumeChallenge: atomic UPDATE consumed=1 WHERE consumed=0 AND expiresAtMs>nowMs — rows-affected=1 on fresh, 0 on stale/spent (AUTH-PROP-1+2 CAS)')
+  it.todo('consumeChallenge: two concurrent calls for the same challengeId — exactly one succeeds (replay race)')
+  it.todo('registerDevice: inserts into devices; accountFingerprint = base64url(SHA-256(signingPublicKey)) — server-computed (F2)')
+  it.todo('registerDevice: duplicate keyId or signingPublicKey → appropriate rejection')
+  it.todo('mintGrant: tokenHash = base64url(SHA-256(token)); raw token NOT stored in any column (F6)')
+  it.todo('resolveGrant: hashes presented token, returns grant row; revokedAt IS NOT NULL → deny')
+  it.todo('resolveGrant: expiresAtMs IS NOT NULL AND < serverNowMs → deny (instant compare, not lexical)')
+  it.todo('revokeByKeyId: sets devices.revokedAt + all grants WHERE mintedByKeyId=keyId (PIN-ID-5 dual-sweep)')
+  it.todo('getDevice: revokedAt IS NOT NULL → device considered revoked; blocks future session mints')
 });
 
 // ---------------------------------------------------------------------------
