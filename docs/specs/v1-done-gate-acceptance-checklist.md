@@ -158,11 +158,24 @@ A `[CLI-device]` checklist is a numbered runbook (one tap-path per row) executed
 
 - **Tier A `[CLI-auto]`** — owner: **devSys2** (coordinating with gruntSys2 for enroll/storage). It is
   the client-side sibling of `v1.donegate.test.ts` and must be green in CI before the gate closes.
-  Covers DG-1b / 2b / 2d / 3d / 3e.
-  - **Host package (scopeSys ruling — wiring LIVE @b98bf3d):** the **worker** test package, with
+  Covers DG-1b / 2b / 2d / 3d / 3e. **Status: 12/13 rows green + committed (`708d476`→`2e421cb`,
+  worker-pkg `v1.donegate.client.test.ts`); DG-2d is the lone open row (client-side, see split below).**
+  - **Tier-A spans two packages (scopeSys [CLI]-method ruling, pilot-ratified):** the split is **by
+    what each row exercises.** App-coupled + identity/persistence rows (DG-1b/2b/3d/3e + the sync-bridge
+    rows DG-3a/2c/5c-echo) live in the **worker** test pkg; the lone **pure-editor** row **DG-2d** lives
+    in **`packages/client/test/`**.
+  - **Host package — worker pkg (scopeSys ruling — wiring LIVE @b98bf3d):** the worker test package, with
     `@deltos/client` added as a test-only devDep + `fake-indexeddb`. Safe — `client` and `worker` both depend only on
     `@deltos/shared`, neither on the other, so the worker→client devDep is no prod cycle; and it
-    co-locates the automatable [CLI] suite with `v1.donegate.test.ts` (one harness, one package).
+    co-locates the app-coupled [CLI] suite with `v1.donegate.test.ts` (one harness, one package).
+  - **DG-2d → client pkg (scopeSys ruling, pilot-ratified):** DG-2d is a pure-editor test (block-id
+    stability through copy/paste/split/merge over the PM harness + the EXISTING `uniqueBlockIdPlugin`,
+    test-only, no plugin change) and needs **no worker app**. `prosemirror-state`/`prosemirror-model`
+    are pnpm-isolated to `client` and do **not** resolve from the worker pkg (`ERR_MODULE_NOT_FOUND`);
+    adding the PM stack as worker devDeps would put editor deps in the backend test pkg (smell) + force
+    another shared-tree install. So it hosts client-side with clean `../src/...` imports.
+    **Writer = devSys2** (owns the Tier-A suite + the criterion + offered) → lands Tier-A **13/13**.
+    NON-BLOCKING for the capstone.
   - **The sync subset** (DG-3a round-trip / DG-3d auth header + token-never-persisted / DG-2c offline
     reconcile / DG-5c client-side isolation echo) is proven by driving the **real** client
     `syncEngine` against the **real** worker Hono app via a `global.fetch → app.request` bridge over

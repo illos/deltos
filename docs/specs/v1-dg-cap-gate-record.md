@@ -21,22 +21,25 @@ here. **The gate closes only when every step is PASS** (and Tier-A `[CLI-auto]` 
 
 ---
 
-## Run metadata
+## Run 1 — metadata
+
+_(build facts pre-filled by scopeSys from pilot's gate-record handoff; live fields filled by
+planSys + the user at run time. Re-runs after a fix duplicate this block.)_
 
 | Field | Value |
 |-------|-------|
-| Build SHA under test | _record the actual `git rev-parse --short HEAD` of the ONE coherent build_ |
-| Build mode (MUST be prod-representative) | _prod-mode worker: `ENVIRONMENT=production`, F13 ACTIVE, no `LOCAL_OWNER` fallback + prod client build — confirm before recording_ |
-| Run date | _YYYY-MM-DD_ |
-| Tester | _(name)_ |
-| Device model | _(e.g. iPhone 15 Pro)_ |
-| iOS version | _(e.g. iOS 18.x)_ |
-| Browser / engine | _Safari (WebKit) — version_ |
+| Build SHA under test | client dist **`55e438d`** (client source unchanged through repo HEAD `2e421cb`; intervening commits worker-test-only — so the client bundle is coherent with HEAD) |
+| Build mode (MUST be prod-representative) | ✅ **CONFIRMED prod-representative** — worker prod-mode singleton (`127.0.0.1:8787`, `ENVIRONMENT=production`, **F13 ACTIVE**, **no** unverified `LOCAL_OWNER` fallback; devSys validated live: enroll / session / recover-same-accountId / replay-401 / audience-401) + prod client build. **prod-MODE = YES.** |
+| Run date | _YYYY-MM-DD (fill at run)_ |
+| Tester | _(fill at run)_ |
+| Device model | _(e.g. iPhone 15 Pro — fill at run)_ |
+| iOS version | _(e.g. iOS 18.x — fill at run)_ |
+| Browser / engine | _Safari (WebKit) — version (fill at run)_ |
 | Install method | _Add-to-Home-Screen (standalone)_ |
-| Serving URL | _Tailscale HTTPS `https://<host>.<tailnet>.ts.net[:port]/` — hostname RP ID (PIN-ID-9)_ |
-| 2nd device (steps 7–8) | _(model + iOS)_ |
+| Serving URL | `https://devbox.tail41404c.ts.net:8451/` — hostname RP ID (PIN-ID-9) |
+| 2nd device (steps 7–8) | _(model + iOS — fill at run)_ |
 
-## Per-step results
+## Run 1 — per-step results
 
 | # | Step (runbook) | Criterion | What to observe | Result | Notes / observations |
 |---|----------------|-----------|-----------------|--------|----------------------|
