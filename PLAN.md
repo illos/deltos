@@ -76,7 +76,8 @@ active WebAuthn binding is `device-local` (wrapping key stored plaintext in Inde
 enroll/unlock UI MUST render an honest D5-style limitation disclosure. secSys's clearance of the
 baseline is *conditional* on this shipping; dropping it voids the clearance. **Owner: gruntSys2**
 (hard acceptance condition on its client-identity lane). Trigger-bound to the enroll/unlock UI
-surface (not dated). Tracked in `[[keystore-noprf-ui-disclosure]]`.
+surface (not dated). Tracked in `[[keystore-noprf-ui-disclosure]]`. **Seam COMPLETE**
+(`getEnrollmentPrfStatus()`, `47f018b` — exposes `usesPrf`/`blobRow.prf`); remaining = the UI render.
 
 ## Later (framed, not yet specced)
 - **Phase 2** — second surface (proves decoupling) + notebooks + universal search + plugin
@@ -267,6 +268,18 @@ surface (not dated). Tracked in `[[keystore-noprf-ui-disclosure]]`.
   (cheap: one nullable col, Phase-1, no data) rather than (b) reuse the single account
   `signingPublicKey` + revise the specs — (b) would force a differentiating migration in Phase-2 and
   thus **break the non-breaking guarantee D5 promised**. (a) preserves locked canon, so **no DECISIONS
-  escalation / no spec revision**; record==reality restored by fixing the migration. Escape hatch
-  offered devSys2: a concrete proof the single column gives a genuinely non-breaking Phase-2 drop-in
-  would reopen it. Reaffirms the seam.
+  escalation / no spec revision**; record==reality restored by fixing the migration. **Escape hatch
+  CLOSED with proof** (devSys2 + devSys concurring): one column CANNOT be non-breaking — per-device
+  keys need the shared account key (→ `accountFingerprint`; PIN-ID-3 same-id-across-devices) AND a
+  distinct per-device key coexisting; a single column makes `SHA-256(it)` differ per device and breaks
+  same-id-across-devices. The two-column design IS the genuine D5 seam → (a) stands definitively.
+  devSys2 re-adds the nullable `deviceSigningPublicKey` + finding-4 CHECK constraints; v1 populates it
+  = `signingPublicKey`. Locked specs intact.
+- 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
+  delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
+  tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
+  pluggable store seam, retire the `notebooks` localStorage stub) — UNBLOCKED, done-gate-critical, zero
+  file-contention with devSys's active chokepoint work. **Stream D (sync-auth integration: wire
+  /api/sync to the real grant token + authorized/rejected/revoked gate) is devSys2's NEXT chunk AFTER
+  client storage, GATED on devSys's chokepoint being green** (resolvePrincipal still the stub in-tree
+  today). Net: devSys + devSys2 run in parallel without collision, converge on Stream D at the lock.
