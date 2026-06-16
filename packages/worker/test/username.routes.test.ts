@@ -13,6 +13,7 @@ import {
 } from '@deltos/shared';
 import app from '../src/index.js';
 import { createAuthStore } from '../src/db/authStore.js';
+import { hashToken } from '../src/authCrypto.js';
 import type { DbAdapter } from '../src/db/schema.js';
 import type { Env } from '../src/env.js';
 
@@ -186,6 +187,30 @@ describe('POST /api/auth/username — authenticated claim (F-acct-4)', () => {
     const { token } = await sessionFor(env, keypair(2));
     const res = await claim(env, token, { username: 'bob', accountId: 'attacker-account' });
     expect(res.status).toBe(400);
+  });
+
+  it('a NON-account (capability/agent) principal cannot claim — 403, even with a create grant (invariant i)', async () => {
+    // Mint a capability grant (kind=agent) with create+workspace scope so it PASSES can(); the
+    // handler's account-bearing-kind guard must still refuse it — only an account may claim, so a
+    // username can never bind to a capability/agent id (which is what principal.id would be here).
+    const raw = freshDb();
+    const env = makeEnv(raw);
+    const store = createAuthStore(sqliteAdapter(raw));
+    const token = 'cap-token-xyz';
+    await store.mintGrant({
+      grantId: 'g-cap',
+      tokenHash: hashToken(token),
+      principal: { kind: 'agent', id: 'capability-not-an-account' },
+      mintedByKeyId: null,
+      resource: { kind: 'workspace' },
+      scope: ['create'],
+      expiresAtMs: 4102444800000, // far future
+      createdAt: 'now',
+    });
+    const res = await claim(env, token, { username: 'agentname' });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('forbidden');
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM usernames').get()).toEqual({ n: 0 });
   });
 
   it('rejects an invalid username (reserved / charset / length) with 400 invalid_username', async () => {

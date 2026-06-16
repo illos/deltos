@@ -272,6 +272,14 @@ auth.post(
     handle: async (req, c, principal) => {
       // ONE normalization rule — the SHARED `normalizeUsername` (NFKC + casefold + conservative charset
       // + reserved denylist). The client hints with the same function, so "taken" can never diverge.
+      // INVARIANT (i), fail-closed: ONLY an account-bearing principal may claim. For owner/device the
+      // re-pointed `principal.id` IS the accountId; for capability/guest/agent/plugin it is a
+      // capability/agent id, NOT an account — binding a directory alias to one would corrupt the
+      // namespace. The chokepoint already authorizes the op; this pins the claim to an actual account.
+      if (principal.kind !== 'owner' && principal.kind !== 'device') {
+        return apiError(c, 403, 'forbidden', 'only an account may claim a username');
+      }
+
       const norm = normalizeUsername(req.username);
       if (!norm.ok) return apiError(c, 400, 'invalid_username', usernameRejectMessage(norm.reason));
 
