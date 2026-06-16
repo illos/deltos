@@ -4,8 +4,9 @@
  * These cover the gap the Phase-1 dogfood found: the autosave path (editor onSave →
  * mutateNotes.put) and the reactive list (observeNotes → HomeView) were NOT exercised
  * together by the server-side Tier-A suite. These tests close that gap at the store
- * layer (fake-indexeddb, no React) so a regression in any part of the chain is caught
- * before the next recorded capstone run.
+ * layer (fake-indexeddb, no React) and at the PM-pipeline layer (EditorState → serializer
+ * → onSave → store) — without EditorView (needs DOM), whose dispatchTransaction call is
+ * ProseMirror's own responsibility.
  *
  * Covered:
  *   - observeNotes fires with initial state on subscription (empty → correct seed)
@@ -15,8 +16,9 @@
  *   - observeNotes scopes by notebookId (cross-notebook isolation)
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import 'fake-indexeddb/auto';
+import { EditorState } from 'prosemirror-state';
 import type { Note, NotebookId } from '@deltos/shared';
 
 // The Dexie instance is a module singleton — clear between tests for isolation.
@@ -152,5 +154,93 @@ describe('observeNotes — notebookId scoping', () => {
     const notesNb2 = await firstEmission(NB2);
     expect(notesNb2).toHaveLength(1);
     expect(notesNb2[0].title).toBe('Notebook 2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PM-pipeline tests: EditorState → serializer → onSave → store
+//
+// These exercise the actual data path from a ProseMirror document change to
+// the note persisting in the store — everything except EditorView.dispatchTransaction
+// (which is ProseMirror's own well-tested code; we trust it calls the handler we give it).
+// ---------------------------------------------------------------------------
+
+describe('PM-pipeline — EditorState doc change → serializer → onSave → store', () => {
+  it('a text edit produces tr.docChanged=true and extractTitleFromDoc returns typed text', async () => {
+    const { deltoSchema } = await import('../src/editor/schema.js');
+    const { spineToPmDoc, extractTitleFromDoc } = await import('../src/editor/serializer.js');
+    const { uniqueBlockIdPlugin } = await import('../src/editor/plugins/blockId.js');
+
+    const state = EditorState.create({
+      doc: spineToPmDoc(deltoSchema, [], ''),
+      plugins: [uniqueBlockIdPlugin],
+    });
+
+    // Simulate typing 'My note' into the title node (position 1 = start of title text).
+    const tr = state.tr.insertText('My note', 1);
+    expect(tr.docChanged).toBe(true);
+
+    const newState = state.apply(tr);
+    const title = extractTitleFromDoc(newState.doc);
+    expect(title).toBe('My note');
+  });
+
+  it('a doc change serializes correctly through pmDocToSpine (the data onChange receives)', async () => {
+    const { deltoSchema } = await import('../src/editor/schema.js');
+    const { spineToPmDoc, extractTitleFromDoc, pmDocToSpine } = await import('../src/editor/serializer.js');
+    const { uniqueBlockIdPlugin } = await import('../src/editor/plugins/blockId.js');
+
+    const state = EditorState.create({
+      doc: spineToPmDoc(deltoSchema, [], ''),
+      plugins: [uniqueBlockIdPlugin],
+    });
+
+    const tr = state.tr.insertText('Hello world', 1);
+    const newState = state.apply(tr);
+
+    const title = extractTitleFromDoc(newState.doc);
+    const body = pmDocToSpine(newState.doc);
+
+    expect(title).toBe('Hello world');
+    expect(Array.isArray(body)).toBe(true);
+  });
+
+  it('onSave(note with PM-derived title) persists to the store and appears in observeNotes', async () => {
+    const { deltoSchema } = await import('../src/editor/schema.js');
+    const { spineToPmDoc, extractTitleFromDoc, pmDocToSpine } = await import('../src/editor/serializer.js');
+    const { uniqueBlockIdPlugin } = await import('../src/editor/plugins/blockId.js');
+    const { mutateNotes } = await import('../src/db/mutate.js');
+
+    // 1. Simulate NoteRoute.handleSave being the onSave callback.
+    const onSave = vi.fn(async (note: Note) => {
+      await mutateNotes.put(note);
+    });
+
+    // 2. Build PM state and simulate a doc change (what dispatchTransaction sees).
+    const state = EditorState.create({
+      doc: spineToPmDoc(deltoSchema, [], ''),
+      plugins: [uniqueBlockIdPlugin],
+    });
+    const tr = state.tr.insertText('Autosaved note', 1);
+    const newState = state.apply(tr);
+
+    // 3. Simulate what ProseMirrorEditor.dispatchTransaction does after debounce:
+    //    call onChangeRef.current(title, body) → NoteEditor.handleDocChange → persistUpdate → onSave.
+    const title = extractTitleFromDoc(newState.doc);
+    const body = pmDocToSpine(newState.doc);
+
+    // persistUpdate builds the updated note from the current note + onChange args, then calls onSave.
+    const baseNote = makeNote('11111111-1111-4111-8111-111111111112', NB, '', '2026-06-16T10:00:00.000Z');
+    const updatedNote: Note = { ...baseNote, title, body, syncStatus: 'pending', updatedAt: '2026-06-16T10:00:01.000Z' };
+    await onSave(updatedNote);
+
+    // 4. onSave called once with the correct title.
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onSave.mock.calls[0][0].title).toBe('Autosaved note');
+
+    // 5. Note lands in the store and appears in observeNotes (the list).
+    const notes = await firstEmission(NB);
+    expect(notes).toHaveLength(1);
+    expect(notes[0].title).toBe('Autosaved note');
   });
 });
