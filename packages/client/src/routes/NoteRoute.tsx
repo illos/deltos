@@ -7,6 +7,8 @@ import { mutateNotes } from '../db/mutate.js';
 import { notifyQueueWrite } from '../lib/syncEngine.js';
 import { NoteEditor } from '../editor/NoteEditor.js';
 import { resolveNoteView } from '../editor/views.js';
+import { ConflictView } from '../components/ConflictView.js';
+import type { ClientNote } from '../db/schema.js';
 
 /**
  * Loads a note by ID through the LocalStore seam and renders the appropriate view.
@@ -45,6 +47,17 @@ export function NoteRoute() {
   // the brief undefined state shows the chrome with no content rather than a spinner.
   if (note === undefined) {
     return <div className="editor editor--loading" />;
+  }
+
+  const clientNote = note as ClientNote;
+
+  if (clientNote.hasConflict) {
+    return (
+      <>
+        <Link to="/" className="editor__back">← Notes</Link>
+        <ConflictView note={note} />
+      </>
+    );
   }
 
   const ViewComponent = resolveNoteView(note, NoteEditor);
