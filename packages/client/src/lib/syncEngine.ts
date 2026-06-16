@@ -157,27 +157,47 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
 
     await db.transaction('rw', db.notes, db.syncQueue, async () => {
       for (const result of json.results) {
-        const queueEntries = batch.filter((e) => e.payload.id === result.id);
+        // The single (latest-wins deduped) entry we actually pushed for this note.
+        const pushed = batch.find((e) => e.payload.id === result.id);
 
         if (result.outcome === 'accepted') {
           // Update local serverVersion synchronously (edit-while-syncing guarantee).
-          // Any edits that arrived DURING this push are a separate queue entry with a higher
-          // createdAt — they survive the queue drain below and will push next cycle.
           await db.notes.where('id').equals(result.id).modify((note: Note) => {
             note.version = result.version;
             note.syncStatus = 'synced' satisfies SyncStatus;
           });
-          // Drain ALL queue entries for this note (including the one we just pushed).
-          await db.syncQueue.where('recordId').equals(result.id).delete();
 
+          if (pushed) {
+            // Drain ONLY the entry we pushed plus any strictly-older superseded entries for this
+            // note. An edit that arrived DURING the in-flight fetch is a NEWER queue entry — it
+            // MUST survive. A blanket delete-by-recordId here is the silent-data-loss race: it
+            // wipes the in-flight edit, marks the note synced at the server version, empties the
+            // queue, and the next pull (carrying the server's pre-edit state) then overwrites the
+            // local edit unguarded. Tie-safe on createdAt: match the pushed entry by its own id,
+            // older entries by strict-less-than, so a same-millisecond in-flight edit is kept.
+            await db.syncQueue
+              .where('recordId')
+              .equals(result.id)
+              .filter((e) => e.id === pushed.id || e.createdAt < pushed.createdAt)
+              .delete();
+
+            // Reconcile any surviving in-flight edit to the just-accepted server version, so it
+            // pushes next cycle as a CAS UPDATE on top of this version — not as a re-INSERT at the
+            // stale baseVersion it was authored at (which the server would fork as a new note).
+            await db.syncQueue
+              .where('recordId')
+              .equals(result.id)
+              .modify((e) => { e.baseVersion = result.version; });
+          }
         } else {
-          // Conflict: server has moved on. Apply PIN-SYNC-3/4 and remove from queue.
+          // Conflict: server has moved on. handleConflict forks the CURRENT local note (which
+          // already reflects any in-flight edit) and adopts server state for the original id, so
+          // the in-flight content is preserved in the fork. A blanket drain is correct here —
+          // keeping the in-flight entry would re-push the original id (now server state) and
+          // double-fork.
           await handleConflict(result.id as NoteId, result.serverNote);
           await db.syncQueue.where('recordId').equals(result.id).delete();
         }
-
-        // Silence TS: queueEntries used only for record keeping in tests via batch reference
-        void queueEntries;
       }
     });
   }
