@@ -69,6 +69,44 @@ journey through the actual UI. Automated green ≠ usable; the capstone is the u
 
 ---
 
+## Run 2 — metadata (re-run on gruntSys2's fix `a7d32e2`)
+
+_(staged by scopeSys; live fields filled by planSys + the user at re-run. Fix under test: HomeView
+note-list + editor "← Notes" back link — the step-4 UI-nav gap from Run 1.)_
+
+| Field | Value |
+|-------|-------|
+| Build SHA under test | client fix **`a7d32e2`** (HomeView note-list + editor back link) — record the actual `git rev-parse --short HEAD` of the coherent build served at run time |
+| Build mode (MUST be prod-representative) | _re-confirm prod-representative on the fixed `:8451` build before recording — prod-mode worker (`ENVIRONMENT=production`, F13 ACTIVE, no `LOCAL_OWNER` fallback) + prod client build. (Worker prod singleton was validated for Run 1; re-confirm it still fronts the fixed build.)_ |
+| Run date | _YYYY-MM-DD (fill at run)_ |
+| Tester | _(fill at run)_ |
+| Device model | _(fill at run)_ |
+| iOS version | _(fill at run)_ |
+| Browser / engine | _Safari (WebKit) — version (fill at run)_ |
+| Install method | _Add-to-Home-Screen (standalone)_ |
+| Serving URL | `https://devbox.tail41404c.ts.net:8451/` — hostname RP ID (PIN-ID-9) |
+| 2nd device (steps 7–8) | _(model + iOS — fill at run)_ |
+
+## Run 2 — per-step results
+
+| # | Step (runbook) | Criterion | What to observe | Result | Notes / observations |
+|---|----------------|-----------|-----------------|--------|----------------------|
+| 1 | Install / A2HS | install | A2HS installs; launches standalone; SW shell loads | ☐ PASS / FAIL | |
+| 2 | Enroll | DG-1d | fresh-account intent; Secure-Enclave signing key; 24-word phrase shown **once** | ☐ PASS / FAIL | |
+| 3 | Lock → unlock | DG-1c | WebAuthn UV (FaceID) decrypts the Identity blob; honest no-PRF disclosure shown (or PRF used on iOS-18) | ☐ PASS / FAIL | _record PRF available? Y/N_ |
+| 4 | Capture `/new` | DG-2a | typing into a client-UUID note; first heading becomes the title; **can exit via "← Notes" + see it in the note list** (Run-1 gap) | ☐ PASS / FAIL | |
+| 5 | True offline | DG-2b (device) | airplane mode → create+edit → relaunch PWA → both notes + edits survive (real IndexedDB across reload) | ☐ PASS / FAIL | |
+| 6 | Reconnect & sync | DG-3e (device) | leave airplane → sync fires on the network transition; indicator syncing→idle; notes reach server | ☐ PASS / FAIL | |
+| 7 | QR-join 2nd device | DG-4b | join **blocked** without the out-of-band code; UI states the in-person model | ☐ PASS / FAIL | |
+| 8 | Recover / capstone | DG-CAP | 2nd device: recover via 24-word phrase → **same `accountId`** → pull → the note from step 4/5 is **PRESENT + content matches** | ☐ PASS / FAIL | |
+
+## Run 2 — verdict: _pending_
+
+- [ ] **DG-CAP PASS** — all 8 steps PASS → done-sentence literally true on device.
+- [ ] **DG-CAP BLOCKED/FAIL** — step(s) ______ ; fix routed to ______ ; re-run.
+
+---
+
 ## Capstone verdict (overall)
 
 - [ ] **DG-CAP PASS** — all 8 steps PASS on one prod-representative build → the done-sentence is

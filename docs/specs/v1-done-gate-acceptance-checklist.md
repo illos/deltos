@@ -131,6 +131,13 @@ lives in the browser/PWA — so it is proven in **two tiers**, both required for
 > reachability of the journey through the UI is **only** provable by the on-device **Tier B** capstone
 > — that is precisely the class it exists to catch (Run-1 caught exactly this: see
 > `v1-dg-cap-gate-record.md`).
+>
+> **Gap-narrowing (post-Run-1):** the specific affordances Run-1 exposed now get **Tier-A-style
+> component coverage** (gruntSys2 `a7d32e2` fix + a jsdom render test: HomeView renders the note-list
+> from the store, NoteRoute has the "← Notes" back link — no WebAuthn). So a *regression* of
+> editor-exit/note-list nav would now fail an automated row rather than wait for a dogfood. This
+> **narrows** the gap (named rendered affordances become testable headless); it does **not close** it —
+> full end-to-end on-device reachability (navigation flow, real WebAuthn, install) still needs Tier B.
 
 ### Tier A — `[CLI-auto]`: headless client test suite (the regression floor)
 
