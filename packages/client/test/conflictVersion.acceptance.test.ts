@@ -51,11 +51,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import type { Note, NoteId, NotebookId } from '@deltos/shared';
+import { useAuthStore } from '../src/auth/store.js';
 
-// Reset ALL Dexie tables between tests.
+// Reset DB tables + auth state between tests.
 beforeEach(async () => {
   const { db } = await import('../src/db/schema.js');
   await Promise.all(db.tables.map((t) => t.clear()));
+  useAuthStore.setState({ accountId: null, bearerToken: null, sessionState: 'booting' });
 });
 
 afterEach(() => {
@@ -114,6 +116,15 @@ function noteVersionsTable(db: unknown) {
   ).noteVersions;
 }
 
+/**
+ * Set a synthetic session so handleConflict can scope the retained NoteVersion by accountId.
+ * Per contract §5/§8.5: handleConflict reads accountId from the session store (never from the
+ * note or serverNote body). Without this, handleConflict early-returns → no noteVersions row.
+ */
+function setSession() {
+  useAuthStore.setState({ accountId: 'cav-acct-01', bearerToken: 'cav-test-tok', sessionState: 'active' });
+}
+
 /** Wire fetch to return a single controlled push outcome; pull always returns empty. */
 function mockFetch(
   outcome:
@@ -132,6 +143,8 @@ function mockFetch(
 
 /** Queue a local edit for NOTE_ID and trigger syncNow — shared setup for conflict tests. */
 async function setupConflict(localTitle: string, serverTitle: string | null) {
+  setSession(); // required: handleConflict scopes the NoteVersion row by session accountId
+
   const { db } = await import('../src/db/schema.js');
   const localEdit = makeNote(NOTE_ID, 1, localTitle);
   await db.notes.put(localEdit);
@@ -153,11 +166,26 @@ async function setupConflict(localTitle: string, serverTitle: string | null) {
 
 // ---------------------------------------------------------------------------
 // CAV-1 — push cadence: debounced push respects 2s idle-settle + 5s max-wait cap
+//
+// These tests call startSyncTriggers(NB, token) to OPT-IN to the debounced-push observer.
+// NOT module-load auto-observe: always-on would fire pushes in the controlled syncEngine.test.ts
+// trip-wire tests (CAV-12) and break them. Teardown is called in afterEach via the returned fn.
+//
+// Fake-timer note: liveQuery emits async — after a queue write, await
+// vi.advanceTimersByTimeAsync(0) to let the observer schedule before advancing timers.
 // ---------------------------------------------------------------------------
 
 describe('CAV-1 — push cadence: debounced server push (2s idle-settle, 5s max-wait cap)', () => {
+  let stopTriggers: (() => void) | undefined;
+
+  afterEach(() => {
+    stopTriggers?.();
+    stopTriggers = undefined;
+  });
+
   it('an edit does not push immediately — respects the idle-settle window', async () => {
     vi.useFakeTimers();
+    setSession();
     const fetchSpy = vi
       .spyOn(global, 'fetch')
       .mockResolvedValue(
@@ -165,6 +193,9 @@ describe('CAV-1 — push cadence: debounced server push (2s idle-settle, 5s max-
       );
 
     const { db } = await import('../src/db/schema.js');
+    const { startSyncTriggers } = await import('../src/lib/syncEngine.js');
+    stopTriggers = startSyncTriggers(NB, 'cav-test-tok');
+
     const note = makeNote(NOTE_ID, 0, 'Typing...');
     await db.notes.put(note);
     await db.syncQueue.add({
@@ -174,9 +205,10 @@ describe('CAV-1 — push cadence: debounced server push (2s idle-settle, 5s max-
       baseVersion: 0,
       createdAt: NOW,
     });
+    await vi.advanceTimersByTimeAsync(0); // let liveQuery observer schedule
 
     // 1.5s elapsed — still inside the 2s settle window; no push yet.
-    vi.advanceTimersByTime(1500);
+    await vi.advanceTimersByTimeAsync(1500);
     const pushCalls = fetchSpy.mock.calls.filter(([url]) =>
       String(url).includes('/sync/push'),
     );
@@ -185,10 +217,14 @@ describe('CAV-1 — push cadence: debounced server push (2s idle-settle, 5s max-
 
   it('an edit DOES push after the 2s idle-settle window elapses', async () => {
     vi.useFakeTimers();
+    setSession();
     mockFetch({ id: NOTE_ID, outcome: 'accepted', version: 1, syncSeq: 1 });
     const fetchSpy = vi.spyOn(global, 'fetch');
 
     const { db } = await import('../src/db/schema.js');
+    const { startSyncTriggers } = await import('../src/lib/syncEngine.js');
+    stopTriggers = startSyncTriggers(NB, 'cav-test-tok');
+
     const note = makeNote(NOTE_ID, 0, 'Settled edit');
     await db.notes.put(note);
     await db.syncQueue.add({
@@ -198,9 +234,9 @@ describe('CAV-1 — push cadence: debounced server push (2s idle-settle, 5s max-
       baseVersion: 0,
       createdAt: NOW,
     });
+    await vi.advanceTimersByTimeAsync(0); // let liveQuery observer schedule
 
-    vi.advanceTimersByTime(2100);
-    await Promise.resolve(); // flush microtasks
+    await vi.advanceTimersByTimeAsync(2100);
 
     const pushed = fetchSpy.mock.calls.some(([url]) =>
       String(url).includes('/sync/push'),
@@ -210,10 +246,14 @@ describe('CAV-1 — push cadence: debounced server push (2s idle-settle, 5s max-
 
   it('continuous typing flushes at most once per 5s max-wait cap (never per-keystroke)', async () => {
     vi.useFakeTimers();
+    setSession();
     mockFetch({ id: NOTE_ID, outcome: 'accepted', version: 1, syncSeq: 1 });
     const fetchSpy = vi.spyOn(global, 'fetch');
 
     const { db } = await import('../src/db/schema.js');
+    const { startSyncTriggers } = await import('../src/lib/syncEngine.js');
+    stopTriggers = startSyncTriggers(NB, 'cav-test-tok');
+
     // Keystroke every 500ms for 4500ms — never idle 2s, so settle never fires on its own.
     for (let i = 0; i < 9; i++) {
       const note = makeNote(NOTE_ID, i, `Keystroke ${i}`);
@@ -225,9 +265,8 @@ describe('CAV-1 — push cadence: debounced server push (2s idle-settle, 5s max-
         baseVersion: i,
         createdAt: NOW,
       });
-      vi.advanceTimersByTime(500);
+      await vi.advanceTimersByTimeAsync(500);
     }
-    await Promise.resolve();
 
     // Max-wait cap forces at most 1 flush (at the 5s boundary).
     const pushCount = fetchSpy.mock.calls.filter(([url]) =>
@@ -243,12 +282,18 @@ describe('CAV-1 — push cadence: debounced server push (2s idle-settle, 5s max-
 
 describe('CAV-2 — offline buffer: edits queued offline are flushed when back online', () => {
   it('edits made while offline accumulate in syncQueue and push once the online event fires', async () => {
+    setSession();
+
     // Simulate offline: fetch always rejects.
     global.fetch = vi.fn(() =>
       Promise.reject(new TypeError('Network error')),
     ) as typeof fetch;
 
     const { db } = await import('../src/db/schema.js');
+    const { startSyncTriggers } = await import('../src/lib/syncEngine.js');
+    // startSyncTriggers wires the 'online' event flush (among others); call before queuing.
+    const stop = startSyncTriggers(NB, 'cav-test-tok');
+
     const note = makeNote(NOTE_ID, 0, 'Offline edit');
     await db.notes.put(note);
     await db.syncQueue.add({
@@ -267,6 +312,8 @@ describe('CAV-2 — offline buffer: edits queued offline are flushed when back o
     window.dispatchEvent(new Event('online'));
     await new Promise((r) => setTimeout(r, 200));
 
+    stop();
+
     // Queue should be drained after reconnect.
     expect(await db.syncQueue.where('recordId').equals(NOTE_ID).count()).toBe(0);
   });
@@ -278,6 +325,7 @@ describe('CAV-2 — offline buffer: edits queued offline are flushed when back o
 
 describe('CAV-3 — fast-forward: accepted push leaves no conflict state', () => {
   it('note syncs to accepted version; hasConflict absent/false; no noteVersions row stored', async () => {
+    setSession();
     const { db } = await import('../src/db/schema.js');
     const localEdit = makeNote(NOTE_ID, 0, 'My offline edit');
     await db.notes.put(localEdit);
