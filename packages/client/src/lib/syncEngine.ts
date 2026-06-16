@@ -159,7 +159,7 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
   // to the data-layer base-ownership in putNoteAndEnqueue + applyAccepted's survivor reconcile.)
   const baseFor = new Map<string, number>();
   for (const e of entries) {
-    const cur = await getStore().getNote(e.recordId);
+    const cur = await getStore().getNote(e.recordId as NoteId);
     baseFor.set(e.id, cur ? cur.version : e.baseVersion);
   }
 
