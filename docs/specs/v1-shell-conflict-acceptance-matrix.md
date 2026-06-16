@@ -35,7 +35,7 @@ green AND the [DEV] capstone confirms the shell + conflict UX on a real device.
 | P1-7 | **Clear browsing data → recovery path** | [DEV] + [CLI-auto] | after clearing data, next load → recovery-phrase re-register (expected; the only logout) | Part 1 §Acceptance, §Behavior 4b |
 | P1-8 | **E4 full-screen removed as a boot gate** | [CLI-auto] | "device hasn't been registered" no longer appears on launch with a surviving local key; it survives **only** as the no-local-key recovery path (4b) | Part 1 §Behavior 5 |
 | P1-9 | **F7 token in-memory only** | [CLI-auto] | session/grant token never written at rest (no Dexie row, no `localStorage`, no cold-start cache); survives reload as *gone-then-re-minted*, never *persisted* | Constraints (F7), [[session-token-in-memory-only]] |
-| P1-10 | **Disclosure at enroll/recovery, OUT of the launch path** | [CLI-auto] + [DEV] | the honest D5-style disclosure shows at enroll (and recovery), **not** on a silent background re-auth | §At-rest custody, [[keystore-noprf-ui-disclosure]] |
+| P1-10 | **Disclosure at enroll/recovery, OUT of the launch path** | [CLI-auto: node + **render**] + [DEV] | **node-level (devSys, provable now):** the placement *logic* — disclosure fires at enroll/recovery, **not** on a silent background re-auth (Option-A invariant). **render-level (gruntSys2, ⛔ jsdom-harness-gated):** the disclosure component actually renders, correct copy, in those routes only | §At-rest custody, [[keystore-noprf-ui-disclosure]] |
 
 ---
 
@@ -50,7 +50,7 @@ green AND the [DEV] capstone confirms the shell + conflict UX on a real device.
 | CAV-5 | **No second note, ever** | [CLI-auto] | a conflict **never** produces a second note in the list | gruntSys (lane 3) |
 | CAV-6 | **Relations stay valid** | [CLI-auto] | the note keeps its ID → inbound relations still resolve (no relation-repair); `forkedFromId` retired for the conflict path (revises **PIN-SYNC-4**) | gruntSys (lane 4) |
 | CAV-7 | **Offline-edit vs server-delete (PIN-SYNC-3)** | [CLI-auto] | live state may be a tombstone, but the divergent offline edit is **retained as a conflict version**; *keep mine* resurrects it | gruntSys (lane 5) |
-| CAV-8 | **Conflict surface — toast + persistent badge** | [CLI-auto] (component) + [DEV] | on conflict (during background sync) a **non-blocking toast** *"Sync conflict on '<title>' — your version was kept"*; the note shows a **persistent badge** until resolved | gruntSys / UI |
+| CAV-8 | **Conflict surface — toast + persistent badge** | [CLI-auto: **render**] + [DEV] | on conflict (during background sync) a **non-blocking toast** *"Sync conflict on '<title>' — your version was kept"*; the note shows a **persistent badge** until resolved | gruntSys2 / UI (⛔ jsdom-harness-gated) |
 | CAV-9 | **Resolve: keep mine** | [CLI-auto] | the divergent local version becomes live (pushed as the new top version); badge clears | gruntSys (lane 6a) |
 | CAV-10 | **Resolve: keep theirs** | [CLI-auto] | discard the retained divergent version; server content stays live; badge clears | gruntSys (lane 6b) |
 | CAV-11 | **Resolve: keep both** | [CLI-auto] | retain **both as versions of the one note** (no auto second note); an explicit "duplicate to new note" is the only split (planner ruling; overridable) | gruntSys (lane 6c) |
@@ -80,6 +80,14 @@ green AND the [DEV] capstone confirms the shell + conflict UX on a real device.
   shell.)
 - **[SRV]** conflict detection — the worker CAS (PIN-SYNC-1, `expectedVersion`) already decides
   fast-forward vs conflict; CAV-3/CAV-4 reference it, no new server mechanism.
+- **Shared jsdom render harness (gruntSys adding; devSys flagged the gap):** node-level CLI-auto
+  tests (logic, no DOM) run today; the **render-level** legs need a shared jsdom harness not yet
+  installed. It unblocks exactly two rows: **P1-10 render leg** (the disclosure *component* renders in
+  the right routes) and **CAV-8** (toast + badge render). **Owner note (flagged to pilot):** the
+  disclosure component is gruntSys2's ([[keystore-noprf-ui-disclosure]]), so P1-10 splits **node-level →
+  devSys** (Option-A placement logic, proven now) vs **render-level → gruntSys2** (harness-gated);
+  CAV-8 was already gruntSys2. No pass-condition changes — only a tier/owner clarification on P1-10's
+  render sub-leg. Until the harness lands, those two render legs are gated, not failing.
 - **Reuse / don't rebuild** (spec): the audited **Stream-B no-lost-edit core** (both sides already
   retained — the hard correctness half is done), the version-counter / `expectedVersion` CAS, the
   autosave debounce (extended to the debounced server push). This is a **representation change**
