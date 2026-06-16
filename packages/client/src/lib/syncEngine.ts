@@ -323,18 +323,15 @@ function schedulePush(notebookId: NotebookId, apiBase: string): void {
 }
 
 /**
- * Start the sync triggers: a reactive queue observer that arms the debounced push, a 30s poll, and
- * flush-now events (online recovery + mobile backgrounding via visibilitychange→hidden / pagehide —
- * rider (b), bounding the unsynced window on app-switch). OPT-IN (not module-load) so controlled-sync
- * tests that drive syncNow directly are unaffected. The observer is interface-only (via the store's
- * observeQueueCount), so the engine never imports Dexie.
+ * Start the sync triggers: a 30s poll + flush-now events (online recovery + mobile backgrounding via
+ * visibilitychange→hidden / pagehide — rider (b), bounding the unsynced window on app-switch). The
+ * debounced push itself is armed by `notifyQueueWrite` (the production path — every queue write goes
+ * through mutateNotes.put, whose caller nudges notifyQueueWrite), so there is deliberately NO
+ * liveQuery queue observer here: it was redundant with notifyQueueWrite AND a Dexie liveQuery
+ * deadlocks under fake timers (the cadence-test hang). OPT-IN (not module-load) so controlled-sync
+ * tests that drive syncNow directly are unaffected.
  */
 export function startSyncTriggers(notebookId: NotebookId, apiBase = '/api'): () => void {
-  // Reactive: any queued work (re)arms the debounced push.
-  const unsubQueue = getStore().observeQueueCount((count) => {
-    if (count > 0) schedulePush(notebookId, apiBase);
-  });
-
   _pollTimer = setInterval(() => syncNow(notebookId, apiBase), 30_000);
 
   const onOnline = () => flushPush(notebookId, apiBase); // reconnect → flush buffered edits now
@@ -347,7 +344,6 @@ export function startSyncTriggers(notebookId: NotebookId, apiBase = '/api'): () 
   window.addEventListener('pagehide', onPageHide);
 
   return () => {
-    unsubQueue();
     if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
     if (_maxWaitTimer) { clearTimeout(_maxWaitTimer); _maxWaitTimer = null; }
     if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
@@ -359,9 +355,9 @@ export function startSyncTriggers(notebookId: NotebookId, apiBase = '/api'): () 
 }
 
 /**
- * Call after every `mutateNotes.put()` to (re)arm the debounced push. Decoupled so mutate.ts doesn't
- * import syncEngine (avoids a circular dep). The startSyncTriggers queue observer covers callers that
- * write the queue directly; this is the explicit caller nudge for the same debounced push.
+ * Call after every `mutateNotes.put()` to (re)arm the debounced server push (idle-settle / max-wait).
+ * This is THE push trigger (the production path): every queue write goes through mutateNotes.put and
+ * its caller nudges this. Decoupled so mutate.ts doesn't import syncEngine (avoids a circular dep).
  */
 export function notifyQueueWrite(notebookId: NotebookId, apiBase = '/api'): void {
   schedulePush(notebookId, apiBase);
