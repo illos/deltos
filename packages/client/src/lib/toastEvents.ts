@@ -47,6 +47,8 @@ export function dismissToast(id: string): void {
  * devSys2: call this from handleConflict() after applyConflict() succeeds.
  */
 export function showConflictToast(noteId: string, title: string): void {
+  // Belt: skip if a live toast for this note already exists (dedup at the toast layer).
+  if (_toasts.some((t) => t.noteId === noteId)) return;
   showToast(`Sync conflict on "${title}" — your version was kept.`, noteId);
 }
 
