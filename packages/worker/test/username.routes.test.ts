@@ -276,12 +276,21 @@ describe('authStore.claimUsername — atomic-unique (no check-then-insert TOCTOU
     const store = createAuthStore(sqliteAdapter(raw));
 
     const first = await store.claimUsername({ usernameNormalized: 'alice', accountId: 'acct-A', usernameDisplay: 'alice', createdAt: 'now' });
-    expect(first).toEqual({ claimed: true, ownerAccountId: 'acct-A' });
+    expect(first).toEqual({ status: 'claimed' });
 
     const second = await store.claimUsername({ usernameNormalized: 'alice', accountId: 'acct-B', usernameDisplay: 'alice', createdAt: 'now' });
-    expect(second).toEqual({ claimed: false, ownerAccountId: 'acct-A' });
+    expect(second).toEqual({ status: 'name-taken' }); // held by acct-A, no holder identity leaked
 
     expect(raw.prepare('SELECT COUNT(*) AS n FROM usernames').get()).toEqual({ n: 1 });
+  });
+
+  it('a same-account re-claim of its OWN name is idempotent, not a conflict', async () => {
+    const raw = freshDb();
+    seedAccount(raw, 'acct-A');
+    const store = createAuthStore(sqliteAdapter(raw));
+    await store.claimUsername({ usernameNormalized: 'alice', accountId: 'acct-A', usernameDisplay: 'Alice', createdAt: 'now' });
+    const again = await store.claimUsername({ usernameNormalized: 'alice', accountId: 'acct-A', usernameDisplay: 'Alice', createdAt: 'now' });
+    expect(again).toEqual({ status: 'idempotent', usernameDisplay: 'Alice' });
   });
 
   it('concurrent claims of the same name resolve to exactly one winner', async () => {
@@ -291,9 +300,26 @@ describe('authStore.claimUsername — atomic-unique (no check-then-insert TOCTOU
     const results = await Promise.all(
       ['a', 'b', 'c', 'd'].map((id) => store.claimUsername({ usernameNormalized: 'zed', accountId: id, usernameDisplay: 'zed', createdAt: 'now' })),
     );
-    expect(results.filter((r) => r.claimed)).toHaveLength(1);
-    expect(results.filter((r) => !r.claimed)).toHaveLength(3);
+    expect(results.filter((r) => r.status === 'claimed')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'name-taken')).toHaveLength(3);
     expect(raw.prepare('SELECT COUNT(*) AS n FROM usernames').get()).toEqual({ n: 1 });
+  });
+
+  it('ATOMIC one-per-account: concurrent claims by the SAME account for DIFFERENT names → exactly one wins (secSys LOW fix)', async () => {
+    // The per-account TOCTOU secSys flagged: a route-level check-then-insert let both concurrent claims
+    // pass an existence read and both succeed (distinct name PKs), leaving the account with TWO names.
+    // The UNIQUE(accountId) index + the 2nd ON CONFLICT target make the second insert fail atomically.
+    const raw = freshDb();
+    seedAccount(raw, 'acct-A');
+    const store = createAuthStore(sqliteAdapter(raw));
+    const names = ['bob', 'carol', 'dave', 'erin'];
+    const results = await Promise.all(
+      names.map((n) => store.claimUsername({ usernameNormalized: n, accountId: 'acct-A', usernameDisplay: n, createdAt: 'now' })),
+    );
+    expect(results.filter((r) => r.status === 'claimed')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'account-has-username')).toHaveLength(3);
+    // The account holds EXACTLY ONE username — the invariant is DB-enforced, not check-then-insert.
+    expect(raw.prepare('SELECT COUNT(*) AS n FROM usernames WHERE accountId = ?').get('acct-A')).toEqual({ n: 1 });
   });
 
   it('getUsernameByAccount returns the account holding the name, null otherwise', async () => {

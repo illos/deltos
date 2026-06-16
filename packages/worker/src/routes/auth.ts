@@ -286,31 +286,29 @@ auth.post(
       const accountId = principal.id; // = accountId; the ONLY account a claim can bind to (invariant i).
       const store = createAuthStore(d1Adapter(c.env.DB));
 
-      // v1: one username per account (rename OFF). A same-account re-claim of the SAME name is
-      // idempotent (200); a different existing name → 409. This is an account-vs-ITSELF check, never a
-      // cross-account security boundary — that boundary is the store's atomic-unique claim below.
-      const existing = await store.getUsernameByAccount(accountId);
-      if (existing) {
-        if (existing.usernameNormalized === norm.value.normalized) {
-          return c.json({ username: existing.usernameDisplay });
-        }
-        return apiError(c, 409, 'username_exists', 'this account already has a username');
-      }
-
+      // The store is the SINGLE atomic authority on BOTH uniqueness axes (cross-account name + v1
+      // one-per-account) — NO check-then-insert here. Map its discriminated result to a status. F-acct-4:
+      // a 409 carries NO holder identity, so it is not a cross-account existence oracle.
       const result = await store.claimUsername({
         usernameNormalized: norm.value.normalized,
         accountId,
         usernameDisplay: norm.value.display,
         createdAt: new Date(Date.now()).toISOString(),
       });
-      if (!result.claimed) {
-        // The store's atomic claim lost. If WE already hold it (a racing duplicate of our own first
-        // claim), that is idempotent success; otherwise another account holds it → 409. F-acct-4: the
-        // 409 carries NO holder identity, so it is not a cross-account existence oracle.
-        if (result.ownerAccountId === accountId) return c.json({ username: norm.value.display });
-        return apiError(c, 409, 'username_taken', 'that username is taken');
+      switch (result.status) {
+        case 'claimed':
+          return c.json({ username: norm.value.display }, 201);
+        case 'idempotent': // this account already holds THIS exact name (a racing/duplicate re-claim)
+          return c.json({ username: result.usernameDisplay });
+        case 'account-has-username': // already holds a DIFFERENT name (v1 rename OFF)
+          return apiError(c, 409, 'username_exists', 'this account already has a username');
+        case 'name-taken': // held by another account
+          return apiError(c, 409, 'username_taken', 'that username is taken');
+        default: {
+          const _exhaustive: never = result;
+          return apiError(c, 409, 'username_taken', 'that username is taken');
+        }
       }
-      return c.json({ username: norm.value.display }, 201);
     },
   }),
 );

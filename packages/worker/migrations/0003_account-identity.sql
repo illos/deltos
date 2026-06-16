@@ -41,12 +41,19 @@ CREATE INDEX accountCredentials_byAccount ON accountCredentials (accountId);
 -- INVARIANT (secSys framing): authz/ownership NEVER key on the username — only on accountId. A released
 -- + re-claimed username inherits nothing, because everything resolves via accountId.
 CREATE TABLE usernames (
-  usernameNormalized TEXT NOT NULL PRIMARY KEY,  -- NFC + casefold; THE uniqueness key
+  usernameNormalized TEXT NOT NULL PRIMARY KEY,  -- NFC + casefold; THE cross-account uniqueness key
   accountId          TEXT NOT NULL,              -- -> accounts.accountId
   usernameDisplay    TEXT NOT NULL,              -- as-typed (within charset)
   createdAt          TEXT NOT NULL
 );
-CREATE INDEX usernames_byAccount ON usernames (accountId);
+-- UNIQUE on accountId enforces v1 ONE-username-per-account (rename OFF) ATOMICALLY at the DB — the
+-- second uniqueness axis, alongside the usernameNormalized PK. This closes a per-account check-then-
+-- insert TOCTOU (secSys): two CONCURRENT same-account claims of DIFFERENT names would otherwise both
+-- pass a route read and both succeed (distinct PKs), leaving an account holding multiple names. With
+-- this, the 2nd concurrent insert fails the accountId conflict atomically — claimUsername uses it as a
+-- second ON CONFLICT target. When multi-alias-per-account lands later, RELAX this to a non-unique index
+-- (the separate-table design already anticipates that).
+CREATE UNIQUE INDEX usernames_byAccount ON usernames (accountId);
 
 -- notes gain the account dimension — the column the per-query scope helper (the PRIMARY fail-closed
 -- control) filters on. Nullable to permit ALTER; back-filled below and stamped server-side on every

@@ -35,6 +35,20 @@ import type { DbAdapter } from './schema.js';
 // local for now so this layer doesn't depend on a not-yet-committed module.
 export type AuthPurpose = 'register' | 'session' | 'step-up';
 
+/**
+ * The outcome of an atomic username claim (D6 directory layer). Discriminated so the route maps each to
+ * a status without a second read or a trusted body field:
+ *  - `claimed`               → the name was free + the account had none → 201.
+ *  - `idempotent`            → this account already holds THIS exact name (a racing/duplicate re-claim) → 200.
+ *  - `name-taken`            → the name is held by ANOTHER account → 409 (no holder identity leaked).
+ *  - `account-has-username`  → this account already holds a DIFFERENT name (v1 one-per-account, rename OFF) → 409.
+ */
+export type ClaimUsernameResult =
+  | { status: 'claimed' }
+  | { status: 'idempotent'; usernameDisplay: string }
+  | { status: 'name-taken' }
+  | { status: 'account-has-username' };
+
 const ScopeArraySchema = z.array(ScopeSchema);
 
 export interface AuthStore {
@@ -117,22 +131,23 @@ export interface AuthStore {
   >;
 
   /**
-   * Atomically claim `usernameNormalized` for `accountId` (the DIRECTORY layer, D6). The UNIQUE PK on
-   * `usernameNormalized` is the SOLE arbiter: ONE statement — INSERT … ON CONFLICT(usernameNormalized)
-   * DO NOTHING RETURNING — so a row returns IFF this call won the claim (rows-affected = 1), null if the
-   * name was already held. There is deliberately NO check-then-insert (the registration-race TOCTOU
-   * secSys S1 forbids): two callers racing the SAME name both run this one statement and exactly one
-   * wins. `ownerAccountId` is who holds the name AFTER the attempt — the winner on success, the existing
-   * holder on conflict — so the route distinguishes a same-account idempotent re-claim from a real
-   * cross-account 409 WITHOUT trusting a body field. The caller has already normalized via the shared
-   * `normalizeUsername`; this layer never re-decides the key.
+   * Atomically claim `usernameNormalized` for `accountId` (the DIRECTORY layer, D6) — the SINGLE atomic
+   * authority on BOTH uniqueness axes, with NO check-then-insert on either (the TOCTOU class secSys S1
+   * forbids, on the cross-account AND the per-account axis):
+   *   - `usernameNormalized` PK     → cross-account name uniqueness (two accounts racing the SAME name).
+   *   - `accountId` UNIQUE index    → v1 one-username-per-account (same account racing DIFFERENT names).
+   * ONE statement with BOTH as `ON CONFLICT … DO NOTHING` targets, so neither conflict throws; a row
+   * returns IFF this call won. The post-conflict point reads run AFTER the atomic claim already failed —
+   * not a TOCTOU (the outcome is decided), and not an oracle (taken is only ever surfaced inside this
+   * authenticated claim). The caller has already normalized via the shared `normalizeUsername`. The
+   * discriminated result lets the route map each outcome to a status WITHOUT trusting a body field.
    */
   claimUsername(row: {
     usernameNormalized: string;
     accountId: string;
     usernameDisplay: string;
     createdAt: string;
-  }): Promise<{ claimed: boolean; ownerAccountId: string | null }>;
+  }): Promise<ClaimUsernameResult>;
 
   /**
    * The username an account currently holds (v1: at most one — rename OFF, one-per-account enforced by
@@ -285,24 +300,34 @@ export function createAuthStore(db: DbAdapter): AuthStore {
     },
 
     async claimUsername(row) {
-      // ONE atomic statement: the PK on usernameNormalized arbitrates. A returned row = we won the
-      // claim; null = the name was already taken (DO NOTHING suppressed the insert). No prior SELECT.
+      // ONE atomic statement, BOTH uniqueness axes as DO-NOTHING conflict targets (neither throws):
+      //   usernameNormalized PK   → cross-account name uniqueness
+      //   accountId UNIQUE index  → one-username-per-account (closes the per-account TOCTOU)
+      // A returned row = we won. No prior SELECT on EITHER axis → no check-then-insert anywhere.
       const won = await db.first<{ accountId: string }>(
         `INSERT INTO usernames (usernameNormalized, accountId, usernameDisplay, createdAt)
               VALUES (?, ?, ?, ?)
          ON CONFLICT(usernameNormalized) DO NOTHING
+         ON CONFLICT(accountId) DO NOTHING
          RETURNING accountId`,
         [row.usernameNormalized, row.accountId, row.usernameDisplay, row.createdAt],
       );
-      if (won) return { claimed: true, ownerAccountId: won.accountId };
-      // Taken — read the current holder. This SELECT runs AFTER the atomic claim already failed, so it
-      // is NOT a TOCTOU on the claim; it only tells the route WHO holds the name (same account ⇒
-      // idempotent, different account ⇒ 409). Indistinguishable timing either way (no oracle leak).
-      const holder = await db.first<{ accountId: string }>(
-        `SELECT accountId FROM usernames WHERE usernameNormalized = ?`,
-        [row.usernameNormalized],
+      if (won) return { status: 'claimed' };
+      // The insert was suppressed by one (or both) conflict(s). Disambiguate with point reads that run
+      // AFTER the atomic claim already failed — NOT a TOCTOU (the outcome is decided) and NOT an oracle
+      // (taken is only surfaced inside this authenticated claim). Check the account's own row first:
+      // accountId is UNIQUE, so this is the account's at-most-one username.
+      const mine = await db.first<{ usernameNormalized: string; usernameDisplay: string }>(
+        `SELECT usernameNormalized, usernameDisplay FROM usernames WHERE accountId = ?`,
+        [row.accountId],
       );
-      return { claimed: false, ownerAccountId: holder?.accountId ?? null };
+      if (mine) {
+        return mine.usernameNormalized === row.usernameNormalized
+          ? { status: 'idempotent', usernameDisplay: mine.usernameDisplay } // re-claim of our OWN name
+          : { status: 'account-has-username' }; // we already hold a DIFFERENT name (v1 one-per-account)
+      }
+      // We hold no name → the suppressed conflict was the NAME, held by another account.
+      return { status: 'name-taken' };
     },
 
     async getUsernameByAccount(accountId) {
