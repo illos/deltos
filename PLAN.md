@@ -341,8 +341,17 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   accountId/signing-key never username, and any credential/username (re)bind to an existing account needs
   possession proof; S5 migration atomic 1:1 + code-together, back-fill dev notes to the single account,
   must precede any multi-account deploy; document username-loss ≠ data-loss. Build = data dimension on
-  accountId + cross-account fix + accounts/accountCredentials/usernames + grants.accountId + sync scoping
-  (unblocks devSys2 Stream-D) + two-account negative test class; fresh secSys build-audits.
+  accountId + cross-account fix + accounts/accountCredentials/usernames + notes.accountId + the
+  grants.principalId re-point (NO new grants column) + sync scoping (unblocks devSys2 Stream-D) +
+  two-account negative test class; fresh secSys build-audits.
+- 2026-06-16 — **DEFERRED to Phase-2 (capability-gated, tracked): the add/replace-credential endpoint.**
+  v1 ships the account/username/credential FOUNDATION + bind-once/append-only invariants. The actual
+  endpoint that binds a NEW signing key to an EXISTING account — the mechanism that *performs* the user's
+  "change auth methods later" goal — is deferred: it needs a **new AUTH_PURPOSE in the FROZEN
+  `canonical.ts` step-up codec** (current TLV can't bind a new credential pubkey), a frozen-contract
+  change requiring a secSys design pass + planSys sign-off. **No date; needed before real
+  multi-device-add / auth-method-change ships.** Lands as a non-breaking drop-in (accountId is stable —
+  no data migration). Tracked: `[[account-identity-model]]` §Phase-2-follow-up.
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
