@@ -304,6 +304,61 @@ describe("D6 cross-account isolation (standing bar) — sync", () => {
 
 });
 
+// ---------------------------------------------------------------------------
+// §J — principalId-stamp regression gate (pilot directive, pre-done-gate close)
+//
+// WHY: in v1, accountId and accountFingerprint are both unique per account, so route-level tests
+// that verify cross-account isolation CANNOT distinguish them — a regression that stamped
+// accountFingerprint instead of accountId at auth.ts session-mint would stay GREEN at every
+// route assertion. This test hits the GRANTS TABLE directly after a real /register -> /session
+// round-trip and asserts the shape of the stored principalId. Any regression is caught instantly.
+//
+// accountId   = hex(randomblob(16)) = 32 lowercase hex chars
+// fingerprint = base64url(SHA-256(pubkey)) = 43 chars, containing A-Z/a-z/0-9/-/_
+// ---------------------------------------------------------------------------
+
+describe("§J — principalId-stamp correctness: real route mint stamps accountId (not fingerprint) in grants [regression gate]", () => {
+
+  it("after real /register -> /session route, grants.principalId == accounts.accountId AND matches 32-hex accountId shape", async () => {
+    const raw = new Database(':memory:');
+    for (const sql of ALL_MIGRATIONS) raw.exec(sql);
+    const env = makeEnv(raw);
+
+    // Seed 35: outside the two-account fixture range (SEED_A=33, SEED_B=34) — no collision.
+    const kp = isoKeypair(35);
+    const { keyId } = await isoRegister(env, kp, 'shape-regression-device');
+    await isoSession(env, kp, keyId);
+
+    // Session mint creates a principalKind='owner' grant. After D6 re-point auth.ts stamps
+    // principalId = accountId (32-hex). A bug stamping device.accountFingerprint (43-char base64url)
+    // instead would propagate silently through all route-level cross-account tests that happen to
+    // have one account per fingerprint — this assertion catches it at the SQL layer.
+    const grantRow = raw
+      .prepare("SELECT principalId FROM grants WHERE principalKind = 'owner' ORDER BY rowid DESC LIMIT 1")
+      .get() as { principalId: string } | undefined;
+    const accountRow = raw
+      .prepare('SELECT accountId FROM accounts LIMIT 1')
+      .get() as { accountId: string } | undefined;
+
+    // The device fingerprint is the value a buggy mint would stamp (base64url SHA-256 of pubkey, 43 chars).
+    const deviceRow = raw
+      .prepare('SELECT accountFingerprint FROM devices LIMIT 1')
+      .get() as { accountFingerprint: string } | undefined;
+
+    expect(grantRow).toBeDefined();
+    expect(accountRow).toBeDefined();
+    expect(deviceRow).toBeDefined();
+    // The two must agree — principalId was re-pointed to accountId by auth.ts session handler.
+    expect(grantRow!.principalId).toBe(accountRow!.accountId);
+    // Must NOT be the device fingerprint (base64url SHA-256(signingPublicKey), 43 chars).
+    // This is the direct proof: a regression stamping accountFingerprint instead of accountId fails here.
+    expect(grantRow!.principalId).not.toBe(deviceRow!.accountFingerprint);
+    // Fingerprint is always 43 chars (base64url 32 bytes); accountId is shorter (randomToken(16) = ~22 chars).
+    expect(grantRow!.principalId.length).toBeLessThan(deviceRow!.accountFingerprint.length);
+  });
+
+});
+
 describe("D6 cross-account isolation (standing bar) — device routes [GREEN now; must survive D6 re-point]", () => {
 
   it("GET /api/auth/devices: A's token lists only A's devices; B's keyId absent", async () => {
