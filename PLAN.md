@@ -367,6 +367,20 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   enroll (F-acct-4 authed-claim, no availability oracle; gated on devSys's endpoint contract); **scopeSys
   → the v1 done-gate acceptance checklist.** Username surface = pilot's rec, scoped/sequenced. All
   contention-free. The e2e harness is now the executable definition of "simple v1 done."
+- 2026-06-16 — **✅ DONE-GATE PASS: cross-account / account-identity re-point (task 12 core).** secSys
+  independent audit cleared all 3 conditions + 6-point scope (#1 reader-audit 9/9, #2 semantic test 7/7,
+  #3 isolation 10/10 — every object route cross-account-denied). **The original CRITICAL cross-account
+  finding is CLOSED** at the data-layer scope. **Step 1 of the simple-v1 path is done** (pending a
+  route-mint false-green one-assertion guard now landing + secSys re-verify). Deferred (tracked): re-key
+  **`notebookSyncSeq` PK → (accountId, notebookId)** tied to NOTEBOOKS-FIRST-CLASS, before serious
+  multi-account scale (weak write side-channel/contention, not a disclosure — conscious-accept for v1).
+- 2026-06-16 — **✅ SYNC-AUTH WORKS END-TO-END (simple-v1 step 2 done).** devSys2 `a52f638`:
+  authenticated push/pull, F7 in-memory bearer, F13-gated, 133 green. Stream-D (b) `resolvePrincipal`
+  stub-retirement DEFERRED as optional hardening (already-real + F13-contained = no live prod gap; keep
+  F13 belt; small post-username devSys item, tracked). devSys2 + gruntSys now driving the e2e done-gate
+  harness's sync round-trip + offline scenarios green = **step 3 (assembly) in progress.** Net: steps 1
+  (cross-account, pending the one assertion + re-verify) + 2 (sync-auth) essentially done; step 3 active;
+  remaining v1 unknown = the iPhone dogfood.
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
