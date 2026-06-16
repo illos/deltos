@@ -1,9 +1,9 @@
 # V1 done-gate — acceptance checklist (the "simple v1 done" definition)
 
-**Owner:** scopeSys (planSys-assigned). **Status:** DRAFT — 2026-06-16. Pairs 1:1 with gruntSys's
+**Owner:** scopeSys (planSys-assigned). **Status:** LOCKED — 2026-06-16. Pairs 1:1 with gruntSys's
 e2e/integration harness `packages/worker/test/v1.donegate.test.ts` — **one shared definition of
-done.** Scenario ids below are placeholders (`DGT-*`) pending gruntSys's confirmation of its scenario
-list; finalize then.
+done.** Scenario ids below are LOCKED to gruntSys's confirmed list (`DGT-1`..`DGT-5`); the SRV/CLI
+split and the conflict/isolation/revoke "reference, don't duplicate" rule are confirmed by gruntSys.
 
 > **Pausable:** this is docs (contention-free). scopeSys remains the PRIORITY notes/`mutate.ts`
 > fixer for secSys's audit — if the notes side is flagged, this doc is dropped, the fix lands, then
@@ -34,6 +34,26 @@ This checklist turns that sentence into explicit, individually-verifiable criter
 A criterion is GREEN only when its proof passes in its tier. The gate is closed when **every** [SRV]
 + [CLI] criterion is green AND the [DEV] capstone has been run once on a real device.
 
+### Locked [SRV] scenario map — `v1.donegate.test.ts` (gruntSys-confirmed)
+
+The harness has exactly **5** scenarios; every [SRV] criterion maps 1:1 onto one of them.
+Conflict, isolation, and revoke are **referenced** from their existing dedicated suites — NOT
+duplicated in the donegate harness.
+
+| Scenario | Covers | Status (per pilot, 2026-06-16) |
+|----------|--------|--------------------------------|
+| **DGT-1** — authenticated sync round-trip | DG-1a (enroll) + DG-3a | 🟢 GREEN |
+| **DGT-2** — same-key 2nd-device recovery | DG-4a | 🔴 RED — devSys fixing |
+| **DGT-3** — CAS / offline reconcile | DG-2c | 🟢 GREEN |
+| **DGT-4** — F13 prod auth gating | DG-3b + DG-3c | 🟢 GREEN |
+| **DGT-5** — note-present capstone (server slice) | DG-CAP [SRV] half | 🔴 RED — auto-greens with DGT-2 |
+| _(referenced)_ conflict fork | DG-5a / DG-5b → `conflict.test.ts` (4/4) | 🟢 |
+| _(referenced)_ cross-account isolation | DG-5c → `isolation.acceptance.test.ts` (10/10) | 🟢 |
+| _(referenced)_ revoke BOLA | DG-4c → revoke BOLA test (9fee9f8) | 🟢 |
+
+[SRV] gate state: **3/5 donegate scenarios green**; DGT-2 (and therefore DGT-5) close when devSys
+lands the same-key 2nd-device recovery fix.
+
 ---
 
 ## Criteria
@@ -42,7 +62,7 @@ A criterion is GREEN only when its proof passes in its tier. The gate is closed 
 
 | ID | Criterion | Tier | Proof / scenario | Pass condition | Spec ref |
 |----|-----------|------|------------------|----------------|----------|
-| DG-1a | Enroll a fresh account: register signing key → account minted (stable `accountId`) → session token issued | SRV | `DGT-enroll` (gruntSys) | register → 201 `{keyId,accountFingerprint}`; session → 200 `{token}`; an `accounts` row + `accountCredentials` map exist | PIN-ID-2, PIN-ID-8 |
+| DG-1a | Enroll a fresh account: register signing key → account minted (stable `accountId`) → session token issued | SRV | **DGT-1** (enroll half of the round-trip) | register → 201 `{keyId,accountFingerprint}`; session → 200 `{token}`; an `accounts` row + `accountCredentials` map exist | PIN-ID-2, PIN-ID-8 |
 | DG-1b | Fresh-account intent is guarded; recovery never silently orphans data | SRV/CLI | `enrollNew()` vs `enrollExisting()` | `enrollNew` requires explicit fresh-account intent; recovery routes through `enrollExisting(mnemonic)` | PIN-ID-8 |
 | DG-1c | Local unlock via passkey/PIN (WebAuthn UV gates the at-rest blob; signing key authenticates to server — roles distinct) | CLI | client unlock UI test + on-device | unlock decrypts the Identity blob; no PRF dependency (UV-only baseline); honest no-PRF disclosure shown | PIN-ID-4, PIN-ID-6, [[keystore-noprf-ui-disclosure]] |
 | DG-1d | 24-word recovery phrase shown once at enroll, guarded | CLI | client enroll UI test | phrase displayed once behind fresh-account intent | PIN-ID-8 |
@@ -53,16 +73,16 @@ A criterion is GREEN only when its proof passes in its tier. The gate is closed 
 |----|-----------|------|------------------|----------------|----------|
 | DG-2a | Capture: `/new` → typing into a client-UUID note immediately; title is the first heading (one PM doc, no separate input) | CLI | client editor test + on-device | stable client UUID at creation; Enter title→body; single drag selects title+body | Stream C acceptance |
 | DG-2b | Edits persist optimistically to the local store with NO network; reload restores from local | CLI | client offline-persistence test | create + edit fully offline; reload → note + edits intact (IndexedDB) | Goal, Stream C |
-| DG-2c | Offline edits queue; on reconnect the atomic-CAS push accepts and version bumps (SERVER view of the offline path) | SRV | `DGT-offline-reconcile` | queued batched edits push → accepted, version increments; pull sees final state | PIN-SYNC-1 |
+| DG-2c | Offline edits queue; on reconnect the atomic-CAS push accepts and version bumps (SERVER view of the offline path) | SRV | **DGT-3** (offline create/edit reconciliation) | queued batched edits push → accepted, version increments; pull sees final state | PIN-SYNC-1 |
 | DG-2d | Block IDs stay unique + stable across copy/paste/split/merge | CLI | client block-id plugin test | every block carries a stable unique `attrs.id` through all transforms | Stream C (block-ID plugin) |
 
 ### Leg 3 — Authenticated sync round-trip
 
 | ID | Criterion | Tier | Proof / scenario | Pass condition | Spec ref |
 |----|-----------|------|------------------|----------------|----------|
-| DG-3a | Push then pull with a REAL bearer grant token; the created note returns byte-identical | SRV | `DGT-sync-roundtrip` (gruntSys scenario 1) | push 200; pull returns the note; title/properties/body match what was created | PIN-SYNC-1/2 |
-| DG-3b | Every `/api/sync/*` call passes the `can(principal, op, resource)` chokepoint authenticated by the grant token; none authorize on `id` alone | SRV | `DGT-sync-roundtrip` + chokepoint | unauthenticated/`id`-only → denied; valid grant → allowed | PIN-ID-1/2 |
-| DG-3c | Production auth gating: the dev-only `unverified` principal is REFUSED outside an explicit non-prod env; real bearer required | SRV | `DGT-prod-gating` (gruntSys scenario 4) | `unverified` + ENVIRONMENT∉{development,test,local} → 503; real bearer → 200 | F13 fail-closed |
+| DG-3a | Push then pull with a REAL bearer grant token; the created note returns byte-identical | SRV | **DGT-1** (authenticated sync round-trip) | push 200; pull returns the note; title/properties/body match what was created | PIN-SYNC-1/2 |
+| DG-3b | Every `/api/sync/*` call passes the `can(principal, op, resource)` chokepoint authenticated by the grant token; none authorize on `id` alone | SRV | **DGT-4** (F13 auth gating) | unauthenticated/`id`-only → denied; valid grant → allowed | PIN-ID-1/2 |
+| DG-3c | Production auth gating: the dev-only `unverified` principal is REFUSED outside an explicit non-prod env; real bearer required | SRV | **DGT-4** (F13 auth gating) | `unverified` + ENVIRONMENT∉{development,test,local} → 503; real bearer → 200 | F13 fail-closed |
 | DG-3d | Client sends the in-memory grant token as the `Authorization` header on push/pull (token never persisted at rest) | CLI | client syncEngine test | push/pull carry `Authorization: Bearer <token>`; token F7 in-memory only | [[session-token-in-memory-only]] |
 | DG-3e | Sync indicator reflects pending / syncing / offline / error | CLI | client indicator test | state model transitions correctly | Stream B acceptance |
 
@@ -70,9 +90,9 @@ A criterion is GREEN only when its proof passes in its tier. The gate is closed 
 
 | ID | Criterion | Tier | Proof / scenario | Pass condition | Spec ref |
 |----|-----------|------|------------------|----------------|----------|
-| DG-4a | Recover on a fresh device via the 24-word phrase → SAME `accountId` → the account's notes are visible | SRV | `DGT-2nd-device` (gruntSys scenario 2) | same signing key/seed → same `accountId`; pull returns the prior device's notes | PIN-ID-3, D6 accountId-stability |
+| DG-4a | Recover on a fresh device via the 24-word phrase → SAME `accountId` → the account's notes are visible | SRV | **DGT-2** (2nd-device recovery) | same signing key/seed → same `accountId`; pull returns the prior device's notes | PIN-ID-3, D6 accountId-stability |
 | DG-4b | QR-join a second device requires an out-of-band confirmation code (in-person threat model surfaced) | CLI | client QR-join test + on-device | join blocked without the OOB code; UI states in-person-only model | PIN-ID-7 |
-| DG-4c | Device revocation is grant-based (revoke the opaque token); revoking one device cannot touch another account's devices | SRV | `DGT-revoke` + existing BOLA test | revoke by keyId idempotent; cross-account revoke → 404 | PIN-ID-5, revoke BOLA fix (9fee9f8) |
+| DG-4c | Device revocation is grant-based (revoke the opaque token); revoking one device cannot touch another account's devices | SRV | existing revoke BOLA test — REFERENCE, not a donegate scenario | revoke by keyId idempotent; cross-account revoke → 404 | PIN-ID-5, revoke BOLA fix (9fee9f8) |
 
 ### Leg 5 — Correctness invariants the journey must hold
 
@@ -87,7 +107,7 @@ A criterion is GREEN only when its proof passes in its tier. The gate is closed 
 
 | ID | Criterion | Tier | Proof | Pass condition | Spec ref |
 |----|-----------|------|-------|----------------|----------|
-| DG-CAP | One end-to-end run: install PWA (Tailscale HTTPS, hostname RP ID) → unlock → create/edit a note offline → reconnect → sync → recover on a 2nd device → the note is PRESENT and its content matches | DEV | on-device manual + `DGT-note-present` capstone (server slice of it) | the done-sentence is literally true once on a real installed PWA; the [SRV] half (enroll→create→sync→2nd-device→pull→present+match) is automated in `v1.donegate.test.ts` | Stream D done-gate (line 193) |
+| DG-CAP | One end-to-end run: install PWA (Tailscale HTTPS, hostname RP ID) → unlock → create/edit a note offline → reconnect → sync → recover on a 2nd device → the note is PRESENT and its content matches | DEV | on-device manual + **DGT-5** (note-present capstone, server slice) | the done-sentence is literally true once on a real installed PWA; the [SRV] half (enroll→create→sync→2nd-device→pull→present+match) is automated in `v1.donegate.test.ts` | Stream D done-gate (line 193) |
 
 ---
 
@@ -98,13 +118,56 @@ registry; blob-store build (reference-by-hash only); E2EE; collaboration build (
 only); Markdown export; history/trash; cross-notebook move (PIN-SYNC-5 ghost gap stated, not
 handled). Source: `phase-1-vertical-slice.md` §Out of scope.
 
+## [CLI] proof method (scopeSys-owned definition)
+
+[SRV] is gruntSys's automated worker harness. The **[CLI] half has no server-runnable proof** — it
+lives in the browser/PWA — so it is proven in **two tiers**, both required for the gate:
+
+### Tier A — `[CLI-auto]`: headless client test suite (the regression floor)
+
+Runnable in CI without a device. Lives in the client package (Vitest + jsdom; `fake-indexeddb` for
+storage; the ProseMirror test harness for the editor). Each maps 1:1 to a [CLI] criterion:
+
+| Criterion | `[CLI-auto]` proof | Asserts |
+|-----------|--------------------|---------|
+| DG-1b | `enrollNew()` vs `enrollExisting()` unit test | fresh-account intent required; recovery routes through `enrollExisting(mnemonic)` — no silent orphan |
+| DG-2b | offline-persistence test over `fake-indexeddb` | create+edit with no network → reload → note+edits restored from IndexedDB |
+| DG-2d | block-id plugin test | every block keeps a stable unique `attrs.id` through copy/paste/split/merge |
+| DG-3d | syncEngine test | push/pull carry `Authorization: Bearer <token>`; token never written to storage (F7 in-memory, [[session-token-in-memory-only]]) |
+| DG-3e | sync-indicator state-model test | pending / syncing / offline / error transitions |
+
+### Tier B — `[CLI-device]`: on-device dogfood (the things only a real PWA can prove)
+
+Capabilities a headless suite **cannot** exercise — they require a real installed PWA over Tailscale
+HTTPS with a hostname RP ID (PIN-ID-9) and a real platform authenticator. Run as a scripted manual
+pass on the **iPhone dogfood that planSys coordinates**, and they constitute the **DG-CAP capstone**:
+
+| Criterion | `[CLI-device]` step (on the real PWA) |
+|-----------|---------------------------------------|
+| (install) | Add-to-Home-Screen installs; launches standalone; service worker serves the shell offline |
+| DG-1c | passkey/PIN unlock decrypts the Identity blob via WebAuthn UV (no PRF dependency); honest no-PRF disclosure shown ([[keystore-noprf-ui-disclosure]]) |
+| DG-1d | 24-word recovery phrase shown once at enroll behind fresh-account intent |
+| DG-2a | capture: `/new` → type into a client-UUID note; first heading is the title (single PM doc) |
+| (true offline) | airplane-mode create/edit persists, then syncs on reconnect (real IndexedDB + SW, not `fake-indexeddb`) |
+| DG-4b | QR-join a 2nd device is blocked without the out-of-band confirmation code; UI states the in-person model |
+
+A `[CLI-device]` checklist is a numbered runbook (one tap-path per row) executed once and recorded
+(pass/fail + build SHA + device/iOS version) in the gate record.
+
+### Owners
+
+- **Tier A `[CLI-auto]`** — owner: the **client lane** (pilot to confirm the session). It is the
+  client-side sibling of `v1.donegate.test.ts` and must be green in CI before the gate closes.
+- **Tier B `[CLI-device]` + DG-CAP capstone** — owner: **planSys's iPhone dogfood** (the one
+  end-to-end on-device run). scopeSys supplies the runbook; the run is executed once at gate time and
+  its result recorded. Until both tiers pass, [CLI] criteria are gated as **not yet proven**.
+
 ## Coordination
 
-- **Pairs with** gruntSys's `packages/worker/test/v1.donegate.test.ts` (the [SRV] RED target). Every
-  [SRV] criterion above must map to exactly one scenario id there; `DGT-*` placeholders are filled
-  when gruntSys confirms its scenario list. gruntSys's proposed scenarios (1 round-trip, 2 2nd-device
-  recovery, 3 offline reconcile, 4 prod gating) map to DG-3a/DG-4a/DG-2c/DG-3c; the requested adds
-  are the DG-CAP note-present capstone + the DG-5c isolation reference.
-- **[CLI] criteria** need a client-side harness owner — flagged to pilot (likely the client lane).
-  Until then they are gated as client-verified/on-device, not server-automated.
-- **[DEV] capstone** is a one-time on-device run over Tailscale, owner TBD by pilot at gate time.
+- **Pairs with** gruntSys's `packages/worker/test/v1.donegate.test.ts` (the [SRV] RED target). The
+  [SRV] scenario map is now **locked** (see "Locked [SRV] scenario map" above): DGT-1..DGT-5, with
+  conflict / isolation / revoke referenced from their existing suites, not duplicated.
+- **[SRV] gate state**: DGT-1/3/4 green; DGT-2 (same-key 2nd-device recovery) is RED with devSys
+  fixing, and DGT-5 (capstone server slice) auto-greens once DGT-2 lands.
+- **[CLI] proof** is now defined above (Tier A headless suite + Tier B on-device dogfood). Open
+  handoffs: pilot to name the Tier-A client-suite session; planSys to schedule the Tier-B dogfood.
