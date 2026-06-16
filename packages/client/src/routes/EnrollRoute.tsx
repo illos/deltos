@@ -264,8 +264,7 @@ export function EnrollRoute() {
       <div className="auth__logo">δ</div>
       <h1 className="auth__title">Set up deltos</h1>
       <p className="auth__subtitle">
-        deltos uses a passkey to protect your notes. Your data stays on this device
-        and syncs end-to-end.
+        Your notes live on this device, protected by its lock screen — and sync across your devices.
       </p>
 
       <button className="auth__btn auth__btn--primary" onClick={handleSetUp}>
