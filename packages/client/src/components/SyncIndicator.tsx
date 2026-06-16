@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { getSyncState, subscribeSyncState } from '../lib/syncEngine.js';
 import type { SyncIndicatorState } from '../lib/syncEngine.js';
-import { db } from '../db/schema.js';
+import { useSyncQueueCount } from '../db/storeHooks.js';
 import './SyncIndicator.css';
 
 /** Human-readable label for each sync state. Queue count replaces the label when pending. */
@@ -31,7 +30,7 @@ const STATE_TITLE: Record<SyncIndicatorState, string> = {
  */
 export function SyncIndicator() {
   const [state, setState] = useState<SyncIndicatorState>(getSyncState);
-  const queueCount = useLiveQuery(() => db.syncQueue.count(), []) ?? 0;
+  const queueCount = useSyncQueueCount();
 
   useEffect(() => subscribeSyncState(setState), []);
 
