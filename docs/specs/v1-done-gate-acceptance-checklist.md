@@ -133,12 +133,15 @@ lives in the browser/PWA — so it is proven in **two tiers**, both required for
 > the UI reaches the engine.** Automated green ≠ usable. This is the sharpest case of why the on-device
 > **Tier B** capstone exists (it caught exactly this — finding E1 in `v1-dg-cap-gate-record.md`).
 >
-> **Gap-narrowing (post-dogfood):** gruntSys2's autosave fix ships a **mandatory Tier-A-style component
-> test** that exercises that exact seam headlessly — **type-in-editor → note in store → renders in
-> list** (jsdom, no WebAuthn). So a *regression* of editor-persistence would now fail an automated row
-> rather than wait for a dogfood. This **narrows** the gap (the editor→store seam becomes headless-
-> testable); it does **not close** it — full end-to-end on-device reachability (real WebAuthn, install,
-> the whole nav flow) still needs Tier B.
+> **Gap-narrowing (post-dogfood) — PARTIAL, mind the layer:** gruntSys2 landed durable tests
+> (`@86afece`, 6 navList tests, suite 142/142) that prove the **store→list reactive layer**
+> (`mutateNotes.put` → renders in list) headlessly. **But that is not the bug locus.** The actual
+> failing seam was the editor `onChange → onSave → put` **wiring** — the UI writing into the store —
+> and the landed tests **still bypass it** (they call `mutateNotes.put` directly). So that exact chain
+> is **still validated only by the on-device dogfood**; full headless closure needs a **PM-editor-render
+> test** (type-into-the-editor → assert the store receives it), which gruntSys2 will add. Net: the
+> store→list half is now covered; the **editor→store half remains dogfood-only** until that render test
+> lands. Lesson stands — a test that calls `put` directly never proves the editor calls `put`.
 
 ### Tier A — `[CLI-auto]`: headless client test suite (the regression floor)
 
