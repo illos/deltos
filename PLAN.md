@@ -429,6 +429,14 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   multi-account-safe. **Sequence: AFTER v1 closes.** Box has a wrangler key; standing-auth covers the
   deploy. **Cheap-now prep** (folds into the capstone's prod-client build): confirm the client API base
   URL is env-configurable, so the deploy is near-turnkey. Tracked: `[[cloudflare-deploy-plan]]`.
+- 2026-06-16 — **v1-BLOCKER caught by the prod-representative push (early smoke HELD + retracted):**
+  migration `0003` used `CREATE TEMP TABLE`, which D1's migration authorizer REJECTS (`SQLITE_AUTH`) →
+  `wrangler d1 migrations apply` FAILS on real D1. The test path (better-sqlite3, no authorizer) MASKED
+  it — a false-green AT THE DEPLOYMENT LAYER, exactly what the prod-representative capstone ruling exists
+  to catch (and a vindication of it). devSys committed the one-line fix (scratch table, identical
+  `CHECK(n<=1)`); secSys eyeballing. **Early-smoke + capstone HELD until an ACTUAL end-to-end enroll
+  works against the worker's D1.** Banked invariant: validate migrations against REAL D1 (wrangler), not
+  just better-sqlite3 ([[cloudflare-deploy-plan]]).
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
