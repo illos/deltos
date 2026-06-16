@@ -74,8 +74,9 @@ promote to devSys/opus if first audit finds a CAS/single-flight/race defect.
 **Acceptance condition (security-clearance, OPEN):** the **no-PRF KeyStore disclosure** — when the
 active WebAuthn binding is `device-local` (wrapping key stored plaintext in IndexedDB, PIN-ID-6), the
 enroll/unlock UI MUST render an honest D5-style limitation disclosure. secSys's clearance of the
-baseline is *conditional* on this shipping; dropping it voids the clearance. Trigger-bound to the
-enroll/unlock UI lane (not dated). Tracked in `[[keystore-noprf-ui-disclosure]]`.
+baseline is *conditional* on this shipping; dropping it voids the clearance. **Owner: gruntSys2**
+(hard acceptance condition on its client-identity lane). Trigger-bound to the enroll/unlock UI
+surface (not dated). Tracked in `[[keystore-noprf-ui-disclosure]]`.
 
 ## Later (framed, not yet specced)
 - **Phase 2** — second surface (proves decoupling) + notebooks + universal search + plugin
@@ -256,4 +257,16 @@ enroll/unlock UI lane (not dated). Tracked in `[[keystore-noprf-ui-disclosure]]`
   is device-local [OPEN — planner-tracked], (ii) stale code comment resolved [gruntSys2]. WebAuthn
   custody audit PASSED 6/6. (i) is a Phase-1 done-gate acceptance condition, ships with the
   enroll/unlock UI lane (trigger-bound, not dated). Durable: `[[keystore-noprf-ui-disclosure]]` +
-  done-gate above. Owning UI lane to be confirmed with pilot.
+  done-gate above. **Owner confirmed: gruntSys2** (hard acceptance condition on its client-identity
+  lane); if the enroll/unlock screen is a distinct shell-UI surface, gruntSys2 carries the binding
+  obligation to land with it.
+- 2026-06-16 — **RULING: `deviceSigningPublicKey` stays in migration 0002 (path a), per D5/F1.**
+  secSys MED found 0002 omitted the column three locked specs require (F1 strawman:174, D1
+  proposal:40, secSys checklist E:152) — the **D5 pre-shaped per-device-key seam** the user accepted
+  (keep the seam so per-device lockout is a NON-BREAKING Phase-2 add). Ruled **re-add the column now**
+  (cheap: one nullable col, Phase-1, no data) rather than (b) reuse the single account
+  `signingPublicKey` + revise the specs — (b) would force a differentiating migration in Phase-2 and
+  thus **break the non-breaking guarantee D5 promised**. (a) preserves locked canon, so **no DECISIONS
+  escalation / no spec revision**; record==reality restored by fixing the migration. Escape hatch
+  offered devSys2: a concrete proof the single column gives a genuinely non-breaking Phase-2 drop-in
+  would reopen it. Reaffirms the seam.
