@@ -71,6 +71,12 @@ fix, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations, PIN-STORAGE/SUBSTRATE p
 device; forced conflict → fork not lost-write. secSys audits each stream; **Stream-B trip-wire** =
 promote to devSys/opus if first audit finds a CAS/single-flight/race defect.
 
+**Acceptance condition (security-clearance, OPEN):** the **no-PRF KeyStore disclosure** — when the
+active WebAuthn binding is `device-local` (wrapping key stored plaintext in IndexedDB, PIN-ID-6), the
+enroll/unlock UI MUST render an honest D5-style limitation disclosure. secSys's clearance of the
+baseline is *conditional* on this shipping; dropping it voids the clearance. Trigger-bound to the
+enroll/unlock UI lane (not dated). Tracked in `[[keystore-noprf-ui-disclosure]]`.
+
 ## Later (framed, not yet specced)
 - **Phase 2** — second surface (proves decoupling) + notebooks + universal search + plugin
   manifest/contribution-registry MVP (one real plugin). Also carries (all from the 2026-06-15
@@ -244,3 +250,10 @@ promote to devSys/opus if first audit finds a CAS/single-flight/race defect.
   fail-open→fail-closed `guard()` flip, then canonical/requests as the foundational first build).
   **Next milestone:** canonical/requests land + secSys clears → flip handler bodies + stepUp live.
   No user-facing decisions outstanding.
+- 2026-06-16 — **OPEN product obligation (security-clearance condition).** secSys cleared the no-PRF
+  KeyStore baseline (PIN-ID-6, device-local fallback stores the wrapping key plaintext in IndexedDB)
+  as ACCEPTABLE because PRF-first, ON two conditions: (i) honest D5-style UI disclosure when binding
+  is device-local [OPEN — planner-tracked], (ii) stale code comment resolved [gruntSys2]. WebAuthn
+  custody audit PASSED 6/6. (i) is a Phase-1 done-gate acceptance condition, ships with the
+  enroll/unlock UI lane (trigger-bound, not dated). Durable: `[[keystore-noprf-ui-disclosure]]` +
+  done-gate above. Owning UI lane to be confirmed with pilot.
