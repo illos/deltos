@@ -59,7 +59,7 @@ export interface GuardConfig<TReq> {
  */
 export interface GuardDeps {
   can?: CanCheck;
-  resolvePrincipal?: (c: AppContext) => RequestPrincipal;
+  resolvePrincipal?: (c: AppContext) => RequestPrincipal | Promise<RequestPrincipal>;
 }
 
 export function guard<TReq>(cfg: GuardConfig<TReq>, deps: GuardDeps = {}) {
@@ -77,7 +77,7 @@ export function guard<TReq>(cfg: GuardConfig<TReq>, deps: GuardDeps = {}) {
         parsed.error.format(),
       );
     }
-    const principal = resolve(c);
+    const principal = await resolve(c);
     // Mechanical tripwire (F13, fail-CLOSED): the dev-only `unverified` principal is honored ONLY in
     // an explicitly-named non-prod environment. Anything else — production, an UNSET var, a typo, a
     // near-match — refuses before authorization or any handler runs, so the allow-all stub can never
