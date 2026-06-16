@@ -1,6 +1,8 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "deltos",
+  // Prod lives in the Blackgate Studio Cloudflare account (user-confirmed 2026-06-16).
+  "account_id": "462b5ee1e395c11b8523d6c38de0577a",
   "main": "src/index.ts",
   "compatibility_date": "2026-06-01",
   "observability": {
