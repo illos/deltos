@@ -170,12 +170,18 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^4.20241218.0
         version: 4.20260613.1
+      '@deltos/client':
+        specifier: workspace:*
+        version: link:../client
       '@types/better-sqlite3':
         specifier: ^7.6.12
         version: 7.6.13
       better-sqlite3:
         specifier: ^11.10.0
         version: 11.10.0
+      fake-indexeddb:
+        specifier: ^6.0.0
+        version: 6.2.5
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
