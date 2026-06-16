@@ -11,7 +11,12 @@ import { apiError, notImplemented, type AppContext } from '../http.js';
  * step below becomes a delegated call and the 501 is removed:
  *   - devSys  `authCrypto` (Ed25519 verify, F2 fingerprint COMPUTE, TLV reconstruct, RNG, token
  *             hashing, scope clamp) + `requests.ts` Zod wire schemas (strict base64url + exact
- *             lengths — R3-4) + `canonical.ts` (TLV). [specifier TBD — confirm import at flip]
+ *             lengths — R3-4) + `canonical.ts` (TLV). CONFIRMED by devSys: `authCrypto` is
+ *             WORKER-LOCAL → `import * as authCrypto from '../authCrypto.js'` (packages/worker/src/
+ *             authCrypto.ts). The request schemas are re-exported from `@deltos/shared` (via
+ *             auth/index.ts) → `import { ChallengeRequestSchema, RegisterDeviceRequestSchema,
+ *             SessionRequestSchema, StepUpRequestSchema } from '@deltos/shared'`. (canonical/requests
+ *             landing now; authCrypto next.)
  *   - devSys2 `authStore` (pure-D1 over the 0002_stream-a-auth migration: devices / authChallenges /
  *             grants). CONFIRMED by devSys2: `import { createAuthStore } from '../db/authStore.js'`,
  *             constructed `const store = createAuthStore(d1Adapter(c.env.DB))` (same DbAdapter as
@@ -131,23 +136,29 @@ auth.get('/devices', async (c) => {
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/devices/:keyId/revoke  — revoke a device (F9 SENSITIVE ⇒ step-up required).
-// PATH CONFIRMED (devSys, via pilot): RESTful POST /api/auth/devices/:keyId/revoke stands. The
-// keyId→grant resolution gap is resolved by devSys2 adding `authStore.revokeByKeyId(keyId)` — exact
-// semantics (grants revoked + whether devices.revokedAt is set) pending devSys's ruling; devSys2
-// confirms the signature when it lands. Revoking a device must (a) verify a fresh step-up bound to
-// this op+resource and (b) call revokeByKeyId for the target device.
+// PATH CONFIRMED (devSys): RESTful POST /api/auth/devices/:keyId/revoke. keyId→grant gap RESOLVED —
+// `grants` gains a `mintedByKeyId` column (devSys2, folded into 0002) and `authStore.revokeByKeyId(keyId)`
+// (a) sets `devices.revokedAt` (blocks future mints) AND (b) `UPDATE grants SET revokedAt WHERE
+// mintedByKeyId=keyId AND revokedAt IS NULL` (immediate deny — resolvePrincipal row-resolves every
+// request). It is `Promise<void>` and IDEMPOTENT (already-revoked stays revoked, no error — devSys2).
+// F9 STEP-UP binding (v1): the step-up signature must be for `op='delete'`,
+// `resource={kind:'workspace'}` (account-level destructive op); the `:keyId` path param selects the
+// target device. Tighter per-device-resource binding is a tracked follow-up, not v1.
 // ---------------------------------------------------------------------------
 auth.post('/devices/:keyId/revoke', async (c) => {
   await readBody(c);
   // FLIP — contract §2 /devices (revoke), F9 step-up seam:
-  // 1. Parse the StepUpRequest fields with requests.ts (R3-4 strict validation).
+  // 1. Parse the StepUpRequest fields with StepUpRequestSchema (@deltos/shared — R3-4 strict).
   // 2. verified = authCrypto.verifyStepUp({ challengeId, keyId, op, resource, signature }) — consumes
   //    the 'step-up' challenge, reconstructs+verifies the step-up TLV against the server-resolved
   //    pubkey; returns { method:'signed-request', keyId, challengeId, op, resource } or throws → 401.
-  //    can() then asserts member.op===op && resourceEquals(member.resource, resource) (LOCKED switch).
-  // 3. await store.revokeByKeyId(c.req.param('keyId'))  (devSys2 — resolves the keyId→grant gap;
-  //    exact semantics pending devSys's ruling).
-  // 4. return c.json({ keyId, revoked: true });
+  //    Assert the v1 binding: op === 'delete' && resource is { kind:'workspace' } (else 403); can()
+  //    then asserts member.op===op && resourceEquals(member.resource, resource) (LOCKED switch).
+  // 3. const store = createAuthStore(d1Adapter(c.env.DB));
+  //    if (!(await store.getDevice(keyId))) → 404 (unknown device; distinguishes from already-revoked).
+  //    await store.revokeByKeyId(keyId);   // void + idempotent (already-revoked → still 200)
+  // 4. return c.json({ keyId, revoked: true });   // boolean, NOT a revoked-grant count: idempotent +
+  //    no session-count info-leak (devSys2 ruling).
   if (!c.req.param('keyId')) return apiError(c, 400, 'invalid_request', 'missing device keyId');
   return notImplemented(c, 'auth.devices.revoke');
 });
