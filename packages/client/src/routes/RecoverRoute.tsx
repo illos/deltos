@@ -76,8 +76,10 @@ export function RecoverRoute() {
           Your identity has been re-bound to a new passkey on this device.
         </p>
 
-        {/* D5 disclosure — MANDATORY when no PRF (secSys PIN-ID-6 acceptance condition) */}
-        {!step.usesPrf && <Disclosure />}
+        {/* Device-local disclosure — mounted UNCONDITIONALLY at this establishment path (secSys
+            built-code gate: every credential-establishment path shows it; under Option-A usesPrf is
+            always false → device-local copy). gruntSys2 owns the copy. */}
+        <Disclosure prf={step.usesPrf} />
 
         <button className="auth__btn auth__btn--primary" onClick={handleFinish}>
           Continue to deltos

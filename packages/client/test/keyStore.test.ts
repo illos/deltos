@@ -3,6 +3,7 @@
 import 'fake-indexeddb/auto';
 
 import { describe, it, expect, vi } from 'vitest';
+import Dexie from 'dexie';
 import {
   NotImplementedError,
   createStubKeyStore,
@@ -467,10 +468,16 @@ describe('WebAuthn provider — no-PRF device-key fallback (secSys gap A)', () =
   });
 });
 
-describe('WebAuthn provider — PRF-downgrade-resistance (secSys gap B)', () => {
+// secSys gap B exercises the DORMANT PRF custody path (optionADeviceLocal: false). Under v1 Option-A
+// new enrollments are device-local-for-all, so PRF-at-enroll is off by default — but the PRF seam is
+// retained (secSys #6, v2 E2EE) and its downgrade-resistance must stay proven. NOTE: with Option-A's
+// rewrap-on-next-unlock, a successful PRF unlock would migrate the blob; here PRF is ABSENT at unlock
+// so no unwrap (and thus no migration) occurs — the property under test is unaffected.
+describe('WebAuthn provider — PRF-downgrade-resistance (secSys gap B, dormant PRF path)', () => {
   it('unlock() returns null when enrolled with PRF but PRF is absent at unlock', async () => {
     // Enroll with PRF — wrapping key is HKDF(prf_output, credId, ...) and NOT in deviceKey table
     const ks = createWebAuthnKeyStore({
+      optionADeviceLocal: false,
       backend: {
         create: vi.fn().mockResolvedValue(makeFakeCred({ prf: true })),
         // unlock backend returns the same cred BUT with no PRF output (PRF absent/downgraded)
@@ -487,6 +494,7 @@ describe('WebAuthn provider — PRF-downgrade-resistance (secSys gap B)', () => 
 
   it('PRF downgrade is null, not throw', async () => {
     const ks = createWebAuthnKeyStore({
+      optionADeviceLocal: false,
       backend: {
         create: vi.fn().mockResolvedValue(makeFakeCred({ prf: true })),
         get: vi.fn().mockResolvedValue(makeFakeCred({ prf: false })),
@@ -507,9 +515,10 @@ describe('getEnrollmentPrfStatus — D5 disclosure helper', () => {
     expect(await getEnrollmentPrfStatus(dbName)).toBeNull();
   });
 
-  it('returns { usesPrf: true } when enrolled with PRF', async () => {
+  it('returns { usesPrf: true } when enrolled with PRF (dormant PRF path, v2)', async () => {
     const dbName = `deltos-identity-test-${++_dbSeq}`;
     const ks = createWebAuthnKeyStore({
+      optionADeviceLocal: false, // dormant PRF path — v1 Option-A default is device-local (usesPrf:false)
       backend: { create: vi.fn().mockResolvedValue(makeFakeCred({ prf: true })), get: vi.fn() },
       dbName,
     });
@@ -572,5 +581,214 @@ describe('WebAuthn provider — durable server keyId (E4 cold-reload fix)', () =
     await ks.setServerKeyId('first');
     await ks.setServerKeyId('second');
     expect(await ks.getServerKeyId()).toBe('second');
+  });
+});
+
+// ── Part 1b — Option-A device-local-for-all + autoUnlock + rewrap-on-next-unlock migration ────────
+//
+// Option-A (user-affirmed): the at-rest signing key is wrapped under a random DEVICE-LOCAL key on
+// ALL devices, so it can be unwrapped SILENTLY (no gesture) on cold start (the north star — zero
+// day-to-day friction). New enrollments are device-local even when PRF is available; already-PRF
+// devices convert on their next unlock (rewrap-on-next-unlock). secSys §1d conditions are asserted.
+
+/** Open a raw second connection on the same IDB to inspect the keystore's at-rest rows directly. */
+async function inspectIdentityDb(dbName: string) {
+  const raw = new Dexie(dbName);
+  raw.version(2).stores({ blob: 'key', deviceKey: 'key', serverHandle: 'key' });
+  const [blobCount, blob, deviceKeyCount, deviceKey] = await Promise.all([
+    raw.table('blob').count(),
+    raw.table('blob').get('v1') as Promise<{ prf: boolean; sealed: { ct: string } } | undefined>,
+    raw.table('deviceKey').count(),
+    raw.table('deviceKey').get('v1') as Promise<{ wrappingKey: string } | undefined>,
+  ]);
+  raw.close();
+  return { blobCount, blob, deviceKeyCount, deviceKey };
+}
+
+describe('Option-A — device-local-for-all enrollment (uniform-disclosure invariant)', () => {
+  it('enrollNew is device-local even when PRF is available → usesPrf:false', async () => {
+    const dbName = `deltos-identity-test-${++_dbSeq}`;
+    const ks = createWebAuthnKeyStore({
+      backend: { create: vi.fn().mockResolvedValue(makeFakeCred({ prf: true })), get: vi.fn() },
+      dbName, // optionADeviceLocal defaults to the v1 constant (true)
+    });
+    await ks.enrollNew();
+    // Every establishment path discloses device-local custody (secSys condition #1).
+    expect(await getEnrollmentPrfStatus(dbName)).toStrictEqual({ usesPrf: false });
+  });
+
+  it('enrollExisting is device-local even with PRF available → usesPrf:false', async () => {
+    const dbName = `deltos-identity-test-${++_dbSeq}`;
+    const ks = createWebAuthnKeyStore({
+      backend: { create: vi.fn().mockResolvedValue(makeFakeCred({ prf: true })), get: vi.fn() },
+      dbName,
+    });
+    await ks.enrollExisting(ABANDON);
+    expect(await getEnrollmentPrfStatus(dbName)).toStrictEqual({ usesPrf: false });
+  });
+});
+
+describe('Option-A — autoUnlock (silent, no WebAuthn)', () => {
+  it('autoUnlock() unwraps a device-local blob with NO WebAuthn get() call', async () => {
+    const getSpy = vi.fn();
+    const ks = createWebAuthnKeyStore({
+      backend: { create: vi.fn().mockResolvedValue(makeFakeCred({ prf: true })), get: getSpy },
+      dbName: `deltos-identity-test-${++_dbSeq}`,
+    });
+    const { identity } = await ks.enrollNew();
+    ks.lock();
+    const auto = await ks.autoUnlock();
+    expect(auto?.id).toBe(identity.id);
+    expect(ks.isUnlocked()).toBe(true);
+    expect(getSpy).not.toHaveBeenCalled(); // no gesture — the whole point
+  });
+
+  it('sign() works after autoUnlock (the in-memory key is loaded)', async () => {
+    const ks = freshKs();
+    await ks.enrollExisting(ABANDON);
+    ks.lock();
+    await ks.autoUnlock();
+    const msg = new Uint8Array(32).fill(0x07);
+    const sig = await ks.sign(msg);
+    const pub = ks.getSigningPublicKey();
+    const webCryptoPub = await crypto.subtle.importKey('raw', pub, { name: 'Ed25519' }, false, ['verify']);
+    expect(await crypto.subtle.verify({ name: 'Ed25519' }, webCryptoPub, sig, msg)).toBe(true);
+  });
+
+  it('autoUnlock() returns null on a not-enrolled store (fail-closed)', async () => {
+    const ks = freshKs();
+    expect(await ks.autoUnlock()).toBeNull();
+    expect(ks.isUnlocked()).toBe(false);
+  });
+
+  it('autoUnlock() returns null on a still-PRF blob (no silent unwrap of PRF) → caller gestures', async () => {
+    const ks = createWebAuthnKeyStore({
+      optionADeviceLocal: false, // enroll PRF-first (un-migrated)
+      backend: { create: vi.fn().mockResolvedValue(makeFakeCred({ prf: true })), get: vi.fn() },
+      dbName: `deltos-identity-test-${++_dbSeq}`,
+    });
+    await ks.enrollNew();
+    ks.lock();
+    expect(await ks.autoUnlock()).toBeNull(); // PRF blob can't be silently unwrapped
+  });
+});
+
+describe('Option-A — rewrap-on-next-unlock migration (secSys §1d)', () => {
+  // Enroll PRF-first (dormant path) on a db, then unlock with a fresh Option-A keystore on the SAME
+  // db — the unlock unwraps via PRF AND migrates the blob to device-local in one gesture.
+  async function enrolledPrfThenOptionAUnlock(dbName: string) {
+    const prfKs = createWebAuthnKeyStore({
+      optionADeviceLocal: false,
+      backend: { create: vi.fn().mockResolvedValue(makeFakeCred({ prf: true })), get: vi.fn() },
+      dbName,
+    });
+    const { identity } = await prfKs.enrollNew();
+    await prfKs.setServerKeyId('keyid-preserved');
+    prfKs.lock();
+
+    // Fresh Option-A keystore (default device-local) on the same db: get() returns a PRF cred so the
+    // existing PRF blob can be unwrapped; the migration then reseals it device-local.
+    const optionAKs = createWebAuthnKeyStore({
+      backend: {
+        create: vi.fn(),
+        get: vi.fn().mockResolvedValue(makeFakeCred({ prf: true })),
+      },
+      dbName,
+    });
+    return { identity, optionAKs };
+  }
+
+  it('PRF unlock migrates to device-local: prf flips false + a deviceKey row appears (consistent pair)', async () => {
+    const dbName = `deltos-identity-test-${++_dbSeq}`;
+    const { optionAKs } = await enrolledPrfThenOptionAUnlock(dbName);
+    expect(await getEnrollmentPrfStatus(dbName)).toStrictEqual({ usesPrf: true }); // before unlock
+
+    const unlocked = await optionAKs.unlock();
+    expect(unlocked).not.toBeNull();
+
+    // secSys §1d-2: prf flipped false (disclosure now honestly device-local).
+    expect(await getEnrollmentPrfStatus(dbName)).toStrictEqual({ usesPrf: false });
+    // Consistent pair (atomicity / never fail-open): device-local blob AND a device key together.
+    const { blob, deviceKeyCount } = await inspectIdentityDb(dbName);
+    expect(blob?.prf).toBe(false);
+    expect(deviceKeyCount).toBe(1);
+  });
+
+  it('replace-not-append: a SINGLE blob row, old PRF ciphertext gone (secSys §1d-3)', async () => {
+    const dbName = `deltos-identity-test-${++_dbSeq}`;
+    const before = (await inspectIdentityDb(dbName)).blob; // undefined (not enrolled yet)
+    const { optionAKs } = await enrolledPrfThenOptionAUnlock(dbName);
+    const prfCt = (await inspectIdentityDb(dbName)).blob?.sealed.ct;
+    await optionAKs.unlock();
+    const after = await inspectIdentityDb(dbName);
+    expect(before).toBeUndefined();
+    expect(after.blobCount).toBe(1);          // single source of truth
+    expect(after.blob?.sealed.ct).not.toBe(prfCt); // resealed — old PRF ciphertext replaced
+  });
+
+  it('payload byte-identical: same id + a working signature survive the rewrap (secSys §1d-1/5)', async () => {
+    const dbName = `deltos-identity-test-${++_dbSeq}`;
+    const { identity, optionAKs } = await enrolledPrfThenOptionAUnlock(dbName);
+    const unlocked = await optionAKs.unlock();
+    expect(unlocked?.id).toBe(identity.id); // id preserved
+
+    // After migration, autoUnlock works silently and signs verifiably → sk/pk preserved intact.
+    optionAKs.lock();
+    const auto = await optionAKs.autoUnlock();
+    expect(auto?.id).toBe(identity.id);
+    const msg = new Uint8Array(32).fill(0x09);
+    const sig = await optionAKs.sign(msg);
+    const pub = optionAKs.getSigningPublicKey();
+    const webCryptoPub = await crypto.subtle.importKey('raw', pub, { name: 'Ed25519' }, false, ['verify']);
+    expect(await crypto.subtle.verify({ name: 'Ed25519' }, webCryptoPub, sig, msg)).toBe(true);
+  });
+
+  it('serverHandle/keyId untouched through the migration', async () => {
+    const dbName = `deltos-identity-test-${++_dbSeq}`;
+    const { optionAKs } = await enrolledPrfThenOptionAUnlock(dbName);
+    await optionAKs.unlock();
+    expect(await optionAKs.getServerKeyId()).toBe('keyid-preserved');
+  });
+
+  it('idempotent: a second unlock after migration stays device-local, no error', async () => {
+    const dbName = `deltos-identity-test-${++_dbSeq}`;
+    const { optionAKs } = await enrolledPrfThenOptionAUnlock(dbName);
+    await optionAKs.unlock();           // migrates
+    optionAKs.lock();
+    const again = await optionAKs.unlock(); // already device-local — no-op migration
+    expect(again).not.toBeNull();
+    expect(await getEnrollmentPrfStatus(dbName)).toStrictEqual({ usesPrf: false });
+    expect((await inspectIdentityDb(dbName)).blobCount).toBe(1);
+  });
+
+  it('concurrent (multi-tab) rewrap resolves to a consistent {blob,deviceKey} pair (secSys #3)', async () => {
+    const dbName = `deltos-identity-test-${++_dbSeq}`;
+    // Enroll PRF-first once.
+    const prfKs = createWebAuthnKeyStore({
+      optionADeviceLocal: false,
+      backend: { create: vi.fn().mockResolvedValue(makeFakeCred({ prf: true })), get: vi.fn() },
+      dbName,
+    });
+    const { identity } = await prfKs.enrollNew();
+    prfKs.lock();
+
+    // Two "tabs" unlock the same db at the same time → two concurrent rewraps.
+    const mkTab = () => createWebAuthnKeyStore({
+      backend: { create: vi.fn(), get: vi.fn().mockResolvedValue(makeFakeCred({ prf: true })) },
+      dbName,
+    });
+    const [a, b] = [mkTab(), mkTab()];
+    const [ua, ub] = await Promise.all([a.unlock(), b.unlock()]);
+    expect(ua?.id).toBe(identity.id);
+    expect(ub?.id).toBe(identity.id);
+
+    // Last-writer-wins, but the single-txn-over-[blob,deviceKey] guarantees the surviving pair is
+    // consistent: prf:false blob WITH a matching device key, and it auto-unlocks.
+    const after = await inspectIdentityDb(dbName);
+    expect(after.blobCount).toBe(1);
+    expect(after.blob?.prf).toBe(false);
+    expect(after.deviceKeyCount).toBe(1);
+    const verify = createWebAuthnKeyStore({ backend: { create: vi.fn(), get: vi.fn() }, dbName });
+    expect((await verify.autoUnlock())?.id).toBe(identity.id);
   });
 });

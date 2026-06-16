@@ -99,6 +99,13 @@ export interface AuthState {
   usesPrf: boolean | null;
   /** Quiet background-session status (see {@link SessionState}). Never gates the notes UI. */
   sessionState: SessionState;
+  /**
+   * True for exactly one unlock: an already-PRF-enrolled device just silently downgraded to
+   * device-local custody via the Option-A rewrap-on-next-unlock migration. Drives the one-time
+   * device-local notice at the migration unlock (secSys honesty-of-record finding; planSys ruled
+   * SHOW ONCE). Cleared by {@link clearMigrationNotice} once shown.
+   */
+  justMigratedToDeviceLocal: boolean;
   error: string | null;
 }
 
@@ -166,6 +173,8 @@ interface AuthActions {
 
   lock(): void;
   clearError(): void;
+  /** Dismiss the one-time device-local migration notice (after it has been shown once). */
+  clearMigrationNotice(): void;
 }
 
 export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
@@ -177,6 +186,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   accountId: null,
   usesPrf: null,
   sessionState: 'booting',
+  justMigratedToDeviceLocal: false,
   error: null,
 
   async init() {
@@ -212,12 +222,23 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     if (!isEnrolled) return;                       // no local identity — the enroll gate handles this
     if (bearerToken) { set({ sessionState: 'active' }); return; } // already authed this session
 
-    // Part 1a: unwrapping the at-rest signing key still needs a user gesture (Part 1b's Option-A
-    // autoUnlock makes it silent). Without the key in memory — or with no registered device handle —
-    // we cannot sign a challenge, so surface a quiet NUDGE, never a blocking gate.
-    if (!keyStore.isUnlocked() || !keyId) {
+    // No registered device handle → the gesture path (UnlockRoute) re-registers; quiet nudge.
+    if (!keyId) {
       set({ sessionState: 'needs-unlock' });
       return;
+    }
+
+    // Part 1b (Option-A): SILENTLY unwrap the device-local key with NO gesture, in the background
+    // (after first paint — never on the render path). A device-local blob unlocks silently; a
+    // not-yet-migrated PRF blob returns null → graceful-degrade to the gesture nudge (which migrates
+    // it on the next unlock). This is the zero-day-to-day-friction path (the north star).
+    if (!keyStore.isUnlocked()) {
+      const identity = await keyStore.autoUnlock();
+      if (!identity) {
+        set({ sessionState: 'needs-unlock' });
+        return;
+      }
+      set({ isUnlocked: true, identity });
     }
 
     set({ sessionState: 'establishing' });
@@ -257,10 +278,14 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
 
   async unlock() {
     set({ error: null });
-    const identity = await keyStore.unlock(); // WebAuthn get() first await (PIN-ID-9)
+    const wasPrf = get().usesPrf; // disclosed custody BEFORE this unlock (true = PRF-bound)
+    const identity = await keyStore.unlock(); // WebAuthn get() first await (PIN-ID-9); may rewrap-migrate
     if (!identity) return 'cancelled';
     const prfStatus = await getEnrollmentPrfStatus();
-    set({ isUnlocked: true, identity, usesPrf: prfStatus?.usesPrf ?? null });
+    const usesPrf = prfStatus?.usesPrf ?? null;
+    // Option-A migration just happened iff the device WAS PRF-bound and is NOW device-local — the
+    // unlock() rewrap flipped prf→false. Surface the one-time device-local notice (planSys: show once).
+    set({ isUnlocked: true, identity, usesPrf, justMigratedToDeviceLocal: wasPrf === true && usesPrf === false });
     return 'ok';
   },
 
@@ -341,6 +366,8 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   },
 
   clearError() { set({ error: null }); },
+
+  clearMigrationNotice() { set({ justMigratedToDeviceLocal: false }); },
 }));
 
 // Background re-auth recovery: when connectivity returns, retry the session mint for an enrolled

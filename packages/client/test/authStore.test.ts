@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   keyStore: {
     isEnrolled: vi.fn(),
     isUnlocked: vi.fn(),
+    autoUnlock: vi.fn(),
     getServerKeyId: vi.fn(),
     setServerKeyId: vi.fn(),
     lock: vi.fn(),
@@ -74,6 +75,7 @@ beforeEach(() => {
   globalThis.fetch = fetchMock;
   mocks.getEnrollmentPrfStatus.mockResolvedValue({ usesPrf: false });
   mocks.buildSessionRequest.mockResolvedValue({ keyId: 'k1', signature: 'sig', payload: 'p' });
+  mocks.keyStore.autoUnlock.mockResolvedValue(null); // default: silent unwrap unavailable
 });
 
 describe('establishSession — background re-auth state machine (P1-3, P1-4)', () => {
@@ -91,14 +93,31 @@ describe('establishSession — background re-auth state machine (P1-3, P1-4)', (
     expect(s.accountId).toBe('acc-1');
   });
 
-  it('no key in memory → quiet needs-unlock nudge, no mint attempted (Part 1a)', async () => {
+  it('key not in memory + silent autoUnlock succeeds → active, NO gesture (Part 1b north star)', async () => {
     const useAuthStore = await freshStore();
     mocks.keyStore.isUnlocked.mockReturnValue(false);
+    mocks.keyStore.autoUnlock.mockResolvedValue({ id: 'acct-id' }); // device-local silent unwrap
+    fetchMock.mockResolvedValue(okSession());
     useAuthStore.setState({ isEnrolled: true, keyId: 'k1' });
 
     await useAuthStore.getState().establishSession();
 
-    expect(useAuthStore.getState().sessionState).toBe('needs-unlock');
+    const s = useAuthStore.getState();
+    expect(mocks.keyStore.autoUnlock).toHaveBeenCalled();
+    expect(s.isUnlocked).toBe(true);
+    expect(s.sessionState).toBe('active');
+    expect(s.bearerToken).toBe('tok-secret-1');
+  });
+
+  it('key not in memory + autoUnlock null (un-migrated PRF / no device key) → needs-unlock, no mint', async () => {
+    const useAuthStore = await freshStore();
+    mocks.keyStore.isUnlocked.mockReturnValue(false);
+    mocks.keyStore.autoUnlock.mockResolvedValue(null);
+    useAuthStore.setState({ isEnrolled: true, keyId: 'k1' });
+
+    await useAuthStore.getState().establishSession();
+
+    expect(useAuthStore.getState().sessionState).toBe('needs-unlock'); // graceful degrade to gesture
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -163,6 +182,49 @@ describe('init — render-before-data: the launch decision never awaits the netw
 
     expect(useAuthStore.getState().isEnrolled).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('unlock — Option-A migration notice (planSys: show once)', () => {
+  it('PRF→device-local downgrade on this unlock → justMigratedToDeviceLocal true', async () => {
+    const useAuthStore = await freshStore();
+    mocks.keyStore.unlock.mockResolvedValue({ id: 'acct-id' });
+    mocks.getEnrollmentPrfStatus.mockResolvedValue({ usesPrf: false }); // post-unlock = device-local
+    useAuthStore.setState({ usesPrf: true }); // pre-unlock disclosed custody = PRF
+
+    const result = await useAuthStore.getState().unlock();
+
+    expect(result).toBe('ok');
+    expect(useAuthStore.getState().justMigratedToDeviceLocal).toBe(true);
+  });
+
+  it('already device-local (no downgrade) → no migration notice', async () => {
+    const useAuthStore = await freshStore();
+    mocks.keyStore.unlock.mockResolvedValue({ id: 'acct-id' });
+    mocks.getEnrollmentPrfStatus.mockResolvedValue({ usesPrf: false });
+    useAuthStore.setState({ usesPrf: false }); // was already device-local
+
+    await useAuthStore.getState().unlock();
+
+    expect(useAuthStore.getState().justMigratedToDeviceLocal).toBe(false);
+  });
+
+  it('cancelled unlock → no migration notice', async () => {
+    const useAuthStore = await freshStore();
+    mocks.keyStore.unlock.mockResolvedValue(null); // user dismissed the passkey prompt
+    useAuthStore.setState({ usesPrf: true });
+
+    const result = await useAuthStore.getState().unlock();
+
+    expect(result).toBe('cancelled');
+    expect(useAuthStore.getState().justMigratedToDeviceLocal).toBe(false);
+  });
+
+  it('clearMigrationNotice() dismisses the one-time notice', async () => {
+    const useAuthStore = await freshStore();
+    useAuthStore.setState({ justMigratedToDeviceLocal: true });
+    useAuthStore.getState().clearMigrationNotice();
+    expect(useAuthStore.getState().justMigratedToDeviceLocal).toBe(false);
   });
 });
 

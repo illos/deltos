@@ -116,8 +116,10 @@ export function QrReceiveRoute() {
           Your identity has been bound to a new passkey on this device.
         </p>
 
-        {/* D5 disclosure — MANDATORY when no PRF (secSys PIN-ID-6 acceptance condition) */}
-        {!step.usesPrf && <Disclosure />}
+        {/* Device-local disclosure — REQUIRED at join-confirmation (secSys HARD #2: QR-join/device-add
+            is a credential-establishment path; mounted UNCONDITIONALLY, never gated. Under Option-A
+            usesPrf is always false → device-local copy). gruntSys2 owns the copy. */}
+        <Disclosure prf={step.usesPrf} />
 
         <button className="auth__btn auth__btn--primary" onClick={handleFinish}>
           Continue to deltos

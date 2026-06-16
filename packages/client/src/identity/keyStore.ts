@@ -66,8 +66,23 @@ export interface KeyStore {
    * Unlock the at-rest blob via WebAuthn (the `get()` IS the first await). Returns the unlocked
    * {@link Identity}, or `null` if no enrolled credential matched (caller shows enroll/retry).
    * Call from a gesture.
+   *
+   * Option-A migration (rewrap-on-next-unlock): when the device is enrolled PRF-first and Option-A
+   * is in force, a successful unlock ALSO converts the blob to device-local custody in-memory
+   * (one-time, idempotent, atomic, fail-safe) so subsequent cold starts can {@link autoUnlock}
+   * silently. The migration is a side-effect — the unlock's return shape is unchanged.
    */
   unlock(): Promise<Identity | null>;
+
+  /**
+   * SILENT unlock — load the in-memory key from a device-local blob with NO WebAuthn ceremony, for
+   * the background cold-start re-auth (Option-A). Returns the {@link Identity}, or `null` when a
+   * silent unwrap is not possible (no blob, or a still-PRF-wrapped blob that has not yet been
+   * migrated — the caller then falls back to the gesture unlock, which migrates it). Fail-closed:
+   * never throws. MUST be called off the render/first-paint path (background only) — it touches the
+   * signing key, which the launch path must not (Part 1a custody line).
+   */
+  autoUnlock(): Promise<Identity | null>;
 
   /** Drop in-memory key material. The encrypted IndexedDB blob is untouched (re-unlock with WebAuthn). */
   lock(): void;
@@ -127,6 +142,7 @@ export function createStubKeyStore(): KeyStore {
     enrollNew: () => reject('enrollNew'),
     enrollExisting: () => reject('enrollExisting'),
     unlock: () => reject('unlock'),
+    autoUnlock: () => reject('autoUnlock'),
     lock: () => {
       throw new NotImplementedError('lock');
     },

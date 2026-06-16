@@ -27,6 +27,7 @@ import Dexie, { type EntityTable } from 'dexie';
 import { base64urlEncode, base64urlDecode } from '@deltos/shared';
 import { generateMnemonic, deriveKeyHierarchy } from './keyDerivation.js';
 import { sealBlob, openBlob, deriveWrappingKey } from './blob.js';
+import { OPTION_A_DEVICE_LOCAL } from './custodyPolicy.js';
 import type { Identity, KeyStore } from './keyStore.js';
 import type { SealedBlob } from './blob.js';
 
@@ -144,8 +145,13 @@ function makeGetOptions(rpId: string): CredentialRequestOptions {
 async function computeWrappingKey(
   prfOutput: ArrayBuffer | null,
   credIdBytes: Uint8Array,
+  deviceLocalForAll: boolean,
 ): Promise<{ wrappingKey: Uint8Array; usedPrf: boolean }> {
-  if (prfOutput && prfOutput.byteLength > 0) {
+  // Option-A (v1, user-affirmed): device-local-for-ALL. New enrollments ALWAYS seal under a random
+  // device-local key so the blob can be unwrapped silently (no gesture) on cold start — the north
+  // star (no day-to-day friction). The PRF branch below is kept DORMANT behind the flag
+  // (secSys #6): `deviceLocalForAll = false` re-enables PRF-first wrapping (v2 E2EE / tests).
+  if (!deviceLocalForAll && prfOutput && prfOutput.byteLength > 0) {
     const wk = await deriveWrappingKey(
       new Uint8Array(prfOutput),
       credIdBytes,                   // per-credential salt
@@ -153,7 +159,7 @@ async function computeWrappingKey(
     );
     return { wrappingKey: wk, usedPrf: true };
   }
-  // No-PRF baseline: random device-local key (caller persists it)
+  // Device-local key (caller persists it). Under Option-A this is the only enrollment path.
   return { wrappingKey: crypto.getRandomValues(new Uint8Array(32)), usedPrf: false };
 }
 
@@ -194,6 +200,30 @@ async function sealAndPersist(
   await db.serverHandle.delete('v1');
 }
 
+/**
+ * Option-A migration (rewrap-on-next-unlock): convert a PRF-wrapped blob to device-local custody,
+ * IN MEMORY, riding the unlock gesture the user is already performing. Re-seals the SAME already-
+ * decrypted plaintext under a fresh random device-local key and writes the new sealed blob + the
+ * device key in a SINGLE Dexie transaction over [blob, deviceKey] — so a crash leaves the original
+ * PRF blob fully intact (fail-safe, never fail-open) and a concurrent (multi-tab) rewrap resolves to
+ * a consistent {blob, deviceKey} pair (last-writer-wins). Replaces the 'v1' row (no lingering PRF
+ * ciphertext) and flips `prf → false` so the disclosure honestly shows the device-local variant.
+ * serverHandle/keyId untouched; the bare signing key is NEVER serialized — only the AES-GCM-sealed
+ * blob + the random wrapping key reach IndexedDB.
+ */
+async function rewrapDeviceLocal(
+  plaintext: Uint8Array,
+  credentialId: string,
+  db: IdentityDB,
+): Promise<void> {
+  const newKey = crypto.getRandomValues(new Uint8Array(32));
+  const sealed = await sealBlob(plaintext, newKey); // reseal the SAME payload bytes (byte-identical)
+  await db.transaction('rw', db.blob, db.deviceKey, async () => {
+    await db.blob.put({ key: 'v1', sealed, credentialId, prf: false }); // replace 'v1', prf→false
+    await db.deviceKey.put({ key: 'v1', wrappingKey: base64urlEncode(newKey) });
+  });
+}
+
 // ── Enrollment info (for D5 UI disclosure) ──────────────────────────────────────────────────────
 
 /**
@@ -219,10 +249,14 @@ export async function getEnrollmentPrfStatus(dbName?: string): Promise<{ usesPrf
 export function createWebAuthnKeyStore(opts?: {
   backend?: WebAuthnBackend;
   dbName?: string;
+  /** Option-A device-local-for-all wrapping. Defaults to the v1 build constant; tests flip it to
+   *  false to exercise the DORMANT PRF custody path (secSys #6, v2 E2EE). */
+  optionADeviceLocal?: boolean;
 }): KeyStore {
   const backend: WebAuthnBackend = opts?.backend ?? navigator.credentials;
   const db = new IdentityDB(opts?.dbName ?? 'deltos-identity');
   const rpId = typeof location !== 'undefined' ? location.hostname : 'localhost';
+  const deviceLocalForAll = opts?.optionADeviceLocal ?? OPTION_A_DEVICE_LOCAL;
 
   // In-memory key state. Null = locked. Zeroed and nulled by lock().
   let _state: {
@@ -255,7 +289,7 @@ export function createWebAuthnKeyStore(opts?: {
       const hierarchy = await deriveKeyHierarchy(mnemonic);
       const credIdBytes = new Uint8Array(cred.rawId);
       const credentialId = base64urlEncode(credIdBytes);
-      const { wrappingKey, usedPrf } = await computeWrappingKey(extractPrf(cred), credIdBytes);
+      const { wrappingKey, usedPrf } = await computeWrappingKey(extractPrf(cred), credIdBytes, deviceLocalForAll);
 
       await sealAndPersist(
         { id: hierarchy.id, sk: base64urlEncode(hierarchy.signing.privateKey), pk: base64urlEncode(hierarchy.signing.publicKey) },
@@ -275,7 +309,7 @@ export function createWebAuthnKeyStore(opts?: {
       const hierarchy = await deriveKeyHierarchy(mnemonic);
       const credIdBytes = new Uint8Array(cred.rawId);
       const credentialId = base64urlEncode(credIdBytes);
-      const { wrappingKey, usedPrf } = await computeWrappingKey(extractPrf(cred), credIdBytes);
+      const { wrappingKey, usedPrf } = await computeWrappingKey(extractPrf(cred), credIdBytes, deviceLocalForAll);
 
       await sealAndPersist(
         { id: hierarchy.id, sk: base64urlEncode(hierarchy.signing.privateKey), pk: base64urlEncode(hierarchy.signing.publicKey) },
@@ -312,6 +346,43 @@ export function createWebAuthnKeyStore(opts?: {
       const publicKey = base64urlDecode(payload.pk);
       const identity: Identity = { id: payload.id };
       _state = { identity, privateKey, publicKey };
+
+      // Option-A migration: an already-PRF-enrolled device silently converts to device-local custody
+      // on this unlock (one-time, idempotent), so subsequent cold starts auto-unlock with no gesture.
+      // Best-effort + atomic — a failure leaves the PRF blob intact and the device migrates on the
+      // next unlock (fail-safe). Runs AFTER _state is set, so the unlock itself never fails on it.
+      if (deviceLocalForAll && blobRow.prf) {
+        try {
+          await rewrapDeviceLocal(plaintext, blobRow.credentialId, db);
+        } catch {
+          /* leave the original PRF blob intact; retry on the next unlock */
+        }
+      }
+
+      return identity;
+    },
+
+    async autoUnlock(): Promise<Identity | null> {
+      // SILENT unwrap — NO WebAuthn, background only (establishSession calls it AFTER first paint,
+      // never on the render path). Works only for device-local blobs; a PRF blob returns null so the
+      // caller falls back to the gesture nudge (which then migrates it via unlock()). Fail-CLOSED.
+      const blobRow = await db.blob.get('v1');
+      if (!blobRow) return null;
+      if (blobRow.prf) return null; // no at-rest key for a PRF blob — cannot silently unwrap
+      const credIdBytes = base64urlDecode(blobRow.credentialId);
+      const wrappingKey = await recoverWrappingKey(null, credIdBytes, blobRow, db);
+      if (!wrappingKey) return null;
+
+      let plaintext: Uint8Array;
+      try {
+        plaintext = await openBlob(blobRow.sealed, wrappingKey);
+      } catch {
+        return null; // wrong key or tampered blob
+      }
+
+      const payload: BlobPayload = JSON.parse(new TextDecoder().decode(plaintext)) as BlobPayload;
+      const identity: Identity = { id: payload.id };
+      _state = { identity, privateKey: base64urlDecode(payload.sk), publicKey: base64urlDecode(payload.pk) };
       return identity;
     },
 
