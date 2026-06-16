@@ -245,10 +245,23 @@ function pmNodeToBlock(node: PmNode): Block | Block[] | null {
   }
 }
 
-/** Convert the ProseMirror document to the spine block body. */
+/**
+ * Extract the note title from the PM document's first `title` node.
+ * Returns an empty string if the doc has no title node or the node is empty.
+ */
+export function extractTitleFromDoc(doc: PmNode): string {
+  const first = doc.firstChild;
+  return first?.type.name === 'title' ? first.textContent : '';
+}
+
+/**
+ * Convert the ProseMirror document to the spine block body.
+ * Skips the first `title` node — the title is extracted via extractTitleFromDoc().
+ */
 export function pmDocToSpine(doc: PmNode): BlockBody {
   const blocks: Block[] = [];
-  doc.forEach((node) => {
+  doc.forEach((node, _offset, index) => {
+    if (index === 0 && node.type.name === 'title') return; // skip title node
     const converted = pmNodeToBlock(node);
     if (converted) {
       if (Array.isArray(converted)) blocks.push(...converted);
@@ -377,18 +390,23 @@ function spineBlockToPmNode(schema: Schema, block: Block): PmNode | PmNode[] | n
   }
 }
 
-/** Convert the spine block body to a ProseMirror document node. */
-export function spineToPmDoc(schema: Schema, blocks: BlockBody): PmNode {
-  const nodes: PmNode[] = [];
+/**
+ * Convert the spine block body to a ProseMirror document node.
+ * The title string becomes the first `title` node; the blocks follow as the body.
+ */
+export function spineToPmDoc(schema: Schema, blocks: BlockBody, title = ''): PmNode {
+  // Build title node inline content
+  const titleInline = title ? [schema.text(title)] : [];
+  const titleNode = schema.nodes['title']!.create({ id: null }, titleInline);
+
+  const bodyNodes: PmNode[] = [];
   for (const block of blocks) {
     const converted = spineBlockToPmNode(schema, block);
     if (converted) {
-      if (Array.isArray(converted)) nodes.push(...converted);
-      else nodes.push(converted);
+      if (Array.isArray(converted)) bodyNodes.push(...converted);
+      else bodyNodes.push(converted);
     }
   }
-  if (nodes.length === 0) {
-    nodes.push(schema.nodes['paragraph']!.create({ id: null }));
-  }
-  return schema.nodes['doc']!.create(null, nodes);
+
+  return schema.nodes['doc']!.create(null, [titleNode, ...bodyNodes]);
 }

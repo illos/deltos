@@ -1,7 +1,19 @@
-import { baseKeymap, toggleMark, setBlockType, wrapIn, chainCommands, exitCode } from 'prosemirror-commands';
+import {
+  baseKeymap,
+  toggleMark,
+  setBlockType,
+  wrapIn,
+  chainCommands,
+  exitCode,
+  newlineInCode,
+  createParagraphNear,
+  liftEmptyBlock,
+  splitBlock,
+} from 'prosemirror-commands';
 import { splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-list';
 import { undo, redo } from 'prosemirror-history';
 import { keymap } from 'prosemirror-keymap';
+import type { Command } from 'prosemirror-state';
 import type { DeltoSchema } from './schema.js';
 
 /**
@@ -9,9 +21,32 @@ import type { DeltoSchema } from './schema.js';
  * (bold, italic, code, lists, heading levels, undo/redo) while integrating with the
  * PM command model so every mutation goes through a Transaction (trackable by plugins).
  */
+
+/**
+ * Enter inside the `title` node: split into title-before + new paragraph-after.
+ * This is what makes "Enter from title → body" work as a single PM document.
+ *
+ * chainCommands tries this first; if the cursor isn't in the title it returns false
+ * and the next handler in the chain takes over (splitListItem, then the base handlers).
+ */
+const titleEnter: Command = (state, dispatch) => {
+  const { $from } = state.selection;
+  if ($from.parent.type.name !== 'title') return false;
+  if (!dispatch) return true;
+
+  const paragraphType = state.schema.nodes['paragraph']!;
+  const tr = state.tr;
+  // Delete any selected text first, then split at the cursor.
+  if (!state.selection.empty) tr.deleteSelection();
+  tr.split(tr.selection.$from.pos, 1, [{ type: paragraphType, attrs: { id: null } }]);
+  tr.scrollIntoView();
+  dispatch(tr);
+  return true;
+};
+
 export function buildKeymap(schema: DeltoSchema) {
   const { nodes, marks } = schema;
-  const bindings: Record<string, ReturnType<typeof toggleMark>> = {};
+  const bindings: Record<string, Command> = {};
 
   // Undo / redo
   bindings['Mod-z'] = undo;
@@ -23,7 +58,7 @@ export function buildKeymap(schema: DeltoSchema) {
   if (marks['italic']) bindings['Mod-i'] = toggleMark(marks['italic']);
   if (marks['code'])   bindings['Mod-`'] = toggleMark(marks['code']);
 
-  // Headings (Mod-Alt-1 … Mod-Alt-3 covers the common cases)
+  // Headings
   if (nodes['heading']) {
     for (let level = 1; level <= 6; level++) {
       bindings[`Mod-Alt-${level}`] = setBlockType(nodes['heading'], { level });
@@ -45,7 +80,7 @@ export function buildKeymap(schema: DeltoSchema) {
     bindings['Mod-Shift->'] = wrapIn(nodes['blockquote']);
   }
 
-  // Hard break (Shift-Enter in non-code blocks; plain Enter inside code)
+  // Hard break (Shift-Enter in non-code blocks)
   if (nodes['hard_break']) {
     const insertHardBreak = chainCommands(exitCode, (state, dispatch) => {
       if (!dispatch) return true;
@@ -55,10 +90,22 @@ export function buildKeymap(schema: DeltoSchema) {
     bindings['Shift-Enter'] = insertHardBreak;
   }
 
-  // List item handling
+  // Enter: title → body → list item → code newline → default block split.
+  // The full chain is required here because buildKeymap overrides baseKeymap's Enter;
+  // without explicitly including the base handlers, regular paragraph Enter would fall
+  // through to browser-native contenteditable behaviour (unmanaged DOM mutation).
+  bindings['Enter'] = chainCommands(
+    titleEnter,
+    ...(nodes['list_item'] ? [splitListItem(nodes['list_item'])] : []),
+    newlineInCode,
+    createParagraphNear,
+    liftEmptyBlock,
+    splitBlock,
+  );
+
+  // List indentation
   if (nodes['list_item']) {
-    bindings['Enter']   = splitListItem(nodes['list_item']);
-    bindings['Tab']     = sinkListItem(nodes['list_item']);
+    bindings['Tab']       = sinkListItem(nodes['list_item']);
     bindings['Shift-Tab'] = liftListItem(nodes['list_item']);
   }
 

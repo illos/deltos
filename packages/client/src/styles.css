@@ -101,22 +101,6 @@
 
 .editor--loading { opacity: 0; }
 
-.editor__title {
-  font-size: 1.55rem;
-  font-weight: 700;
-  line-height: 1.25;
-  color: inherit;
-  background: transparent;
-  border: none;
-  outline: none;
-  width: 100%;
-  padding: 0;
-  margin-bottom: 1rem;
-  letter-spacing: -0.01em;
-}
-
-.editor__title::placeholder { color: var(--muted); opacity: 0.55; }
-
 /* ProseMirror host div */
 .editor__pm {
   flex: 1;
@@ -133,6 +117,22 @@
 
 .editor__pm .ProseMirror p   { margin: 0 0 0.55em; }
 .editor__pm .ProseMirror h1  { font-size: 1.55rem; font-weight: 700; margin: 1.2em 0 0.4em; line-height: 1.2; }
+
+/* Unified title node — always the first h1 in the document, no top margin */
+.editor__pm .ProseMirror h1[data-type="title"] {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  letter-spacing: -0.01em;
+}
+/* Placeholder when title is empty (titlePlaceholderPlugin adds data-empty attr) */
+.editor__pm .ProseMirror h1[data-type="title"][data-empty]::before {
+  content: 'Title';
+  color: var(--muted);
+  opacity: 0.55;
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
 .editor__pm .ProseMirror h2  { font-size: 1.25rem; font-weight: 600; margin: 1.1em 0 0.4em; }
 .editor__pm .ProseMirror h3  { font-size: 1.05rem; font-weight: 600; margin: 1em 0 0.35em; }
 .editor__pm .ProseMirror h4,

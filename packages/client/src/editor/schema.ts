@@ -20,7 +20,19 @@ import { Schema } from 'prosemirror-model';
  */
 export const deltoSchema = new Schema({
   nodes: {
-    doc: { content: 'block+' },
+    // title is always the first (and only) node at the root of the doc; it is NOT in the
+    // `block` group so it cannot be created in the body or moved. Enter at end of title
+    // creates a new body paragraph (handled by the keymap's title-enter command).
+    doc: { content: 'title block*' },
+
+    title: {
+      content: 'inline*',
+      defining: true,
+      attrs: { id: { default: null } },
+      parseDOM: [{ tag: 'h1[data-type="title"]' }],
+      toDOM: (node) =>
+        ['h1', { 'data-type': 'title', 'data-id': node.attrs.id as string }, 0] as const,
+    },
 
     // ── Inline leaf ──────────────────────────────────────────────────────────
     text: { group: 'inline' },

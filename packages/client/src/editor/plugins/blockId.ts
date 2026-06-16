@@ -24,6 +24,7 @@ import { newBlockId } from '../../lib/ids.js';
  */
 
 const ID_NODE_TYPES = new Set([
+  'title',
   'paragraph',
   'heading',
   'blockquote',
