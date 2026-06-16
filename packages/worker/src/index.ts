@@ -20,6 +20,7 @@ import {
   searchNotes,
 } from './db/mutate.js';
 import { sync } from './routes/sync.js';
+import { auth } from './routes/auth.js';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -56,6 +57,13 @@ app.get('/api/health', async (c) => {
 // ---------------------------------------------------------------------------
 
 app.route('/api/sync', sync);
+
+// ---------------------------------------------------------------------------
+// Stream A identity auth routes — the unauthenticated bootstrap that mints request auth.
+// Handlers are contract-only skeletons (501) until authCrypto + authStore land.
+// ---------------------------------------------------------------------------
+
+app.route('/api/auth', auth);
 
 // ---------------------------------------------------------------------------
 // Helpers
