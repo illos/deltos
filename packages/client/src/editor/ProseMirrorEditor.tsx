@@ -11,6 +11,7 @@ import { buildKeymapPlugin } from './keymap.js';
 import { spineToPmDoc, pmDocToSpine } from './serializer.js';
 import { buildPluginIslandNodeViews } from './nodeviews/PluginIsland.js';
 import { TodoItemView } from './nodeviews/TodoItem.js';
+import { sliceToPlainText } from './clipboard.js';
 
 interface ProseMirrorEditorProps {
   noteId: string;
@@ -72,6 +73,10 @@ export function ProseMirrorEditor({
         todo_item: (node, view, getPos) =>
           new TodoItemView(node, view, getPos as () => number | undefined),
       },
+      // Plain text clipboard output: readable markdown-flavoured text for system clipboard.
+      // PM's default collapses everything to textContent — losing all structure. This makes
+      // "copy from deltos, paste into email/terminal" produce something the user can read.
+      clipboardTextSerializer: sliceToPlainText,
       // Strip scripts and on* event handlers from HTML pasted from external sources.
       // PM's own parser handles structural sanitization; this removes the XSS surface.
       // The uniqueBlockIdPlugin then re-mints any IDs that arrive null or duplicated.

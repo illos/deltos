@@ -38,7 +38,8 @@ function isBool(x: unknown): x is boolean   { return typeof x === 'boolean'; }
 function isTextSegment(x: unknown): x is TextSegment {
   if (!x || typeof x !== 'object') return false;
   const o = x as Record<string, unknown>;
-  if (!isString(o['text'])) return false;
+  // schema.text('') throws RangeError — empty text nodes are never valid in PM.
+  if (!isString(o['text']) || o['text'].length === 0) return false;
   if ('bold' in o && o['bold'] !== true) return false;
   if ('italic' in o && o['italic'] !== true) return false;
   if ('code' in o && o['code'] !== true) return false;
