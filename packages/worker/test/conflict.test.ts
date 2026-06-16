@@ -50,7 +50,15 @@ function sqliteAdapter(db: Database.Database): DbAdapter {
 // Schema setup: apply the same migration files the production D1 uses
 // ---------------------------------------------------------------------------
 
-const migrations = ['0000_baseline.sql', '0001_stream-b-sync.sql'].map((f) =>
+// 0002 (auth) + 0003 (account-identity) are applied too: 0003 adds the notes.accountId column the
+// scoped mutate.ts queries filter on, and its back-fill/re-point reference the 0002 devices/grants tables.
+// On a fresh empty DB the 0003 guard + back-fill are no-ops (no devices, no notes yet).
+const migrations = [
+  '0000_baseline.sql',
+  '0001_stream-b-sync.sql',
+  '0002_stream-a-auth.sql',
+  '0003_account-identity.sql',
+].map((f) =>
   readFileSync(join(__dirname, '../migrations', f), 'utf8'),
 );
 
@@ -69,6 +77,9 @@ function freshDb(): { db: DbAdapter; raw: Database.Database } {
 
 const NOW = '2026-06-15T12:00:00.000Z';
 const NB = '00000000-0000-4000-8000-000000000001' as const;
+// All notes in these single-account CAS/cursor tests belong to one account; the accountId param is
+// required (fail-closed) but the scoping is exercised by isolation.acceptance.test.ts, not here.
+const ACCT = 'acct-conflict-test-0001';
 
 function entry(id: string, baseVersion: number, title = 'Test'): SyncPushEntry & { notebookId: string } {
   return {
@@ -103,15 +114,15 @@ describe('conflict engine — server-side CAS (PIN-SYNC-1)', () => {
     const id = '00000000-0000-4000-8000-000000000002';
 
     // Insert the note (baseVersion = 0 → new note)
-    const first = await insertNote(db, entry(id, 0, 'Original'), NOW);
+    const first = await insertNote(db, entry(id, 0, 'Original'), ACCT, NOW);
     expect(first.outcome).toBe('accepted');
     if (first.outcome !== 'accepted') throw new Error('setup failed');
     expect(first.version).toBe(1);
 
     // Two concurrent UPDATE attempts at the same baseVersion = 1
     const [aResult, bResult] = await Promise.all([
-      updateNote(db, entry(id, 1, 'Device A edit'), NOW),
-      updateNote(db, entry(id, 1, 'Device B edit'), NOW),
+      updateNote(db, entry(id, 1, 'Device A edit'), ACCT, NOW),
+      updateNote(db, entry(id, 1, 'Device B edit'), ACCT, NOW),
     ]);
 
     // Exactly one must succeed and one must raise a conflict
@@ -141,14 +152,14 @@ describe('conflict engine — server-side CAS (PIN-SYNC-1)', () => {
     const id = '00000000-0000-4000-8000-000000000003';
 
     // Create the note
-    await insertNote(db, entry(id, 0, 'Will be deleted'), NOW);
+    await insertNote(db, entry(id, 0, 'Will be deleted'), ACCT, NOW);
 
     // Tombstone it (simulating a delete from another device)
-    const del = await deleteNote(db, id, NB, 1, NOW);
+    const del = await deleteNote(db, id, NB, ACCT, 1, NOW);
     expect(del.outcome).toBe('accepted');
 
     // Now push an update at the old baseVersion — should conflict
-    const conflict = await updateNote(db, entry(id, 1, 'Offline edit'), NOW);
+    const conflict = await updateNote(db, entry(id, 1, 'Offline edit'), ACCT, NOW);
     expect(conflict.outcome).toBe('conflict');
 
     const serverRow = (conflict as { outcome: 'conflict'; serverRow: NoteRow | null }).serverRow;
@@ -165,12 +176,12 @@ describe('conflict engine — server-side CAS (PIN-SYNC-1)', () => {
     const id = '00000000-0000-4000-8000-000000000009';
 
     // Create (version 1), then a concurrent edit moves it to version 2.
-    await insertNote(db, entry(id, 0, 'Original'), NOW);
-    const edit = await updateNote(db, entry(id, 1, 'Edited elsewhere'), NOW);
+    await insertNote(db, entry(id, 0, 'Original'), ACCT, NOW);
+    const edit = await updateNote(db, entry(id, 1, 'Edited elsewhere'), ACCT, NOW);
     expect(edit.outcome).toBe('accepted');
 
     // Delete still believing the note is at version 1 — must CAS-miss → conflict.
-    const del = await deleteNote(db, id, NB, 1, NOW);
+    const del = await deleteNote(db, id, NB, ACCT, 1, NOW);
     expect(del.outcome).toBe('conflict');
     const serverRow = (del as { outcome: 'conflict'; serverRow: NoteRow | null }).serverRow;
     expect(serverRow).not.toBeNull();
@@ -178,7 +189,7 @@ describe('conflict engine — server-side CAS (PIN-SYNC-1)', () => {
     expect(serverRow!.deletedAt).toBeNull(); // not tombstoned — the stale delete was refused
 
     // A delete at the correct version still succeeds (the clause gates, it doesn't block).
-    const ok = await deleteNote(db, id, NB, 2, NOW);
+    const ok = await deleteNote(db, id, NB, ACCT, 2, NOW);
     expect(ok.outcome).toBe('accepted');
   });
 
@@ -190,11 +201,11 @@ describe('conflict engine — server-side CAS (PIN-SYNC-1)', () => {
     const id1 = '00000000-0000-4000-8000-000000000004';
     const id2 = '00000000-0000-4000-8000-000000000005';
 
-    await insertNote(db, entry(id1, 0, 'Note 1'), NOW);
-    await insertNote(db, entry(id2, 0, 'Note 2'), NOW);
+    await insertNote(db, entry(id1, 0, 'Note 1'), ACCT, NOW);
+    await insertNote(db, entry(id2, 0, 'Note 2'), ACCT, NOW);
 
     // Full sync (cursor = 0)
-    const page1 = await pullNotes(db, NB, 0);
+    const page1 = await pullNotes(db, NB, ACCT, 0);
     expect(page1.notes).toHaveLength(2);
     expect(page1.hasMore).toBe(false);
     // Monotone order
@@ -204,13 +215,13 @@ describe('conflict engine — server-side CAS (PIN-SYNC-1)', () => {
     expect(cursor).toBe(page1.notes[1].syncSeq);
 
     // Incremental pull — nothing new
-    const page2 = await pullNotes(db, NB, cursor);
+    const page2 = await pullNotes(db, NB, ACCT, cursor);
     expect(page2.notes).toHaveLength(0);
     expect(page2.nextCursor).toBe(cursor); // cursor unchanged when no results
 
     // Update note 1 — it must now appear in a pull since cursor
-    await updateNote(db, entry(id1, 1, 'Note 1 updated'), NOW);
-    const page3 = await pullNotes(db, NB, cursor);
+    await updateNote(db, entry(id1, 1, 'Note 1 updated'), ACCT, NOW);
+    const page3 = await pullNotes(db, NB, ACCT, cursor);
     expect(page3.notes).toHaveLength(1);
     expect(page3.notes[0].id).toBe(id1);
     expect(page3.notes[0].title).toBe('Note 1 updated');

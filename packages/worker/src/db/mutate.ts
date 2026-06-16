@@ -57,6 +57,7 @@ export type InsertOutcome =
 export async function insertNote(
   db: DbAdapter,
   entry: SyncPushEntry & { notebookId: string },
+  accountId: string,
   serverNow: string,
 ): Promise<InsertOutcome> {
   // The client never sends createdAt: NoteDraftSchema deliberately omits it because the server
@@ -71,14 +72,15 @@ export async function insertNote(
     {
       sql: `
         INSERT INTO notes
-          (id, notebookId, title, properties, body, version, createdAt, updatedAt, syncSeq)
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?,
+          (id, notebookId, accountId, title, properties, body, version, createdAt, updatedAt, syncSeq)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?,
                (${READ_SEQ_SQL})
         WHERE NOT EXISTS (SELECT 1 FROM notes WHERE id = ?)
       `,
       params: [
         entry.id,
         entry.notebookId,
+        accountId,
         entry.draft.title ?? '',
         JSON.stringify(entry.draft.properties ?? {}),
         JSON.stringify(entry.draft.body ?? []),
@@ -122,6 +124,7 @@ export type UpdateOutcome =
 export async function updateNote(
   db: DbAdapter,
   entry: SyncPushEntry & { notebookId: string },
+  accountId: string,
   serverNow: string,
 ): Promise<UpdateOutcome> {
   // Batch: bump seq → CAS update reading new seq as subquery.
@@ -138,6 +141,7 @@ export async function updateNote(
             syncSeq    = (${READ_SEQ_SQL})
         WHERE id         = ?
           AND notebookId = ?
+          AND accountId  = ?
           AND version    = ?
           AND deletedAt  IS NULL
       `,
@@ -149,6 +153,7 @@ export async function updateNote(
         entry.notebookId,
         entry.id,
         entry.notebookId,
+        accountId,
         entry.baseVersion,
       ],
     },
@@ -161,9 +166,11 @@ export async function updateNote(
   }
 
   // CAS missed — return current server state so the client can fork (PIN-SYNC-3/4).
+  // Scoped by accountId: a cross-account push (caller A, note owned by B) gets a 0-row CAS, then this
+  // returns null — serverNote=null → client forks under a new id. No leak of B's note, no clobber.
   const serverRow = await db.first<NoteRow>(
-    `SELECT * FROM notes WHERE id = ? AND notebookId = ?`,
-    [entry.id, entry.notebookId],
+    `SELECT * FROM notes WHERE id = ? AND notebookId = ? AND accountId = ?`,
+    [entry.id, entry.notebookId, accountId],
   );
   return { outcome: 'conflict', serverRow: serverRow ?? null };
 }
@@ -181,6 +188,7 @@ export async function deleteNote(
   db: DbAdapter,
   id: string,
   notebookId: string,
+  accountId: string,
   expectedVersion: number | undefined,
   serverNow: string,
 ): Promise<DeleteOutcome> {
@@ -200,10 +208,11 @@ export async function deleteNote(
             syncSeq   = (${READ_SEQ_SQL})
         WHERE id         = ?
           AND notebookId = ?
+          AND accountId  = ?
           AND deletedAt  IS NULL
           ${versionClause}
       `,
-      params: [serverNow, serverNow, notebookId, id, notebookId, ...versionParam],
+      params: [serverNow, serverNow, notebookId, id, notebookId, accountId, ...versionParam],
     },
   ]);
   const deleteResult = deleteBatch[1]!;
@@ -214,8 +223,8 @@ export async function deleteNote(
   }
 
   const serverRow = await db.first<NoteRow>(
-    `SELECT * FROM notes WHERE id = ? AND notebookId = ?`,
-    [id, notebookId],
+    `SELECT * FROM notes WHERE id = ? AND notebookId = ? AND accountId = ?`,
+    [id, notebookId, accountId],
   );
   if (!serverRow) return { outcome: 'not_found' };
   if (serverRow.deletedAt !== null) return { outcome: 'accepted', syncSeq: serverRow.syncSeq }; // idempotent
@@ -239,6 +248,7 @@ export async function patchNote(
   db: DbAdapter,
   id: string,
   notebookId: string,
+  accountId: string,
   patch: { title?: string; properties?: string; body?: string },
   expectedVersion: number | undefined,
   serverNow: string,
@@ -255,16 +265,18 @@ export async function patchNote(
   const patchBatch = await db.batch([
     { sql: BUMP_SEQ_SQL, params: [notebookId] },
     {
-      sql: `UPDATE notes SET ${setParts.join(', ')} WHERE id = ? AND notebookId = ? AND deletedAt IS NULL ${versionClause}`,
-      params: [...setParams, id, notebookId, ...versionParam],
+      sql: `UPDATE notes SET ${setParts.join(', ')} WHERE id = ? AND notebookId = ? AND accountId = ? AND deletedAt IS NULL ${versionClause}`,
+      params: [...setParams, id, notebookId, accountId, ...versionParam],
     },
   ]);
   const result = patchBatch[1]!;
 
   if (result.rowsWritten === 0) {
+    // Scoped by accountId: a row owned by another account is invisible here → not_found (404),
+    // not a 409 conflict — no cross-account existence oracle.
     const exists = await db.first<{ id: string }>(
-      `SELECT id FROM notes WHERE id = ? AND notebookId = ?`,
-      [id, notebookId],
+      `SELECT id FROM notes WHERE id = ? AND notebookId = ? AND accountId = ?`,
+      [id, notebookId, accountId],
     );
     return { outcome: exists ? 'conflict' : 'not_found' };
   }
@@ -292,12 +304,14 @@ export interface PullResult {
 export async function pullNotes(
   db: DbAdapter,
   notebookId: string,
+  accountId: string,
   cursor: number,
 ): Promise<PullResult> {
   // Fetch one extra to detect hasMore without a separate COUNT query.
+  // Account-scoped (read isolation): a notebookId never resolves across accounts.
   const rows = await db.all<NoteRow>(
-    `SELECT * FROM notes WHERE notebookId = ? AND syncSeq > ? ORDER BY syncSeq ASC LIMIT ?`,
-    [notebookId, cursor, PULL_PAGE + 1],
+    `SELECT * FROM notes WHERE notebookId = ? AND accountId = ? AND syncSeq > ? ORDER BY syncSeq ASC LIMIT ?`,
+    [notebookId, accountId, cursor, PULL_PAGE + 1],
   );
 
   const hasMore = rows.length > PULL_PAGE;
@@ -315,10 +329,11 @@ export async function getNote(
   db: DbAdapter,
   id: string,
   notebookId: string,
+  accountId: string,
 ): Promise<NoteRow | null> {
   return db.first<NoteRow>(
-    `SELECT * FROM notes WHERE id = ? AND notebookId = ? AND deletedAt IS NULL`,
-    [id, notebookId],
+    `SELECT * FROM notes WHERE id = ? AND notebookId = ? AND accountId = ? AND deletedAt IS NULL`,
+    [id, notebookId, accountId],
   );
 }
 
@@ -329,25 +344,29 @@ export async function getNote(
 export async function searchNotes(
   db: DbAdapter,
   notebookId: string | undefined,
+  accountId: string,
   text: string | undefined,
 ): Promise<NoteRow[]> {
   // Phase 1: title-only LIKE search as a placeholder. Full FTS (SQLite FTS5) is Phase 3.
+  // EVERY branch is account-scoped — the no-notebookId branch was the original cross-account leak
+  // (a bare `title LIKE` returned all accounts' notes). notebookId is a bare client string, so the
+  // notebookId branches scope too — A's and B's "notebook-X" are distinct invisible rows.
   if (text && notebookId) {
     return db.all<NoteRow>(
-      `SELECT * FROM notes WHERE notebookId = ? AND title LIKE ? AND deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 50`,
-      [notebookId, `%${text}%`],
+      `SELECT * FROM notes WHERE notebookId = ? AND accountId = ? AND title LIKE ? AND deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 50`,
+      [notebookId, accountId, `%${text}%`],
     );
   }
   if (text) {
     return db.all<NoteRow>(
-      `SELECT * FROM notes WHERE title LIKE ? AND deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 50`,
-      [`%${text}%`],
+      `SELECT * FROM notes WHERE accountId = ? AND title LIKE ? AND deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 50`,
+      [accountId, `%${text}%`],
     );
   }
   if (notebookId) {
     return db.all<NoteRow>(
-      `SELECT * FROM notes WHERE notebookId = ? AND deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 50`,
-      [notebookId],
+      `SELECT * FROM notes WHERE notebookId = ? AND accountId = ? AND deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 50`,
+      [notebookId, accountId],
     );
   }
   // Caller guarantees at least one constraint (SearchQuerySchema refine).

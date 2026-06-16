@@ -20,6 +20,12 @@ import {
   deleteNote,
   searchNotes,
 } from './db/mutate.js';
+import {
+  callerAccountId,
+  stampAccountId,
+  getNoteForAccount,
+  getNoteForAccountIncludingDeleted,
+} from './db/accountScope.js';
 import { sync } from './routes/sync.js';
 import { auth } from './routes/auth.js';
 
@@ -116,16 +122,18 @@ app.post(
     schema: CreateNoteRequestSchema,
     input: (c) => readBody(c),
     resource: (req): Resource => ({ kind: 'notebook', id: req.notebookId }),
-    handle: async (req, c) => {
+    handle: async (req, c, principal) => {
       const db = d1Adapter(c.env.DB);
       const now = new Date().toISOString();
+      // Stamp the owning account server-side from the principal — never a body field (F2).
+      const accountId = stampAccountId(principal);
       const entry = {
         id: req.id,
         notebookId: req.notebookId,
         baseVersion: 0 as const,
         draft: { title: req.title, properties: req.properties, body: req.body },
       };
-      const outcome = await insertNote(db, entry, now);
+      const outcome = await insertNote(db, entry, accountId, now);
       if (outcome.outcome === 'conflict') {
         return apiError(c, 400, 'conflict', 'a note with this id already exists');
       }
@@ -142,13 +150,11 @@ app.get(
     schema: NoteRefSchema,
     input: (c) => ({ id: c.req.param('id') }),
     resource: (req): Resource => ({ kind: 'note', id: req.id }),
-    handle: async (req, c) => {
+    handle: async (req, c, principal) => {
       const db = d1Adapter(c.env.DB);
-      // Note id is globally unique (UUID); notebookId scoping is in the auth layer.
-      const row = await db.first<NoteRow>(
-        `SELECT * FROM notes WHERE id = ? AND deletedAt IS NULL`,
-        [req.id],
-      );
+      // Account-scoped read: a note owned by another account returns null → 404, indistinguishable
+      // from not-found (no cross-account existence oracle).
+      const row = await getNoteForAccount(db, callerAccountId(principal), req.id);
       if (!row) return apiError(c, 404, 'not_found', 'note not found');
       return c.json(rowToResponse(row));
     },
@@ -163,15 +169,14 @@ app.patch(
     schema: UpdateNoteRequestSchema,
     input: async (c) => ({ ...asObject(await readBody(c)), id: c.req.param('id') }),
     resource: (req): Resource => ({ kind: 'note', id: req.id }),
-    handle: async (req, c) => {
+    handle: async (req, c, principal) => {
       const db = d1Adapter(c.env.DB);
       const now = new Date().toISOString();
+      const accountId = callerAccountId(principal);
 
-      // Pre-fetch notebookId — it's not in the update request, but patchNote needs it for CAS.
-      const lookup = await db.first<{ notebookId: string }>(
-        `SELECT notebookId FROM notes WHERE id = ? AND deletedAt IS NULL`,
-        [req.id],
-      );
+      // Pre-fetch the caller's own note — scoped by account so a cross-account id yields 404, and
+      // gives patchNote the notebookId it needs for the CAS.
+      const lookup = await getNoteForAccount(db, accountId, req.id);
       if (!lookup) return apiError(c, 404, 'not_found', 'note not found');
 
       const patch: { title?: string; properties?: string; body?: string } = {};
@@ -179,7 +184,7 @@ app.patch(
       if (req.patch.properties !== undefined) patch.properties = JSON.stringify(req.patch.properties);
       if (req.patch.body !== undefined) patch.body = JSON.stringify(req.patch.body);
 
-      const outcome = await patchNote(db, req.id, lookup.notebookId, patch, req.expectedVersion, now);
+      const outcome = await patchNote(db, req.id, lookup.notebookId, accountId, patch, req.expectedVersion, now);
       if (outcome.outcome === 'not_found') return apiError(c, 404, 'not_found', 'note not found');
       if (outcome.outcome === 'conflict') return apiError(c, 409, 'conflict', 'version mismatch — note was modified concurrently');
       return c.json(rowToResponse(outcome.row));
@@ -195,17 +200,16 @@ app.delete(
     schema: NoteRefSchema,
     input: (c) => ({ id: c.req.param('id') }),
     resource: (req): Resource => ({ kind: 'note', id: req.id }),
-    handle: async (req, c) => {
+    handle: async (req, c, principal) => {
       const db = d1Adapter(c.env.DB);
       const now = new Date().toISOString();
+      const accountId = callerAccountId(principal);
 
-      const lookup = await db.first<{ notebookId: string }>(
-        `SELECT notebookId FROM notes WHERE id = ?`,
-        [req.id],
-      );
+      // Include tombstones (idempotent delete) but stay account-scoped — a cross-account id is 404.
+      const lookup = await getNoteForAccountIncludingDeleted(db, accountId, req.id);
       if (!lookup) return apiError(c, 404, 'not_found', 'note not found');
 
-      const outcome = await deleteNote(db, req.id, lookup.notebookId, undefined, now);
+      const outcome = await deleteNote(db, req.id, lookup.notebookId, accountId, undefined, now);
       if (outcome.outcome === 'not_found') return apiError(c, 404, 'not_found', 'note not found');
       if (outcome.outcome === 'conflict') return apiError(c, 409, 'conflict', 'note was modified concurrently');
       return c.json({ id: req.id, deleted: true });
@@ -231,9 +235,11 @@ app.get(
       req.notebookId === undefined
         ? { kind: 'workspace' }
         : { kind: 'notebook', id: req.notebookId },
-    handle: async (req, c) => {
+    handle: async (req, c, principal) => {
       const db = d1Adapter(c.env.DB);
-      const rows = await searchNotes(db, req.notebookId, req.text);
+      // Account-scoped: a text-only search returns ONLY the caller's notes (this was the original
+      // cross-account disclosure — an unscoped `title LIKE` exposed every account's content).
+      const rows = await searchNotes(db, req.notebookId, callerAccountId(principal), req.text);
       const results = rows.map((row) => ({
         id: row.id,
         notebookId: row.notebookId,
@@ -254,21 +260,19 @@ app.post(
     schema: AppendBlockRequestSchema,
     input: async (c) => ({ ...asObject(await readBody(c)), noteId: c.req.param('id') }),
     resource: (req): Resource => ({ kind: 'note', id: req.noteId }),
-    handle: async (req, c) => {
+    handle: async (req, c, principal) => {
       const db = d1Adapter(c.env.DB);
       const now = new Date().toISOString();
+      const accountId = callerAccountId(principal);
 
-      const rawRow = await db.first<NoteRow>(
-        `SELECT * FROM notes WHERE id = ? AND deletedAt IS NULL`,
-        [req.noteId],
-      );
+      const rawRow = await getNoteForAccount(db, accountId, req.noteId);
       if (!rawRow) return apiError(c, 404, 'not_found', 'note not found');
 
       const currentBody = JSON.parse(rawRow.body) as unknown[];
       const newBody = [...currentBody, req.block];
 
       const outcome = await patchNote(
-        db, req.noteId, rawRow.notebookId,
+        db, req.noteId, rawRow.notebookId, accountId,
         { body: JSON.stringify(newBody) },
         req.expectedVersion, now,
       );
@@ -291,21 +295,19 @@ app.put(
       key: c.req.param('key'),
     }),
     resource: (req): Resource => ({ kind: 'note', id: req.noteId }),
-    handle: async (req, c) => {
+    handle: async (req, c, principal) => {
       const db = d1Adapter(c.env.DB);
       const now = new Date().toISOString();
+      const accountId = callerAccountId(principal);
 
-      const rawRow = await db.first<NoteRow>(
-        `SELECT * FROM notes WHERE id = ? AND deletedAt IS NULL`,
-        [req.noteId],
-      );
+      const rawRow = await getNoteForAccount(db, accountId, req.noteId);
       if (!rawRow) return apiError(c, 404, 'not_found', 'note not found');
 
       const currentProps = JSON.parse(rawRow.properties) as Record<string, unknown>;
       const newProps = { ...currentProps, [req.key]: req.value };
 
       const outcome = await patchNote(
-        db, req.noteId, rawRow.notebookId,
+        db, req.noteId, rawRow.notebookId, accountId,
         { properties: JSON.stringify(newProps) },
         req.expectedVersion, now,
       );
