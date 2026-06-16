@@ -182,3 +182,109 @@ data.
 5. A decision recorded on F1 (shared-key revocation: accept+document, or go per-device-key).
 6. F9 sensitive-op step-up set enumerated (+ whether it adds a signed-request union member).
 7. F7 plugin/token isolation stated; F8 audience binding added; F10 exhaustive+deny; F12 verified.
+
+---
+
+# Revision 3 review — WIRE proof-bodies pre-build pressure-test (canonical.ts + requests.ts)
+
+Pressure-testing the Rev-3 strawman (`stream-a-auth-strawman.md` §Rev 3) BEFORE devSys builds
+`auth/canonical.ts` + `auth/requests.ts`. The Rev-2 union is LOCKED (`1cfaf3e`) and not reopened;
+these findings live entirely in the WIRE shapes, where replay / freshness / pubkey-binding actually
+sit. Property tags use the reconciled **AUTH-PROP-1..4** (1 replay / 2 freshness / 3 pubkey-account
+binding / 4 intent-scope-audience) — same four properties, real-canon-sourced.
+
+## Direct answers to the three Rev-3 asks
+
+**Ask 1 — wire-vs-verified boundary: YES, this is exactly the split I wanted.** Signature material
+crosses exactly one family and the LOCKED union has nowhere to put it — that's the structural win.
+The must-NOT-survive-onto-the-principal set is broader than just `signature`/`nonce`; the middleware
+must also drop, when it constructs the verified output: **`audience`, the raw `requestedScope` (only
+the CLAMPED granted scope matters, and it lives on the grant row — never echo the *requested* scope
+onto the principal — F5), `signingPublicKey`, `deviceLabel`.** The locked union drops all of these by
+construction (it carries only `{grantId}` or `{keyId, challengeId, op, resource}`), so nothing to
+change — just make the middleware's "copy only the verified facts, drop everything else" step
+explicit in `resolvePrincipal`, and add a test that the constructed principal has no extra fields.
+`challengeId`/`keyId`/`op`/`resource` surviving is correct and desired (can() asserts op/resource).
+
+**Ask 2 — `SignedRequest` base `{challengeId, signature}`: sound, ship it.** Do NOT add a
+server-*trusted* `purpose` to the body. The server derives `purpose` from the **stored challenge**
+(minted with its purpose) and asserts it equals the endpoint's fixed expected purpose; the TLV binds
+`purpose` regardless, so a body field would be redundant at best and a trust-the-body footgun at
+worst. If you want `purpose` in the body for client-side clarity, fine — but the server reconstructs
+from the stored challenge's purpose and ignores the body value. Same logic applies to `keyId` (see
+R3-2).
+
+**Ask 3 — register/session/step-up field orders: correct, with two tightenings (R3-2, R3-3 below).**
+Register correctly omits `keyId` (no handle yet) and the fingerprint is *derived* from the pubkey,
+not signed-in — that's right (the pubkey IS in the register TLV, so the derived fingerprint is
+transitively bound; no need to add it). Likewise **do not add `accountFingerprint` to the session
+TLV** — binding `keyId` transitively binds the pubkey and thus the derived fingerprint; an extra
+field is redundant signed surface.
+
+## Lock-blockers for the wire build (must land in the shapes/build)
+
+### R3-1 — freshness MUST be folded into the atomic consume (AUTH-PROP-2)
+The strawman keeps F11 consume-before-verify (endorsed) but still describes expiry as a *separate*
+check ("expiry checked against stored `expiresAt` vs server-now"). A separate expiry check + a
+separate consume is two statements with a window between them. Collapse them: the single atomic
+conditional write is the ONE authority on both single-use AND freshness —
+`UPDATE auth_challenges SET consumed=1 WHERE challengeId=? AND consumed=0 AND expiresAt > :serverNow`
+(or the `DELETE … WHERE … AND expiresAt > :serverNow` variant). **rows-affected=1 ⇒ fresh AND
+first-consumer**, in one indivisible step; 0 ⇒ reject (expired OR already-spent, indistinguishable to
+the caller, which is fine). `:serverNow` is the server clock; no client timestamp ever enters this.
+Test: an expired-but-unconsumed challenge yields rows-affected=0 → reject.
+
+### R3-2 — reconstruct the TLV from SERVER-HELD challenge fields; assert stored==request (AUTH-PROP-1/3)
+The strawman names `nonce` + `audience` as server-held. Extend that to **`keyId` and `purpose`**: the
+challenge row stores the `keyId` it was minted for (session/step-up) and its `purpose`. The consuming
+endpoint MUST, before any crypto: (a) assert `challenge.keyId === request.keyId` (session/step-up),
+(b) assert `challenge.purpose === <endpoint's fixed purpose>`, then (c) **reconstruct the TLV using
+the STORED `keyId`/`purpose`/`nonce`/`audience`** — never the request copies. The ONLY genuinely
+request-supplied (and therefore signature-authenticated) fields are the intent fields:
+`requestedScope` (session), `op`+`resource` (step-up), `signingPublicKey`+`deviceLabel` (register).
+This makes the server-held/request-supplied partition crisp and forecloses any cross-keyId /
+cross-purpose challenge reuse at the row level (defense-in-depth atop the TLV purpose binding).
+
+### R3-3 — pin the COMPOSITE canonical sub-encodings now; they are signed bytes = contract (AUTH-PROP-4)
+F4 fixed the top-level framing (length-prefixed TLV). But two fields are themselves composite and the
+strawman leaves them as `requestedScopeCanonical` / `resourceCanonical` without a spec. Since these
+bytes are signed, their encoding IS frozen contract — pin it in `canonical.ts` v1:
+- **`requestedScopeCanonical`** = the scope set, **sorted by the canonical enum order, de-duplicated**,
+  each scope emitted as its own length-prefixed sub-TLV (or a single field of sorted-unique tokens
+  joined by a delimiter that cannot appear in the closed `ScopeSchema` enum). `{read,write}` and
+  `{write,read}` MUST produce identical bytes — otherwise reordering is a malleability seam and the
+  signature doesn't actually pin the requested set.
+- **`resourceCanonical`** = `TLV(kind, idOrEmpty)` — `kind` as its own field so `{note,id}` and
+  `{notebook,id}` with the same `id` string never collide; `workspace` emits an empty id field. This
+  is what makes can()'s `resourceEquals(member.resource, resource)` sound: the verified `resource`
+  echoed onto the principal must be the injective decode of exactly what was signed.
+
+### R3-4 — pin exact byte lengths + strict base64url in the wire Zod (AUTH-PROP-4 + ≥32B floor)
+`base64urlBytes` must decode strictly (reject non-canonical base64url, reject padding variance) AND
+enforce exact/min lengths at the boundary, before anything reaches crypto: **`signingPublicKey` = 32
+bytes (Ed25519 pubkey), `signature` = 64 bytes, `nonce` ≥ 32, opaque token ≥ 32, `challengeId`
+high-entropy.** An over-long or wrong-length blob should reject at parse, not deep in verify. This is
+the ≥32-byte nonce/token floor made structural at the schema, plus DoS hygiene on attacker-sized
+inputs.
+
+## Notes (not blockers; bank for the routes/authStore build)
+- **Unauthenticated challenge endpoint = an unauth D1 row-creator.** Rate-limit minting, cap rows,
+  and sweep expired rows — otherwise `auth_challenges` is a cheap fill target. The 60s TTL bounds it
+  but doesn't cap creation rate.
+- **keyId existence oracle.** `POST /api/auth/challenge` for an unknown `keyId` should respond
+  uniformly (issue a challenge regardless, or a constant-shape response) so it isn't a
+  device-enumeration oracle. Low severity (keyId isn't very secret) but cheap to get right.
+- **audience = ONE canonical server constant**, never request-supplied and never a multi-valued
+  accept-set — a set reopens the cross-deployment replay F8 closes.
+- **No replay-dedup keyed on signature bytes.** Single-use is the challenge consume (R3-1), never the
+  signature — Ed25519 is malleable enough that signature-keyed dedup is unsound. Use `@noble/ed25519`
+  strict verify (it rejects non-canonical S / small-order points) and keep dedup on `challengeId`.
+
+## Rev-3 verdict
+**Conditional OK to build `canonical.ts` + `requests.ts`** — the wire-vs-verified split is right and
+the shapes are close. Build them with R3-1..R3-4 folded in (R3-3's composite canon and R3-4's
+lengths are the parts that, if deferred, become a breaking re-sign later — do them now). The Notes
+are for the endpoint/authStore layer, not the two schema files. TDD targets I'll want to see green:
+expired-challenge→reject (R3-1), cross-keyId & cross-purpose challenge reuse→reject (R3-2), scope
+reordering→identical bytes / resource kind-collision→distinct bytes (R3-3), wrong-length pubkey/sig
+→parse reject (R3-4).
