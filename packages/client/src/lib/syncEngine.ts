@@ -1,5 +1,6 @@
 import { getStore } from '../db/store.js';
 import { useAuthStore } from '../auth/store.js';
+import { showConflictToast } from './toastEvents.js';
 import type { SyncQueueEntry } from '../db/schema.js';
 import type { Note, NoteId, NotebookId, SyncStatus } from '@deltos/shared';
 import { NoteResponseSchema } from '@deltos/shared';
@@ -208,20 +209,15 @@ async function handleConflict(
   localId: NoteId,
   serverNote: Note | null,
 ): Promise<void> {
-  const isResurrection = serverNote === null; // null = server tombstone (PIN-SYNC-3)
+  // conflict-as-version (Part 2): retain the divergent local edit as a version of the SAME note id
+  // (no fork). accountId comes from the session principal (client D6 scope), never a body.
+  const accountId = useAuthStore.getState().accountId;
+  if (!accountId) return; // no authed session — leave the queue entry; the next cycle retries.
 
-  // applyConflict (atomic, in the store): reads the CURRENT local note, builds the fork via this
-  // closure, stores it as a new local-only note, adopts server state (or tombstone) for the
-  // original id, and BLANKET-drains the queue. Returns false if there was no local note to fork.
-  await getStore().applyConflict(localId, serverNote, (localNote) => ({
-    ...localNote,
-    id: crypto.randomUUID() as NoteId,
-    title: isResurrection
-      ? `(deleted on another device — your edits kept) ${localNote.title}`
-      : `(conflict copy) ${localNote.title}`,
-    version: 0, // fork starts unsynced; will push as new note
-    syncStatus: 'local-only' satisfies SyncStatus,
-  }));
+  // Read the live title BEFORE applyConflict adopts server state, for the conflict toast.
+  const local = await getStore().getNote(localId);
+  await getStore().applyConflict(localId, serverNote, accountId);
+  if (local) showConflictToast(localId, local.title); // non-blocking "your version was kept" toast
 }
 
 // ---------------------------------------------------------------------------

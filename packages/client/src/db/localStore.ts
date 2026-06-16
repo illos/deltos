@@ -82,13 +82,15 @@ export interface LocalStore {
   applyAccepted(recordId: NoteId, version: number, pushedEntryId: string, pushedCreatedAt: string): Promise<void>;
 
   /**
-   * Push CONFLICT reconcile, atomic: read the CURRENT local note (reflecting any in-flight edit),
-   * build a fork via `makeFork`, store the fork as a new local-only note, adopt the server state for
-   * the original id (or tombstone when `serverNote` is null), then BLANKET-drain the record's queue
-   * entries. Blanket is correct ONLY here — keeping the in-flight entry would re-push the now-server
-   * state and double-fork. Returns false if there was no local note to fork.
+   * Push CONFLICT reconcile — conflict-as-version (Part 2), atomic over notes + noteVersions +
+   * syncQueue: (1) RETAIN the CURRENT local note (reflecting any in-flight edit) as a `noteVersions`
+   * snapshot keyed to the SAME id (kind:'conflict', accountId-stamped — client D6) — never a new-id
+   * fork; (2) ADOPT the server state as the note's LIVE content, or when `serverNote` is null
+   * (server tombstone / PIN-SYNC-3) retain the row as a `deletedAt` tombstone-state so keep-mine can
+   * resurrect; (3) set `hasConflict`; (4) BLANKET-drain the record's queue entries (asymmetry
+   * preserved — never unify with applyAccepted's selective drain). No-op if no local note exists.
    */
-  applyConflict(recordId: NoteId, serverNote: Note | null, makeFork: (local: Note) => Note): Promise<boolean>;
+  applyConflict(recordId: NoteId, serverNote: Note | null, accountId: string): Promise<void>;
 
   /**
    * Pull MERGE (PIN-SYNC-2 + pending-edit guard), atomic over BOTH notes AND the sync queue: compute

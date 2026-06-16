@@ -24,7 +24,7 @@ import type { SyncNote } from '@deltos/shared';
 // the path it claims to). Clear the tables before each test for genuine isolation.
 beforeEach(async () => {
   const { db } = await import('../src/db/schema.js');
-  await Promise.all([db.notes.clear(), db.syncQueue.clear(), db.notebooks.clear()]);
+  await Promise.all([db.notes.clear(), db.syncQueue.clear(), db.notebooks.clear(), db.noteVersions.clear()]);
 });
 
 // We import the engine AFTER setting up fake-indexeddb so Dexie picks up the shim.
@@ -209,38 +209,23 @@ describe('pending-edit pull guard (PIN-SYNC-1 landmine)', () => {
 // Test 3: delete-vs-edit resurrection (PIN-SYNC-3)
 // ---------------------------------------------------------------------------
 
-describe('delete-vs-edit resurrection (PIN-SYNC-3)', () => {
-  it('conflict with a tombstone creates a fork with the resurrection label and removes the original', async () => {
+describe('delete-vs-edit (PIN-SYNC-3): divergent edit retained as a conflict version, no fork', () => {
+  it('a server-tombstone conflict retains the divergent edit as a version on the SAME id — no new note', async () => {
     const { db } = await import('../src/db/schema.js');
-
-    // We test handleConflict (an internal function) by importing it — if it's not exported,
-    // we test via the push flow with a controlled server response.
-    //
-    // The spec requirement: when serverNote is null (tombstone), a fork is created with title
-    // prefixed "(deleted on another device — your edits kept)".
+    const { useAuthStore } = await import('../src/auth/store.js');
+    useAuthStore.setState({ accountId: 'acct-res', bearerToken: 'tok' }); // session for client-D6 scope
 
     const noteId = 'note-resurrection-00000000-0000-4000-8000-000000000001';
     const localEdit = makeNote(noteId, 1, 'My offline edit');
     await db.notes.put(localEdit);
 
-    // Simulate what happens after the push path receives a conflict with serverNote = null
-    // by calling handleConflict directly via the push path mock.
-    // We mock fetch to return a conflict with serverNote: null for this note.
-
+    // Server tombstoned the note → push returns a conflict with serverNote: null (PIN-SYNC-3).
     global.fetch = vi.fn(async (url: string) => {
       const u = String(url);
       if (u.includes('/sync/push')) {
-        return new Response(
-          JSON.stringify({
-            results: [{ id: noteId, outcome: 'conflict', serverNote: null }],
-          }),
-          { status: 200 },
-        );
+        return new Response(JSON.stringify({ results: [{ id: noteId, outcome: 'conflict', serverNote: null }] }), { status: 200 });
       }
-      return new Response(
-        JSON.stringify({ notes: [], nextCursor: 0, hasMore: false }),
-        { status: 200 },
-      );
+      return new Response(JSON.stringify({ notes: [], nextCursor: 0, hasMore: false }), { status: 200 });
     }) as typeof fetch;
 
     const storage: Record<string, string> = {};
@@ -250,67 +235,53 @@ describe('delete-vs-edit resurrection (PIN-SYNC-3)', () => {
       removeItem: (k: string) => { delete storage[k]; },
     } as unknown as Storage;
 
-    // Put the note in the queue
-    await db.syncQueue.add({
-      id: crypto.randomUUID(),
-      recordId: noteId,
-      payload: localEdit,
-      baseVersion: 0,
-      createdAt: NOW,
-    });
+    await db.syncQueue.add({ id: crypto.randomUUID(), recordId: noteId, payload: localEdit, baseVersion: 0, createdAt: NOW });
 
     const { syncNow } = await import('../src/lib/syncEngine.js');
     syncNow(NB, '');
-    await new Promise((r) => setTimeout(r, 100)); // let async chain complete
+    await new Promise((r) => setTimeout(r, 100));
 
-    // Original note must be deleted (server tombstoned it)
-    const original = await db.notes.get(noteId as Note['id']);
-    expect(original).toBeUndefined();
+    // SAME note id RETAINED as a tombstone-state with hasConflict (resurrectable via keep-mine) —
+    // NOT hard-deleted, NO sibling fork note.
+    const note = await db.notes.get(noteId as Note['id']);
+    expect(note).toBeDefined();
+    expect(note!.hasConflict).toBe(true);
+    expect(note!.deletedAt).toBeTruthy();
+    expect(await db.notes.count()).toBe(1); // no new-id fork
 
-    // A fork must exist with the resurrection label in its title
-    const all = await db.notes.toArray();
-    const fork = all.find((n) => n.title.startsWith('(deleted on another device'));
-    expect(fork).toBeDefined();
-    expect(fork!.title).toContain('My offline edit');
-    // Fork gets a new ID — not the original noteId
-    expect(fork!.id).not.toBe(noteId);
+    // The divergent offline edit is retained as a conflict version on the SAME id (no-lost-edit).
+    const versions = await db.noteVersions.where('noteId').equals(noteId).toArray();
+    expect(versions).toHaveLength(1);
+    expect(versions[0]!.kind).toBe('conflict');
+    expect(versions[0]!.title).toBe('My offline edit');
+
+    useAuthStore.setState({ accountId: null, bearerToken: null });
   });
 });
 
 // ---------------------------------------------------------------------------
-// Test 3c: pending edit survives a server conflict as fork content (secSys data-loss audit)
-//
-// The TOCTOU silent-loss chain secSys flagged: a pull stomps a pending-edit note, then the next
-// push conflict-forks the STOMPED state (not the edit) and blanket-drains the edit's queue entry =>
-// edit lost. The fix computes the pending guard INSIDE mergeServerNotes' notes+queue transaction so
-// a pending note is never stomped; this locks the observable property — a pending edit hit by a
-// (non-tombstone) server conflict is preserved as the conflict-copy fork, never silently dropped.
+// Test 3c: divergent edit retained as a conflict VERSION on a non-tombstone conflict (no-lost-edit,
+// conflict-as-version). The divergent local edit is never lost and never a second note: it is
+// retained as a noteVersions row on the SAME id; the server content is adopted live + hasConflict set.
 // ---------------------------------------------------------------------------
 
-describe('pending edit preserved on conflict (secSys TOCTOU audit)', () => {
-  it('a pending local edit survives a non-tombstone server conflict as the fork content', async () => {
+describe('conflict retains the divergent edit as a version on the SAME id (no-lost-edit)', () => {
+  it('a pending local edit hit by a non-tombstone server conflict is retained as a conflict version; server adopted live; no new note', async () => {
     const { db } = await import('../src/db/schema.js');
+    const { useAuthStore } = await import('../src/auth/store.js');
+    useAuthStore.setState({ accountId: 'acct-conf', bearerToken: 'tok' });
 
     const noteId = 'note-toctou-000000000-0000-4000-8000-000000000001';
     const localEdit = makeNote(noteId, 1, 'My unsent edit');
     await db.notes.put(localEdit);
-    await db.syncQueue.add({
-      id: crypto.randomUUID(),
-      recordId: noteId,
-      payload: localEdit,
-      baseVersion: 0,
-      createdAt: NOW,
-    });
+    await db.syncQueue.add({ id: crypto.randomUUID(), recordId: noteId, payload: localEdit, baseVersion: 0, createdAt: NOW });
 
     const serverNote = makeNote(noteId, 5, 'Server state from another device');
 
     global.fetch = vi.fn(async (url: string) => {
       const u = String(url);
       if (u.includes('/sync/push')) {
-        return new Response(
-          JSON.stringify({ results: [{ id: noteId, outcome: 'conflict', serverNote }] }),
-          { status: 200 },
-        );
+        return new Response(JSON.stringify({ results: [{ id: noteId, outcome: 'conflict', serverNote }] }), { status: 200 });
       }
       return new Response(JSON.stringify({ notes: [], nextCursor: 0, hasMore: false }), { status: 200 });
     }) as typeof fetch;
@@ -326,17 +297,21 @@ describe('pending edit preserved on conflict (secSys TOCTOU audit)', () => {
     syncNow(NB, '');
     await new Promise((r) => setTimeout(r, 100));
 
-    const all = await db.notes.toArray();
-    // The original id adopts server state...
-    const original = all.find((n) => n.id === noteId);
-    expect(original?.title).toBe('Server state from another device');
-    // ...and the unsent edit survives as a conflict-copy fork — NOT silently lost.
-    const fork = all.find((n) => n.title.startsWith('(conflict copy)'));
-    expect(fork).toBeDefined();
-    expect(fork!.title).toContain('My unsent edit');
-    expect(fork!.id).not.toBe(noteId);
-    // The edit's queue entry was blanket-drained (its content now lives in the fork).
+    // SAME id adopts server state + hasConflict; NO sibling fork note in the list.
+    const note = await db.notes.get(noteId as Note['id']);
+    expect(note!.title).toBe('Server state from another device');
+    expect(note!.hasConflict).toBe(true);
+    expect(await db.notes.count()).toBe(1);
+
+    // The unsent edit is retained as a conflict version — never lost.
+    const versions = await db.noteVersions.where('noteId').equals(noteId).toArray();
+    expect(versions).toHaveLength(1);
+    expect(versions[0]!.title).toBe('My unsent edit');
+
+    // The edit's queue entry was blanket-drained (its content now lives in the retained version).
     expect(await db.syncQueue.where('recordId').equals(noteId).count()).toBe(0);
+
+    useAuthStore.setState({ accountId: null, bearerToken: null });
   });
 });
 

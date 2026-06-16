@@ -152,32 +152,45 @@ export const dexieLocalStore: LocalStore = {
     });
   },
 
-  async applyConflict(
-    recordId: NoteId,
-    serverNote: Note | null,
-    makeFork: (local: Note) => Note,
-  ): Promise<boolean> {
-    let forked = false;
-    await db.transaction('rw', db.notes, db.syncQueue, async () => {
+  async applyConflict(recordId: NoteId, serverNote: Note | null, accountId: string): Promise<void> {
+    // conflict-as-version (Part 2): retain the divergent edit as a version of the SAME note id,
+    // adopt server state as live, flag the conflict — never a new-id fork.
+    await db.transaction('rw', db.notes, db.noteVersions, db.syncQueue, async () => {
       const local = await db.notes.get(recordId);
-      if (!local) return; // nothing local to fork — discard (forked stays false)
+      if (!local) return; // nothing local diverged — nothing to retain
 
-      // Fork the CURRENT local note (reflects any in-flight edit), store as a new local-only note.
-      await db.notes.put(makeFork(local));
+      // (1) RETAIN the current local note (reflecting any in-flight edit) as a conflict version,
+      // keyed to the SAME id, accountId-stamped (client D6). The no-lost-edit retention, re-expressed.
+      await db.noteVersions.add({
+        id: crypto.randomUUID(),
+        noteId: recordId,
+        accountId,
+        kind: 'conflict',
+        title: local.title,
+        properties: local.properties,
+        body: local.body,
+        baseVersion: local.version,
+        createdAt: new Date().toISOString(),
+      });
 
-      // Adopt server state for the original id (or tombstone if the server deleted it).
+      // (2) ADOPT server state as LIVE + (3) set hasConflict — same note id (no fork).
       if (serverNote) {
-        await db.notes.put({ ...serverNote, syncStatus: 'synced' satisfies SyncStatus });
+        await db.notes.put({ ...serverNote, syncStatus: 'synced' satisfies SyncStatus, hasConflict: true });
       } else {
-        await db.notes.delete(recordId);
+        // PIN-SYNC-3: server tombstoned the note. Retain the row as a deletedAt tombstone-state (NOT
+        // hard-deleted) carrying hasConflict, so the badge + keep-mine resurrection work.
+        await db.notes.put({
+          ...local,
+          deletedAt: new Date().toISOString(),
+          syncStatus: 'synced' satisfies SyncStatus,
+          hasConflict: true,
+        });
       }
 
-      // BLANKET drain — correct ONLY here: keeping the in-flight entry would re-push the now-server
-      // state and double-fork. Never unify with applyAccepted's selective drain.
+      // (4) BLANKET drain — correct ONLY here: keeping the in-flight entry would re-push the
+      // now-server state. Never unify with applyAccepted's selective drain.
       await db.syncQueue.where('recordId').equals(recordId).delete();
-      forked = true;
     });
-    return forked;
   },
 
   async mergeServerNotes(liveNotes: Note[], tombstones: NoteId[]): Promise<void> {
