@@ -43,19 +43,38 @@ planSys + the user at run time. Re-runs after a fix duplicate this block.)_
 
 | # | Step (runbook) | Criterion | What to observe | Result | Notes / observations |
 |---|----------------|-----------|-----------------|--------|----------------------|
-| 1 | Install / A2HS | install | A2HS installs; launches standalone; SW shell loads | ☐ PASS / FAIL | |
-| 2 | Enroll | DG-1d | fresh-account intent; Secure-Enclave signing key; 24-word phrase shown **once** | ☐ PASS / FAIL | |
-| 3 | Lock → unlock | DG-1c | WebAuthn UV (FaceID) decrypts the Identity blob; honest no-PRF disclosure shown (or PRF used on iOS-18) | ☐ PASS / FAIL | _record PRF available? Y/N_ |
-| 4 | Capture `/new` | DG-2a | typing into a client-UUID note; first heading becomes the title (single PM doc) | ☐ PASS / FAIL | |
-| 5 | True offline | DG-2b (device) | airplane mode → create+edit → relaunch PWA → both notes + edits survive (real IndexedDB across reload) | ☐ PASS / FAIL | |
-| 6 | Reconnect & sync | DG-3e (device) | leave airplane → sync fires on the network transition; indicator syncing→idle; notes reach server | ☐ PASS / FAIL | |
-| 7 | QR-join 2nd device | DG-4b | join **blocked** without the out-of-band code; UI states the in-person model | ☐ PASS / FAIL | |
-| 8 | Recover / capstone | DG-CAP | 2nd device: recover via 24-word phrase → **same `accountId`** → pull → the note from step 4/5 is **PRESENT + content matches** | ☐ PASS / FAIL | |
+| 1 | Install / A2HS | install | A2HS installs; launches standalone; SW shell loads | ✅ PASS | reached step 4 |
+| 2 | Enroll | DG-1d | fresh-account intent; Secure-Enclave signing key; 24-word phrase shown **once** | ✅ PASS | reached step 4 |
+| 3 | Lock → unlock | DG-1c | WebAuthn UV (FaceID) decrypts the Identity blob; honest no-PRF disclosure shown (or PRF used on iOS-18) | ✅ PASS | reached step 4 |
+| 4 | Capture `/new` | DG-2a | typing into a client-UUID note; first heading becomes the title (single PM doc) | 🔴 **BLOCKED** | **UI-NAVIGATION GAP** — editor has **no exit/save affordance** (no done/back, no note list to return to) → user is **stuck in the editor**, cannot proceed. Capstone-blocking. |
+| 5 | True offline | DG-2b (device) | airplane mode → create+edit → relaunch PWA → both notes + edits survive (real IndexedDB across reload) | ⛔ NOT REACHED | gated by the step-4 block |
+| 6 | Reconnect & sync | DG-3e (device) | leave airplane → sync fires on the network transition; indicator syncing→idle; notes reach server | ⛔ NOT REACHED | gated by the step-4 block |
+| 7 | QR-join 2nd device | DG-4b | join **blocked** without the out-of-band code; UI states the in-person model | ⛔ NOT REACHED | gated by the step-4 block |
+| 8 | Recover / capstone | DG-CAP | 2nd device: recover via 24-word phrase → **same `accountId`** → pull → the note from step 4/5 is **PRESENT + content matches** | ⛔ NOT REACHED | gated by the step-4 block |
 
-## Capstone verdict
+## Run 1 — verdict: 🔴 BLOCKED
 
-- [ ] **DG-CAP PASS** — all 8 steps PASS on this build → the done-sentence is literally true on a real
-  device. Combined with Tier-A green + [SRV] 5/5, **v1 done-gate is CLOSED.**
-- [ ] **DG-CAP FAIL** — step(s) ______ failed. Fix routed to ______; re-run on a new build.
+- [x] **DG-CAP BLOCKED** — step **4** blocked by a **UI-navigation/shell gap** (editor exit/save +
+  note list missing). Steps 5–8 not reached. Fix in progress — **gruntSys2**. **Re-run** the full
+  capstone on the fixed `:8451` build (new build SHA), fresh Run block below.
 
-**Recorded by:** ______   **Date:** ______   **Result relayed to:** scopeSys (checklist flip) + pilot.
+### Run 1 — instructive finding (why the automated gates didn't catch this)
+
+The automated gate — **server `v1.donegate.test.ts` 14/14** + **Tier-A `[CLI-auto]` 13/13** — proved
+the **data / sync / auth** journey by driving the store and sync engine **programmatically**. It
+**structurally cannot** catch a missing **UI-navigation / shell affordance** (no exit/save button, no
+note list), because it never renders or navigates the shell — it calls the engine directly. This gap
+is **exactly the class the on-device Tier-B capstone exists to catch**: real-user reachability of the
+journey through the actual UI. Automated green ≠ usable; the capstone is the usability backstop.
+
+---
+
+## Capstone verdict (overall)
+
+- [ ] **DG-CAP PASS** — all 8 steps PASS on one prod-representative build → the done-sentence is
+  literally true on a real device. Combined with Tier-A green + [SRV] 5/5, **v1 done-gate is CLOSED.**
+- [x] **DG-CAP not yet passed** — Run 1 BLOCKED at step 4 (UI-nav gap, gruntSys2 fixing); awaiting a
+  re-run on the fixed build.
+
+**Recorded by:** scopeSys (from pilot's Run-1 report)   **Date:** 2026-06-16   **Result relayed to:**
+scopeSys (checklist) + pilot + gruntSys2 (fix).

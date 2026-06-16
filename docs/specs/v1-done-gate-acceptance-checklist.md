@@ -123,6 +123,15 @@ handled). Source: `phase-1-vertical-slice.md` §Out of scope.
 [SRV] is gruntSys's automated worker harness. The **[CLI] half has no server-runnable proof** — it
 lives in the browser/PWA — so it is proven in **two tiers**, both required for the gate:
 
+> **Scope limit the two tiers must respect (learned from Run-1 of the capstone):** the automated gates
+> ([SRV] `v1.donegate.test.ts` + Tier-A `[CLI-auto]`) drive the store and sync engine
+> **programmatically** — they prove the **data / sync / auth** journey but **structurally cannot catch
+> UI-navigation / shell affordance gaps** (a missing exit/save button, no note list, an unreachable
+> screen), because they never render or navigate the actual shell. Automated green ≠ usable. Real-user
+> reachability of the journey through the UI is **only** provable by the on-device **Tier B** capstone
+> — that is precisely the class it exists to catch (Run-1 caught exactly this: see
+> `v1-dg-cap-gate-record.md`).
+
 ### Tier A — `[CLI-auto]`: headless client test suite (the regression floor)
 
 Runnable in CI without a device. Lives in the client package (Vitest + jsdom; `fake-indexeddb` for
