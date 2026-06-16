@@ -8,7 +8,7 @@ import {
   createStubKeyStore,
   type KeyStore,
 } from '../src/identity/keyStore.js';
-import { createWebAuthnKeyStore, type WebAuthnBackend } from '../src/identity/webAuthnKeyStore.js';
+import { createWebAuthnKeyStore, getEnrollmentPrfStatus, type WebAuthnBackend } from '../src/identity/webAuthnKeyStore.js';
 
 /**
  * Characterization tests for the pinned KeyStore interface.
@@ -494,5 +494,34 @@ describe('WebAuthn provider — PRF-downgrade-resistance (secSys gap B)', () => 
     await ks.enrollNew();
     ks.lock();
     await expect(ks.unlock()).resolves.toBeNull();
+  });
+});
+
+// ── getEnrollmentPrfStatus — D5 UI disclosure helper (planSys done-gate) ────────────────────────
+
+describe('getEnrollmentPrfStatus — D5 disclosure helper', () => {
+  it('returns null when the device is not enrolled', async () => {
+    const dbName = `deltos-identity-test-${++_dbSeq}`;
+    expect(await getEnrollmentPrfStatus(dbName)).toBeNull();
+  });
+
+  it('returns { usesPrf: true } when enrolled with PRF', async () => {
+    const dbName = `deltos-identity-test-${++_dbSeq}`;
+    const ks = createWebAuthnKeyStore({
+      backend: { create: vi.fn().mockResolvedValue(makeFakeCred({ prf: true })), get: vi.fn() },
+      dbName,
+    });
+    await ks.enrollNew();
+    expect(await getEnrollmentPrfStatus(dbName)).toStrictEqual({ usesPrf: true });
+  });
+
+  it('returns { usesPrf: false } when enrolled without PRF (no-PRF device-key path)', async () => {
+    const dbName = `deltos-identity-test-${++_dbSeq}`;
+    const ks = createWebAuthnKeyStore({
+      backend: { create: vi.fn().mockResolvedValue(makeFakeCred({ prf: false })), get: vi.fn() },
+      dbName,
+    });
+    await ks.enrollNew();
+    expect(await getEnrollmentPrfStatus(dbName)).toStrictEqual({ usesPrf: false });
   });
 });

@@ -177,6 +177,26 @@ async function sealAndPersist(
   }
 }
 
+// ── Enrollment info (for D5 UI disclosure) ──────────────────────────────────────────────────────
+
+/**
+ * Read the PRF binding status of the current enrollment (if any).
+ * Returns null if the device is not enrolled.
+ *
+ * D5 DISCLOSURE OBLIGATION (planSys done-gate, secSys ruling on PIN-ID-6):
+ *   The UI MUST call this after enrollNew/enrollExisting and, when `usesPrf === false`,
+ *   render an honest disclosure explaining that the wrapping key is stored plaintext in
+ *   IndexedDB — a local storage-read attacker can recover it. This disclosure is a hard
+ *   ACCEPTANCE CONDITION for Phase-1; omitting it voids secSys's clearance of the no-PRF path.
+ *
+ * @param dbName — must match the dbName passed to createWebAuthnKeyStore (default: 'deltos-identity')
+ */
+export async function getEnrollmentPrfStatus(dbName?: string): Promise<{ usesPrf: boolean } | null> {
+  const db = new IdentityDB(dbName ?? 'deltos-identity');
+  const row = await db.blob.get('v1');
+  return row ? { usesPrf: row.prf } : null;
+}
+
 // ── Factory ─────────────────────────────────────────────────────────────────────────────────────
 
 export function createWebAuthnKeyStore(opts?: {
