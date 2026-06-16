@@ -15,6 +15,24 @@ guess it was lifted?). See `KICKOFF.md` §Reuse discipline.
 
 ---
 
+## ⏯ CURRENT STATE (2026-06-16 — resume here)
+Design complete; **Phase 1 building.** Delivery vehicle = the **local-first PWA** (desktop + mobile,
+surfaces pinnable as home-screen webclips). Long-term native target is framed in *Later* (native
+Android, for full surface control + sideload freedom — the own-your-software values).
+- **Built + stable (foundation):** `@deltos/shared` spine + the **FROZEN auth contract**
+  (discriminated-union PrincipalVerification + `can()`); **crypto core** (keyDerivation
+  BIP39/SLIP-21/Ed25519 + at-rest blob AES-GCM/HKDF, WebCrypto-only); **sync engine** with the
+  data-loss/CAS correctness fix verified (Stream-B trip-wire fired + closed); **editor** Stream C
+  (ProseMirror, title unified into the document, iOS-Safari functional gate passed); server (Worker +
+  Hono + D1). P0 done + on remote.
+- **Next to build:** **identity** (passkey/recovery/QR signed-challenge auth — server endpoints +
+  client unlock, on the frozen contract) and **client storage/persistence** (IndexedDB + a pluggable
+  store seam) + Stream-D integration/e2e. I issue the build re-sequence to pilot next.
+- **Constraints in force:** PIN-SYNC-1 atomic-CAS, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations
+  (global-by-id), PIN-STORAGE-1 (SW never runtime-caches `/api` into shared Cache), S3 one-clip-per-
+  notebook + PIN-ID PRF floor — see `docs/specs/phase-1-constraints.md`.
+- **No open user decisions.**
+
 ## Status legend
 `PLANNED` → spec not yet written · `SPEC-READY` → written to docs/specs, not handed off ·
 `HANDED-OFF` → given to pilot · `IN-FLIGHT` → team building · `LANDED` → built, awaiting audit ·
@@ -43,10 +61,10 @@ fix, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations, PIN-STORAGE/SUBSTRATE p
 
 | Stream | Scope | Owner | Status |
 |--------|-------|-------|--------|
-| A | Identity (passkey/recovery/QR, signed-challenge auth) | devSys (opus, re-tasked fresh post-clear) | auth union + `can()` **LOCKED** (`1cfaf3e`); bulk backend build |
-| B | Substrate + sync (atomic-CAS conflict engine) | **devSys2 (opus, online)** — gruntSys on a non-correctness peripheral meanwhile | 🔔 trip-wire fired → opus; server CAS endorsed-correct; fixing client queue-drain race + false test |
-| C | Capture surface + editor (ProseMirror) | gruntSys2 (sonnet) | iOS functional gate **PASSED** (user dogfood: IME/paste/nested-selection OK); 1 cosmetic fix pending (body center→left-align) |
-| D | Integration / e2e | pilot | pending A+B+C |
+| A | Identity (passkey/recovery/QR, signed-challenge auth) | devSys (opus) | auth contract + `can()` **FROZEN**; server endpoints + client unlock = **next to build** |
+| B | Substrate + sync (atomic-CAS conflict engine) | devSys2 (opus) | server CAS + client queue-drain **verified correct** (trip-wire fired + closed); sync foundation solid |
+| C | Capture surface + editor (ProseMirror) | gruntSys2 (sonnet) | iOS-Safari functional gate **PASSED** (IME/paste/nested-selection); title unified into the document; left-aligned |
+| D | Integration / e2e | pilot | pending A + storage |
 
 **Done-gate:** install PWA → unlock w/ passkey → create/edit offline → sync; recover/QR-join 2nd
 device; forced conflict → fork not lost-write. secSys audits each stream; **Stream-B trip-wire** =
@@ -198,3 +216,6 @@ promote to devSys/opus if first audit finds a CAS/single-flight/race defect.
   metadata derives from the first heading; NO frozen-contract change). Load-bearing for the
   "effortless capture" thesis → do it in Stream C now. Banked in brainstorm §Spine + Phase-1 spec
   Stream C.
+- 2026-06-16 — **Stream-B trip-wire CLOSED** (secSys): the queue-drain data-loss race is genuinely
+  fixed AND the test genuinely reproduces it — **opus promotion (devSys2) vindicated; sync
+  foundation VERIFIED correct.**

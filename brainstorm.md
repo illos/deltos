@@ -47,8 +47,9 @@ iOS in our favor: home-screen PWAs get JIT (Safari-class JS); the 7-day IndexedD
 doesn't apply to installed PWAs. Irreducible gaps: cold WebView spawn, more frequent cold
 starts, no background execution.
 
-**Escape hatch:** Capacitor wraps the same codebase in a native shell later — improves launch
-consistency + background work, no rewrite. "PWA now, Capacitor later" de-risks committing to web.
+**Native portability:** the architecture stays portable — the same codebase can be wrapped in a
+native shell later if launch consistency / background execution ever demand it, no rewrite. Long-term
+native target is **Android** (full surface control + free sideloading — the own-your-software values).
 
 ### One PWA, surfaces-as-routes, multiple icons
 **One PWA = one app = one origin = one substrate** (multiple PWAs would fragment storage). A

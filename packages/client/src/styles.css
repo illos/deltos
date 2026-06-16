@@ -106,6 +106,8 @@
   flex: 1;
   outline: none;
   min-height: 200px;
+  /* touch-action is not inherited — applied here so the editing surface gets it directly. */
+  touch-action: manipulation;
 }
 
 /* ProseMirror — base prose */
@@ -135,9 +137,10 @@
 }
 .editor__pm .ProseMirror h2  { font-size: 1.25rem; font-weight: 600; margin: 1.1em 0 0.4em; }
 .editor__pm .ProseMirror h3  { font-size: 1.05rem; font-weight: 600; margin: 1em 0 0.35em; }
+/* h4-h6 raised to 1rem: 0.95rem computes to ~15.2px at a 16px root, triggering iOS focus-zoom. */
 .editor__pm .ProseMirror h4,
 .editor__pm .ProseMirror h5,
-.editor__pm .ProseMirror h6  { font-size: 0.95rem; font-weight: 600; margin: 0.9em 0 0.3em; }
+.editor__pm .ProseMirror h6  { font-size: 1rem; font-weight: 600; margin: 0.9em 0 0.3em; }
 
 .editor__pm .ProseMirror blockquote {
   border-left: 3px solid var(--edge);
@@ -156,7 +159,8 @@
 
 .editor__pm .ProseMirror pre code {
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  font-size: 0.875rem;
+  /* 1rem: 0.875rem computes to ~14px at a 16px root, triggering iOS focus-zoom on this editable surface. */
+  font-size: 1rem;
   background: none;
   padding: 0;
 }

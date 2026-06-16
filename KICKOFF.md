@@ -29,7 +29,8 @@ and **plugins** extending data + UI. One database, many paths in.
 ## Locked architecture (one-line each; full rationale in `brainstorm.md`)
 
 - **Platform:** local-first **PWA**, home-screen installed. Render-before-data + SW precache
-  → launch feels ~native. Capacitor is the later escape hatch (no rewrite).
+  → launch feels ~native. Portable to a native shell later if ever needed (no rewrite; long-term
+  native target = Android).
 - **One PWA, surfaces = routes**, each optionally pinned via Add-to-Home-Screen at its route.
   `/new` route = instant-capture icon. Not multiple PWAs.
 - **Sync:** online-first (~95%). **Optimistic write buffer + stale-while-revalidate reads**

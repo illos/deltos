@@ -38,10 +38,12 @@
         background: var(--bg);
         color: var(--fg);
         font:
-          15px/1.5 system-ui,
+          16px/1.5 system-ui,
           -apple-system,
           sans-serif;
         -webkit-font-smoothing: antialiased;
+        /* Prevents double-tap zoom + 300ms tap delay on web/PWA. Pinch-zoom left intact. */
+        touch-action: manipulation;
       }
       .shell {
         display: flex;
