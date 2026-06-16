@@ -123,6 +123,11 @@ export const can: CanCheck = async (principal, op, resource) => {
       return grantAllows(grant, op, resource, Date.now());
     }
     case 'signed-request':
+      // INTENTIONALLY v1-UNUSED — DO NOT delete in a dead-code sweep. Correct + tested (can.test.ts),
+      // but in v1 the revoke route verifies the step-up inline (authCrypto.verifyStepUp) and does not
+      // yet construct a `signed-request` principal, so no live request reaches this branch. Routing
+      // step-up through can() (so this becomes live) is a tracked devSys follow-up (F9 consolidation).
+      //
       // Step-up: the signature was VERIFIED for `v.op` + `v.resource`. Bind it to THIS request
       // at the chokepoint — a step-up signed for one (op, resource) can never authorize another,
       // and there is no trust in middleware having matched them.

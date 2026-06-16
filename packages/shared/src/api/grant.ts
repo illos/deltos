@@ -99,6 +99,11 @@ export type Op = z.infer<typeof OpSchema>;
 export const PrincipalVerificationSchema = z.discriminatedUnion('method', [
   z.object({ method: z.literal('grant-token'), grantId: z.string().min(1) }),
   z.object({ method: z.literal('capability'), grantId: z.string().min(1) }),
+  // INTENTIONALLY v1-UNUSED — DO NOT delete in a dead-code sweep. This member is deliberately built,
+  // locked, and tested (can.test.ts) for the F9 sensitive-op step-up set. In v1 the revoke route
+  // verifies the step-up inline (authCrypto.verifyStepUp) rather than producing this principal, so no
+  // live path constructs it yet; routing step-up through can() is a tracked devSys follow-up (F9
+  // consolidation). The frozen contract carries it so that consolidation is non-breaking.
   z.object({
     method: z.literal('signed-request'),
     keyId: z.string().min(1),
