@@ -5,9 +5,17 @@
 export interface Env {
   DB: D1Database;
   /**
-   * Deployment environment. When set to 'production', the chokepoint REFUSES any unverified
-   * principal — the mechanical tripwire that stops the Phase-0 allow-all/unverified auth stub
-   * from ever serving real traffic. Unset/anything-else = development (stub allowed).
+   * Deployment environment (F13 fail-CLOSED tripwire). The dev-only `unverified` principal is honored
+   * ONLY when this is an exact member of the non-prod allowlist {development, test, local}; production,
+   * an UNSET var, or anything else REFUSES (see `NON_PROD_ENVIRONMENTS` in http.ts). A misconfigured
+   * deploy denies rather than serving the allow-all stub.
    */
   ENVIRONMENT?: string;
+  /**
+   * The auth audience — the deployment HOSTNAME (= WebAuthn RP ID = client `location.hostname`), bound
+   * into every signed auth payload (PROP-4 / F8). A configured per-deployment constant; the server uses
+   * THIS, never the request Host header, when reconstructing the canonical TLV to verify a signature, so
+   * a signature minted for one deployment cannot be replayed against another. One value, never a set.
+   */
+  AUTH_AUDIENCE?: string;
 }
