@@ -313,13 +313,14 @@ describe("D6 cross-account isolation (standing bar) — sync", () => {
 // route assertion. This test hits the GRANTS TABLE directly after a real /register -> /session
 // round-trip and asserts the shape of the stored principalId. Any regression is caught instantly.
 //
-// accountId   = hex(randomblob(16)) = 32 lowercase hex chars
+// accountId   = randomToken(16) = base64url ~22 chars (NOT hex; the migration comment
+//               says hex(randomblob(16)) but auth.ts uses randomToken(16) — base64url)
 // fingerprint = base64url(SHA-256(pubkey)) = 43 chars, containing A-Z/a-z/0-9/-/_
 // ---------------------------------------------------------------------------
 
 describe("§J — principalId-stamp correctness: real route mint stamps accountId (not fingerprint) in grants [regression gate]", () => {
 
-  it("after real /register -> /session route, grants.principalId == accounts.accountId AND matches 32-hex accountId shape", async () => {
+  it("after real /register -> /session route, grants.principalId == accounts.accountId AND is shorter than the 43-char fingerprint (base64url ~22 chars, not hex)", async () => {
     const raw = new Database(':memory:');
     for (const sql of ALL_MIGRATIONS) raw.exec(sql);
     const env = makeEnv(raw);
