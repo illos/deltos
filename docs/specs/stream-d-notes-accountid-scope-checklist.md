@@ -36,11 +36,45 @@ ONLY — never a body field** (F2 discipline; same class as `accountFingerprint`
 Loud comment at the seam: `principal.id = accountId, NOT accountFingerprint`
 (planSys binding condition).
 
+**Surfacing pattern is devSys's — DO NOT invent a local way to reach accountId** (pilot,
+2026-06-16). devSys is deciding the ONE mechanism to surface accountId into handlers across the
+shared guard→handler boundary (guard-sets-on-`c` / 3rd `handle` arg / helper-reads-from-`c`); it
+applies to these notes routes IDENTICALLY to how devSys2 wires sync. Leave a slot for that pattern;
+wire notes-spine queries to it the same way. (`handle(req, c, principal)` is the leading candidate —
+devSys's lane to land.)
+
 **Helper dependency:** devSys is landing a per-query scope helper "in its own file" that REQUIRES
 the caller accountId (the split's only gap-risk = a handler omitting it — the helper makes omission
-a type error). This checklist assumes queries route THROUGH that helper rather than hand-editing
-`mutate.ts` SQL inline. Final signature TBD — the per-site notes below are written to be agnostic:
-each names the query, the file:line, and the scope key to apply.
+a type error). The per-site notes below are written to be agnostic: each names the query, the
+file:line, and the scope key to apply.
+
+### PILOT RULINGS (2026-06-16) — mutate.ts single-editor + one signature for notes AND sync
+
+1. **`mutate.ts` SINGLE-EDITOR = scopeSys for Phase-2.** It is shared with the sync lane; to avoid a
+   lock fight + a fail-open seam, scopeSys owns ALL `mutate.ts` edits — helper signatures gain a
+   **REQUIRED `accountId` param**, scope/stamp applied INSIDE. devSys2 edits ONLY `sync.ts` call
+   sites, never `mutate.ts`.
+2. **Lock the signature BEFORE editing.** Collect devSys2's exact sync call-site needs (pullNotes
+   scope, the conflict-path serverNote SELECT scope, push insert/update stamp) + devSys's
+   scope-helper shape, so the ONE `mutate.ts` signature serves both notes and sync in a single shape.
+   A required `accountId` param is fail-closed by construction: a call site cannot compile without
+   passing it.
+
+### Proposed mutate.ts signatures (strawman — pending devSys2 confirm against sync call sites)
+
+`accountId: string` added as a REQUIRED param, server-supplied, adjacent to the identity args.
+For `entry`-taking helpers it is a SEPARATE param, **never folded into `entry`** (entry is the
+client `SyncPushEntry` wire shape — accountId must stay server-supplied, F2):
+
+| Helper | Today | Proposed |
+|--------|-------|----------|
+| insertNote | `(db, entry, serverNow)` | `(db, entry, accountId, serverNow)` — STAMP into INSERT cols |
+| updateNote | `(db, entry, serverNow)` | `(db, entry, accountId, serverNow)` — CAS `WHERE` + conflict serverNote SELECT both `AND accountId=?` (sync) |
+| patchNote | `(db, id, notebookId, patch, expectedVersion, serverNow)` | `(db, id, notebookId, accountId, patch, expectedVersion, serverNow)` — UPDATE `WHERE` + exists-check SELECT (`mutate.ts:265`) + final SELECT |
+| deleteNote | `(db, id, notebookId, expectedVersion, serverNow)` | `(db, id, notebookId, accountId, expectedVersion, serverNow)` — UPDATE `WHERE` + serverRow SELECT |
+| pullNotes | `(db, notebookId, cursor)` | `(db, notebookId, accountId, cursor)` — SELECT `WHERE … AND accountId=?` (sync) |
+| searchNotes | `(db, notebookId, text)` | `(db, notebookId, accountId, text)` — ALL 3 branches `AND accountId=?` |
+| getNote | `(db, id, notebookId)` | `(db, id, notebookId, accountId)` — exported, currently UNUSED in worker (index.ts uses inline SELECT); scope for consistency or drop. |
 
 ---
 
