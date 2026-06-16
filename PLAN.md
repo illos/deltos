@@ -329,9 +329,14 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   `[[account-identity-model]]`. D5 copy approved (ship with the PRF-claim accuracy tweak).
 - 2026-06-16 — **Account-identity strawman SIGNED OFF (planSys); build wave authorized.** Strawman
   (`docs/design/account-identity-strawman.md` + secSys sweep) honors the user goal + all 4 assumptions;
-  frozen contract ratified ADDITIVE (`PrincipalVerification` union untouched; `PrincipalSchema` gains one
-  **required** server-resolved `accountId`). Rulings: keep `accountFingerprint` as credential id
-  (additive-only); accountId required-not-optional (fail-closed); username rename v1 OFF; enumeration-oracle
+  frozen contract ratified **ZERO-DELTA RE-POINT** (`Principal.id` + `grants.principalId` re-point
+  `accountFingerprint`→`accountId`; union AND `PrincipalSchema` byte-for-byte untouched; NO new field, NO
+  new `grants.accountId` column — supersedes my first add-a-field wording; stronger no-reopen + inherently
+  fail-closed since `id` is always-present). 3 binding conditions: audit every `principal.id`/
+  `grants.principalId` reader (rewire credential-needing sites to `mintedByKeyId`/`devices`); a SEMANTIC
+  test (`principal.id==accountId` end-to-end) guarding the false-green not just the schema freeze; two-account
+  negative tests prove isolation through the re-pointed id. Rulings: keep `accountFingerprint` as credential
+  id; additive tables only (`accounts`/`accountCredentials`/`usernames`/`notes.accountId`); username rename v1 OFF; enumeration-oracle
   mitigation a build requirement (prefer authenticated-claim-only); HARD invariants — ownership keys on
   accountId/signing-key never username, and any credential/username (re)bind to an existing account needs
   possession proof; S5 migration atomic 1:1 + code-together, back-fill dev notes to the single account,

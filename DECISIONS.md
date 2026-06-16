@@ -64,10 +64,13 @@ principal's accountId; grants account-relative.
 Tradeoff (proceeding unless overruled): a unique-username namespace = server-arbitrated uniqueness — a
 deliberate step from pure seed-only self-sovereign identity toward an account handle. Assumptions:
 username = stable account handle + anchor; **local passkey/phrase unlock UNCHANGED**; built
-credential-independent so methods add OR replace. Expected **ADDITIVE** to the frozen
-`PrincipalVerification` union (proof stays signed-challenge → grant; principal gains accountId) —
-**devSys/secSys CONFIRM no reopen.** Design-first → then build the data dimension on accountId.
-Tracked: `[[account-identity-model]]`; handed to pilot as expanded task 12.
+credential-independent so methods add OR replace. **Frozen contract = ZERO-DELTA RE-POINT** (confirmed
+by devSys/secSys + signed off): `Principal.id` + `grants.principalId` re-point `accountFingerprint` →
+`accountId` (same shape, semantic fill); the `PrincipalVerification` union AND `PrincipalSchema` are
+byte-for-byte untouched — **not a reopen, and not even an added field** (the strongest no-reopen + more
+fail-closed than add-a-field). Signed off with 3 conditions (reader-audit, a semantic test guarding the
+false-green, two-account isolation tests) + a back-fill migration guard. Tracked:
+`[[account-identity-model]]`; handed to pilot as expanded task 12.
 
 ---
 
