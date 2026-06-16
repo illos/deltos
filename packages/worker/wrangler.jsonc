@@ -12,12 +12,26 @@
     {
       "binding": "DB",
       "database_name": "deltos",
-      // Placeholder for local dev (miniflare uses a local SQLite file and ignores this).
-      // Run `wrangler d1 create deltos` and paste the real id here before the first deploy.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // Prod D1 in the Blackgate Studio account (created 2026-06-16). Local dev uses miniflare's
+      // own SQLite file and ignores this id.
+      "database_id": "0892afd3-67a2-410b-8131-6b4fa64269d8",
       "migrations_dir": "migrations",
     },
   ],
+  "vars": {
+    // F13 fail-CLOSED tripwire: prod refuses the dev-only unverified principal.
+    "ENVIRONMENT": "production",
+    // F8/PROP-4: the auth audience bound into every signed payload. MUST equal the served hostname
+    // (= WebAuthn RP ID = client location.hostname). Same-origin deploy on the workers.dev subdomain.
+    "AUTH_AUDIENCE": "deltos.rdxx.workers.dev",
+  },
+  // Same-origin PWA hosting: serve the client build as static assets; SPA-fallback unmatched routes
+  // to index.html; run the Worker FIRST only for /api/* so the API is never shadowed by the shell.
+  "assets": {
+    "directory": "../client/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+  },
   // Reserved per the locked architecture — NOT wired in Phase 0:
   //   - Durable Objects (live collaboration's promote-to-DO seam; the E2EE relay)
   //   - R2 (the content-addressed blob store)
