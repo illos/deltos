@@ -453,6 +453,12 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   (dev client) → recorded **DG-CAP capstone `:8451`** (prod client dist `55e438d` + prod-mode worker, F13
   active; live round-trip persist confirmed — accounts=1/credentials=1/notes-scoped=1). devSys's
   concurrent safety net flags instantly on any live-worker break. **This is THE v1 capstone run.**
+- 2026-06-16 — **Automatable v1 done-gate FULLY PROVEN — v1 now hinges SOLELY on the on-device capstone.**
+  Tier-A `[CLI]`-auto **13/13** (devSys2, zero prod gaps) joins server done-gate 14/14 + all-security-closed
+  + live-prod-worker-validated end-to-end. Only the **Tier-B iPhone dogfood** (mine, with the user) is open.
+  Team validated + standing by per-area (devSys2 client/sync/offline/recover fixes, gruntSys regression
+  pins, devSys live-worker/safety-net, secSys security, scopeSys gate-record → `v1-dg-cap-gate-record.md`,
+  prod-MODE=YES). Capstone GO sent (smoke `:8449` + recorded capstone `:8451`).
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
