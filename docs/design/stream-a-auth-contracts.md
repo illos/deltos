@@ -50,13 +50,19 @@ binary = base64url TEXT (ruling 1). Comparison-critical expiry = epoch-millis IN
 -- devices (DeviceRegistry). v1 account-level signing key (F1 option a): every device of an account
 -- shares signingPublicKey + accountFingerprint; keyId is the per-device handle for revocation.
 CREATE TABLE devices (
-  keyId              TEXT PRIMARY KEY,             -- server-ASSIGNED handle (random, >=16B base64url)
-  signingPublicKey   TEXT NOT NULL,               -- base64url(Ed25519 pubkey, 32B)
-  accountFingerprint TEXT NOT NULL,               -- base64url(SHA-256(signingPublicKey)) — server-COMPUTED (F2)
-  deviceLabel        TEXT NOT NULL,
-  createdAt          TEXT NOT NULL,               -- ISO-Z, audit-only
-  revokedAt          TEXT                         -- ISO-Z, audit-only; presence (IS NOT NULL) = revoked
+  keyId                  TEXT PRIMARY KEY,         -- server-ASSIGNED handle (random, >=16B base64url)
+  signingPublicKey       TEXT NOT NULL,            -- ACCOUNT key; base64url(Ed25519 pubkey, 32B). -> accountFingerprint
+  deviceSigningPublicKey TEXT NOT NULL,            -- per-device verification key (F1 option-(b) seam, day-one per
+                                                   --   strawman Rev-1 §F1). v1 = signingPublicKey; option-(b) differs.
+  accountFingerprint     TEXT NOT NULL,            -- base64url(SHA-256(signingPublicKey)) — server-COMPUTED (F2)
+  deviceLabel            TEXT NOT NULL,
+  createdAt              TEXT NOT NULL,            -- ISO-Z, audit-only
+  revokedAt              TEXT                      -- ISO-Z, audit-only; presence (IS NOT NULL) = revoked
 );
+-- WHY both keys: signingPublicKey is the ACCOUNT key, shared across an account's devices so
+-- SHA-256(it) = the same accountFingerprint = Identity.id on every device (PIN-ID-3). A single column
+-- can't seam to per-device keys: option-(b) needs the shared account key AND a distinct per-device key
+-- to coexist. v1 sets deviceSigningPublicKey = signingPublicKey; verify still uses signingPublicKey.
 CREATE INDEX devices_byAccount ON devices(accountFingerprint);
 
 -- authChallenges. Short-TTL, single-use. nonce = server-held authoritative copy.
@@ -107,7 +113,7 @@ createChallenge(row: { challengeId, nonce, keyId: string|null, purpose, issuedAt
 // the SERVER clock; no client timestamp ever enters. Do NOT add a getChallenge() that reads these.
 consumeChallenge(challengeId: string, purpose: AuthPurpose, serverNowMs: number): Promise<{ nonce: string, keyId: string|null } | null>
 
-registerDevice(row: { keyId, signingPublicKey, accountFingerprint, deviceLabel, createdAt }): Promise<void>
+registerDevice(row: { keyId, signingPublicKey, deviceSigningPublicKey, accountFingerprint, deviceLabel, createdAt }): Promise<void>  // v1: deviceSigningPublicKey = signingPublicKey
 getDevice(keyId: string): Promise<{ signingPublicKey, accountFingerprint, revokedAt: string|null } | null>
 listDevices(accountFingerprint: string): Promise<Array<{ keyId, deviceLabel, createdAt, revokedAt }>>
 
@@ -153,7 +159,9 @@ Routes parse with my `requests.ts` Zod schema (which enforces R3-4: strict base6
    `purpose='register'` + the request INTENT fields `signingPublicKey`/`deviceLabel`; verifies against
    the SUBMITTED pubkey (proof of key control / anti-squat). Fail → 401.
 3. `accountFingerprint = authCrypto.computeFingerprint(signingPublicKey)` (F2 — server COMPUTES).
-4. `keyId = authCrypto.randomToken(16)`; `authStore.registerDevice({...})`. Return `{ keyId, accountFingerprint }`.
+4. `keyId = authCrypto.randomToken(16)`; `authStore.registerDevice({ keyId, signingPublicKey,
+   deviceSigningPublicKey: signingPublicKey /* v1 = account key */, accountFingerprint, deviceLabel,
+   createdAt })`. Return `{ keyId, accountFingerprint }`.
 
 ### POST /api/auth/session — `SessionRequest { challengeId, keyId, requestedScope, signature }` → `{ token, expiresAt }`
 1. `c = authStore.consumeChallenge(challengeId, 'session', nowMs)`; null → 401.
