@@ -14,6 +14,6 @@ export function ConflictBadgeSlot({ note }: { note: Note }) {
   const clientNote = note as ClientNote;
   if (!clientNote.hasConflict) return null;
   return (
-    <ConflictBadge onClick={() => navigate(`/note/${note.id}`)} />
+    <ConflictBadge onClick={() => navigate(`/note/${note.id}?resolve`)} />
   );
 }

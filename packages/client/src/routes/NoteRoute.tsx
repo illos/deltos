@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useSearchParams, Navigate } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
 import { NoteIdSchema } from '@deltos/shared';
 import { useNote } from '../db/storeHooks.js';
@@ -23,6 +23,10 @@ import type { ClientNote } from '../db/schema.js';
  */
 export function NoteRoute() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  // ConflictView is gated behind an explicit ?resolve param — never auto-triggered by sync.
+  // Paths that set it: badge-tap (ConflictBadgeSlot) and back-with-conflict (← Notes below).
+  const isResolving = searchParams.has('resolve');
 
   // Stable save handler: write to Dexie then kick Stream B's debounced sync.
   const handleSave = useCallback(async (note: Note) => {
@@ -51,7 +55,12 @@ export function NoteRoute() {
 
   const clientNote = note as ClientNote;
 
-  if (clientNote.hasConflict) {
+  // Conflict resolution view — only when explicitly requested via ?resolve.
+  if (isResolving) {
+    // Conflict was just resolved (hasConflict cleared): drop ?resolve and show the editor.
+    if (!clientNote.hasConflict) {
+      return <Navigate to={`/note/${noteId.data}`} replace />;
+    }
     return (
       <>
         <Link to="/" className="editor__back">← Notes</Link>
@@ -63,7 +72,14 @@ export function NoteRoute() {
   const ViewComponent = resolveNoteView(note, NoteEditor);
   return (
     <>
-      <Link to="/" className="editor__back">← Notes</Link>
+      {/* Exit-with-conflict: if the note has an unresolved conflict, the back link
+          first routes through ?resolve so the user can resolve before leaving. */}
+      <Link
+        to={clientNote.hasConflict ? `/note/${noteId.data}?resolve` : '/'}
+        className="editor__back"
+      >
+        ← Notes
+      </Link>
       <ViewComponent note={note} onSave={handleSave} />
     </>
   );
