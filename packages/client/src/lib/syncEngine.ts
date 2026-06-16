@@ -148,6 +148,21 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
   const entries = await dedupeQueue(notebookId);
   if (entries.length === 0) return;
 
+  // Re-stamp each entry's CAS baseVersion to the CURRENT local note version at push time. The
+  // pending-edit pull guard (mergeServerNotes) pins a queued note's local version to whatever the
+  // edit was composed on — a remote change can't advance it while an edit for that note is queued —
+  // so the live local version IS the correct CAS base. Re-reading it here closes the phantom-conflict
+  // loop: a sibling entry enqueued in the WINDOW between a prior push and its applyAccepted carries a
+  // momentarily-stale base (the version hadn't advanced yet) that would otherwise CAS-miss the now-
+  // advanced server on every cadence tick. A REAL conflict still surfaces — when an un-pulled remote
+  // change exists the local version genuinely trails the server, so base < server → conflict. (Belt
+  // to the data-layer base-ownership in putNoteAndEnqueue + applyAccepted's survivor reconcile.)
+  const baseFor = new Map<string, number>();
+  for (const e of entries) {
+    const cur = await getStore().getNote(e.recordId);
+    baseFor.set(e.id, cur ? cur.version : e.baseVersion);
+  }
+
   const BATCH = 50; // keep payloads reasonable
   for (let i = 0; i < entries.length; i += BATCH) {
     const batch = entries.slice(i, i + BATCH);
@@ -160,7 +175,7 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
           properties: e.payload.properties,
           body: e.payload.body,
         },
-        baseVersion: e.baseVersion,
+        baseVersion: baseFor.get(e.id) ?? e.baseVersion,
       })),
     };
 

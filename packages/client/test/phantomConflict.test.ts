@@ -129,4 +129,33 @@ describe('P1 — sync base-version lockstep: no phantom conflicts on a single de
     }
     expect(await db.syncQueue.where('recordId').equals(NOTE_ID).count()).toBe(0); // fully drained
   });
+
+  it('a STALE-BASE queue entry (the cross-cycle editor-race duplicate) is re-stamped to the live version at push time and does NOT conflict', async () => {
+    const server = installServer();
+    const { db } = await import('../src/db/schema.js');
+    const { mutateNotes } = await import('../src/db/mutate.js');
+
+    // Advance the note to v2.
+    await mutateNotes.put(freshNote());
+    await tick();
+    await mutateNotes.put({ ...freshNote(), title: 'edit-1' });
+    await tick();
+    expect((await db.notes.get(NOTE_ID))!.version).toBe(2);
+
+    // Inject a duplicate entry carrying a STALE base (1 < live 2) — exactly what the editor's
+    // double-save produces in the window between a prior push and its applyAccepted. Pre-belt this
+    // CAS-missed the server (base 1 vs v2) → phantom conflict every tick.
+    const live = (await db.notes.get(NOTE_ID))!;
+    await db.syncQueue.add({
+      id: crypto.randomUUID(), recordId: NOTE_ID,
+      payload: { ...live, title: 'stale-dup' }, baseVersion: 1, createdAt: new Date().toISOString(),
+    });
+    await tick();
+
+    // Re-stamped to the live version (2) at push time → accepted v3, NOT a conflict.
+    expect(await db.noteVersions.count()).toBe(0);          // ZERO phantom conflicts
+    expect((await db.notes.get(NOTE_ID))!.version).toBe(3);
+    expect(server.get(NOTE_ID)!.version).toBe(3);
+    expect(await db.syncQueue.where('recordId').equals(NOTE_ID).count()).toBe(0);
+  });
 });
