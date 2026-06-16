@@ -437,6 +437,13 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   `CHECK(n<=1)`); secSys eyeballing. **Early-smoke + capstone HELD until an ACTUAL end-to-end enroll
   works against the worker's D1.** Banked invariant: validate migrations against REAL D1 (wrangler), not
   just better-sqlite3 ([[cloudflare-deploy-plan]]).
+- 2026-06-16 — **v1-blocker FIXED (`f8f96ce`, scratch table — all 4 migrations apply clean on real D1);
+  early UX smoke RE-GREENLIT + sent to the user.** Verified functional: /challenge 200 on live D1, F13
+  no-bearer→503, bad-sig→401, donegate 14/14 on the same app+migrations the worker runs. **Recorded-
+  capstone TARGET DECIDED (accepted): local `wrangler dev` `ENVIRONMENT=production` over Tailscale, NOT a
+  CF deploy** — F13 keys on ENVIRONMENT so prod auth is identical; lightest valid prod-representative
+  target; keeps v1-close decoupled from CF (CF = the post-v1 live-test env). Recorded-capstone GO pending
+  the prod client build + clean SHA + secSys migration-guard eyeball.
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
