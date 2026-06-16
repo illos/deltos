@@ -352,6 +352,14 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   change requiring a secSys design pass + planSys sign-off. **No date; needed before real
   multi-device-add / auth-method-change ships.** Lands as a non-breaking drop-in (accountId is stable —
   no data migration). Tracked: `[[account-identity-model]]` §Phase-2-follow-up.
+- 2026-06-16 — **Cross-account fix landed GREEN (pending secSys done-gate); devSys2 → Stream-D sync-auth.**
+  accountId scoping in `mutate.ts`/`index.ts` (`303db9a`) + `sync.ts` (`dd86704`); gruntSys two-account
+  isolation **10/10 GREEN** (pull B→0, push B→conflict) — condition #3 demonstrated; full worker suite
+  **200 pass.** secSys runs the done-gate audit (6-point + condition #1 reader-audit + #2 semantic test +
+  hard gates); **'done' HELD until secSys signs.** devSys2 confirmed onto **Stream-D sync-auth** (the
+  authenticated-synced-notes critical path): (a) client Authorization header on push/pull now; (b) retire
+  the Phase-0 unverified `resolvePrincipal` stub after the username chunk (avoid auth.ts contention) —
+  **keep the F13 prod tripwire as defense-in-depth post-retirement.**
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
