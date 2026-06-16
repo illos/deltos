@@ -22,7 +22,7 @@ export interface ApiErrorBody {
 
 export function apiError(
   c: AppContext,
-  status: 400 | 403 | 404 | 409 | 500 | 501 | 503,
+  status: 400 | 401 | 403 | 404 | 409 | 500 | 501 | 503,
   code: string,
   message: string,
   details?: unknown,
