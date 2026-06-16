@@ -30,7 +30,7 @@ import {
   type Note,
 } from '@deltos/shared';
 import { generateMnemonic, deriveKeyHierarchy } from '@deltos/client/src/identity/keyDerivation.js';
-import { syncNow, getSyncState } from '@deltos/client/src/lib/syncEngine.js';
+import { syncNow, getSyncState, subscribeSyncState } from '@deltos/client/src/lib/syncEngine.js';
 import { mutateNotes } from '@deltos/client/src/db/mutate.js';
 import { db as clientDb } from '@deltos/client/src/db/schema.js';
 import { useAuthStore } from '@deltos/client/src/auth/store.js';
@@ -168,14 +168,15 @@ const clientNote = (id: string, title: string, body: unknown[] = [], version = 0
   ({ id, notebookId: DG_NB, title, properties: {}, body, version, createdAt: '2026-06-16T00:00:00.000Z', updatedAt: '2026-06-16T00:00:00.000Z', syncStatus: 'local-only' } as unknown as Note);
 
 const bridgeLog: Array<{ path: string; auth: string | undefined; status: number }> = [];
+let lsStore: Record<string, string> = {};
 /** Route the client engine's fetch → the worker app over `env`; stub localStorage (cursor/keyId). */
 function bridge(env: Env) {
   bridgeLog.length = 0;
-  const storage: Record<string, string> = {};
+  lsStore = {};
   global.localStorage = {
-    getItem: (k: string) => storage[k] ?? null,
-    setItem: (k: string, v: string) => { storage[k] = v; },
-    removeItem: (k: string) => { delete storage[k]; },
+    getItem: (k: string) => lsStore[k] ?? null,
+    setItem: (k: string, v: string) => { lsStore[k] = v; },
+    removeItem: (k: string) => { delete lsStore[k]; },
   } as unknown as Storage;
   global.fetch = (async (input: string | URL, init?: RequestInit) => {
     const raw = typeof input === 'string' ? input : input.toString();
@@ -303,5 +304,93 @@ describe('DG-5c-echo — cross-account isolation (client engine pull)', () => {
     // B's local store never received A's note (server scoped the pull by B's accountId).
     expect(await clientDb.notes.get(aNote)).toBeUndefined();
     expect(await clientDb.notes.count()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DG-3d (F7) — the session/bearer token is IN-MEMORY ONLY, never persisted at rest. The real
+// mintSession is WebAuthn-coupled (buildSessionRequest → keyStore), so the headless test asserts the
+// store's persistence INVARIANT (mintSession's ONLY persistence is `set({bearerToken})` — no
+// localStorage write, verified in auth/store.ts); the on-device capstone exercises the full ceremony.
+// Spec: gruntSys2. [[session-token-in-memory-only]]
+// ---------------------------------------------------------------------------
+
+describe('DG-3d (F7) — token in-memory only, never at rest', () => {
+  it('a set bearerToken is never written to localStorage; lock() clears it', () => {
+    const TOKEN = 'secret-grant-token-zzz';
+    useAuthStore.setState({ bearerToken: TOKEN, accountId: 'acct-f7' });
+    expect(useAuthStore.getState().bearerToken).toBe(TOKEN); // in-memory is fine
+
+    expect(Object.values(lsStore).some((v) => v.includes(TOKEN))).toBe(false); // not at rest
+    expect(lsStore['bearerToken']).toBeUndefined();
+
+    useAuthStore.getState().lock();
+    expect(useAuthStore.getState().bearerToken).toBeNull(); // lock clears in-memory
+    expect(Object.values(lsStore).some((v) => v.includes(TOKEN))).toBe(false); // still not at rest
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DG-2b — offline create/edit persists to the local store; survives a connection reopen (LOGIC;
+// true persistence-across-reload/PWA-reinstall stays on-device per scopeSys). Spec: gruntSys2.
+// ---------------------------------------------------------------------------
+
+describe('DG-2b — offline persistence (local store logic)', () => {
+  it('a note created/edited offline persists in IndexedDB, survives a db reopen, queues each edit', async () => {
+    const id = '00000000-0000-4000-d000-00000000a005';
+
+    await mutateNotes.put(clientNote(id, 'offline note')); // NO network
+    expect((await clientDb.notes.get(id))?.title).toBe('offline note');
+    expect((await clientDb.syncQueue.toArray()).some((e) => e.recordId === id)).toBe(true);
+
+    // "Reload": drop + reopen the IDB connection → the note is restored from IndexedDB (not memory).
+    clientDb.close();
+    await clientDb.open();
+    expect((await clientDb.notes.get(id))?.title).toBe('offline note');
+
+    // Edit updates in place (old title gone); a fresh queue entry is enqueued.
+    await mutateNotes.put({ ...((await clientDb.notes.get(id)) as Note), title: 'edited offline' });
+    expect((await clientDb.notes.get(id))?.title).toBe('edited offline');
+    expect((await clientDb.syncQueue.toArray()).filter((e) => e.recordId === id).length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DG-3e — sync-indicator state model: idle → syncing → idle on a clean cycle; offline on a network
+// failure; error on a non-network failure. [Stream B acceptance]
+// ---------------------------------------------------------------------------
+
+describe('DG-3e — sync-indicator state model', () => {
+  it('a clean sync cycle settles to idle and notifies subscribers', async () => {
+    const { token } = await dgEnroll(env, 16);
+    useAuthStore.setState({ bearerToken: token });
+    const seen: string[] = [];
+    const unsub = subscribeSyncState((s) => seen.push(s));
+
+    await mutateNotes.put(clientNote('00000000-0000-4000-d000-00000000a006', 'indicator note'));
+    syncNow(DG_NB, '/api');
+    await settle();
+    unsub();
+
+    expect(seen).toContain('syncing'); // went through syncing
+    expect(getSyncState()).toBe('idle'); // settled clean
+  });
+
+  it('reaches offline on a network failure and error on a non-network failure', async () => {
+    useAuthStore.setState({ bearerToken: 'tok' });
+
+    // offline: a fetch TypeError mentioning "fetch" maps to the offline state.
+    global.fetch = (async () => { throw new TypeError('Failed to fetch'); }) as typeof fetch;
+    await mutateNotes.put(clientNote('00000000-0000-4000-d000-00000000a007', 'offline test'));
+    syncNow(DG_NB, '/api');
+    await settle();
+    expect(getSyncState()).toBe('offline');
+
+    // error: any other thrown error maps to the error state.
+    global.fetch = (async () => { throw new Error('boom'); }) as typeof fetch;
+    await mutateNotes.put(clientNote('00000000-0000-4000-d000-00000000a008', 'error test'));
+    syncNow(DG_NB, '/api');
+    await settle();
+    expect(getSyncState()).toBe('error');
   });
 });
