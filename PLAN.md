@@ -275,8 +275,12 @@ criterion of gruntSys2's enroll/unlock/recovery UI surface (closes condition (i)
   keys need the shared account key (→ `accountFingerprint`; PIN-ID-3 same-id-across-devices) AND a
   distinct per-device key coexisting; a single column makes `SHA-256(it)` differ per device and breaks
   same-id-across-devices. The two-column design IS the genuine D5 seam → (a) stands definitively.
-  devSys2 re-adds the nullable `deviceSigningPublicKey` + finding-4 CHECK constraints; v1 populates it
-  = `signingPublicKey`. Locked specs intact.
+  devSys2 re-adds the `deviceSigningPublicKey` + finding-4 CHECK constraints; v1 populates it
+  = `signingPublicKey`. Locked specs intact. **FOLLOW-UP: column is NOT NULL** — flipped my earlier
+  nullable default once it was explicit that v1 *always* populates it and Phase-2 always populates the
+  per-device key (always-populate, not null-as-sentinel) ⇒ no legitimate null state; NOT NULL encodes
+  the true auth-table integrity invariant and avoids null-coalesce logic; free to set now (Phase-1, no
+  data). Reopener only on a concrete Phase-2 null-sentinel need.
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
