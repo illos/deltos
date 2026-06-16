@@ -46,7 +46,7 @@ green AND the [DEV] capstone confirms the shell + conflict UX on a real device.
 | CAV-1 | **Push cadence** — online edits debounce-push at the blessed cadence | [CLI-auto] (fake timers) | a push fires **~2 s after typing settles**, and **at least every 5 s** during continuous typing (max-wait cap); not per-keystroke | shell/sync (devSys2) |
 | CAV-2 | **Offline buffer → flush on reconnect** | [CLI-auto] + [DEV] | offline edits accumulate in local store + push queue; flushed on the `online` event | gruntSys / sync |
 | CAV-3 | **Fast-forward, no conflict** | [CLI-auto] + [SRV] | offline edit → reconnect, **server unchanged** → CAS fast-forwards; no conflict, **no toast** | gruntSys (lane 1) |
-| CAV-4 | **Conflict retained as a version on the SAME note** | [CLI-auto] + [SRV] | server advanced beyond device base → conflict; divergent edit retained as a conflict-version keyed to the same note ID; **server content stays live**; note gains `hasConflict` + ≥1 retained snapshot; nothing overwritten | gruntSys (lane 2) |
+| CAV-4 | **Conflict retained as a version on the SAME note** (data-model anchor) | [CLI-auto] + [SRV] | server advanced beyond device base → conflict; divergent edit retained as a conflict-version (`NoteVersion`) keyed to the same note ID; **server content stays live**; note gains `hasConflict` + ≥1 retained snapshot; nothing overwritten. **Record shape pinned `@eab2ab5`**; `body`+`properties` present = whole-note grain (subsumes CAV-13). **`NoteVersion` carries `accountId`** — secSys-ruled YES (D6 scoping belt-and-suspenders; compound `[noteId+accountId]` index) — asserted in CAV-4's 3rd test | gruntSys (lane 2) |
 | CAV-5 | **No second note, ever** | [CLI-auto] | a conflict **never** produces a second note in the list | gruntSys (lane 3) |
 | CAV-6 | **Relations stay valid** | [CLI-auto] | the note keeps its ID → inbound relations still resolve (no relation-repair); `forkedFromId` retired for the conflict path (revises **PIN-SYNC-4**) | gruntSys (lane 4) |
 | CAV-7 | **Offline-edit vs server-delete (PIN-SYNC-3)** | [CLI-auto] | live state may be a tombstone, but the divergent offline edit is **retained as a conflict version**; *keep mine* resurrects it | gruntSys (lane 5) |
@@ -62,10 +62,13 @@ green AND the [DEV] capstone confirms the shell + conflict UX on a real device.
 ## Coordination & owners
 
 - **Part 2 / `CAV-*`** — gruntSys writes the conflict-as-version tests in `packages/client/test/`,
-  **1:1 with these row IDs**, against devSys2's data-model contract once it lands. gruntSys's six
-  pilot-assigned lanes map exactly: lane 1→CAV-3, 2→CAV-4, 3→CAV-5, 4→CAV-6, 5→CAV-7, 6→CAV-9/10/11.
-  My matrix adds the rows beyond those six: **CAV-1** (cadence), **CAV-2** (offline buffer/flush),
-  **CAV-8** (toast/badge UI), **CAV-12** (trip-wire reference), **CAV-13** (grain invariant).
+  **1:1 with these row IDs** (aligned + committed `@2526f71`; **22 RED / 163 GREEN** — correct TDD
+  state), against devSys2's data-model contract. gruntSys's six pilot-assigned lanes map exactly:
+  lane 1→CAV-3, 2→CAV-4, 3→CAV-5, 4→CAV-6, 5→CAV-7, 6→CAV-9/10/11. Final owner split of my added rows:
+  **CAV-1** (cadence) + **CAV-2** (offline buffer/flush) — **claimed by gruntSys**, go GREEN when
+  devSys2 wires the debounced push + `online` listener; **CAV-8** (toast/badge UI) → **gruntSys2**;
+  **CAV-12** (trip-wire) → a reference comment in `syncEngine.test.ts`, no duplication; **CAV-13**
+  (grain) → folded inline into CAV-4.
 - **Part 1 / `P1-*`** — **test owner = devSys** (the shell owner; pilot 2026-06-16). devSys writes the
   **automatable shell-logic legs TDD as it builds**: the gating logic (first-run vs no-local-key vs
   enrolled → which UI; P1-6/P1-8), **render-before-data ordering** (P1-1, P1-3), the **F7
