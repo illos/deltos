@@ -15,6 +15,16 @@ ALTER TABLE notes ADD COLUMN forkedFromId TEXT;
 
 -- Per-notebook monotonic counter. Bumped in the same D1 batch as the note write so the counter
 -- and the note's syncSeq are always consistent under concurrent requests.
+--
+-- CONSCIOUS V1-ACCEPT (secSys, 2026-06-16): the PRIMARY KEY is notebookId ALONE, not
+-- (accountId, notebookId). With per-account row isolation (notes.accountId, migration 0003), two
+-- accounts that happen to use the SAME notebookId string share THIS one seq-counter row. Note rows
+-- stay fully isolated — pull/search/get all filter on accountId, so there is no leak and no missed
+-- write (syncSeq gaps are the documented-harmless case) — but the SEQUENCE SPACE is shared: a weak
+-- write-activity side-channel (an account observing gaps could infer that *some* other account
+-- writes under the same guessed notebookId string — activity-exists only, never content) plus write
+-- contention on one row. ACCEPTED for v1; re-key to (accountId, notebookId) when notebooks become
+-- first-class (planSys roadmap). Deferred — not a gate.
 CREATE TABLE notebookSyncSeq (
   notebookId TEXT NOT NULL PRIMARY KEY,
   seq        INTEGER NOT NULL DEFAULT 0
