@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
 import { NoteIdSchema } from '@deltos/shared';
 import { useNote } from '../db/storeHooks.js';
@@ -48,5 +48,10 @@ export function NoteRoute() {
   }
 
   const ViewComponent = resolveNoteView(note, NoteEditor);
-  return <ViewComponent note={note} onSave={handleSave} />;
+  return (
+    <>
+      <Link to="/" className="editor__back">← Notes</Link>
+      <ViewComponent note={note} onSave={handleSave} />
+    </>
+  );
 }

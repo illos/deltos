@@ -35,6 +35,9 @@ export interface LocalStore {
   /** Reactive single-note read for a surface; `cb` gets the current note (or undefined) on each change. */
   observeNote(id: NoteId, cb: (note: Note | undefined) => void): Unsubscribe;
 
+  /** Reactive list of all notes in a notebook, sorted by updatedAt descending. */
+  observeNotes(notebookId: NotebookId, cb: (notes: Note[]) => void): Unsubscribe;
+
   // --- sync queue: the Stream-B drainer's domain ---
   /** All queue entries (the engine dedupes/filters per notebook itself). */
   queueEntries(): Promise<SyncQueueEntry[]>;

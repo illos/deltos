@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Note, NoteId } from '@deltos/shared';
+import type { Note, NoteId, NotebookId } from '@deltos/shared';
 import { getStore } from './store.js';
 
 /**
@@ -19,6 +19,15 @@ export function useNote(id: NoteId | undefined): Note | undefined {
     return getStore().observeNote(id, setNote);
   }, [id]);
   return note;
+}
+
+/** Reactively read all notes in a notebook, sorted by updatedAt descending. */
+export function useNotes(notebookId: NotebookId): Note[] {
+  const [notes, setNotes] = useState<Note[]>([]);
+  useEffect(() => {
+    return getStore().observeNotes(notebookId, setNotes);
+  }, [notebookId]);
+  return notes;
 }
 
 /** Reactively read the outbound sync-queue depth (for the sync indicator). */

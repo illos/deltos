@@ -41,6 +41,14 @@ export const dexieLocalStore: LocalStore = {
     return () => sub.unsubscribe();
   },
 
+  observeNotes(notebookId: NotebookId, cb: (notes: Note[]) => void): Unsubscribe {
+    const sub = liveQuery(async () => {
+      const notes = await db.notes.where('notebookId').equals(notebookId).toArray();
+      return notes.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    }).subscribe({ next: cb });
+    return () => sub.unsubscribe();
+  },
+
   // --- sync queue ---
   queueEntries(): Promise<SyncQueueEntry[]> {
     return db.syncQueue.toArray();

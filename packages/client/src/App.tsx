@@ -10,6 +10,7 @@ import { startSyncTriggers } from './lib/syncEngine.js';
 import { getDefaultNotebookId } from './lib/notebooks.js';
 import { SyncIndicator } from './components/SyncIndicator.js';
 import { useAuthStore } from './auth/store.js';
+import { useNotes } from './db/storeHooks.js';
 
 /**
  * App shell — the host chrome that every surface mounts inside.
@@ -73,6 +74,31 @@ function AppRoutes() {
   return <AuthedShell />;
 }
 
+function HomeView() {
+  const notes = useNotes(getDefaultNotebookId());
+  return (
+    <div className="home">
+      <div className="home__header">
+        <span className="home__title">Notes</span>
+        <Link to="/new" className="home__new-btn">+ New</Link>
+      </div>
+      {notes.length === 0 ? (
+        <p className="home__lede">No notes yet.</p>
+      ) : (
+        <ul className="home__notes">
+          {notes.map(note => (
+            <li key={note.id}>
+              <Link to={`/note/${note.id}`} className="home__note-link">
+                {note.title || 'Untitled'}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function AuthedShell() {
   useEffect(() => {
     return startSyncTriggers(getDefaultNotebookId());
@@ -89,15 +115,7 @@ function AuthedShell() {
         <Routes>
           <Route path="/new" element={<NewNote />} />
           <Route path="/note/:id" element={<NoteRoute />} />
-          <Route
-            path="/"
-            element={
-              <div className="home">
-                <p className="home__lede">Your notes.</p>
-                <Link to="/new" className="home__new-btn">+ New note</Link>
-              </div>
-            }
-          />
+          <Route path="/" element={<HomeView />} />
           {/* Redirect auth routes back to home when already authenticated */}
           <Route path="/enroll" element={<Navigate to="/" replace />} />
           <Route path="/unlock" element={<Navigate to="/" replace />} />

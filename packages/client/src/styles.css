@@ -40,33 +40,74 @@
 .home {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
   flex: 1;
-  gap: 1.2rem;
-  padding: 2rem;
+  gap: 1rem;
+  padding: 1.5rem 1.25rem;
+  max-width: 600px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.home__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.home__title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .home__lede {
-  margin: 0;
-  font-size: 1.05rem;
+  margin: 2rem 0 0;
+  font-size: 0.9rem;
   color: var(--muted);
+  text-align: center;
 }
 
 .home__new-btn {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.55rem 1.1rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 0.4rem;
+  background: var(--edge);
+  color: inherit;
+  text-decoration: none;
+  font-size: 0.85rem;
+  letter-spacing: 0.01em;
+  transition: background 0.1s;
+}
+.home__new-btn:hover { background: #2a2d3a; }
+
+.home__notes {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.home__note-link {
+  display: block;
+  padding: 0.65rem 0.9rem;
   border-radius: 0.4rem;
   background: var(--edge);
   color: inherit;
   text-decoration: none;
   font-size: 0.9rem;
-  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: background 0.1s;
 }
-.home__new-btn:hover { background: #2a2d3a; }
+.home__note-link:hover { background: #2a2d3a; }
 
 /* ── Route transitions ────────────────────────────────────────────────────────── */
 
@@ -87,6 +128,16 @@
 }
 
 /* ── Note editor ──────────────────────────────────────────────────────────────── */
+
+.editor__back {
+  display: block;
+  padding: 0.6rem 1.25rem;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+.editor__back:hover { color: inherit; }
 
 .editor {
   flex: 1;
