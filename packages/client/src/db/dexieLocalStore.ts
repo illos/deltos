@@ -44,7 +44,9 @@ export const dexieLocalStore: LocalStore = {
   observeNotes(notebookId: NotebookId, cb: (notes: ClientNote[]) => void): Unsubscribe {
     const sub = liveQuery(async () => {
       const notes = await db.notes.where('notebookId').equals(notebookId).toArray();
-      return notes.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      // Hide client tombstone-state rows (PIN-SYNC-3: a conflict against a server-deleted note retains
+      // the row marked deletedAt for badge + keep-mine resurrection, but it must not appear in the list).
+      return notes.filter((n) => !n.deletedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     }).subscribe({ next: cb });
     return () => sub.unsubscribe();
   },
@@ -67,9 +69,12 @@ export const dexieLocalStore: LocalStore = {
         const latest = versions.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
         if (note && latest) {
           // The divergent version becomes the note's LIVE content, enqueued as a new edit at the
-          // CURRENT server version so the push CAS-updates on top (not a stale-base re-INSERT).
+          // CURRENT server version so the push CAS-updates on top (not a stale-base re-INSERT). Drop
+          // deletedAt (omit, not set-undefined — exactOptionalPropertyTypes) so a tombstone-state note
+          // is RESURRECTED back into the list when the user keeps their edit.
+          const { deletedAt: _resurrected, ...base } = note;
           const live: ClientNote = {
-            ...note,
+            ...base,
             title: latest.title,
             properties: latest.properties,
             body: latest.body,

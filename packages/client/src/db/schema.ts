@@ -5,10 +5,12 @@ import type { Note, NoteId, NotebookId } from '@deltos/shared';
  * The client's stored note shape: the spine {@link Note} plus client-only state. `syncStatus` is
  * already a client-owned field on the spine Note; `hasConflict` is the same class — a client-only
  * flag (default/absent = false) set when an UNRESOLVED conflict version is attached, driving the
- * list badge. Kept client-side (no spine/shared change) — the server never sees it. See
- * docs/design/part2-conflict-version-data-model.md.
+ * list badge. `deletedAt` is the client tombstone-state (PIN-SYNC-3): a conflict against a
+ * server-deleted note retains the live row marked deleted (not hard-removed) so the badge + keep-mine
+ * resurrection still work; `observeNotes` filters it out of the list. Both are client-only (no
+ * spine/shared change) — the server never sees them. See docs/design/part2-conflict-version-data-model.md.
  */
-export type ClientNote = Note & { hasConflict?: boolean };
+export type ClientNote = Note & { hasConflict?: boolean; deletedAt?: string };
 
 /**
  * A retained whole-note snapshot — PART 2 conflict-as-version. On a CAS-conflict the device's
