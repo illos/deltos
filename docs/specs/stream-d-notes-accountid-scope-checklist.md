@@ -158,14 +158,26 @@ so a forged/guessed `notebookId` can never widen the CAS across accounts.
 
 ---
 
-## Cross-account negative test class (STANDING DISCIPLINE — [[stream-a-routes-lane]], planSys condition 3)
+## Cross-account negative test class — gruntSys OWNS the ROUTE-LEVEL class; scopeSys makes it GREEN
 
-Two-account fixture (seed account A + account B, distinct accountId). For EACH of S-1..S-7:
-**A acts on B's object → 404 (reads/CRUD) and B's row is UNMUTATED**; and the positive path
-(A on A's own → success). For S-6: A's search (text-only AND notebookId) returns ONLY A's notes,
-never B's. Root cause of the original blind spot: every existing test seeded ONE account
-([[cross-account-data-layer-finding]]). The semantic test (planSys condition 2): an end-to-end
-assertion that scope reads resolve through `principal.id == accountId`.
+**Pilot dedup (2026-06-16):** the two-account negative ROUTE test class is **gruntSys's deliverable**
+— `packages/worker/test/isolation.acceptance.test.ts` (in flight): two-account fixture via the real
+auth flow, RED across notes get/update/delete + block.append + property.set + note.search + sync
+push/pull + device list/revoke, all expecting deny/404/empty until scoping lands. **scopeSys does
+NOT author a parallel route-level two-account test** (would duplicate + collide). My deliverable =
+the IMPLEMENTATION (S-1..S-9 on index.ts + mutate.ts) that turns gruntSys's RED class GREEN.
+
+What the route class asserts (gruntSys's, for reference — this is the bar S-1..S-9 must satisfy):
+for each notes op, **A acts on B's object → 404 (reads/CRUD), B's row UNMUTATED**; positive path
+(A on A's own → success); S-6 search (text-only AND notebookId) returns ONLY A's notes; the semantic
+assertion that scope resolves through `principal.id == accountId` (planSys condition 2). Root cause
+of the original blind spot: every prior test seeded ONE account ([[cross-account-data-layer-finding]]).
+
+**Complementary (OPTIONAL, scopeSys's lane):** helper-level unit tests for the required-accountId
+param belong in/near `conflict.test.ts` (already mine — mutate.ts tests). Before adding, **coordinate
+file/scope with gruntSys** so I don't re-cover its route-level ground. Likely shape: assert each
+mutate.ts helper filters/stamps accountId (e.g. insertNote stamps; patchNote/deleteNote/searchNotes/
+pullNotes/updateNote 0-row or empty on a foreign accountId) at the helper boundary, not via HTTP.
 
 ## Shared-helper coordination (mutate.ts is shared with the sync lane)
 
@@ -178,8 +190,10 @@ different route). `coord ask packages/worker/src/db/mutate.ts "..."` if held.
 
 ## Apply order (once helper lands)
 
-1. devSys: principal→handler seam (`http.ts`) + scope helper file + `insertNote` accountId param.
-2. scopeSys: S-1..S-6 (inline SELECTs + search) routed through the helper.
-3. scopeSys: S-7 write-stamp; S-8/S-9 helper UPDATE gates (coordinate mutate.ts).
-4. scopeSys: cross-account negative test class + wire-leak test (E).
-5. secSys: fail-closed per-query-scope review + two-account-test audit (the build-audit).
+1. devSys: principal→handler seam (`http.ts`) + scope helper file + broadcast the surfacing pattern.
+2. scopeSys: S-1..S-6 (inline SELECTs + search) routed through the seam/helper.
+3. scopeSys: S-7 write-stamp; S-8/S-9 helper UPDATE gates (mutate.ts — mine, single-editor).
+4. scopeSys: fix the 19 `conflict.test.ts` mutate call sites for the new accountId arg.
+5. scopeSys: wire-leak test (E); OPTIONAL helper-level unit tests (coordinate w/ gruntSys).
+6. **gruntSys's `isolation.acceptance.test.ts` goes GREEN** — the route-level acceptance bar.
+7. secSys: fail-closed per-query-scope review + two-account-test audit (the build-audit).
