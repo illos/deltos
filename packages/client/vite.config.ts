@@ -1,13 +1,25 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import type { UserConfig } from 'vitest/config';
 
 // The control dashboard injects a stable per-project HTTPS port; fall back to Vite's default
 // when running outside it. Binding 127.0.0.1 (not localhost→::1) is what `tailscale serve`
 // proxies to, and `.ts.net` must be an allowed Host or the tailnet request is rejected.
 const devPort = Number(process.env.DEVBOX_PORT) || 5173;
 
+const testConfig: UserConfig['test'] = {
+  // Default to node — existing Dexie/syncEngine tests run without jsdom.
+  // Component/render tests opt-in via the *.render.test.tsx naming pattern.
+  environment: 'node',
+  environmentMatchGlobs: [
+    ['**/*.render.test.tsx', 'jsdom'],
+    ['**/*.render.test.ts', 'jsdom'],
+  ],
+};
+
 export default defineConfig({
+  test: testConfig,
   plugins: [
     react(),
     VitePWA({
