@@ -60,21 +60,39 @@ file:line, and the scope key to apply.
    A required `accountId` param is fail-closed by construction: a call site cannot compile without
    passing it.
 
-### Proposed mutate.ts signatures (strawman — pending devSys2 confirm against sync call sites)
+### FROZEN mutate.ts signatures (converged + confirmed with devSys2, 2026-06-16)
 
-`accountId: string` added as a REQUIRED param, server-supplied, adjacent to the identity args.
-For `entry`-taking helpers it is a SEPARATE param, **never folded into `entry`** (entry is the
-client `SyncPushEntry` wire shape — accountId must stay server-supplied, F2):
+Convention: `accountId: string` is a **REQUIRED** param placed **immediately after the
+entry/notebookId identity arg**, server-supplied (= `principal.id` post-D6), never folded into
+`entry` (entry is the client `SyncPushEntry` wire shape — accountId must stay server-supplied,
+F2). Required ⇒ fail-closed: a call site cannot compile without it. Order is devSys2's confirmed
+"FREEZE it" shape exactly.
 
-| Helper | Today | Proposed |
-|--------|-------|----------|
-| insertNote | `(db, entry, serverNow)` | `(db, entry, accountId, serverNow)` — STAMP into INSERT cols |
-| updateNote | `(db, entry, serverNow)` | `(db, entry, accountId, serverNow)` — CAS `WHERE` + conflict serverNote SELECT both `AND accountId=?` (sync) |
-| patchNote | `(db, id, notebookId, patch, expectedVersion, serverNow)` | `(db, id, notebookId, accountId, patch, expectedVersion, serverNow)` — UPDATE `WHERE` + exists-check SELECT (`mutate.ts:265`) + final SELECT |
-| deleteNote | `(db, id, notebookId, expectedVersion, serverNow)` | `(db, id, notebookId, accountId, expectedVersion, serverNow)` — UPDATE `WHERE` + serverRow SELECT |
-| pullNotes | `(db, notebookId, cursor)` | `(db, notebookId, accountId, cursor)` — SELECT `WHERE … AND accountId=?` (sync) |
-| searchNotes | `(db, notebookId, text)` | `(db, notebookId, accountId, text)` — ALL 3 branches `AND accountId=?` |
-| getNote | `(db, id, notebookId)` | `(db, id, notebookId, accountId)` — exported, currently UNUSED in worker (index.ts uses inline SELECT); scope for consistency or drop. |
+| Helper | Today | FROZEN | Scope/stamp applied inside |
+|--------|-------|--------|----------------------------|
+| insertNote | `(db, entry, serverNow)` | `(db, entry, accountId, serverNow)` | STAMP `notes.accountId = accountId` into INSERT cols. SHARED: notes.create + sync push-new. |
+| updateNote | `(db, entry, serverNow)` | `(db, entry, accountId, serverNow)` | CAS `WHERE … AND accountId=?`; conflict-path serverNote SELECT also `AND accountId=?` (no cross-account leak — cross-account push gets 0-row CAS → conflict → scoped SELECT null → client forks new id; secSys pt-4). Sync only. |
+| patchNote | `(db, id, notebookId, patch, expectedVersion, serverNow)` | `(db, id, notebookId, accountId, patch, expectedVersion, serverNow)` | UPDATE `WHERE … AND accountId=?` + exists-check SELECT (`mutate.ts:265`) + final SELECT. notes.update/append/property. |
+| deleteNote | `(db, id, notebookId, expectedVersion, serverNow)` | `(db, id, notebookId, accountId, expectedVersion, serverNow)` | UPDATE `WHERE … AND accountId=?` + serverRow SELECT. notes.delete. |
+| pullNotes | `(db, notebookId, cursor)` | `(db, notebookId, accountId, cursor)` | SELECT `WHERE … AND accountId=?` (read isolation). Sync only. |
+| searchNotes | `(db, notebookId, text)` | `(db, notebookId, accountId, text)` | ALL 3 branches `AND accountId=?` (the title-LIKE leak). notes.search. |
+| getNote | `(db, id, notebookId)` | `(db, id, notebookId, accountId)` | Exported, UNUSED in worker (index.ts uses inline SELECT) — scope for consistency or drop. |
+
+**Signature CONVERGED + CONFIRMED by devSys2** ("FREEZE it"): its 3 sync helpers
+(insertNote/updateNote/pullNotes) verified against its sync call sites; the scoped conflict
+serverNote SELECT is the no-leak behavior it wants; no other sync notes query exists. I edit
+`mutate.ts` (single-editor); devSys2 passes accountId from sync.ts call sites. **Test blast radius I own:** `conflict.test.ts` calls these helpers directly
+(19 call sites: insertNote/updateNote/deleteNote/pullNotes) — all need the accountId arg added
+when the signature lands. Those tests seed a SINGLE account/notebook today (the root-cause blind
+spot).
+
+### ⚠ OWNERSHIP DISCREPANCY (routed to pilot 2026-06-16) — who edits index.ts notes call sites?
+
+Pilot's fresh-start message assigned scopeSys the **index.ts notes data routes**
+(note.get/update/delete, block.append, property.set, note.search) + mutate.ts. devSys2's memory
+records the index.ts call sites as devSys2's (devSys2 = "index.ts call-sites + sync.ts"). These
+conflict on index.ts. **Resolution pending pilot.** Until ruled: scopeSys holds index.ts edits to
+avoid a collision; signature + mutate.ts ownership are unaffected (both confirmed mine).
 
 ---
 
