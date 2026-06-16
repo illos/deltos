@@ -444,6 +444,15 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   CF deploy** — F13 keys on ENVIRONMENT so prod auth is identical; lightest valid prod-representative
   target; keeps v1-close decoupled from CF (CF = the post-v1 live-test env). Recorded-capstone GO pending
   the prod client build + clean SHA + secSys migration-guard eyeball.
+- 2026-06-16 — **SERVER SLICE FULLY VALIDATED; early-smoke FINAL GO sent.** Live HTTP enroll confirmed
+  all-green on the prod-mode `:8787` worker (register/session/recover → SAME accountId, replay→401,
+  wrong-audience→401). secSys §K verified 14/14; **ALL D6/v1 security threads CLOSED; cross-account
+  done-gate CLOSED.** Early UX smoke (dev client `e92dc7b` + prod-mode worker = real auth) sent to the
+  user as the verified, caveat-free GO (after two prior GO/hold whiplashes — relay policy now: forward a
+  GO only on an UNCONDITIONAL signal). **BOTH URLs now ready — full clean final GO sent:** smoke `:8449`
+  (dev client) → recorded **DG-CAP capstone `:8451`** (prod client dist `55e438d` + prod-mode worker, F13
+  active; live round-trip persist confirmed — accounts=1/credentials=1/notes-scoped=1). devSys's
+  concurrent safety net flags instantly on any live-worker break. **This is THE v1 capstone run.**
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
