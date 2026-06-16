@@ -81,6 +81,41 @@ export interface AuthStore {
     Array<{ keyId: string; deviceLabel: string; createdAt: string; revokedAt: string | null }>
   >;
 
+  // --- account-identity (D6, migration 0003) -------------------------------------------------------
+  // ACCOUNT (stable, random, credential-INDEPENDENT accountId) vs CREDENTIAL (signing-key fingerprint).
+  // accountId is the data-ownership key; accountFingerprint is demoted to one credential id. The route
+  // resolves accountId via these and stamps principal.id = accountId at session mint (the re-point).
+
+  /** Create a new account. `accountId` is server-generated random (>=16B) by the caller (authCrypto). */
+  createAccount(row: { accountId: string; createdAt: string }): Promise<void>;
+
+  /**
+   * Bind a credential (signing-key fingerprint) to an account. BIND-ONCE: the PK on accountFingerprint
+   * makes a second bind of the same credential throw — a credential maps to exactly one account, and
+   * re-pointing it is forbidden (secSys S2/S3). Binding to an EXISTING account requires possession proof
+   * at the route layer; this only records the proven binding.
+   */
+  bindCredential(row: {
+    accountFingerprint: string;
+    accountId: string;
+    credentialType: string;
+    addedAt: string;
+  }): Promise<void>;
+
+  /**
+   * Resolve a credential fingerprint to its (non-revoked) accountId, or null if unbound/revoked. Used at
+   * session mint to stamp `principal.id = accountId` server-side (never a body field) — the re-point.
+   */
+  resolveAccountIdByFingerprint(accountFingerprint: string): Promise<string | null>;
+
+  /**
+   * List an account's devices across ALL its (N:1) credentials. Replaces `listDevices(principal.id)` now
+   * that `principal.id` = accountId (not a fingerprint) — the GET /devices re-point.
+   */
+  listDevicesByAccount(accountId: string): Promise<
+    Array<{ keyId: string; deviceLabel: string; createdAt: string; revokedAt: string | null }>
+  >;
+
   /** Persist a minted grant. The token is already HASHED by the caller (F6). */
   mintGrant(row: {
     grantId: string;
@@ -185,6 +220,43 @@ export function createAuthStore(db: DbAdapter): AuthStore {
       );
     },
 
+    async createAccount(row) {
+      await db.batch([
+        {
+          sql: `INSERT INTO accounts (accountId, createdAt) VALUES (?, ?)`,
+          params: [row.accountId, row.createdAt],
+        },
+      ]);
+    },
+
+    async bindCredential(row) {
+      // PK on accountFingerprint enforces bind-once: a duplicate bind of the same credential throws.
+      await db.batch([
+        {
+          sql: `INSERT INTO accountCredentials (accountFingerprint, accountId, credentialType, addedAt, revokedAt)
+                VALUES (?, ?, ?, ?, NULL)`,
+          params: [row.accountFingerprint, row.accountId, row.credentialType, row.addedAt],
+        },
+      ]);
+    },
+
+    async resolveAccountIdByFingerprint(accountFingerprint) {
+      const row = await db.first<{ accountId: string }>(
+        `SELECT accountId FROM accountCredentials WHERE accountFingerprint = ? AND revokedAt IS NULL`,
+        [accountFingerprint],
+      );
+      return row?.accountId ?? null;
+    },
+
+    async listDevicesByAccount(accountId) {
+      return db.all<{ keyId: string; deviceLabel: string; createdAt: string; revokedAt: string | null }>(
+        `SELECT keyId, deviceLabel, createdAt, revokedAt FROM devices
+          WHERE accountFingerprint IN (SELECT accountFingerprint FROM accountCredentials WHERE accountId = ?)
+          ORDER BY createdAt`,
+        [accountId],
+      );
+    },
+
     async mintGrant(row) {
       const resourceId = row.resource.kind === 'workspace' ? null : row.resource.id;
       await db.batch([
@@ -227,6 +299,10 @@ export function createAuthStore(db: DbAdapter): AuthStore {
       if (!row) return null;
       // Fail-closed read: a row that does not parse to a valid principal/resource/scope throws here
       // rather than handing a malformed grant to the chokepoint (DB read is a boundary).
+      // ⚠ RE-POINT (migration 0003): for owner/device grants `principalId` MEANS `accountId`, NOT a
+      // credential fingerprint — so the resolved `principal.id` is the account key the data layer scopes
+      // by. The minting credential/device is tracked separately on `mintedByKeyId`. Never treat this id
+      // as a fingerprint. (capability grants keep a capability id in principalId.)
       const principal = PrincipalSchema.parse({ kind: row.principalKind, id: row.principalId });
       const resource = ResourceSchema.parse(
         row.resourceKind === 'workspace'

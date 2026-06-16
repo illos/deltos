@@ -50,7 +50,13 @@ export interface GuardConfig<TReq> {
   schema: z.ZodType<TReq, z.ZodTypeDef, unknown>;
   input: (c: AppContext) => unknown | Promise<unknown>;
   resource: (req: TReq) => Resource;
-  handle: (req: TReq, c: AppContext) => Response | Promise<Response>;
+  /**
+   * The typed handler. Receives the resolved, authorized `principal` as a 3rd arg (the single seam
+   * both notes + sync use to get the caller's account: `callerAccountId(principal)` — `principal.id`
+   * is the `accountId`, NOT a fingerprint, after the re-point). The same principal is also on the
+   * context (`requireAccountId(c)`) for code paths that only hold `c`.
+   */
+  handle: (req: TReq, c: AppContext, principal: RequestPrincipal) => Response | Promise<Response>;
 }
 
 /**
@@ -98,7 +104,13 @@ export function guard<TReq>(cfg: GuardConfig<TReq>, deps: GuardDeps = {}) {
     if (!allowed) {
       return apiError(c, 403, 'forbidden', `principal not permitted to ${cfg.op} this resource`);
     }
-    return cfg.handle(parsed.data, c);
+    // Surface the resolved principal to the handler via the context — the SINGLE shared way handlers
+    // get the caller's account (read `requireAccountId(c)` in db/accountScope.ts). Set only after the
+    // tripwire + can() pass, so a handler can never read a principal that was not authorized. Both the
+    // notes routes (scopeSys) and sync routes (devSys2) MUST scope through this one path — no handler
+    // re-resolves the principal or reads `principal.id` directly (that would be a fail-open seam).
+    c.set('principal', principal);
+    return cfg.handle(parsed.data, c, principal);
   };
 }
 

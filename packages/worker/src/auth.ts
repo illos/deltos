@@ -31,10 +31,17 @@ type ResolvedGrant = NonNullable<Awaited<ReturnType<AuthStore['resolveGrantByTok
  */
 const resolvedGrants = new WeakMap<RequestPrincipal, ResolvedGrant>();
 
-/** The dev-only stub principal — no bearer present. Refused in production by the F13 tripwire. */
+/**
+ * The dev-only stub principal — no bearer present. Refused in production by the F13 tripwire.
+ *
+ * ⚠ `id` = a sentinel ACCOUNT id (accountId), NOT a credential fingerprint. After the zero-delta
+ * re-point (migration 0003), `principal.id` MEANS `accountId` everywhere. In dev this stub stands in
+ * for "the local account"; data scopes to it. The credential id (accountFingerprint) is never carried
+ * on a principal — it lives on `devices.accountFingerprint` / `grants.mintedByKeyId`.
+ */
 const LOCAL_OWNER: RequestPrincipal = {
   kind: 'owner',
-  id: 'local-owner',
+  id: 'local-account',
   verification: { method: 'unverified' },
 };
 
@@ -50,7 +57,15 @@ function methodForPrincipalKind(kind: PrincipalKind): 'grant-token' | 'capabilit
   return kind === 'owner' || kind === 'device' ? 'grant-token' : 'capability';
 }
 
-/** Build the live principal a resolved grant authenticates — never a bare claimed id. */
+/**
+ * Build the live principal a resolved grant authenticates — never a bare claimed id.
+ *
+ * ⚠ `grant.principal.id` = the grant's `principalId`, which after the re-point (migration 0003) MEANS
+ * `accountId` for owner/device grants — so `principal.id` = `accountId`, NOT `accountFingerprint`.
+ * The session-mint route stamps `principalId = accountId` (resolved server-side from the credential),
+ * and migration 0003 re-pointed any pre-existing owner grants. Credential identity is tracked
+ * separately on `grants.mintedByKeyId` + `devices.accountFingerprint`; never read a fingerprint here.
+ */
 export function principalForGrant(grant: ResolvedGrant): RequestPrincipal {
   const grantId = grant.grantId;
   const verification =
@@ -75,12 +90,32 @@ function resourceCovers(granted: Resource, requested: Resource): boolean {
  *   - op not in the granted scope  → deny (the F5 clamp at mint is upheld here)
  *   - resource not covered         → deny
  * `nowMs` is the SERVER clock supplied by the caller (`can()` passes `Date.now()`).
+ *
+ * OWNERSHIP BELT (defense-in-depth, secSys S6 — the cross-account dimension). When the caller can supply
+ * the resource's owning account (`resourceAccountId`, looked up server-side), the grant's account
+ * (`grant.principal.id` = accountId after the re-point) MUST match it — a workspace-wide grant for
+ * account A can never reach account B's note. This is the BELT; the PRIMARY control is the per-query
+ * `accountId` scope in the data layer (`db/accountScope.ts`), which physically excludes other accounts'
+ * rows and cannot be bypassed by a forgotten arg. `can()` (no DB handle) omits it; a db-bound caller
+ * that has resolved the resource owner passes it. A null/absent owner with a check requested = DENY
+ * (fail-closed — an unstamped row is owned by no one).
  */
-export function grantAllows(grant: ResolvedGrant, op: Op, resource: Resource, nowMs: number): boolean {
+export function grantAllows(
+  grant: ResolvedGrant,
+  op: Op,
+  resource: Resource,
+  nowMs: number,
+  resourceAccountId?: string | null,
+): boolean {
   if (grant.revokedAt !== null) return false;
   if (grant.expiresAtMs !== null && grant.expiresAtMs <= nowMs) return false;
   if (!grant.scope.includes(op)) return false;
-  return resourceCovers(grant.resource, resource);
+  if (!resourceCovers(grant.resource, resource)) return false;
+  if (resourceAccountId !== undefined) {
+    // Belt requested: the resource must belong to the grant's account. Fail-closed on a null owner.
+    return resourceAccountId !== null && resourceAccountId === grant.principal.id;
+  }
+  return true;
 }
 
 /**

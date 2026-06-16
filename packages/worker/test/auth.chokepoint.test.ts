@@ -106,7 +106,7 @@ describe('resolvePrincipal + can() integration', () => {
   it('no Authorization header → the unverified dev stub (prod refuses it at the tripwire)', async () => {
     const p = await resolvePrincipal(ctxWith(undefined), storeReturning(grant()));
     expect(p.verification).toEqual({ method: 'unverified' });
-    expect(p.id).toBe('local-owner');
+    expect(p.id).toBe('local-account'); // dev stub id = a sentinel accountId (re-point), not a fingerprint
   });
 
   it('a present but UNKNOWN token is not honored — falls to unverified, not a real principal', async () => {

@@ -11,6 +11,7 @@ import {
 import type { Resource, NoteResponse } from '@deltos/shared';
 import type { Env } from './env.js';
 import { guard, apiError, type AppContext } from './http.js';
+import type { AppEnv } from './context.js';
 import { d1Adapter } from './db/schema.js';
 import type { NoteRow } from './db/schema.js';
 import {
@@ -22,7 +23,7 @@ import {
 import { sync } from './routes/sync.js';
 import { auth } from './routes/auth.js';
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<AppEnv>();
 
 /**
  * Liveness + readiness. The worker answering at all is liveness; the D1 probe (reading the

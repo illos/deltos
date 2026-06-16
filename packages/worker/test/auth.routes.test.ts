@@ -31,9 +31,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 if (!ed.hashes.sha512) ed.hashes.sha512 = sha512;
 
 const AUD = 'deltos.test';
-const migrations = ['0000_baseline.sql', '0001_stream-b-sync.sql', '0002_stream-a-auth.sql'].map((f) =>
-  readFileSync(join(__dirname, '../migrations', f), 'utf8'),
-);
+const migrations = [
+  '0000_baseline.sql',
+  '0001_stream-b-sync.sql',
+  '0002_stream-a-auth.sql',
+  '0003_account-identity.sql',
+].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 /** Minimal D1Database shim over better-sqlite3 — supports the prepare/bind/first/all + batch the routes hit. */
 function d1Over(raw: Database.Database): D1Database {
@@ -319,12 +322,17 @@ describe('POST /api/auth/devices/:keyId/revoke (F9 step-up)', () => {
 });
 
 describe('GET /api/auth/devices', () => {
-  it("lists the resolved principal's devices and excludes other accounts", async () => {
+  it("lists the resolved principal's account devices and excludes other accounts (scoped by accountId)", async () => {
     const raw = freshDb();
-    const seed = (keyId: string, fp: string, label: string) =>
+    const seedDevice = (keyId: string, fp: string, label: string) =>
       raw.prepare('INSERT INTO devices (keyId, signingPublicKey, deviceSigningPublicKey, accountFingerprint, deviceLabel, createdAt) VALUES (?,?,?,?,?,?)').run(keyId, b64(32), b64(32), fp, label, '2026-06-16T00:00:00.000Z');
-    seed('dev-mine', 'local-owner', 'My phone'); // resolvePrincipal stub id
-    seed('dev-other', 'someone-else', 'Their phone');
+    const seedCred = (fp: string, accountId: string) =>
+      raw.prepare('INSERT INTO accountCredentials (accountFingerprint, accountId, credentialType, addedAt) VALUES (?,?,?,?)').run(fp, accountId, 'signing-key-v1', '2026-06-16T00:00:00.000Z');
+    // The dev stub principal.id = 'local-account' (LOCAL_OWNER sentinel = an accountId, NOT a fingerprint).
+    // listDevicesByAccount resolves the account's devices via accountCredentials — so this exercises
+    // cross-account isolation THROUGH the re-pointed id: A's device is visible, B's is not.
+    seedDevice('dev-mine', 'fp-mine', 'My phone'); seedCred('fp-mine', 'local-account');
+    seedDevice('dev-other', 'fp-other', 'Their phone'); seedCred('fp-other', 'acct-other');
     const res = await app.request('/api/auth/devices', {}, makeEnv(raw));
     expect(res.status).toBe(200);
     const { devices } = (await res.json()) as { devices: Array<{ keyId: string }> };

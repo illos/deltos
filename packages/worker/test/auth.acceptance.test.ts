@@ -60,6 +60,7 @@ const ALL_MIGRATIONS = [
   '0000_baseline.sql',
   '0001_stream-b-sync.sql',
   '0002_stream-a-auth.sql',
+  '0003_account-identity.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 /**

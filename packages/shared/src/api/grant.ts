@@ -30,7 +30,19 @@ export type PrincipalKind = z.infer<typeof PrincipalKindSchema>;
  */
 export const PrincipalSchema = z.object({
   kind: PrincipalKindSchema,
-  /** Stable identifier for this principal (device id, agent name, plugin id, …). */
+  /**
+   * Stable identifier for this principal.
+   *
+   * ⚠ ACCOUNT-IDENTITY RE-POINT (D6, migration 0003 — server-side only, ZERO schema change here): for
+   * owner/device principals, `id` is the **`accountId`** — the stable, random, credential-INDEPENDENT
+   * account key the data layer scopes ownership by. It is NOT `accountFingerprint` (= SHA-256 of the
+   * signing key, which is credential-derived and changes if the auth method changes). The credential id
+   * lives on `devices.accountFingerprint` / `grants.mintedByKeyId`; never read a fingerprint off this id.
+   * (For capability/guest/agent/plugin principals `id` is the capability/agent/plugin id as before.)
+   * This is a semantic re-point of how the field is FILLED — the schema (`{kind, id:string}`) is
+   * unchanged, and the {@link PrincipalVerification} union is untouched (the account dimension added no
+   * verification method). See docs/design/account-identity-strawman.md §6.
+   */
   id: z.string().min(1),
 });
 export type Principal = z.infer<typeof PrincipalSchema>;

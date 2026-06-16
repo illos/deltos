@@ -4,13 +4,13 @@ import {
   SyncPullRequestSchema,
 } from '@deltos/shared';
 import type { SyncPushResult, SyncNote, NoteResponse } from '@deltos/shared';
-import type { Env } from '../env.js';
+import type { AppEnv } from '../context.js';
 import { guard, apiError } from '../http.js';
 import { d1Adapter } from '../db/schema.js';
 import type { NoteRow } from '../db/schema.js';
 import { insertNote, updateNote, pullNotes } from '../db/mutate.js';
 
-const sync = new Hono<{ Bindings: Env }>();
+const sync = new Hono<AppEnv>();
 
 // ---------------------------------------------------------------------------
 // Helpers

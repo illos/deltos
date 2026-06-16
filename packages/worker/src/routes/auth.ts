@@ -11,7 +11,7 @@ import type { Resource } from '@deltos/shared';
 import * as authCrypto from '../authCrypto.js';
 import type { Env } from '../env.js';
 import { apiError, guard, type AppContext } from '../http.js';
-import { resolvePrincipal } from '../auth.js';
+import type { AppEnv } from '../context.js';
 import { d1Adapter } from '../db/schema.js';
 import { createAuthStore } from '../db/authStore.js';
 import { entitlementFor, SESSION_GRANT_RESOURCE, SESSION_TTL_MS, DEVICE_REVOKE_STEP_UP } from '../authPolicy.js';
@@ -35,7 +35,7 @@ import { entitlementFor, SESSION_GRANT_RESOURCE, SESSION_TTL_MS, DEVICE_REVOKE_S
  * GET /devices and the device-revoke route carry their own auth (a guard, and a fresh F9 step-up).
  */
 
-const auth = new Hono<{ Bindings: Env }>();
+const auth = new Hono<AppEnv>();
 
 const CHALLENGE_TTL_MS = 60_000; // 60s — short freshness window (contract §3 / AUTH-PROP-2).
 
@@ -138,6 +138,24 @@ auth.post('/register', async (c) => {
     deviceLabel,
     createdAt: new Date(nowMs).toISOString(),
   });
+
+  // ENROLL into an ACCOUNT (D6 account-identity). Bind this credential (the fingerprint) to an account:
+  //  - first time we see this fingerprint → enrollNew: mint a fresh, random, credential-INDEPENDENT
+  //    `accountId` and bind the credential to it. accountId is the data-ownership key — server-assigned,
+  //    IMMUTABLE, never client-supplied. It is NOT the fingerprint, so the account survives an auth-method
+  //    change with no data migration.
+  //  - fingerprint already bound → the SAME account re-enrolling a device (recovery / QR-join with the
+  //    same signing key, PIN-ID-3): reuse its accountId, do NOT re-bind (bind-once / append-only).
+  // (Binding a *different* credential to an existing account — add/replace auth method — is the Phase-2
+  // flow gated on account-possession proof; this enrollNew path mints/reuses for the SAME credential only.)
+  const existingAccountId = await store.resolveAccountIdByFingerprint(accountFingerprint);
+  if (!existingAccountId) {
+    const isoNow = new Date(nowMs).toISOString();
+    const accountId = authCrypto.randomToken(16); // server-generated random >=16B (secSys S4)
+    await store.createAccount({ accountId, createdAt: isoNow });
+    await store.bindCredential({ accountFingerprint, accountId, credentialType: 'signing-key-v1', addedAt: isoNow });
+  }
+
   return c.json({ keyId, accountFingerprint }, 201);
 });
 
@@ -179,13 +197,20 @@ auth.post('/session', async (c) => {
   });
   if (!verified) return apiError(c, 401, 'unauthorized', UNAUTHORIZED);
 
+  // RE-POINT (D6): key the grant on the account, not the credential. Resolve the device's
+  // accountFingerprint → accountId SERVER-SIDE (never a body field); stamp `principal.id = accountId`.
+  // The minting device is still recorded via `mintedByKeyId`, so per-device revoke (PIN-ID-5) + the F2
+  // credential binding are untouched — only the principal's IDENTITY moves from fingerprint to account.
+  const accountId = await store.resolveAccountIdByFingerprint(device.accountFingerprint);
+  if (!accountId) return apiError(c, 401, 'unauthorized', UNAUTHORIZED); // credential not bound to an account
+
   const granted = authCrypto.clampScope(requestedScope, entitlementFor(device)); // F5 — never verbatim
   const token = authCrypto.randomToken(32);
   const expiresAtMs = nowMs + SESSION_TTL_MS;
   await store.mintGrant({
     grantId: authCrypto.randomToken(16),
     tokenHash: authCrypto.hashToken(token), // F6 — only the hash is stored
-    principal: { kind: 'owner', id: device.accountFingerprint },
+    principal: { kind: 'owner', id: accountId }, // principalId = accountId (re-point), NOT the fingerprint
     mintedByKeyId: serverKeyId, // scopes revokeByKeyId to THIS device's tokens (devSys2)
     resource: SESSION_GRANT_RESOURCE,
     scope: granted,
@@ -198,8 +223,8 @@ auth.post('/session', async (c) => {
 // ---------------------------------------------------------------------------
 // GET /api/auth/devices  — list the caller's account devices (authStore-backed READ).
 // Behind the chokepoint guard: prod tripwire (refuses the dev-only `unverified` stub, F13) +
-// can(op:'read'). Lists for the resolved principal's accountFingerprint; once grant-token resolution
-// lands in resolvePrincipal this lists the real account with no change here.
+// can(op:'read'). guard() supplies the resolved principal (3rd arg); principal.id = accountId
+// (the re-point), so we list by ACCOUNT — across all the account's credentials, NOT by a fingerprint.
 // ---------------------------------------------------------------------------
 auth.get(
   '/devices',
@@ -208,10 +233,10 @@ auth.get(
     schema: z.object({}).strict(),
     input: () => ({}),
     resource: (): Resource => ({ kind: 'workspace' }),
-    handle: async (_req, c) => {
-      const principal = await resolvePrincipal(c);
+    handle: async (_req, c, principal) => {
       const store = createAuthStore(d1Adapter(c.env.DB));
-      return c.json({ devices: await store.listDevices(principal.id) });
+      // principal.id = accountId (NOT accountFingerprint). listDevicesByAccount joins via accountCredentials.
+      return c.json({ devices: await store.listDevicesByAccount(principal.id) });
     },
   }),
 );
