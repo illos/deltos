@@ -1,4 +1,4 @@
-import { db } from '../db/schema.js';
+import { getStore } from '../db/store.js';
 import type { SyncQueueEntry } from '../db/schema.js';
 import type { Note, NoteId, NotebookId, SyncStatus } from '@deltos/shared';
 import { NoteResponseSchema } from '@deltos/shared';
@@ -93,7 +93,7 @@ async function runSync(notebookId: NotebookId, apiBase: string): Promise<void> {
     setState('syncing');
     await pushQueued(notebookId, apiBase);
     await pullUpdates(notebookId, apiBase);
-    const remaining = await db.syncQueue.where('id').above('').count(); // any queue left?
+    const remaining = await getStore().queueCount(); // any queue left?
     setState(remaining > 0 ? 'pending' : 'idle');
   } catch (err) {
     if (err instanceof TypeError && err.message.includes('fetch')) {
@@ -119,7 +119,7 @@ async function runSync(notebookId: NotebookId, apiBase: string): Promise<void> {
  * own queue — NOT latest-wins globally; the server's CAS is what prevents global lost-writes).
  */
 async function dedupeQueue(notebookId: NotebookId): Promise<SyncQueueEntry[]> {
-  const all = await db.syncQueue.toArray();
+  const all = await getStore().queueEntries();
   // Keep only entries whose note belongs to this notebook
   const forNotebook = all.filter((e) => e.payload.notebookId === notebookId);
   // Latest-wins per note within the queue
@@ -159,51 +159,31 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
 
     const json: SyncPushResponse = await res.json();
 
-    await db.transaction('rw', db.notes, db.syncQueue, async () => {
-      for (const result of json.results) {
-        // The single (latest-wins deduped) entry we actually pushed for this note.
-        const pushed = batch.find((e) => e.payload.id === result.id);
+    // Each result reconciles in its own store transaction. Safe because sync is single-flight PER
+    // NOTEBOOK (no intra-notebook concurrency), so per-record atomicity preserves every invariant;
+    // the per-batch transaction was incidental. The SELECTIVE vs BLANKET drain asymmetry now lives
+    // in the store (applyAccepted vs applyConflict) and MUST NOT be unified.
+    for (const result of json.results) {
+      // The single (latest-wins deduped) entry we actually pushed for this note.
+      const pushed = batch.find((e) => e.payload.id === result.id);
 
-        if (result.outcome === 'accepted') {
-          // Update local serverVersion synchronously (edit-while-syncing guarantee).
-          await db.notes.where('id').equals(result.id).modify((note: Note) => {
-            note.version = result.version;
-            note.syncStatus = 'synced' satisfies SyncStatus;
-          });
-
-          if (pushed) {
-            // Drain ONLY the entry we pushed plus any strictly-older superseded entries for this
-            // note. An edit that arrived DURING the in-flight fetch is a NEWER queue entry — it
-            // MUST survive. A blanket delete-by-recordId here is the silent-data-loss race: it
-            // wipes the in-flight edit, marks the note synced at the server version, empties the
-            // queue, and the next pull (carrying the server's pre-edit state) then overwrites the
-            // local edit unguarded. Tie-safe on createdAt: match the pushed entry by its own id,
-            // older entries by strict-less-than, so a same-millisecond in-flight edit is kept.
-            await db.syncQueue
-              .where('recordId')
-              .equals(result.id)
-              .filter((e) => e.id === pushed.id || e.createdAt < pushed.createdAt)
-              .delete();
-
-            // Reconcile any surviving in-flight edit to the just-accepted server version, so it
-            // pushes next cycle as a CAS UPDATE on top of this version — not as a re-INSERT at the
-            // stale baseVersion it was authored at (which the server would fork as a new note).
-            await db.syncQueue
-              .where('recordId')
-              .equals(result.id)
-              .modify((e) => { e.baseVersion = result.version; });
-          }
-        } else {
-          // Conflict: server has moved on. handleConflict forks the CURRENT local note (which
-          // already reflects any in-flight edit) and adopts server state for the original id, so
-          // the in-flight content is preserved in the fork. A blanket drain is correct here —
-          // keeping the in-flight entry would re-push the original id (now server state) and
-          // double-fork.
-          await handleConflict(result.id as NoteId, result.serverNote);
-          await db.syncQueue.where('recordId').equals(result.id).delete();
+      if (result.outcome === 'accepted') {
+        if (pushed) {
+          // applyAccepted (atomic): set version+synced, SELECTIVE-drain the pushed + strictly-older
+          // entries (a same-/later-ms in-flight edit survives — the silent-data-loss guard), and
+          // reconcile any survivor's baseVersion to the accepted version.
+          await getStore().applyAccepted(result.id as NoteId, result.version, pushed.id, pushed.createdAt);
         }
+        // (No `pushed` is structurally impossible — results only come for entries we sent. If it
+        // ever occurred there'd be nothing to drain; the note reconciles on the next pull/cycle.)
+      } else {
+        // Conflict: handleConflict forks the CURRENT local note (reflecting any in-flight edit),
+        // adopts server state for the original id, and BLANKET-drains the queue — all atomic in
+        // applyConflict. Blanket is correct ONLY here; keeping the in-flight entry would re-push
+        // the now-server state and double-fork.
+        await handleConflict(result.id as NoteId, result.serverNote);
       }
-    });
+    }
   }
 }
 
@@ -215,32 +195,20 @@ async function handleConflict(
   localId: NoteId,
   serverNote: Note | null,
 ): Promise<void> {
-  const localNote = await db.notes.get(localId);
-  if (!localNote) return; // nothing local to fork — discard
-
   const isResurrection = serverNote === null; // null = server tombstone (PIN-SYNC-3)
 
-  const forkTitle = isResurrection
-    ? `(deleted on another device — your edits kept) ${localNote.title}`
-    : `(conflict copy) ${localNote.title}`;
-
-  const fork: Note = {
+  // applyConflict (atomic, in the store): reads the CURRENT local note, builds the fork via this
+  // closure, stores it as a new local-only note, adopts server state (or tombstone) for the
+  // original id, and BLANKET-drains the queue. Returns false if there was no local note to fork.
+  await getStore().applyConflict(localId, serverNote, (localNote) => ({
     ...localNote,
     id: crypto.randomUUID() as NoteId,
-    title: forkTitle,
+    title: isResurrection
+      ? `(deleted on another device — your edits kept) ${localNote.title}`
+      : `(conflict copy) ${localNote.title}`,
     version: 0, // fork starts unsynced; will push as new note
     syncStatus: 'local-only' satisfies SyncStatus,
-  };
-
-  // Store fork as a new local-only note (not in syncQueue — it will be pushed next cycle via put)
-  await db.notes.put(fork);
-
-  // Adopt server state for the original id (or tombstone if deleted)
-  if (serverNote) {
-    await db.notes.put({ ...serverNote, syncStatus: 'synced' });
-  } else {
-    await db.notes.delete(localId);
-  }
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -279,35 +247,32 @@ async function pullUpdates(notebookId: NotebookId, apiBase: string): Promise<voi
  * Exported for direct testing (syncEngine.test.ts).
  */
 export async function mergePull(notes: SyncNote[], _notebookId: NotebookId): Promise<void> {
-  // Collect note IDs that have a pending local edit
-  const pendingIds = new Set(
-    (await db.syncQueue.toArray()).map((e) => e.recordId),
-  );
+  // Note IDs with a pending local edit — the store skips these (push reconciles them, pull never
+  // stomps them). The engine splits the wire notes into live puts vs tombstone deletes; the store's
+  // mergeServerNotes applies both atomically with the pending-edit guard.
+  const pendingIds = await getStore().pendingRecordIds();
 
-  await db.transaction('rw', db.notes, async () => {
-    for (const serverNote of notes) {
-      // Pending-edit pull guard
-      if (pendingIds.has(serverNote.id)) continue;
-
-      if (serverNote.deletedAt !== null) {
-        // Tombstone: remove the local copy (no local edit to protect — it was cleared above)
-        await db.notes.delete(serverNote.id as NoteId);
-      } else {
-        const note: Note = {
-          id: serverNote.id,
-          notebookId: serverNote.notebookId,
-          title: serverNote.title,
-          properties: serverNote.properties,
-          body: serverNote.body,
-          version: serverNote.version,
-          createdAt: serverNote.createdAt,
-          updatedAt: serverNote.updatedAt,
-          syncStatus: 'synced',
-        };
-        await db.notes.put(note);
-      }
+  const liveNotes: Note[] = [];
+  const tombstones: NoteId[] = [];
+  for (const serverNote of notes) {
+    if (serverNote.deletedAt !== null) {
+      tombstones.push(serverNote.id as NoteId);
+    } else {
+      liveNotes.push({
+        id: serverNote.id,
+        notebookId: serverNote.notebookId,
+        title: serverNote.title,
+        properties: serverNote.properties,
+        body: serverNote.body,
+        version: serverNote.version,
+        createdAt: serverNote.createdAt,
+        updatedAt: serverNote.updatedAt,
+        syncStatus: 'synced',
+      });
     }
-  });
+  }
+
+  await getStore().mergeServerNotes(liveNotes, tombstones, pendingIds);
 }
 
 // ---------------------------------------------------------------------------
