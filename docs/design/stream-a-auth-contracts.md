@@ -43,46 +43,52 @@ only, then verifies. `nonce`/`keyId`/`purpose`/`audience` are never trusted from
 
 ## 1. authStore contract (devSys2)
 
-### D1 schema (3 tables — migration owner devSys2). All binary = base64url TEXT (ruling 1).
+### D1 schema (3 tables — migration owner devSys2; committed camelCase in migration 0002 @ b835804).
+Columns are **camelCase 1:1 with the spine (PIN-SUBSTRATE-1 — no camel-snake mapping layer)**. All
+binary = base64url TEXT (ruling 1). Comparison-critical expiry = epoch-millis INTEGER (ruling 2).
 ```sql
 -- devices (DeviceRegistry). v1 account-level signing key (F1 option a): every device of an account
--- shares signing_public_key + account_fingerprint; key_id is the per-device handle for revocation.
+-- shares signingPublicKey + accountFingerprint; keyId is the per-device handle for revocation.
 CREATE TABLE devices (
-  key_id              TEXT PRIMARY KEY,            -- server-ASSIGNED handle (random, >=16B base64url)
-  signing_public_key  TEXT NOT NULL,              -- base64url(Ed25519 pubkey, 32B)
-  account_fingerprint TEXT NOT NULL,              -- base64url(SHA-256(signing_public_key)) — server-COMPUTED (F2)
-  device_label        TEXT NOT NULL,
-  created_at          TEXT NOT NULL,              -- ISO-Z, audit-only
-  revoked_at          TEXT                        -- ISO-Z, audit-only; presence (IS NOT NULL) = revoked
+  keyId              TEXT PRIMARY KEY,             -- server-ASSIGNED handle (random, >=16B base64url)
+  signingPublicKey   TEXT NOT NULL,               -- base64url(Ed25519 pubkey, 32B)
+  accountFingerprint TEXT NOT NULL,               -- base64url(SHA-256(signingPublicKey)) — server-COMPUTED (F2)
+  deviceLabel        TEXT NOT NULL,
+  createdAt          TEXT NOT NULL,               -- ISO-Z, audit-only
+  revokedAt          TEXT                         -- ISO-Z, audit-only; presence (IS NOT NULL) = revoked
 );
-CREATE INDEX idx_devices_account ON devices(account_fingerprint);
+CREATE INDEX devices_byAccount ON devices(accountFingerprint);
 
--- auth_challenges. Short-TTL, single-use. nonce = server-held authoritative copy.
-CREATE TABLE auth_challenges (
-  challenge_id  TEXT PRIMARY KEY,                 -- random, >=32B base64url
-  nonce         TEXT NOT NULL,                    -- random, >=32B base64url; server-held
-  key_id        TEXT,                             -- NULL for purpose='register' (no key yet)
-  purpose       TEXT NOT NULL,                    -- 'register' | 'session' | 'step-up'
-  issued_at     TEXT NOT NULL,                    -- ISO-Z, audit-only
-  expires_at_ms INTEGER NOT NULL,                 -- epoch-millis — THE freshness gate (instant compare)
-  consumed      INTEGER NOT NULL DEFAULT 0
+-- authChallenges. Short-TTL, single-use. nonce = server-held authoritative copy.
+CREATE TABLE authChallenges (
+  challengeId  TEXT PRIMARY KEY,                  -- random, >=32B base64url
+  nonce        TEXT NOT NULL,                     -- random, >=32B base64url; server-held
+  keyId        TEXT,                              -- NULL for purpose='register' (no key yet)
+  purpose      TEXT NOT NULL,                     -- 'register' | 'session' | 'step-up'
+  issuedAt     TEXT NOT NULL,                     -- ISO-Z, audit-only
+  expiresAtMs  INTEGER NOT NULL,                  -- epoch-millis — THE freshness gate (instant compare)
+  consumed     INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX idx_challenges_expiry ON auth_challenges(expires_at_ms);
+CREATE INDEX authChallenges_byExpiry ON authChallenges(expiresAtMs);
 
 -- grants registry. Token stored HASHED (F6) — never raw.
 CREATE TABLE grants (
-  grant_id       TEXT PRIMARY KEY,                -- random row id (base64url)
-  token_hash     TEXT NOT NULL UNIQUE,            -- base64url(SHA-256(token)) — F6
-  principal_kind TEXT NOT NULL,                   -- 'owner' | 'device' | ...
-  principal_id   TEXT NOT NULL,                   -- accountFingerprint (owner) | key_id (device)
-  resource_kind  TEXT NOT NULL,                   -- 'workspace' | 'notebook' | 'note'
-  resource_id    TEXT,                            -- NULL for workspace
-  scope          TEXT NOT NULL,                   -- JSON array, CLAMPED at mint (F5)
-  expires_at_ms  INTEGER,                         -- epoch-millis, nullable — instant compare at resolve
-  revoked_at     TEXT,                            -- ISO-Z; presence = instant deny (PIN-ID-5)
-  created_at     TEXT NOT NULL                    -- ISO-Z, audit-only
+  grantId       TEXT PRIMARY KEY,                 -- random row id (base64url)
+  tokenHash     TEXT NOT NULL UNIQUE,             -- base64url(SHA-256(token)) — F6
+  principalKind TEXT NOT NULL,                    -- 'owner' | 'device' | ...
+  principalId   TEXT NOT NULL,                    -- accountFingerprint (owner) | keyId (device)
+  mintedByKeyId TEXT,                             -- the device keyId whose session minted this grant;
+                                                  --   NULL for capability grants. Enables revokeByKeyId
+                                                  --   without re-keying the principal (PIN-ID-5).
+  resourceKind  TEXT NOT NULL,                    -- 'workspace' | 'notebook' | 'note'
+  resourceId    TEXT,                             -- NULL for workspace
+  scope         TEXT NOT NULL,                    -- JSON array, CLAMPED at mint (F5)
+  expiresAtMs   INTEGER,                          -- epoch-millis, nullable — instant compare at resolve
+  revokedAt     TEXT,                             -- ISO-Z; presence = instant deny (PIN-ID-5)
+  createdAt     TEXT NOT NULL                     -- ISO-Z, audit-only
 );
-CREATE INDEX idx_grants_token ON grants(token_hash);
+CREATE INDEX grants_byToken ON grants(tokenHash);
+CREATE INDEX grants_byMintedKey ON grants(mintedByKeyId);
 ```
 
 ### authStore functions (pure D1, no crypto)
@@ -90,14 +96,14 @@ CREATE INDEX idx_grants_token ON grants(token_hash);
 createChallenge(row: { challengeId, nonce, keyId: string|null, purpose, issuedAt, expiresAtMs: number }): Promise<void>
 
 // R3-1 + R3-2: THE single authority on single-use AND freshness, in ONE indivisible write.
-//   UPDATE auth_challenges SET consumed=1
-//   WHERE challenge_id=?1 AND consumed=0 AND purpose=?2 AND expires_at_ms > ?3   -- ?3 = serverNowMs
-//   RETURNING nonce, key_id;
+//   UPDATE authChallenges SET consumed=1
+//   WHERE challengeId=?1 AND consumed=0 AND purpose=?2 AND expiresAtMs > ?3   -- ?3 = serverNowMs
+//   RETURNING nonce, keyId;
 // rows-affected=1 => fresh AND first-consumer => proceed with the returned SERVER-HELD nonce/keyId
 // (purpose is pinned by the WHERE = the endpoint's fixed purpose constant; no need to return it).
 // 0 rows => null => REJECT (expired OR already-spent OR wrong-purpose — indistinguishable, all reject).
 // HARD RULES: single-use+freshness decided ONLY by this write's rows-affected — NEVER by a prior
-// SELECT of `consumed` or `expires_at_ms` (a stale-replica read reopens the window). serverNowMs is
+// SELECT of `consumed` or `expiresAtMs` (a stale-replica read reopens the window). serverNowMs is
 // the SERVER clock; no client timestamp ever enters. Do NOT add a getChallenge() that reads these.
 consumeChallenge(challengeId: string, purpose: AuthPurpose, serverNowMs: number): Promise<{ nonce: string, keyId: string|null } | null>
 
@@ -105,13 +111,19 @@ registerDevice(row: { keyId, signingPublicKey, accountFingerprint, deviceLabel, 
 getDevice(keyId: string): Promise<{ signingPublicKey, accountFingerprint, revokedAt: string|null } | null>
 listDevices(accountFingerprint: string): Promise<Array<{ keyId, deviceLabel, createdAt, revokedAt }>>
 
-mintGrant(row: { grantId, tokenHash, principal, resource, scope, expiresAtMs: number|null, createdAt }): Promise<void>
-// Resolve by HASH; caller passes authCrypto.hashToken(presentedToken). Returns row incl. expires_at_ms
-// + revoked_at so the chokepoint applies freshness (instant compare) + revocation (presence) itself.
+// principal STAYS {kind:'owner', id: accountFingerprint}; mintedByKeyId records the minting device.
+mintGrant(row: { grantId, tokenHash, principal, mintedByKeyId: string|null, resource, scope, expiresAtMs: number|null, createdAt }): Promise<void>
+// Resolve by HASH; caller passes authCrypto.hashToken(presentedToken). Returns row incl. expiresAtMs
+// + revokedAt so the chokepoint applies freshness (instant compare) + revocation (presence) itself.
 resolveGrantByTokenHash(tokenHash: string): Promise<{ grantId, principal, resource, scope, expiresAtMs: number|null, revokedAt: string|null } | null>
-revokeGrant(grantId: string): Promise<void>            // sets revoked_at = now ISO-Z
+revokeGrant(grantId: string): Promise<void>            // capability/single-grant revoke; sets revokedAt = now
+// PIN-ID-5 device revocation. Batch: (a) UPDATE devices SET revokedAt=now WHERE keyId=? (blocks future
+// mints via getDevice revoked-check) AND (b) UPDATE grants SET revokedAt=now WHERE mintedByKeyId=? AND
+// revokedAt IS NULL (immediate deny on that device's outstanding tokens — resolvePrincipal row-resolves
+// every request). F1 honest-limit: re-enroll re-mints under a NEW keyId (revoke != cryptographic lockout).
+revokeByKeyId(keyId: string): Promise<void>
 
-sweepExpiredChallenges(serverNowMs: number): Promise<void>   // DELETE WHERE expires_at_ms < serverNowMs
+sweepExpiredChallenges(serverNowMs: number): Promise<void>   // DELETE WHERE expiresAtMs < serverNowMs
 ```
 Invariants devSys2 holds: (a) `consumeChallenge` is the atomic CAS above — single-use+freshness live
 entirely in that one statement; (b) `mintGrant`/`resolveGrant` touch `token_hash` only, never a raw
@@ -153,12 +165,17 @@ Routes parse with my `requests.ts` Zod schema (which enforces R3-4: strict base6
    `requestedScope`. Verify against the SERVER-RESOLVED pubkey. Fail → 401.
 4. F5 clamp: `granted = authCrypto.clampScope(requestedScope, entitlementFor(d))` — never verbatim.
 5. `token = authCrypto.randomToken(32)`; `authStore.mintGrant({ grantId, tokenHash:
-   authCrypto.hashToken(token), principal:{kind:'owner', id: d.accountFingerprint}, resource, scope:
-   granted, expiresAtMs, createdAt })`. Return `{ token, expiresAt }` (raw token returned ONCE).
+   authCrypto.hashToken(token), principal:{kind:'owner', id: d.accountFingerprint}, mintedByKeyId:
+   keyId, resource, scope: granted, expiresAtMs, createdAt })`. Return `{ token, expiresAt }` (raw
+   token returned ONCE). `mintedByKeyId` is what later lets `revokeByKeyId` find this device's tokens.
 
-### POST /api/auth/devices — list / revoke
-- `GET` → `authStore.listDevices(caller's accountFingerprint)`.
-- `revoke` ∈ F9 SENSITIVE set ⇒ requires a fresh **step-up** (below) → `authStore.revokeGrant(...)`.
+### GET /api/auth/devices, POST /api/auth/devices/:keyId/revoke — list / revoke
+- `GET /api/auth/devices` → `authStore.listDevices(caller's accountFingerprint)`.
+- `POST /api/auth/devices/:keyId/revoke` ∈ F9 SENSITIVE set ⇒ requires a fresh **step-up** bound for
+  v1 to `op='delete'`, `resource={kind:'workspace'}` (an account-level destructive op; the `:keyId`
+  path param selects the target device). On success → `authStore.revokeByKeyId(keyId)` (sets
+  `devices.revokedAt` + revokes that device's outstanding grants). *Follow-up (tracked, not v1): a
+  tighter per-device resource binding once the resource model carries a device kind.*
 
 ### Step-up verification (F9) — SEAM
 - **gruntSys2 (client):** builds `StepUpRequest { challengeId, keyId, op, resource, signature }`.
