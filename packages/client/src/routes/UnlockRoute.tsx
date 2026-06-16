@@ -9,8 +9,8 @@
  * public-key fingerprint and returns a fresh keyId tied to the same accountId (devSys validated).
  * This avoids the "not registered" dead-end without persisting the bearer token (F7 upheld).
  *
- * Security disclosure: shown for ALL devices after enrollment status is known (secSys universal
- * D5 condition). PRF and no-PRF variants differ in the text but both are shown.
+ * No security disclosure here — the pilot ruling is: disclosure only at credential-establishment
+ * (enroll / recovery / QR-join), never on the day-to-day launch/unlock path.
  *
  * PIN-ID-9: the "Unlock" button calls unlock() synchronously (no preceding await) so that
  * WebAuthn get() is the first await within the gesture's transient activation window.
@@ -18,12 +18,11 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore, detectDeviceLabel } from '../auth/store.js';
-import { Disclosure } from '../components/Disclosure.js';
 
 type Step = 'idle' | 'unlocking' | 'minting' | 'error';
 
 export function UnlockRoute() {
-  const { unlock, mintSession, register, usesPrf, keyId } = useAuthStore();
+  const { unlock, mintSession, register, keyId } = useAuthStore();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>('idle');
   const [errorMsg, setErrorMsg] = useState('');
@@ -84,9 +83,6 @@ export function UnlockRoute() {
       <div className="auth__logo">δ</div>
       <h1 className="auth__title">Welcome back</h1>
       <p className="auth__subtitle">Use your passkey to unlock deltos.</p>
-
-      {/* Security disclosure — shown for all devices once enrollment status is known (secSys universal D5 condition) */}
-      {usesPrf !== null && <Disclosure prf={usesPrf} />}
 
       <button
         className="auth__btn auth__btn--primary"

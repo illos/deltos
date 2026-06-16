@@ -153,8 +153,8 @@ export function EnrollRoute() {
           Write them down in order and keep them safe — deltos cannot recover them for you.
         </p>
 
-        {/* Security disclosure — UNIVERSAL (secSys condition): shown for all enrollment paths */}
-        <Disclosure prf={step.usesPrf} />
+        {/* Security disclosure — establishment point (planSys ruling): enroll only, never launch path */}
+        <Disclosure />
 
         <div className="auth__phrase" aria-label="Recovery phrase">
           {words.map((word, i) => (

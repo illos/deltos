@@ -721,3 +721,34 @@ a.auth__link { display: inline; }
   color: var(--muted);
   font-weight: 400;
 }
+
+/* ── Migration notice ───────────────────────────────────────────────── */
+
+.migration-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  box-sizing: border-box;
+  padding: 0.9rem 1.1rem;
+  background: rgba(78, 125, 255, 0.08);
+  border: 1px solid rgba(78, 125, 255, 0.3);
+  border-radius: 0.5rem;
+}
+
+.migration-notice__body {
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.migration-notice__dismiss {
+  align-self: flex-end;
+  background: none;
+  border: 1px solid var(--edge, rgba(255,255,255,0.15));
+  border-radius: 0.375rem;
+  color: inherit;
+  font-size: 0.875rem;
+  padding: 0.35rem 0.85rem;
+  cursor: pointer;
+  touch-action: manipulation;
+}
