@@ -5,6 +5,16 @@ import type { AppContext } from './context.js';
 
 export type { AppContext };
 
+/**
+ * The closed, exact-match allowlist of environments in which the dev-only `unverified` principal is
+ * tolerated (F13). Membership is the ONLY way the stub is honored — anything else (production, an
+ * unset var, a typo like `prod`, a near-match like `development-2`) DENIES. The tripwire is therefore
+ * fail-CLOSED: a misconfigured or unset deploy REFUSES rather than serving the allow-all stub on real
+ * data. Inverting the P0 `=== 'production'` check (which fail-OPENed on any non-prod string) closes
+ * the bypass where an unset/typo'd ENVIRONMENT silently honored an unverified principal.
+ */
+export const NON_PROD_ENVIRONMENTS: ReadonlySet<string> = new Set(['development', 'test', 'local']);
+
 /** One error envelope for the whole API, so every client decodes failures the same way. */
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: unknown };
@@ -68,15 +78,19 @@ export function guard<TReq>(cfg: GuardConfig<TReq>, deps: GuardDeps = {}) {
       );
     }
     const principal = resolve(c);
-    // Mechanical tripwire: the Phase-0 stub yields an `unverified` principal. In production that
-    // must NEVER be honored — refuse before authorization or any handler runs, so the allow-all
-    // stub cannot silently serve real traffic once Phase-1 handlers replace these stubs.
-    if (principal.verification.method === 'unverified' && c.env.ENVIRONMENT === 'production') {
+    // Mechanical tripwire (F13, fail-CLOSED): the dev-only `unverified` principal is honored ONLY in
+    // an explicitly-named non-prod environment. Anything else — production, an UNSET var, a typo, a
+    // near-match — refuses before authorization or any handler runs, so the allow-all stub can never
+    // silently serve real traffic (including on a misconfigured deploy).
+    if (
+      principal.verification.method === 'unverified' &&
+      !NON_PROD_ENVIRONMENTS.has(c.env.ENVIRONMENT ?? '')
+    ) {
       return apiError(
         c,
         503,
         'auth_not_configured',
-        'refusing an unverified principal in production',
+        'refusing an unverified principal outside an explicit non-prod environment',
       );
     }
     const resource = cfg.resource(parsed.data);

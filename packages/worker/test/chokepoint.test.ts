@@ -12,7 +12,10 @@ import type { Env } from '../src/env.js';
  */
 
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const devEnv = { DB: {} } as unknown as Env;
+// `development` is an explicit allowlist member (F13), so the unverified stub passes the
+// fail-closed tripwire and these ordering tests exercise validate→authorize→handle. An UNSET
+// ENVIRONMENT now DENIES (fail-closed) — the F13 allowlist matrix is covered in auth.acceptance.test.ts.
+const devEnv = { DB: {}, ENVIRONMENT: 'development' } as unknown as Env;
 const prodEnv = { DB: {}, ENVIRONMENT: 'production' } as unknown as Env;
 
 /** A one-route app guarding `note.get`, with injectable auth deps and a spy handler. */
