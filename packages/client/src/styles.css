@@ -25,19 +25,6 @@
   text-decoration: none;
 }
 
-.shell__net {
-  margin-left: auto;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  border: 1px solid var(--edge);
-  color: var(--muted);
-}
-
-.shell__net--online  { color: #6ee7a8; border-color: #1f3b2c; }
-.shell__net--offline { color: #f0b86e; border-color: #3b321f; }
 
 .shell__main {
   flex: 1;
