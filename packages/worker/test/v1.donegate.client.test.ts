@@ -229,4 +229,79 @@ describe('DG-3a — authenticated sync round-trip (client engine ↔ worker)', (
     expect(server!.title).toBe(note.title);
     expect(server!.body).toEqual(note.body); // byte-identical round-trip of the block body
   });
+
+  it('DG-3d: every sync request the engine issues carries Authorization: Bearer <token>', async () => {
+    const { token } = await dgEnroll(env, 12);
+    useAuthStore.setState({ bearerToken: token });
+    await mutateNotes.put(clientNote('00000000-0000-4000-d000-00000000a002', 'Auth header note'));
+    syncNow(DG_NB, '/api');
+    await settle();
+
+    const syncReqs = bridgeLog.filter((r) => r.path.startsWith('/api/sync/'));
+    expect(syncReqs.length).toBeGreaterThan(0);
+    for (const r of syncReqs) expect(r.auth).toBe(`Bearer ${token}`); // push AND pull authenticated
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DG-2c — offline create→edit reconciliation through the engine: each push accepted, version
+// bumps monotonically, pull returns the final state. [PIN-SYNC-1]
+// ---------------------------------------------------------------------------
+
+describe('DG-2c — offline create/edit reconciliation (client engine)', () => {
+  it('a create then an edit each push accepted with version increments; final state is the edit', async () => {
+    const { token } = await dgEnroll(env, 13);
+    useAuthStore.setState({ bearerToken: token });
+    const id = '00000000-0000-4000-d000-00000000a003';
+
+    await mutateNotes.put(clientNote(id, 'v1 title'));
+    syncNow(DG_NB, '/api');
+    await settle();
+    const after1 = await clientDb.notes.get(id);
+    expect(after1?.version).toBe(1); // create accepted at v1
+
+    // Offline edit on top of the confirmed version → queues at baseVersion=1.
+    await mutateNotes.put({ ...(after1 as Note), title: 'v2 title' });
+    syncNow(DG_NB, '/api');
+    await settle();
+    const after2 = await clientDb.notes.get(id);
+    expect(after2?.version).toBe(2); // edit accepted via CAS → v2
+    expect(after2?.syncStatus).toBe('synced');
+    expect(after2?.title).toBe('v2 title');
+
+    // Server pull reflects the final edit.
+    const res = await app.request(`/api/sync/pull?notebookId=${DG_NB}&cursor=0`, { headers: { Authorization: `Bearer ${token}` } }, env);
+    const { notes } = (await res.json()) as { notes: Array<{ id: string; title: string }> };
+    expect(notes.find((n) => n.id === id)?.title).toBe('v2 title');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DG-5c-echo — cross-account isolation at the CLIENT engine: account B's pull never returns
+// account A's notes. (Server-authoritative isolation is isolation.acceptance.test.ts 10/10; this is
+// the engine-level echo, not a replacement.) [D6 accountId]
+// ---------------------------------------------------------------------------
+
+describe('DG-5c-echo — cross-account isolation (client engine pull)', () => {
+  it("account B's engine pull does not surface account A's synced note", async () => {
+    // A creates + syncs a note.
+    const a = await dgEnroll(env, 14);
+    useAuthStore.setState({ bearerToken: a.token });
+    const aNote = '00000000-0000-4000-d000-00000000a004';
+    await mutateNotes.put(clientNote(aNote, "A's private note"));
+    syncNow(DG_NB, '/api');
+    await settle();
+
+    // B (a distinct account) starts fresh and pulls the SAME notebookId via the engine.
+    const b = await dgEnroll(env, 15);
+    await Promise.all([clientDb.notes.clear(), clientDb.syncQueue.clear()]);
+    global.localStorage.removeItem(`deltos.sync.cursor.v1.${DG_NB}`); // fresh cursor for B
+    useAuthStore.setState({ bearerToken: b.token });
+    syncNow(DG_NB, '/api');
+    await settle();
+
+    // B's local store never received A's note (server scoped the pull by B's accountId).
+    expect(await clientDb.notes.get(aNote)).toBeUndefined();
+    expect(await clientDb.notes.count()).toBe(0);
+  });
 });
