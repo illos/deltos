@@ -191,8 +191,12 @@ Routes parse with my `requests.ts` Zod schema (which enforces R3-4: strict base6
 (devSys) own and hand scopeSys as a small enum + helper so routes stay declarative.
 
 ## Endpoint/authStore-layer notes (banked from secSys; not in the 2 schema files)
-- **Audience = ONE canonical server constant** (`authCrypto` config), never request-supplied, never a
-  multi-valued accept-set (a set reopens cross-deployment replay F8 closes).
+- **Audience = ONE canonical server constant** = the **deployment HOSTNAME** (= WebAuthn RP ID =
+  client `location.hostname`, bare — no scheme, no port). Held server-side as `env.AUTH_AUDIENCE`,
+  configured per-deployment to that hostname; the server uses THIS when reconstructing the canonical
+  TLV, **never the request Host header** and never a multi-valued accept-set (a set reopens the
+  cross-deployment replay F8 closes). Client (gruntSys2) uses `location.hostname` in both the WebAuthn
+  `rpId` and the step-up `audience`, so the two match byte-for-byte (PROP-4). Confirmed aligned.
 - **No replay-dedup on signature bytes** — Ed25519 is malleable; single-use is the `challengeId`
   consume (R3-1). Use `@noble/ed25519` strict verify (rejects non-canonical S / small-order points).
 - **resolvePrincipal must copy ONLY verified facts onto the principal** — never `signature`, `nonce`,
