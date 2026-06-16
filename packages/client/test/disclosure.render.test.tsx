@@ -215,6 +215,7 @@ describe('P1-10 — MigrationNotice renders planSys-approved copy on migration u
     const body = container.querySelector('.migration-notice__body');
     expect(body?.textContent).toMatch(/how your notes are protected on this device/i);
     expect(body?.textContent).toMatch(/device.s lock screen/i);
+    expect(body?.textContent).toMatch(/or copy its storage, could read your notes/i);
     expect(body?.textContent).toMatch(/Your notes and recovery phrase are unchanged/i);
   });
 });
