@@ -8,6 +8,13 @@ It pairs 1:1 with the 8-step **Tier B `[CLI-device]` runbook** in
 here. **The gate closes only when every step is PASS** (and Tier-A `[CLI-auto]` is green in CI, and
 [SRV] is 5/5 — both already true at scaffold time).
 
+> **⚠ GATE-FIDELITY PREAMBLE (canon — planSys):** the RECORDED capstone MUST run against a
+> **PROD-REPRESENTATIVE build** — a prod-mode worker (`ENVIRONMENT=production`, F13 **ACTIVE**, **NO**
+> unverified `LOCAL_OWNER` fallback) + a prod client build, with **all 8 steps on ONE coherent
+> build**. A **dev build FALSE-PASSES** the auth / F13-gating / QR-join-blocked legs (permissive auth)
+> and **MUST NOT** be used for the recorded run. The refreshed **dev** build is ONLY for the early,
+> **non-recorded** iOS-WebAuthn-UX smoke — never for the gate record.
+
 > How to use: duplicate the "Run" block below per attempt (re-runs after a fix get a fresh block so
 > the history is preserved, not overwritten). Mark each step **PASS / FAIL / BLOCKED / N-A**. A FAIL
 > on any step fails the capstone — note the failure, route the fix, re-run with a new build SHA.
@@ -18,7 +25,8 @@ here. **The gate closes only when every step is PASS** (and Tier-A `[CLI-auto]` 
 
 | Field | Value |
 |-------|-------|
-| Build SHA under test | `b98bf3d` _(or the refreshed build — record the actual `git rev-parse --short HEAD` at run time)_ |
+| Build SHA under test | _record the actual `git rev-parse --short HEAD` of the ONE coherent build_ |
+| Build mode (MUST be prod-representative) | _prod-mode worker: `ENVIRONMENT=production`, F13 ACTIVE, no `LOCAL_OWNER` fallback + prod client build — confirm before recording_ |
 | Run date | _YYYY-MM-DD_ |
 | Tester | _(name)_ |
 | Device model | _(e.g. iPhone 15 Pro)_ |

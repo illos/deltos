@@ -184,6 +184,12 @@ pass/fail + build SHA + device/iOS version per step in the **gate-record capture
 (`v1-dg-cap-gate-record.md`, scopeSys scaffold — one fillable block per attempt). This run **is** the
 DG-CAP capstone.
 
+> **Gate fidelity (canon — planSys):** the RECORDED capstone MUST run against a **prod-representative
+> build** — prod-mode worker (`ENVIRONMENT=production`, F13 ACTIVE, no unverified `LOCAL_OWNER`
+> fallback) + prod client build, all 8 steps on ONE coherent build. A dev build **false-passes** the
+> auth / F13-gating / QR-join-blocked legs (permissive auth) and must NOT be used for the record. The
+> refreshed **dev** build is ONLY for the early, non-recorded iOS-WebAuthn-UX smoke.
+
 1. **Install / A2HS** — open the Tailscale HTTPS URL in Safari → Add to Home Screen → launch
    standalone; the service-worker shell loads. *(install criterion)*
 2. **Enroll** — fresh-account intent → signing key registered in the Secure Enclave; the 24-word
