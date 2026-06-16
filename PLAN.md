@@ -81,6 +81,12 @@ surface (not dated). Tracked in `[[keystore-noprf-ui-disclosure]]`. **Seam COMPL
 (`getEnrollmentPrfStatus()`, `47f018b`); the **render is now IN PROGRESS** as a hard acceptance
 criterion of gruntSys2's enroll/unlock/recovery UI surface (closes condition (i) when it ships).
 
+**Acceptance condition (security-clearance, OPEN):** the **session token stays in-memory-only (F7).**
+secSys's v1 30-day session-TTL clearance holds ONLY if the client never persists the session/grant
+token at rest (no Dexie table, no localStorage, no cold-start cache). Hard acceptance criterion of
+devSys2's client-storage chunk; persisting it voids the TTL clearance (then shorten TTL / wrap at
+rest). Tracked in `[[session-token-in-memory-only]]`.
+
 ## Later (framed, not yet specced)
 - **Phase 2** — second surface (proves decoupling) + notebooks + universal search + plugin
   manifest/contribution-registry MVP (one real plugin). Also carries (all from the 2026-06-15
@@ -281,6 +287,16 @@ criterion of gruntSys2's enroll/unlock/recovery UI surface (closes condition (i)
   per-device key (always-populate, not null-as-sentinel) ⇒ no legitimate null state; NOT NULL encodes
   the true auth-table integrity invariant and avoids null-coalesce logic; free to set now (Phase-1, no
   data). Reopener only on a concrete Phase-2 null-sentinel need.
+- 2026-06-16 — **Stream A CF-1..CF-5 sign-off VERIFIED; one BOLA blocker → done-gate RED→green.**
+  secSys verified all CF gates (PROP-3 server-resolved pubkey, R3-2 server-keyId single-sourced, F8
+  audience-not-Host, F2 no-client-fingerprint, CF-5 chokepoint) BUT caught a **BOLA cross-account
+  device-revocation hole** (revoke never checked target device belongs to the authenticating account →
+  cross-tenant DoS; the 169-green suite missed it because every test was single-account). Fix = 404
+  ownership guard + test (scopeSys) → secSys re-verify → done-gate-green. **Planner propagation:**
+  root cause (single-account-blind tests) isn't unique to revoke — ordered a sweep of ALL object-id
+  routes for account-ownership, and made **cross-tenant negative tests a STANDING bar** (gruntSys
+  harness + scopeSys's Stream-D acceptance-gate checklist must include account-B-can't-touch-account-A
+  → 404). **New acceptance condition tracked:** session token in-memory-only (see done-gate above).
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
