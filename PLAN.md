@@ -26,10 +26,13 @@ Android, for full surface control + sideload freedom — the own-your-software v
   (ProseMirror, title unified into the document, iOS-Safari functional gate passed); server (Worker +
   Hono + D1). P0 done + on remote.
 - **Now building:** **Stream A — identity** (passkey/recovery/QR signed-challenge auth — server
-  endpoints + client unlock, on the frozen contract) — **auth CORE COMPLETE 2026-06-16**: chokepoint
-  landed (real `resolvePrincipal` + `can()` enforcement, 150/150 worker green); green end-to-end auth
-  path imminent (pending scopeSys CF-gated handlers + secSys CF-1..5 sign-off). Then client
-  storage/persistence (IndexedDB + pluggable store seam) + Stream-D sync-auth integration.
+  endpoints + client unlock, on the frozen contract) — **v1 SERVER SLICE PROVEN 2026-06-16:** the full
+  journey is green in tests — enroll → create note → authenticated sync → 2nd-device recover (same seed →
+  same `accountId`) → note present + content-match (v1 done-gate **14/14**; worker suite **231**;
+  cross-account isolation **11/11** incl §J false-green closed). Identity + cross-account + sync-auth all
+  landed/audited. **Remaining to a USABLE v1:** the CLIENT/device half (client rebind to `accountId`,
+  real-PWA enroll/offline/sync) + the **iPhone dogfood** (the user-only unknown) + small in-flight
+  re-verifies (§J / `UNIQUE(accountId)` / accountId-exposure).
 - **Constraints in force:** PIN-SYNC-1 atomic-CAS, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations
   (global-by-id), PIN-STORAGE-1 (SW never runtime-caches `/api` into shared Cache), S3 one-clip-per-
   notebook + PIN-ID PRF floor — see `docs/specs/phase-1-constraints.md`.
@@ -388,6 +391,14 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   removes; the user's whole reason). Server returns accountId in the session/identity response (non-secret,
   §4); client uses it for LOCAL tagging only — server stays authoritative (stamps from
   `principal.accountId`, never client-trusted, §5.3/F2). Consistency of secSys invariant-(i) across layers.
+- 2026-06-16 — **✅ v1 SERVER DONE-GATE GREEN (step-3 signal MET, server slice).** `v1.donegate.test.ts`
+  **14/14** — full journey proven: enroll → create → authenticated sync → 2nd-device recover (same seed →
+  SAME accountId) → note present + content-match (DGT-1 round-trip / DGT-2 same-key re-enroll reuses
+  accountId / DGT-3 offline reconcile / DGT-4 F13 prod-gating / DGT-5 capstone). Worker suite **231/0**;
+  cross-account isolation **11/11** incl §J false-green closed. **Integrity note:** DGT-2 green = the
+  FOUNDATION's accountId re-point holding (shipped `d9d6803`), not a late patch — devSys ground-truthed it;
+  gruntSys confirms the DGT-2 assertion is STRICT, secSys spot-confirms the harness exercises the real path
+  (anti-false-green). **Remaining v1 = the client/device half + the iPhone dogfood + the re-verifies.**
 - 2026-06-16 — **Capacity ruling: devSys2 → client storage next, then Stream D (gated).** devSys2
   delivered its Stream-A lane (migration 0002 + authStore, secSys STRONG PASS). Ruled: after its short
   tail, release to **client storage** (reactive query + persistence layer over IndexedDB, the
