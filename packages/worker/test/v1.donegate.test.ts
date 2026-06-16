@@ -285,6 +285,13 @@ describe("DGT-2 — 2nd-device recovery: same signing key → same accountId →
       .all() as Array<{ principalId: string }>;
     expect(rows).toHaveLength(2);
     expect(rows[0]!.principalId).toBe(rows[1]!.principalId);
+    // THE invariant DGT-2 exists to prove: 2 devices, 1 signing key → EXACTLY ONE account.
+    // Bind-once (accountCredentials PK) + resolveAccountIdByFingerprint reuse path enforce it;
+    // this assertion proves it directly rather than by implication from same-principalId alone.
+    const accountCount = raw
+      .prepare('SELECT COUNT(*) as n FROM accounts')
+      .get() as { n: number };
+    expect(accountCount.n).toBe(1);
   });
 
   it("device B (same key) can pull notes created and synced by device A", async () => {
