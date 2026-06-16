@@ -45,7 +45,7 @@ fix, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations, PIN-STORAGE/SUBSTRATE p
 |--------|-------|-------|--------|
 | A | Identity (passkey/recovery/QR, signed-challenge auth) | devSys (opus, re-tasked fresh post-clear) | auth union + `can()` **LOCKED** (`1cfaf3e`); bulk backend build |
 | B | Substrate + sync (atomic-CAS conflict engine) | **devSys2 (opus, online)** — gruntSys on a non-correctness peripheral meanwhile | 🔔 trip-wire fired → opus; server CAS endorsed-correct; fixing client queue-drain race + false test |
-| C | Capture surface + editor (ProseMirror) | gruntSys2 (sonnet) | built + golden-path local; **iOS on-device gate pending** (user dogfood) + findings-fixes |
+| C | Capture surface + editor (ProseMirror) | gruntSys2 (sonnet) | iOS functional gate **PASSED** (user dogfood: IME/paste/nested-selection OK); 1 cosmetic fix pending (body center→left-align) |
 | D | Integration / e2e | pilot | pending A+B+C |
 
 **Done-gate:** install PWA → unlock w/ passkey → create/edit offline → sync; recover/QR-join 2nd
@@ -187,3 +187,7 @@ promote to devSys/opus if first audit finds a CAS/single-flight/race defect.
 - 2026-06-16 — **devSys2 online** (opus) — Stream-B sync-correctness owner. Roster now pilot + 5:
   devSys (Stream A), devSys2 (Stream B), gruntSys (peripheral/handoff), gruntSys2 (Stream C),
   secSys (audit). See [[team-and-process]].
+- 2026-06-16 — **iOS dogfood (user, real iPhone) — Stream-C functional gate PASSED.** IME/autocorrect,
+  external-clipboard paste, nested-block selection all work on-device (the only-surfaces-on-device
+  risk set). One cosmetic bug → gruntSys2: note **body is center-aligned, should be left**. Not
+  blocking; quick CSS fix → then Stream-C iOS gate fully green.
