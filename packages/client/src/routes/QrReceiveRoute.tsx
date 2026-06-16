@@ -27,7 +27,7 @@ type Step =
   | { tag: 'error'; msg: string };
 
 export function QrReceiveRoute() {
-  const { enrollExisting, register, mintSession } = useAuthStore();
+  const { enrollExisting, register, mintSession, finalizeEnroll } = useAuthStore();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>({ tag: 'entry' });
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -65,6 +65,7 @@ export function QrReceiveRoute() {
         return mintSession();
       })
       .then(() => {
+        finalizeEnroll();
         navigate('/', { replace: true });
       })
       .catch((e: Error) => {

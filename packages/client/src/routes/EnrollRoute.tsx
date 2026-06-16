@@ -54,7 +54,7 @@ function usernameHintMessage(reason: UsernameRejectReason): string {
 }
 
 export function EnrollRoute() {
-  const { enroll, register, mintSession, claimUsername } = useAuthStore();
+  const { enroll, register, mintSession, claimUsername, finalizeEnroll } = useAuthStore();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>({ tag: 'welcome' });
   const [phraseSaved, setPhraseSaved] = useState(false);
@@ -104,6 +104,7 @@ export function EnrollRoute() {
     claimUsername(username)
       .then(result => {
         if (result.ok || result.code === 'account-has-username') {
+          finalizeEnroll();
           navigate('/', { replace: true });
         } else if (result.code === 'name-taken') {
           setClaiming(false);
@@ -250,7 +251,7 @@ export function EnrollRoute() {
 
         <button
           className="auth__link"
-          onClick={() => navigate('/', { replace: true })}
+          onClick={() => { finalizeEnroll(); navigate('/', { replace: true }); }}
         >
           Skip for now
         </button>

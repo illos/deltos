@@ -24,7 +24,7 @@ type Step =
   | { tag: 'error'; msg: string };
 
 export function RecoverRoute() {
-  const { enrollExisting, register, mintSession } = useAuthStore();
+  const { enrollExisting, register, mintSession, finalizeEnroll } = useAuthStore();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>({ tag: 'entry' });
   const mnemonicRef = useRef<HTMLTextAreaElement>(null);
@@ -52,6 +52,7 @@ export function RecoverRoute() {
         return mintSession();
       })
       .then(() => {
+        finalizeEnroll();
         navigate('/', { replace: true });
       })
       .catch((e: Error) => {
