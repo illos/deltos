@@ -43,16 +43,16 @@ duplicated in the donegate harness.
 | Scenario | Covers | Status (per pilot, 2026-06-16) |
 |----------|--------|--------------------------------|
 | **DGT-1** — authenticated sync round-trip | DG-1a (enroll) + DG-3a | 🟢 GREEN |
-| **DGT-2** — same-key 2nd-device recovery | DG-4a | 🔴 RED — devSys fixing |
+| **DGT-2** — same-key 2nd-device recovery | DG-4a | 🟢 GREEN — foundation already had same-key reuse; devSys ground-truthed |
 | **DGT-3** — CAS / offline reconcile | DG-2c | 🟢 GREEN |
 | **DGT-4** — F13 prod auth gating | DG-3b + DG-3c | 🟢 GREEN |
-| **DGT-5** — note-present capstone (server slice) | DG-CAP [SRV] half | 🔴 RED — auto-greens with DGT-2 |
+| **DGT-5** — note-present capstone (server slice) | DG-CAP [SRV] half | 🟢 GREEN |
 | _(referenced)_ conflict fork | DG-5a / DG-5b → `conflict.test.ts` (4/4) | 🟢 |
 | _(referenced)_ cross-account isolation | DG-5c → `isolation.acceptance.test.ts` (10/10) | 🟢 |
 | _(referenced)_ revoke BOLA | DG-4c → revoke BOLA test (9fee9f8) | 🟢 |
 
-[SRV] gate state: **3/5 donegate scenarios green**; DGT-2 (and therefore DGT-5) close when devSys
-lands the same-key 2nd-device recovery fix.
+[SRV] gate state: **5/5 donegate scenarios green** (all DGT-1..DGT-5 + the three referenced suites).
+The [SRV] half of the done-gate is CLOSED; what remains for v1 done is the [CLI] half (Tier A + B).
 
 ---
 
@@ -154,13 +154,50 @@ pass on the **iPhone dogfood that planSys coordinates**, and they constitute the
 A `[CLI-device]` checklist is a numbered runbook (one tap-path per row) executed once and recorded
 (pass/fail + build SHA + device/iOS version) in the gate record.
 
-### Owners
+### Owners (RESOLVED — pilot, 2026-06-16)
 
-- **Tier A `[CLI-auto]`** — owner: the **client lane** (pilot to confirm the session). It is the
-  client-side sibling of `v1.donegate.test.ts` and must be green in CI before the gate closes.
+- **Tier A `[CLI-auto]`** — owner: **devSys2** (coordinating with gruntSys2 for enroll/storage). It is
+  the client-side sibling of `v1.donegate.test.ts` and must be green in CI before the gate closes.
+  Covers DG-1b / 2b / 2d / 3d / 3e.
+  - **Host package (scopeSys ruling):** the **worker** test package, with `@deltos/client` added as a
+    test-only devDep + `fake-indexeddb`. Safe — `client` and `worker` both depend only on
+    `@deltos/shared`, neither on the other, so the worker→client devDep is no prod cycle; and it
+    co-locates the automatable [CLI] suite with `v1.donegate.test.ts` (one harness, one package).
+  - **The sync subset** (DG-3a round-trip / DG-3d auth header + token-never-persisted / DG-2c offline
+    reconcile / DG-5c client-side isolation echo) is proven by driving the **real** client
+    `syncEngine` against the **real** worker Hono app via a `global.fetch → app.request` bridge over
+    better-sqlite3 + migrations 0000-0003, bearer from a real enroll (`dgRegister`+`dgSession`).
+    `fake-indexeddb` proves the queue/store/restore **logic** only — true persistence-across-reload
+    is Tier B. The DG-5c client echo does **not** replace the canonical `isolation.acceptance.test.ts`
+    (10/10), which stays server-authoritative.
+  - **pnpm-lock:** devSys2 runs the single `pnpm install`, announces it on coord first (shared tree),
+    and commits `packages/worker/package.json` + `pnpm-lock.yaml` by explicit path.
 - **Tier B `[CLI-device]` + DG-CAP capstone** — owner: **planSys's iPhone dogfood** (the one
-  end-to-end on-device run). scopeSys supplies the runbook; the run is executed once at gate time and
-  its result recorded. Until both tiers pass, [CLI] criteria are gated as **not yet proven**.
+  end-to-end on-device run, scheduled with the user). scopeSys supplies the numbered runbook (below);
+  the run is executed once at gate time and its result recorded. Until both tiers pass, [CLI]
+  criteria are gated as **not yet proven**.
+
+### Tier B `[CLI-device]` runbook (for planSys's iPhone dogfood)
+
+One scripted pass on a real installed PWA over Tailscale HTTPS (hostname RP ID per PIN-ID-9). Record
+pass/fail + build SHA + device/iOS version per step. This run **is** the DG-CAP capstone.
+
+1. **Install / A2HS** — open the Tailscale HTTPS URL in Safari → Add to Home Screen → launch
+   standalone; the service-worker shell loads. *(install criterion)*
+2. **Enroll** — fresh-account intent → signing key registered in the Secure Enclave; the 24-word
+   recovery phrase is shown **once** behind that intent. *(DG-1d)*
+3. **Unlock** — lock, reopen → passkey/PIN unlock via WebAuthn UV (FaceID); the Identity blob
+   decrypts; the honest no-PRF disclosure is shown (or PRF used on iOS-18). *(DG-1c, [[keystore-noprf-ui-disclosure]])*
+4. **Capture** — `/new` → type a note; the first heading becomes the title (single PM doc, no
+   separate title field). *(DG-2a)*
+5. **True offline** — airplane mode → create + edit another note → relaunch the PWA → both notes and
+   their edits survive (real IndexedDB across reload/PWA-reinstall). *(DG-2b on-device half)*
+6. **Reconnect & sync** — leave airplane mode → sync fires on the network transition → the indicator
+   reflects syncing→idle; notes reach the server. *(DG-3e on-device, real network)*
+7. **QR-join a 2nd device** — attempt join; it is **blocked** without the out-of-band confirmation
+   code; the UI states the in-person threat model. *(DG-4b)*
+8. **Recover / capstone** — on the 2nd device, recover via the 24-word phrase → same `accountId` →
+   pull → the note from step 4/5 is **PRESENT and its content matches**. *(DG-CAP)*
 
 ## Coordination
 
