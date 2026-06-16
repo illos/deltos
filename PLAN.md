@@ -16,12 +16,15 @@ guess it was lifted?). See `KICKOFF.md` §Reuse discipline.
 ---
 
 ## ⏯ CURRENT STATE (2026-06-16 — resume here)
-> 🧭 **COURSE-CORRECTION IN PROGRESS (team PAUSED).** Mid-v1-dogfood the user halted to re-anchor to the
-> locked arch: (1) SHELL — render-before-data, auth/sync in background, recovery-phrase ≠ boot gate (proper
-> E4 fix); (2) SYNC — option A conflict-as-version (divergent offline edit kept as a VERSION of the same
-> note, not a sibling fork; revises PIN-SYNC-3/4; full history UI → Phase 3). Reuses the audited Stream-B
-> no-lost-edit core. See the latest **Decision log** entry. Team HELD until planner finalizes the spec
-> (open: reconcile UX) + hands pilot. The dogfood/finish-line state below is PRE-correction context.
+> ✅ **COURSE-CORRECTION COMPLETE (2026-06-16, HEAD 75b58db, fully green + security-cleared).** The
+> user-led re-anchor shipped: (1) SHELL — render-before-data, auth/sync in background, recovery-phrase ≠
+> boot gate (E4 closed properly); (2) SYNC — option A conflict-as-version (divergent offline edit kept as a
+> VERSION of the same note + toast + persistent badge, never a sibling note; revised PIN-SYNC-3/4; full
+> history UI → Phase 3). client 225/225 (conflictVersion 18/18, syncEngine trip-wire 8/8, cadence 0-RED,
+> disclosure 13/13) + worker Tier-A 12/12; both secSys audits PASS. NORTH STAR locked:
+> `[[auth-friction-philosophy]]`. **NEXT: Cloudflare LIVE deploy** (devSys2, single-owner, gated on
+> migrate-vs-real-D1 + env-base + clean SHA) → live URL → the LOAD-SENSITIVE real-device re-dogfood. The
+> dogfood/finish-line detail below is PRE-correction context, now reframed under the shipped shell/sync model.
 
 Design complete; **Phase 1 building.** Delivery vehicle = the **local-first PWA** (desktop + mobile,
 surfaces pinnable as home-screen webclips). Long-term native target is framed in *Later* (native
@@ -550,3 +553,16 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   friction. Validates 1a (`cd61fae`, local-first shell — E4 closed properly) + the conflict-as-version
   direction. Tracked: `[[auth-friction-philosophy]]`. **Part 1a DONE; 1b greenlit; disclosure copy redraft
   (uniform lock-screen-grade) routes to planSys for approval.**
+- 2026-06-16 — **✅ COURSE-CORRECTION COMPLETE + VERIFIED (HEAD 75b58db, tree clean).** Both parts shipped
+  + security-cleared (both secSys audits PASS; devSys2+gruntSys verified in-code, not hearsay): client
+  **225/225** (conflictVersion 18/18, syncEngine trip-wire **8/8 no-lost-edit intact**, cadence CAV-1/2
+  0-RED, disclosure render 13/13) + worker Tier-A **12/12**. Shipped: 1a local-first shell (E4 closed
+  properly), 1b silent background re-auth (Option-A device-local, rewrap-on-next-unlock, honest disclosure
+  at enroll/recovery/QR-join + one-time migration notice), Part-2 conflict-as-version (toast + persistent
+  badge + keep-mine/theirs/both, no sibling-note fork, relations stay valid). Disclosure copy = my
+  synthesis (warm + honest; secSys ship-confirmed). **Post-green chain EXECUTING:** batch-clear the 3
+  parked sessions (devSys/scopeSys/secSys) → hand the **Cloudflare LIVE deploy** to devSys2 (single-owner,
+  gated: migrate-vs-real-D1 + env API base + clean SHA) → live URL → the user's **load-sensitive
+  real-device re-dogfood**. CF deploy pulled FORWARD from post-v1 (user 2026-06-16: live-hardware load
+  testing is first-class for this load-sensitive app; Tailscale can't represent real edge/cellular; DB-safe
+  — code deploys don't touch D1, migrations additive/forward-only, local-first replica survives a reset).
