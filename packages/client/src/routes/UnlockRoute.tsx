@@ -3,21 +3,27 @@
  *
  * Flow: idle → [button click] → unlocking (WebAuthn get) → minting session → navigate to /
  *
- * D5 disclosure: shown when the stored enrollment used the no-PRF device-key fallback.
- * Displayed as a persistent notice (not a gate) — the user unlocked legitimately.
+ * E4 belt: if keyId is absent from localStorage (iOS evicts localStorage more aggressively
+ * than IndexedDB), init() recovers it from IDB. As a true fallback, if keyId is still null
+ * after unlock, we re-register the same signing key — the server resolves the account by
+ * public-key fingerprint and returns a fresh keyId tied to the same accountId (devSys validated).
+ * This avoids the "not registered" dead-end without persisting the bearer token (F7 upheld).
+ *
+ * Security disclosure: shown for ALL devices after enrollment status is known (secSys universal
+ * D5 condition). PRF and no-PRF variants differ in the text but both are shown.
  *
  * PIN-ID-9: the "Unlock" button calls unlock() synchronously (no preceding await) so that
  * WebAuthn get() is the first await within the gesture's transient activation window.
  */
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuthStore } from '../auth/store.js';
+import { useAuthStore, detectDeviceLabel } from '../auth/store.js';
 import { Disclosure } from '../components/Disclosure.js';
 
 type Step = 'idle' | 'unlocking' | 'minting' | 'error';
 
 export function UnlockRoute() {
-  const { unlock, mintSession, usesPrf, keyId } = useAuthStore();
+  const { unlock, mintSession, register, usesPrf, keyId } = useAuthStore();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>('idle');
   const [errorMsg, setErrorMsg] = useState('');
@@ -26,12 +32,18 @@ export function UnlockRoute() {
   const handleUnlock = () => {
     setStep('unlocking');
     unlock()
-      .then((result) => {
+      .then(async (result) => {
         if (result === 'cancelled') {
           setStep('idle');
           return;
         }
         setStep('minting');
+        // E4 belt: keyId may be null if iOS evicted localStorage and init()'s IDB recovery
+        // also came up empty (device was enrolled but never registered, or IDB was cleared).
+        // Re-register the same signing key — server reuses the account → fresh keyId.
+        if (!keyId) {
+          await register(detectDeviceLabel());
+        }
         return mintSession();
       })
       .then(() => {
@@ -73,20 +85,12 @@ export function UnlockRoute() {
       <h1 className="auth__title">Welcome back</h1>
       <p className="auth__subtitle">Use your passkey to unlock deltos.</p>
 
-      {/* D5 disclosure on the unlock screen too — user should see it on every unlock if no PRF */}
-      {usesPrf === false && <Disclosure />}
-
-      {!keyId && (
-        <p className="auth__error">
-          This device hasn't been registered with the server yet.
-          Use your recovery phrase to re-register.
-        </p>
-      )}
+      {/* Security disclosure — shown for all devices once enrollment status is known (secSys universal D5 condition) */}
+      {usesPrf !== null && <Disclosure prf={usesPrf} />}
 
       <button
         className="auth__btn auth__btn--primary"
         onClick={handleUnlock}
-        disabled={!keyId}
       >
         Unlock with Passkey
       </button>

@@ -153,8 +153,8 @@ export function EnrollRoute() {
           Write them down in order and keep them safe — deltos cannot recover them for you.
         </p>
 
-        {/* D5 disclosure — MANDATORY when PRF is unavailable (secSys PIN-ID-6 acceptance condition) */}
-        {!step.usesPrf && <Disclosure />}
+        {/* Security disclosure — UNIVERSAL (secSys condition): shown for all enrollment paths */}
+        <Disclosure prf={step.usesPrf} />
 
         <div className="auth__phrase" aria-label="Recovery phrase">
           {words.map((word, i) => (

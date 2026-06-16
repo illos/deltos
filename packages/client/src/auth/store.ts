@@ -111,7 +111,21 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   async init() {
     try {
       const enrolled = await keyStore.isEnrolled();
-      set({ isEnrolled: enrolled });
+      // Resolve keyId: localStorage fast-read first; fall back to durable IDB on eviction.
+      let keyId = getStoredKeyId();
+      let usesPrf: boolean | null = null;
+      if (enrolled) {
+        const prfStatus = await getEnrollmentPrfStatus();
+        usesPrf = prfStatus?.usesPrf ?? null;
+        if (!keyId) {
+          const idbKeyId = await keyStore.getServerKeyId();
+          if (idbKeyId) {
+            keyId = idbKeyId;
+            storeKeyId(idbKeyId); // mirror back to localStorage for next fast-path read
+          }
+        }
+      }
+      set({ isEnrolled: enrolled, keyId, usesPrf });
     } catch (e) {
       set({ isEnrolled: false, error: String(e) });
     }
@@ -158,7 +172,8 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       throw new Error(msg);
     }
     const { keyId } = (await resp.json()) as { keyId: string; accountFingerprint: string };
-    storeKeyId(keyId);
+    await keyStore.setServerKeyId(keyId); // durable IDB storage (survives iOS localStorage eviction)
+    storeKeyId(keyId);                    // localStorage mirror (fast cold-start read)
     set({ keyId });
   },
 
