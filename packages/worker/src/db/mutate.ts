@@ -65,7 +65,7 @@ export async function insertNote(
 
   // Three-statement batch: bump seq counter → insert note with seq from counter → read back row.
   // All three run in one atomic D1 transaction.
-  const [, insertResult] = await db.batch([
+  const insertBatch = await db.batch([
     { sql: BUMP_SEQ_SQL, params: [entry.notebookId] },
     {
       sql: `
@@ -89,6 +89,7 @@ export async function insertNote(
       ],
     },
   ]);
+  const insertResult = insertBatch[1]!;
 
   if (insertResult.rowsWritten === 0) {
     return { outcome: 'conflict' };
@@ -123,7 +124,7 @@ export async function updateNote(
   serverNow: string,
 ): Promise<UpdateOutcome> {
   // Batch: bump seq → CAS update reading new seq as subquery.
-  const [, updateResult] = await db.batch([
+  const updateBatch = await db.batch([
     { sql: BUMP_SEQ_SQL, params: [entry.notebookId] },
     {
       sql: `
@@ -151,6 +152,7 @@ export async function updateNote(
       ],
     },
   ]);
+  const updateResult = updateBatch[1]!;
 
   if (updateResult.rowsWritten === 1) {
     const row = await db.first<NoteRow>(`SELECT * FROM notes WHERE id = ?`, [entry.id]);
@@ -184,7 +186,7 @@ export async function deleteNote(
   const versionClause =
     expectedVersion !== undefined ? `AND version = ${Number(expectedVersion)}` : '';
 
-  const [, deleteResult] = await db.batch([
+  const deleteBatch = await db.batch([
     { sql: BUMP_SEQ_SQL, params: [notebookId] },
     {
       sql: `
@@ -201,6 +203,7 @@ export async function deleteNote(
       params: [serverNow, serverNow, notebookId, id, notebookId],
     },
   ]);
+  const deleteResult = deleteBatch[1]!;
 
   if (deleteResult.rowsWritten === 1) {
     const row = await db.first<NoteRow>(`SELECT syncSeq FROM notes WHERE id = ?`, [id]);
@@ -246,13 +249,14 @@ export async function patchNote(
   const versionClause = expectedVersion !== undefined ? `AND version = ?` : '';
   const versionParam = expectedVersion !== undefined ? [expectedVersion] : [];
 
-  const [, result] = await db.batch([
+  const patchBatch = await db.batch([
     { sql: BUMP_SEQ_SQL, params: [notebookId] },
     {
       sql: `UPDATE notes SET ${setParts.join(', ')} WHERE id = ? AND notebookId = ? AND deletedAt IS NULL ${versionClause}`,
       params: [...setParams, id, notebookId, ...versionParam],
     },
   ]);
+  const result = patchBatch[1]!;
 
   if (result.rowsWritten === 0) {
     const exists = await db.first<{ id: string }>(
@@ -295,7 +299,7 @@ export async function pullNotes(
 
   const hasMore = rows.length > PULL_PAGE;
   const page = hasMore ? rows.slice(0, PULL_PAGE) : rows;
-  const nextCursor = page.length > 0 ? page[page.length - 1].syncSeq : cursor;
+  const nextCursor = page.length > 0 ? page[page.length - 1]!.syncSeq : cursor;
 
   return { notes: page, hasMore, nextCursor };
 }
