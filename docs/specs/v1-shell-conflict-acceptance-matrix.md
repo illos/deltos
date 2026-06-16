@@ -66,9 +66,15 @@ green AND the [DEV] capstone confirms the shell + conflict UX on a real device.
   pilot-assigned lanes map exactly: lane 1→CAV-3, 2→CAV-4, 3→CAV-5, 4→CAV-6, 5→CAV-7, 6→CAV-9/10/11.
   My matrix adds the rows beyond those six: **CAV-1** (cadence), **CAV-2** (offline buffer/flush),
   **CAV-8** (toast/badge UI), **CAV-12** (trip-wire reference), **CAV-13** (grain invariant).
-- **Part 1 / `P1-*`** — the local-first **shell lane** (devSys2 is wiring render-before-data +
-  background auth + durable keyId; cadence is CAV-1). Test owner to confirm with pilot; the reload /
-  offline / clear-data legs land in the **[DEV] capstone** (planSys's iPhone dogfood).
+- **Part 1 / `P1-*`** — **test owner = devSys** (the shell owner; pilot 2026-06-16). devSys writes the
+  **automatable shell-logic legs TDD as it builds**: the gating logic (first-run vs no-local-key vs
+  enrolled → which UI; P1-6/P1-8), **render-before-data ordering** (P1-1, P1-3), the **F7
+  token-in-memory-only** assertion (P1-9), and the non-blocking-failure / disclosure-placement logic
+  (P1-4, P1-10). The **inherently-manual legs stay [DEV]-tier** in planSys's on-device capstone:
+  **P1-2** (real plain reload), **P1-5** (airplane offline cold start), **P1-7** (clear-browsing-data).
+  Implementer-writes-tests is acceptable here because **independent verification** = this spec-level
+  matrix + **secSys's F7 audit** + the [DEV] capstone. (devSys2 owns the sync core / cadence, not the
+  shell.)
 - **[SRV]** conflict detection — the worker CAS (PIN-SYNC-1, `expectedVersion`) already decides
   fast-forward vs conflict; CAV-3/CAV-4 reference it, no new server mechanism.
 - **Reuse / don't rebuild** (spec): the audited **Stream-B no-lost-edit core** (both sides already
