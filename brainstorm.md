@@ -144,6 +144,10 @@ spine stays frozen.
 - `relation` is a **core** property type (backlinks, graph, Notion-relations, smarter
   transport). `title` defaults to first heading. **No formal note type** — behavior emerges
   from a notebook's plugins + the note's own properties/blocks.
+- **Title is the first heading, NOT a separate field** (2026-06-16 UX): the editing surface is
+  **unified** — the title is the first heading *node in the one document*, never a separate input.
+  This is the "note, not web form" principle: Enter flows title→body, selection spans both. The
+  `title` *metadata* (spine) is **derived** from that first heading. (Realized in Phase-1 Stream C.)
 
 **Polymorphism resolution (2026-06-15 design thread, reaffirmed):** "Is one block editor powerful
 enough for everything — code notes, recipes with custom layout, todo+automation — or do we add

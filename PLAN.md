@@ -191,3 +191,10 @@ promote to devSys/opus if first audit finds a CAS/single-flight/race defect.
   external-clipboard paste, nested-block selection all work on-device (the only-surfaces-on-device
   risk set). One cosmetic bug → gruntSys2: note **body is center-aligned, should be left**. Not
   blocking; quick CSS fix → then Stream-C iOS gate fully green.
+- 2026-06-16 — **Editor UX → design-alignment fix (user).** Title was built as a SEPARATE input
+  (can't Enter title→body, can't select across title+body, "feels like a web form"). Root cause =
+  divergence from locked "title defaults to first heading." Fix routed to gruntSys2: **unify title
+  as the first heading node in the one PM document** (Enter→body + cross-selection fall out; title
+  metadata derives from the first heading; NO frozen-contract change). Load-bearing for the
+  "effortless capture" thesis → do it in Stream C now. Banked in brainstorm §Spine + Phase-1 spec
+  Stream C.

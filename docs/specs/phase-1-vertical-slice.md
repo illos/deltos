@@ -168,7 +168,18 @@ mobile IME composition** (iOS). Size Stream C around these, not the ~12 block ty
 editor on a real iPhone (Tailscale HTTPS) from the first working build, not at the end. IME /
 selection / clipboard bugs surface only on-device.
 
-**Acceptance:** tap the `/new` icon → already typing into a client-UUID note; edits persist
+**Unified note surface — title IS the first heading, NOT a separate field** [user UX, 2026-06-16]:
+the title must be the **first heading/title node inside the single PM document**, never a separate
+`<input>` above it. Realizes the locked "title defaults to first heading" (brainstorm §Spine). This
+is what makes the surface feel like a *note, not a web form* — and it's the **only** way to deliver:
+**Enter from title → body** (one document), and **drag-selection spanning title + body** (one
+contenteditable; you cannot select across two separate DOM inputs). The `title` **metadata** field
+stays (spine needs it) but is **derived from the first-heading text on change** — no frozen-contract
+change, the editor just binds title→first-heading and syncs metadata. Load-bearing for the Phase-1
+"effortless capture" thesis.
+
+**Acceptance:** tap the `/new` icon → already typing into a client-UUID note; **Enter from the title
+moves into the body; a single drag selects across title + body; no separate title input element;** edits persist
 optimistically to the local store and flow into Stream B's queue; reload restores from local;
 serialization round-trips spine ↔ PM doc losslessly for all core block types; **block IDs stay
 unique + stable across copy/paste/split/merge** (explicit test); **selection, clipboard, undo/redo,
