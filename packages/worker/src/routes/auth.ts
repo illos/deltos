@@ -221,7 +221,14 @@ auth.post('/session', async (c) => {
     expiresAtMs,
     createdAt: new Date(nowMs).toISOString(),
   });
-  return c.json({ token, expiresAt: new Date(expiresAtMs).toISOString() }); // raw token leaves the server once
+  // Surface the server-resolved `accountId` (D6) so the client can bind LOCAL notes to the stable,
+  // credential-INDEPENDENT account key — NOT the accountFingerprint (which changes if the auth method
+  // changes). ADDITIVE response field only: the frozen `PrincipalVerification` union is untouched, and
+  // accountId is NON-SECRET (strawman §4 — fine in client localStorage; it is not a bearer). The
+  // guardrail holds: the server still STAMPS + SCOPES every write from this server-resolved accountId,
+  // NEVER a client-supplied value (§5.3 / F2), so echoing it for local tagging is not a cross-account
+  // seam. The raw token leaves the server exactly once (stored only hashed, F6).
+  return c.json({ token, expiresAt: new Date(expiresAtMs).toISOString(), accountId });
 });
 
 // A username reject reason → a stable, user-helpful 400 message. The charset/length hints HELP the

@@ -155,8 +155,8 @@ async function sessionFor(env: Env, kp: ReturnType<typeof keypair>, scope: Scope
   );
   const res = await postJson(env, '/api/auth/session', { challengeId: ch.challengeId, keyId, requestedScope: scope, signature });
   expect(res.status).toBe(200);
-  const { token } = (await res.json()) as { token: string };
-  return { token, keyId };
+  const { token, accountId } = (await res.json()) as { token: string; accountId: string };
+  return { token, keyId, accountId };
 }
 
 const claim = (env: Env, token: string, body: unknown) =>
@@ -165,6 +165,31 @@ const claim = (env: Env, token: string, body: unknown) =>
 const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
 
 // ================================================================================================
+describe('POST /api/auth/session — accountId exposure (D6, additive)', () => {
+  it('returns the server-resolved accountId so the client can bind local notes to the stable key', async () => {
+    const raw = freshDb();
+    const env = makeEnv(raw);
+    const { token, accountId } = await sessionFor(env, keypair(20));
+    expect(typeof accountId).toBe('string');
+    expect(accountId.length).toBeGreaterThan(0);
+    // It is the SAME value the server stamped on the grant (principal.id), NOT the credential fingerprint.
+    const grant = raw.prepare("SELECT principalId FROM grants WHERE principalKind='owner' ORDER BY rowid DESC LIMIT 1").get() as { principalId: string };
+    expect(accountId).toBe(grant.principalId);
+    const device = raw.prepare('SELECT accountFingerprint FROM devices LIMIT 1').get() as { accountFingerprint: string };
+    expect(accountId).not.toBe(device.accountFingerprint); // accountId, never the fingerprint
+    // Non-secret identifier, not the bearer: it is NOT the token.
+    expect(accountId).not.toBe(token);
+  });
+
+  it('the SAME account on a 2nd device (same seed) gets the SAME accountId back (rebind anchor is stable)', async () => {
+    const env = makeEnv(freshDb());
+    const kp = keypair(21);
+    const a = await sessionFor(env, kp); // device 1
+    const b = await sessionFor(env, kp); // device 2 — same signing key (recovery / 2nd device)
+    expect(b.accountId).toBe(a.accountId);
+  });
+});
+
 describe('POST /api/auth/username — authenticated claim (F-acct-4)', () => {
   it('claims a free username → 201, echoing the display form', async () => {
     const env = makeEnv(freshDb());
