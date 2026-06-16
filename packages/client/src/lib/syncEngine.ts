@@ -65,26 +65,30 @@ function setState(s: SyncIndicatorState): void {
 // Single-flight guard (PIN-SYNC-1 client gate)
 // ---------------------------------------------------------------------------
 
-let _syncInFlight = false;
-let _syncPending = false;
+// Single-flight is keyed PER NOTEBOOK: a global gate would let one notebook's in-flight cycle
+// swallow a concurrent trigger for a different notebook (the deferred re-run only knew the
+// in-flight notebook's id), silently dropping the other notebook's edits.
+const _inFlight = new Set<NotebookId>();
+const _pending = new Set<NotebookId>();
 
 /**
- * Trigger a sync cycle. If a sync is already in progress, marks a re-run needed and returns
- * immediately — the in-progress cycle checks this flag on completion and re-runs if set.
- * This collapses N concurrent triggers (1s-debounce + 30s-poll + online-event) into at most
- * one concurrent push, with at most one deferred follow-up.
+ * Trigger a sync cycle for a notebook. If a cycle for THAT notebook is already in progress,
+ * marks a re-run needed and returns immediately — the in-progress cycle checks this on completion
+ * and re-runs if set. This collapses N concurrent triggers for one notebook (1s-debounce +
+ * 30s-poll + online-event) into at most one concurrent push, with at most one deferred follow-up,
+ * while leaving other notebooks free to sync concurrently.
  */
 export function syncNow(notebookId: NotebookId, apiBase = '/api'): void {
-  if (_syncInFlight) {
-    _syncPending = true;
+  if (_inFlight.has(notebookId)) {
+    _pending.add(notebookId);
     return;
   }
   void runSync(notebookId, apiBase);
 }
 
 async function runSync(notebookId: NotebookId, apiBase: string): Promise<void> {
-  _syncInFlight = true;
-  _syncPending = false;
+  _inFlight.add(notebookId);
+  _pending.delete(notebookId);
   try {
     setState('syncing');
     await pushQueued(notebookId, apiBase);
@@ -98,9 +102,9 @@ async function runSync(notebookId: NotebookId, apiBase: string): Promise<void> {
       setState('error');
     }
   } finally {
-    _syncInFlight = false;
-    if (_syncPending) {
-      // A trigger arrived while we were running — honour it with one follow-up cycle.
+    _inFlight.delete(notebookId);
+    if (_pending.has(notebookId)) {
+      // A trigger for THIS notebook arrived while we were running — honour it with one follow-up.
       void runSync(notebookId, apiBase);
     }
   }

@@ -285,6 +285,66 @@ describe('queue drain on accept', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Test 3c: single-flight is per-notebook — another notebook is not dropped
+// ---------------------------------------------------------------------------
+
+describe('per-notebook single-flight', () => {
+  it('a syncNow for a different notebook during an in-flight cycle is not dropped', async () => {
+    // The single-flight guard must key on notebookId. A global gate (plus a deferred re-run
+    // hardcoded to the in-flight notebook) silently swallows a concurrent syncNow for a different
+    // notebook — its edits never reach the server.
+    const { db } = await import('../src/db/schema.js');
+    const NB_A = NB;
+    const NB_B = 'nb-test-00000000-0000-4000-8000-0000000000b2' as NotebookId;
+
+    const noteA = makeNote('note-a-00000000-0000-4000-8000-000000000001', 0, 'A');
+    const noteB: Note = { ...makeNote('note-b-00000000-0000-4000-8000-000000000001', 0, 'B'), notebookId: NB_B };
+    await db.notes.bulkPut([noteA, noteB]);
+    await db.syncQueue.bulkAdd([
+      { id: crypto.randomUUID(), recordId: noteA.id, payload: noteA, baseVersion: 0, createdAt: '2026-06-15T12:00:00.001Z' },
+      { id: crypto.randomUUID(), recordId: noteB.id, payload: noteB, baseVersion: 0, createdAt: '2026-06-15T12:00:00.002Z' },
+    ]);
+
+    const pushedNotebooks: string[] = [];
+    let releaseA!: () => void;
+    const heldA = new Promise<void>((r) => (releaseA = r));
+    let signalAEntered!: () => void;
+    const aEntered = new Promise<void>((r) => (signalAEntered = r));
+
+    global.fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.includes('/sync/push')) {
+        const body = JSON.parse(String(init!.body)) as { notebookId: string; entries: { id: string }[] };
+        pushedNotebooks.push(body.notebookId);
+        if (body.notebookId === NB_A) { signalAEntered(); await heldA; }
+        return new Response(
+          JSON.stringify({ results: body.entries.map((e) => ({ id: e.id, outcome: 'accepted', version: 1, syncSeq: 1 })) }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ notes: [], nextCursor: 0, hasMore: false }), { status: 200 });
+    }) as typeof fetch;
+
+    const storage: Record<string, string> = {};
+    global.localStorage = {
+      getItem: (k: string) => storage[k] ?? null,
+      setItem: (k: string, v: string) => { storage[k] = v; },
+      removeItem: (k: string) => { delete storage[k]; },
+    } as unknown as Storage;
+
+    const { syncNow } = await import('../src/lib/syncEngine.js');
+    syncNow(NB_A, '');
+    await aEntered;                 // notebook A's push is in flight, held open
+    syncNow(NB_B, '');             // different notebook — must run, not be swallowed
+    await new Promise((r) => setTimeout(r, 30)); // let B push concurrently
+    releaseA();
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(pushedNotebooks).toContain(NB_B);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Test 4: edit-while-syncing — edit during in-flight push is preserved
 // ---------------------------------------------------------------------------
 
