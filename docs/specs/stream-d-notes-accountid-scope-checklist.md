@@ -1,7 +1,10 @@
 # Stream-D Phase-2 — accountId scope application to the notes data routes (spine)
 
-**Owner:** scopeSys. **Status:** PREP (read-only enumeration) — 2026-06-16. Mechanical to
-apply once devSys's per-query scope helper signature lands.
+**Owner:** scopeSys. **Status:** ✅ COMPLETE — 2026-06-16. S-1..S-9 landed at `303db9a` (notes +
+mutate.ts); devSys2's sync.ts call sites at `dd86704`. Authoritative verification: `tsc --noEmit`
+clean, full worker suite **200 passed / 30 todo**, `isolation.acceptance.test.ts` **10/10** (the 8
+cross-account RED rows green + 2 device), `conflict.test.ts` 4/4. No regressions. secSys build-audit
+is the next gate (devSys2 routed it the sync side + a point-4 notebook→account-binding question).
 
 **Goal:** every id-/notebookId-keyed notes query in the spine filters by the *caller's*
 `accountId` (= `principal.id` after the D6 zero-delta re-point), so no authenticated account
