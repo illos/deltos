@@ -40,5 +40,7 @@ export const NoteIdentitySchema = z.object({
   version: VersionSchema,
   syncStatus: SyncStatusSchema,
   title: z.string(),
+  /** Client-side account scope: `base64url(SHA-256(signingPublicKey))` from the authed Identity. */
+  accountFingerprint: z.string().optional(),
 });
 export type NoteIdentity = z.infer<typeof NoteIdentitySchema>;

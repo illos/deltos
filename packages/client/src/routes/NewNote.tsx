@@ -5,6 +5,7 @@ import type { Note } from '@deltos/shared';
 import { mutateNotes } from '../db/mutate.js';
 import { newNoteId } from '../lib/ids.js';
 import { getDefaultNotebookId } from '../lib/notebooks.js';
+import { useAuthStore } from '../auth/store.js';
 
 /**
  * The instant-capture route. On mount: mints a client UUID, writes the empty note to the
@@ -17,6 +18,7 @@ import { getDefaultNotebookId } from '../lib/notebooks.js';
 export function NewNote() {
   const navigate = useNavigate();
   const didCreate = useRef(false);
+  const identity = useAuthStore(s => s.identity);
 
   useEffect(() => {
     if (didCreate.current) return;
@@ -33,12 +35,13 @@ export function NewNote() {
       title: '',
       properties: {},
       body: [],
+      accountFingerprint: identity?.id,
     };
 
     mutateNotes.put(note).then(() => {
       navigate(`/note/${note.id}`, { replace: true });
     });
-  }, [navigate]);
+  }, [navigate, identity]);
 
   return <div className="route-loading" aria-label="Opening note…" />;
 }

@@ -42,6 +42,10 @@ class DeltosDB extends Dexie {
       // notebooks: primary only — mirror is small, full re-pull on reconnect
       notebooks: 'id',
     });
+    this.version(2).stores({
+      // Add accountFingerprint index for per-account local query scoping.
+      notes: 'id, notebookId, updatedAt, [notebookId+updatedAt], accountFingerprint',
+    });
   }
 }
 
