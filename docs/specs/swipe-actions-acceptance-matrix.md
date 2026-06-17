@@ -53,10 +53,14 @@ fast-follow**, not a blocker for this slice.
 
 ---
 
-## Gate-check record — 2026-06-17 @fc11051 (build LIVE on deltos.blackgate.studio)
+## Gate-check record — 2026-06-17, fc11051 → 9f7758c (build LIVE on deltos.blackgate.studio)
 
-scopeSys independently re-ran the suites: **client 240/240, worker 252/252 (+30 todo), shared 100/100**,
-prod build clean.
+**GATE VERDICT: 🟢 GREEN-pending-feel.** Every automatable, integration, and perf row is GREEN. The ONLY
+open rows are the inherently on-device gesture-FEEL verdicts (SA-1/2/5/6, SA-3 toast UX, SA-8 felt-load),
+which are user-only by design (mobile-only feature) — no honest headless proof exists for them, as this
+matrix has stated throughout. scopeSys independently re-ran the suites at each stage: final
+**client 241/241, worker 252/252 (+30 todo), shared 100/100**, prod build clean, green-gate green
+`@9f7758c`.
 
 **Tier-A automatable gate = GREEN.** CLOSED by the automated suite (no dogfood needed):
 - **SA-T1/T2/T3** (`packages/client/test/swipeActions.test.ts`) — softDelete→`sys:trashedAt` set + row
@@ -69,9 +73,15 @@ prod build clean.
   = the single **UI-hide + export-exclude** chokepoint; `UserPropertyKeySchema`/`UserPropertyBagSchema`
   **reject** a user write into the namespace at the **mutate boundary**; secSys **no-literal-drift** contract
   (writer key ≡ export-filter constant → a system key can never reach export).
-- **SA-T5/T6 (CAS on real D1)** — CLOSED **transitively**: the `trashed` flag rides the **exact `updateNote`
-  CAS** already real-D1-proven (`casRowsWritten` mock + `bbb149d` live-verified deploy); Fork P added **no
-  new CAS surface**, so no bespoke real-D1 leg is required.
+- **SA-T4 (no-loss while syncing)** — LANDED `@d3bdead` (241/241) as a **labeled** test
+  (`swipeActions.test.ts` *"trash toggle while a pending edit exists"*): softDelete after an unsynced edit
+  **retains the edit content** + trashes it, both entries enqueued under their own ids. The earlier
+  by-construction read is now a first-class assertion — the labeled-coverage gap is **closed**.
+- **SA-T5/T6 (CAS on real D1 + LIVE round-trip)** — (a) CAS CLOSED **transitively**: the `trashed` flag
+  rides the **exact `updateNote` CAS** already real-D1-proven (`casRowsWritten` mock + `bbb149d`
+  live-verified deploy); Fork P added **no new CAS surface**. (b) **LIVE end-to-end round-trip CLOSED**
+  (devSys2, prod D1): trash **sticks across a forced fresh pull** → trash view → **restore clears it
+  server-side** → duplicate clean. The integration leg is confirmed on real prod D1, not just the unit CAS.
 
 **SA-8 perf — GREEN (both halves):** measured = **233.6 KB gzip served / +~8.6 KB raw for the whole
 feature / NO new dependency** — within budget (pilot, reported to planSys). Felt half = [DEV] below.
@@ -80,14 +90,15 @@ feature / NO new dependency** — within budget (pilot, reported to planSys). Fe
 - **SA-9 client-side placement → secSys PASS (RECORDED).** Enforcement at the **client** mutate boundary is
   correct within the documented within-account low-surface trust model; **do not reopen Fork P** — the
   cross-account boundary is held on every path. secSys additionally closed a **server `property.set`
-  reserved-key-acceptance hole** (1-line, honors guardrail-(c)) — a server-side reinforcement of SA-9.
-- **SA-T4 labeled belt → assigned to devSys2** (one explicit trash-toggle-while-pending-edit assertion). The
-  by-construction coverage (trash = ordinary upsert → existing edit-while-syncing drain invariants apply) is
-  confirmed; the belt makes the marquee no-loss row a labeled test rather than an inherited one.
+  reserved-key-acceptance hole** — now LIVE in consolidated redeploy **version `37387fcc`**, so guardrail-(c)
+  is enforced **server-side too** (defense-in-depth on top of the client SA-9). **RESOLVED.**
+- **SA-T4 labeled belt → LANDED `@d3bdead`** (see above). **RESOLVED.**
 
-**Gate now hinges ONLY on the [DEV] dogfood:** SA-1/2/5/6 gesture feel, SA-3 undo-toast, SA-8 felt-load
-(still beats Apple Notes), and the **live end-to-end real-D1 round-trip** (trash→sticks-across-reload→trash
-view→restore→back). The **trash view** (`TrashRoute.tsx` + `observeTrashedNotes`, SA-V1/V2) **landed early**.
+**Gate now hinges ONLY on the inherently-user [DEV] gesture FEEL:** SA-1/2/5/6 (reveal, stretchy-delete
+fling, single-open/outside-close, scroll-not-hijacked), SA-3 undo-toast UX, SA-8 felt-load (still beats
+Apple Notes). These are mobile-only by design — user-verified via the exploratory-relay pattern; there is
+no headless substitute. The **trash view** (`TrashRoute.tsx` + `observeTrashedNotes`, SA-V1/V2) **landed
+early**. **On the user's feel sign-off, this gate is fully GREEN.**
 
 ---
 
