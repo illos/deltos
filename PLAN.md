@@ -584,6 +584,11 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   browse/restore UI (**pulls the deferred Phase-3 version-history FORWARD** onto the conflict-as-version
   data model already built), basic EDITOR-TOOLS (formatting; "maybe"). **Interpretations to confirm:**
   history = per-note version timeline view/restore; settings = account/username + sign-out + appearance +
-  app-info (minimal); editor-tools = bold/italic/headings/lists/checkboxes. **NEXT:** team build-status
+  app-info (minimal); editor-tools = bold/italic/headings/lists/checkboxes; **MARKDOWN-LIGHT = IN-SCOPE for v1 (user-confirmed
+  2026-06-17), built WITH the editor tools (not deferred):** inline ProseMirror input-rules (type `# `→
+  heading, consumes the marker), NOT stored-as-markdown, NO preview pane, toggle-able "Markdown mode";
+  same formatting substrate as the toolbar, shortcuts are the primary mobile input. Distinct from
+  export-to-markdown (Phase-3 output). Validate input-rules on-device + integration w/ block-ID plugin +
+  unified-title at spec time. **NEXT:** team build-status
   inventory → planner writes ORDERED specs → hand to pilot AFTER the in-flight dogfood fixes (clean-copy,
   dead button, conflict-screen-on-exit, onboarding-refinement, autofocus) settle.
