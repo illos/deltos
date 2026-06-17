@@ -37,9 +37,7 @@ export function useNotes(notebookId: NotebookId): Note[] {
  */
 export function useTrashedNotes(notebookId: NotebookId): Note[] {
   const [notes, setNotes] = useState<Note[]>([]);
-  useEffect(() => {
-    void notebookId; void setNotes; // wired by devSys2
-  }, [notebookId]);
+  useEffect(() => getStore().observeTrashedNotes(notebookId, setNotes), [notebookId]);
   return notes;
 }
 
