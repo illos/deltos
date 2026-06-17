@@ -55,12 +55,14 @@ fast-follow**, not a blocker for this slice.
 
 ## Gate-check record — 2026-06-17, fc11051 → 9f7758c (build LIVE on deltos.blackgate.studio)
 
-**GATE VERDICT: 🟢 GREEN-pending-feel.** Every automatable, integration, and perf row is GREEN. The ONLY
-open rows are the inherently on-device gesture-FEEL verdicts (SA-1/2/5/6, SA-3 toast UX, SA-8 felt-load),
-which are user-only by design (mobile-only feature) — no honest headless proof exists for them, as this
-matrix has stated throughout. scopeSys independently re-ran the suites at each stage: final
+**GATE VERDICT: ✅ CLOSED — FULLY GREEN (2026-06-17).** Automatable + integration + perf + **feel** all
+green, live-verified on prod D1. scopeSys independently re-ran the suites at each stage: final
 **client 241/241, worker 252/252 (+30 todo), shared 100/100**, prod build clean, green-gate green
-`@9f7758c`.
+`@9f7758c`. The inherently on-device gesture-FEEL rows (SA-1/2/5/6, SA-3 toast UX, SA-8 felt-load) **PASS**
+on the user's on-device verdict — *"overall it feels great,"* **no threshold/easing changes requested**
+(via planSys relay). **One cosmetic defect DEFERRED (not a gate/feel blocker):** a 1px underlying-button
+poke on the top note — folded into the new notes-list-display spec `@6559b9d` (the full-bleed restyle
+subsumes its cause).
 
 **Tier-A automatable gate = GREEN.** CLOSED by the automated suite (no dogfood needed):
 - **SA-T1/T2/T3** (`packages/client/test/swipeActions.test.ts`) — softDelete→`sys:trashedAt` set + row
@@ -94,11 +96,11 @@ feature / NO new dependency** — within budget (pilot, reported to planSys). Fe
   is enforced **server-side too** (defense-in-depth on top of the client SA-9). **RESOLVED.**
 - **SA-T4 labeled belt → LANDED `@d3bdead`** (see above). **RESOLVED.**
 
-**Gate now hinges ONLY on the inherently-user [DEV] gesture FEEL:** SA-1/2/5/6 (reveal, stretchy-delete
-fling, single-open/outside-close, scroll-not-hijacked), SA-3 undo-toast UX, SA-8 felt-load (still beats
-Apple Notes). These are mobile-only by design — user-verified via the exploratory-relay pattern; there is
-no headless substitute. The **trash view** (`TrashRoute.tsx` + `observeTrashedNotes`, SA-V1/V2) **landed
-early**. **On the user's feel sign-off, this gate is fully GREEN.**
+**[DEV] gesture-FEEL rows — PASS (user sign-off 2026-06-17):** SA-1/2/5/6 (reveal, stretchy-delete fling,
+single-open/outside-close, scroll-not-hijacked), SA-3 undo-toast UX, SA-8 felt-load — all confirmed on a
+real iPhone, *"overall it feels great,"* no tuning requested. The **trash view** (`TrashRoute.tsx` +
+`observeTrashedNotes`, SA-V1/V2) **landed early**. **GATE CLOSED — swipe+trash is FULLY DONE.** Deferred
+(non-blocking): the 1px top-note button-poke cosmetic → notes-list-display spec `@6559b9d`.
 
 ---
 
