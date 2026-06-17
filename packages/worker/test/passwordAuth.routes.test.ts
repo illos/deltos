@@ -445,6 +445,68 @@ describe('AP-T8 — revoke-all', () => {
     },
     T,
   );
+
+  it(
+    '2FA-CHANGE (enable via /totp/verify) revokes all refresh families (AP-10 2FA-change leg)',
+    async () => {
+      const raw = freshDb();
+      const env = makeEnv(raw);
+      const acct = await signup(env, 'tfa-on', 'tfa-on-pass-1'); // signup() finalizes → 1 live refresh family
+      const live = () =>
+        (raw.prepare('SELECT COUNT(*) n FROM refreshSessions WHERE accountId=? AND revokedAt IS NULL').get(
+          acct.accountId,
+        ) as { n: number }).n;
+      expect(live()).toBeGreaterThan(0);
+
+      // Enable 2FA (confirm-before-activate) — a credential change → revoke-all.
+      const setup = await post(env, '/api/auth/totp/setup', {}, { Authorization: `Bearer ${acct.token}` });
+      const { secret } = (await setup.json()) as { secret: string };
+      const verify = await post(
+        env,
+        '/api/auth/totp/verify',
+        { code: codeAtStep(base32ToBytes(secret), stepAt(Date.now())) },
+        { Authorization: `Bearer ${acct.token}` },
+      );
+      expect(verify.status, await bodyText(verify)).toBe(200);
+      expect(live()).toBe(0); // every refresh family revoked
+    },
+    T,
+  );
+
+  it(
+    '2FA-CHANGE (disable via /totp/disable) revokes all refresh families (AP-10 2FA-change leg)',
+    async () => {
+      const raw = freshDb();
+      const env = makeEnv(raw);
+      const acct = await signup(env, 'tfa-off', 'tfa-off-pass-1');
+      const live = () =>
+        (raw.prepare('SELECT COUNT(*) n FROM refreshSessions WHERE accountId=? AND revokedAt IS NULL').get(
+          acct.accountId,
+        ) as { n: number }).n;
+
+      const { secret } = (await (
+        await post(env, '/api/auth/totp/setup', {}, { Authorization: `Bearer ${acct.token}` })
+      ).json()) as { secret: string };
+      const secretBytes = base32ToBytes(secret);
+      const step = stepAt(Date.now());
+      // Enable using step-1 so the replay guard leaves room for the login (step) + disable (step+1).
+      expect(
+        (await post(env, '/api/auth/totp/verify', { code: codeAtStep(secretBytes, step - 1) }, { Authorization: `Bearer ${acct.token}` })).status,
+      ).toBe(200);
+
+      // A fresh TOTP login mints a new live refresh family (enable's revoke-all killed the prior one).
+      const login = await post(env, '/api/auth/login', { username: 'tfa-off', password: 'tfa-off-pass-1', totp: codeAtStep(secretBytes, step) });
+      expect(login.status, await bodyText(login)).toBe(200);
+      const newToken = ((await login.json()) as { token: string }).token;
+      expect(live()).toBeGreaterThan(0);
+
+      // Disable 2FA (re-prove with step+1, > lastAcceptedStep) — a credential change → revoke-all.
+      const disable = await post(env, '/api/auth/totp/disable', { code: codeAtStep(secretBytes, step + 1) }, { Authorization: `Bearer ${newToken}` });
+      expect(disable.status, await bodyText(disable)).toBe(200);
+      expect(live()).toBe(0); // every refresh family revoked
+    },
+    T,
+  );
 });
 
 // ===========================================================================
