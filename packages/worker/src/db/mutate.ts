@@ -160,7 +160,14 @@ export async function updateNote(
   ]);
   const updateResult = updateBatch[1]!;
 
-  if (updateResult.rowsWritten === 1) {
+  // CAS hit ⇔ rowsWritten > 0. The WHERE clause uniquely identifies at most ONE note (id +
+  // notebookId + accountId + version + deletedAt IS NULL), so a miss writes 0 rows. We must NOT test
+  // `=== 1`: on real D1 `meta.rows_written` counts INDEX writes too, so a successful single-row UPDATE
+  // on this multi-index table (notes_pull/notes_list/notes_byNotebook/notes_byAccount) reports >1 →
+  // `=== 1` would mislabel an accepted write as a CONFLICT (the row IS updated server-side, but the
+  // client gets a phantom conflict on every edit). better-sqlite3's `changes` reports rows-changed
+  // (=1), so the test suite masks this — same class as the D1 CREATE-TEMP-TABLE landmine.
+  if (updateResult.rowsWritten > 0) {
     const row = await db.first<NoteRow>(`SELECT * FROM notes WHERE id = ?`, [entry.id]);
     return { outcome: 'accepted', version: row!.version, syncSeq: row!.syncSeq, row: row! };
   }
@@ -217,7 +224,9 @@ export async function deleteNote(
   ]);
   const deleteResult = deleteBatch[1]!;
 
-  if (deleteResult.rowsWritten === 1) {
+  // CAS hit ⇔ rowsWritten > 0 (see updateNote): real D1 `meta.rows_written` includes index writes, so
+  // a successful single-row soft-delete UPDATE reports >1 — `=== 1` would mislabel it a conflict.
+  if (deleteResult.rowsWritten > 0) {
     const row = await db.first<NoteRow>(`SELECT syncSeq FROM notes WHERE id = ?`, [id]);
     return { outcome: 'accepted', syncSeq: row!.syncSeq };
   }
