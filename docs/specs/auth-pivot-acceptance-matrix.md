@@ -45,6 +45,12 @@ A row is GREEN when its proof passes in its tier. **The gate closes when every T
 is green, AP-M1 reports a real-Workers Argon2id cost within the gated budget, AND the [DEV] dogfood confirms
 ungated-reload-across-eviction + the ceremony feel + the on-screen at-rest disclosure.**
 
+**Build progress (2026-06-17):** ✅ **AP-7/AP-M1 CLOSED** — Argon2id measured ~295ms/hash on real workerd,
+pure-JS rung-1 held (no dep-exception). ✅ **Worker handlers green `@bb1033c`** (298 passed). IN FLIGHT:
+devSys legacy-auth retire (closing step) → worker post-retire green; client route swap (devSys2/gruntSys2);
+secSys spec+build review. Full scopeSys gate-check fires once worker-post-retire + client are both green +
+secSys-reviewed (pilot will ping).
+
 ---
 
 ## Acceptance matrix — one row per criterion (AP-1 … AP-19)
@@ -60,7 +66,7 @@ Spec AC refs in the last column map to `auth-pivot-password.md` §Acceptance cri
 | **AP-4** | **GATE-BEFORE-HASH** ordering on login AND reset (leg #10, DoS defense) | **Tier-A** [SRV] + **[SRV: real-Workers]** | the cheap gate (edge rate-limit / Turnstile / per-account exponential backoff) **runs BEFORE** any Argon2id work on **both** unauthenticated endpoints; an over-threshold request is **rejected without reaching the hash** | AP-T4: spy/order assertion — gate invoked before the hash fn; throttled request never calls Argon2id. Real-Workers (AP-M1) confirms a gated 325ms hash is within budget, ungated is not | devSys + secSys / AC10 |
 | **AP-5** | **Uniform real-or-DUMMY hash inside the gate** (no timing oracle) (leg #10) | **Tier-A** [SRV] | even on an **unknown user**, an Argon2id (decoy) hash is computed — **no early return** — so response timing never leaks account existence; constant-time compare | AP-T5: the unknown-user branch still calls Argon2id (assert no short-circuit); timing parity | devSys + secSys / AC10 |
 | **AP-6** | **Argon2id + pepper + PHC** | **Tier-A** [SRV] | `@noble/hashes` argon2id (no new dep), 16B per-user salt, full **PHC string** stored, **pepper as a Worker secret** (HMAC before hash → a D1-only leak can't crack offline), **rehash-on-login** upgrade when params change | AP-T6: PHC round-trip; pepper applied; rehash-on-param-change; a D1 row alone is not offline-crackable (pepper absent) | devSys / AC2 |
-| **AP-7** | **Argon2id real-Workers CPU/memory measurement** (the ONE build dependency) | **[SRV: real-Workers]** — measured gate | measure CPU/latency on real CF Workers at min-sane params; the **memory-concurrency bound** (~19MB/hash → ~6 concurrent per 128MB isolate); tune params to budget; **fallback ladder in order:** (1) step-down pure-JS `@noble` Argon2id [free], (2) WASM Argon2id [server-side, bundle-safe, **logged dep exception**], (3) scrypt/PBKDF2 last | AP-M1 below — report the real-Workers number; algorithm stays Argon2id as far up the ladder as possible | devSys / AC2 (build dep) |
+| **AP-7** | **Argon2id real-Workers CPU/memory measurement** (the ONE build dependency) | **[SRV: real-Workers]** — measured gate **✅ CLOSED** | measure CPU/latency on real CF Workers at min-sane params; the **memory-concurrency bound** (~19MB/hash → ~6 concurrent per 128MB isolate); tune params to budget; **fallback ladder in order:** (1) step-down pure-JS `@noble` Argon2id [free], (2) WASM Argon2id [server-side, bundle-safe, **logged dep exception**], (3) scrypt/PBKDF2 last | **✅ AP-M1 SATISFIED (devSys, real workerd): ~295ms/hash at target `m=19456,t=2,p=1`.** VERDICT = **keep pure-JS `@noble` at target params** — **rung-1 held, NO ladder descent, NO WASM, NO dep-exception**; `ARGON2_PARAMS` unchanged. Closes on "pure-JS held, zero logged exception." | devSys / AC2 (build dep) |
 | **AP-8** | **Durable session = httpOnly+Secure+SameSite=Strict refresh cookie**, access token in-memory (leg #11) | **Tier-A** [SRV] + [CLI-auto] + [DEV] | refresh = an **httpOnly+Secure+SameSite=Strict** cookie **Path-scoped to /refresh**, Max-Age = durable window (30–90d sliding); access = short-TTL **in-memory** Bearer. Same-origin (worker serves PWA via `assets`, no CORS) | [SRV] cookie attributes asserted on Set-Cookie; [CLI-auto] access token held in memory only; [DEV] survives reload | devSys + client / AC3 |
 | **AP-9** | **Refresh is STATEFUL + server-HASHED — NOT a JWT** (leg #11) | **Tier-A** [SRV] | only a **HASH** of the refresh token is stored server-side (reuse F6 `hashToken`, never raw); **rotation-on-use** (issue new, invalidate prior); **reuse-detection** (a presented already-rotated token = theft → **revoke the whole family**). Stateful so revocation is real | AP-T7: stored value ≠ raw token; rotate-then-replay-old → family revoked | devSys / AC11 |
 | **AP-10** | **Revoke-all on ALL FOUR credential-change events** (leg #11) | **Tier-A** [SRV] — **marquee gate** | **reset / password-change / logout / 2FA-change** each **revoke all refresh families** for the account | AP-T8: four explicit assertions, one per event; each invalidates every family | devSys / AC4, AC11 |
@@ -96,13 +102,14 @@ The **automatable** rows the dogfood does not re-prove. Written TDD against the 
 | **AP-T11** | AP-16 | the **`enrollCeremony` latch pattern** ported to RegisterRoute/LoginRoute/ResetRoute: `isAuthed` flips to shell **only at ceremony-complete**, all paths; a mid-ceremony unmount leaves **no half-authed shell** | [CLI-auto] |
 | **AP-T12** | AP-13 | after register/login, **no token at rest** (Dexie/localStorage/sessionStorage scanned clean); only the httpOnly cookie holds the durable credential | [CLI-auto] |
 
-> **AP-M1 (the ONE build dependency) — Argon2id real-Workers measurement.** Measure CPU/latency + the
-> memory-concurrency bound (~6 hashes/128MB isolate) on **real CF Workers** at the target params
-> (`m=19456,t=2,p=1`). Tune to budget via the **ordered fallback ladder** (step-down pure-JS @noble → WASM
-> Argon2id as a *logged* dep exception → scrypt/PBKDF2 last). The local ~325ms datapoint is **not**
-> authoritative — same measure-on-real-infra discipline as `[[d1-rowswritten-index-inflation]]` /
-> `[[migration-d1-no-temp-table]]`. **Gate:** report the real-Workers number; a gated 325ms is acceptable
-> for the low-volume (new-device+reset-only) path, ungated it is a DoS — which is why AP-4 is a hard gate.
+> **AP-M1 (the ONE build dependency) — Argon2id real-Workers measurement. ✅ SATISFIED 2026-06-17 (devSys,
+> real workerd).** Result: **~295ms/hash at target `m=19456,t=2,p=1`** (better than the local ~325ms
+> datapoint). **VERDICT: keep pure-JS `@noble` at target params — rung-1 of the ladder held; NO step-down,
+> NO WASM, NO scrypt/PBKDF2, NO logged dep-exception; `ARGON2_PARAMS` unchanged.** The measure-on-real-infra
+> discipline (same class as `[[d1-rowswritten-index-inflation]]` / `[[migration-d1-no-temp-table]]`) paid
+> off — the authoritative number came from real workerd, not the local box. A gated ~295ms is acceptable
+> for the low-volume (new-device+reset-only) path; ungated it is a DoS — which is why **AP-4 (gate-before-
+> hash) remains a hard gate** even though the measurement passed.
 
 ---
 
