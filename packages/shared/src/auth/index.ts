@@ -1,11 +1,9 @@
 /**
- * `auth/*` — the cross-surface authentication contract: the binary encoding, the canonical
- * signed-payload format, and the auth endpoint request/response schemas. The key DERIVATION and
- * signing live on the device (client package); only the shapes both sides must agree on byte-for-byte
- * live here, alongside the spine and the grant primitive.
+ * `auth/*` — the cross-surface authentication contract: the binary encoding, the password-auth endpoint
+ * request/response schemas (the 2026-06-17 pivot), and the username directory normalizer. The retired
+ * signed-challenge contract (`canonical.ts` TLV + `requests.ts` Challenge/Register/Session/StepUp) was
+ * DELETED with the worker's signed-challenge stack; password auth is the sole surface.
  */
 export * from './encoding.js';
-export * from './canonical.js';
-export * from './requests.js';
 export * from './password.js';
 export * from './username.js';

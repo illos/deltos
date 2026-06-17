@@ -22,19 +22,18 @@ import Database from 'better-sqlite3';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import {
-  canonicalAuthPayload, base64urlEncode, base64urlDecodeStrict,
-  type Scope,
-} from '@deltos/shared';
 import app from '../src/index.js';
 import type { Env } from '../src/env.js';
-import * as ed from '@noble/ed25519';
-import { sha512 } from '@noble/hashes/sha2.js';
-
-if (!ed.hashes.sha512) ed.hashes.sha512 = sha512;
+import { signupToken } from './helpers/passwordToken.js';
 
 // ---------------------------------------------------------------------------
 // Infrastructure (mirrored from auth.acceptance.test.ts — test files cannot import each other)
+//
+// AUTH PIVOT (2026-06-17): tokens are now minted via password /signup (was signed-challenge
+// register+session). The data layer is credential-agnostic, so every cross-account isolation
+// assertion below is UNCHANGED — only the mint moved. The retired device/keyId/fingerprint legs
+// (old §J principalId-vs-fingerprint regression + the device-routes describe) were removed with the
+// signed-challenge stack; cross-account isolation of notes/search/sync is the standing bar that remains.
 // ---------------------------------------------------------------------------
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -43,6 +42,8 @@ const ALL_MIGRATIONS = [
   '0001_stream-b-sync.sql',
   '0002_stream-a-auth.sql',
   '0003_account-identity.sql',
+  '0004_password-auth.sql',
+  '0005_recovery-established.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 const ISO_AUD = 'deltos.isolation';
@@ -78,14 +79,13 @@ function d1Over(raw: Database.Database): D1Database {
 }
 
 const makeEnv = (raw: Database.Database): Env =>
-  ({ DB: d1Over(raw), ENVIRONMENT: 'development', AUTH_AUDIENCE: ISO_AUD } as unknown as Env);
+  ({
+    DB: d1Over(raw),
+    ENVIRONMENT: 'development',
+    AUTH_AUDIENCE: ISO_AUD,
+    AUTH_PEPPER: 'isolation-test-pepper',
+  } as unknown as Env);
 
-function isoKeypair(seed: number) {
-  const priv = new Uint8Array(32).fill(seed);
-  const pub = ed.getPublicKey(priv);
-  return { priv, pub, pubB64: base64urlEncode(pub) };
-}
-const isoSign = (priv: Uint8Array, msg: Uint8Array) => base64urlEncode(ed.sign(msg, priv));
 const isoPost = (env: Env, path: string, body: unknown, token?: string) =>
   app.request(path, {
     method: 'POST',
@@ -95,43 +95,6 @@ const isoPost = (env: Env, path: string, body: unknown, token?: string) =>
     },
     body: JSON.stringify(body),
   }, env);
-
-async function isoChallenge(env: Env, body: unknown) {
-  const res = await isoPost(env, '/api/auth/challenge', body);
-  expect(res.status).toBe(200);
-  return res.json() as Promise<{ challengeId: string; nonce: string }>;
-}
-
-async function isoRegister(env: Env, kp: ReturnType<typeof isoKeypair>, label: string) {
-  const ch = await isoChallenge(env, { purpose: 'register' });
-  const sig = isoSign(kp.priv, canonicalAuthPayload({
-    purpose: 'register', audience: ISO_AUD, challengeId: ch.challengeId,
-    nonce: base64urlDecodeStrict(ch.nonce), signingPublicKey: kp.pub, deviceLabel: label,
-  }));
-  const res = await isoPost(env, '/api/auth/register', {
-    challengeId: ch.challengeId, signingPublicKey: kp.pubB64, deviceLabel: label, signature: sig,
-  });
-  expect(res.status).toBe(201);
-  return res.json() as Promise<{ keyId: string }>;
-}
-
-async function isoSession(
-  env: Env,
-  kp: ReturnType<typeof isoKeypair>,
-  keyId: string,
-  scope: Scope[] = ['read', 'write', 'create', 'delete', 'search'],
-) {
-  const ch = await isoChallenge(env, { purpose: 'session', keyId });
-  const sig = isoSign(kp.priv, canonicalAuthPayload({
-    purpose: 'session', audience: ISO_AUD, challengeId: ch.challengeId,
-    nonce: base64urlDecodeStrict(ch.nonce), keyId, requestedScope: scope,
-  }));
-  const res = await isoPost(env, '/api/auth/session', {
-    challengeId: ch.challengeId, keyId, requestedScope: scope, signature: sig,
-  });
-  expect(res.status).toBe(200);
-  return res.json() as Promise<{ token: string }>;
-}
 
 // ---------------------------------------------------------------------------
 // Two-account fixture — B's objects are the isolation targets
@@ -143,18 +106,11 @@ const B_SYNC_NOTE = '00000000-0000-4000-b000-000000000003'; // pushed via sync.p
 const B_BLOCK     = '00000000-0000-4000-b000-000000000004'; // block inside B_NOTE
 const SEARCH_TERM = 'b-account-exclusive-secret-note';      // only in B's notes
 
-// Seeds outside the range auth.acceptance.test.ts uses (20..32) — no fixture collision.
-const SEED_A = 33;
-const SEED_B = 34;
-
 interface IsoFixture {
   raw: Database.Database;
   env: Env;
   tokenA: string;
-  keyIdA: string;
-  kpA: ReturnType<typeof isoKeypair>;
   tokenB: string;
-  keyIdB: string;
 }
 
 async function buildFixture(): Promise<IsoFixture> {
@@ -162,14 +118,9 @@ async function buildFixture(): Promise<IsoFixture> {
   for (const sql of ALL_MIGRATIONS) raw.exec(sql);
   const env = makeEnv(raw);
 
-  const kpA = isoKeypair(SEED_A);
-  const kpB = isoKeypair(SEED_B);
-
-  const { keyId: keyIdA } = await isoRegister(env, kpA, 'account-A');
-  const { keyId: keyIdB } = await isoRegister(env, kpB, 'account-B');
-
-  const { token: tokenA } = await isoSession(env, kpA, keyIdA);
-  const { token: tokenB } = await isoSession(env, kpB, keyIdB);
+  // Two distinct accounts via password signup (replaces the signed-challenge two-device mint).
+  const { token: tokenA } = await signupToken(env, 'account-a');
+  const { token: tokenB } = await signupToken(env, 'account-b');
 
   // B creates a note via the REST API (D6 will stamp accountId = B.id at insert).
   const noteCreate = await app.request('/api/notes', {
@@ -192,7 +143,7 @@ async function buildFixture(): Promise<IsoFixture> {
   }, tokenB);
   expect(syncPush.status).toBe(200);
 
-  return { raw, env, tokenA, keyIdA, kpA, tokenB, keyIdB };
+  return { raw, env, tokenA, tokenB };
 }
 
 // ---------------------------------------------------------------------------
@@ -300,61 +251,9 @@ describe("D6 cross-account isolation (standing bar) — sync [GREEN: scopeSys dd
 
 });
 
-// ---------------------------------------------------------------------------
-// §J — principalId-stamp regression gate (pilot directive, pre-done-gate close)
-//
-// WHY: in v1, accountId and accountFingerprint are both unique per account, so route-level tests
-// that verify cross-account isolation CANNOT distinguish them — a regression that stamped
-// accountFingerprint instead of accountId at auth.ts session-mint would stay GREEN at every
-// route assertion. This test hits the GRANTS TABLE directly after a real /register -> /session
-// round-trip and asserts the shape of the stored principalId. Any regression is caught instantly.
-//
-// accountId   = randomToken(16) = base64url ~22 chars (NOT hex; the migration comment
-//               says hex(randomblob(16)) but auth.ts uses randomToken(16) — base64url)
-// fingerprint = base64url(SHA-256(pubkey)) = 43 chars, containing A-Z/a-z/0-9/-/_
-// ---------------------------------------------------------------------------
-
-describe("§J — principalId-stamp correctness: real route mint stamps accountId (not fingerprint) in grants [regression gate]", () => {
-
-  it("after real /register -> /session route, grants.principalId == accounts.accountId AND is shorter than the 43-char fingerprint (base64url ~22 chars, not hex)", async () => {
-    const raw = new Database(':memory:');
-    for (const sql of ALL_MIGRATIONS) raw.exec(sql);
-    const env = makeEnv(raw);
-
-    // Seed 35: outside the two-account fixture range (SEED_A=33, SEED_B=34) — no collision.
-    const kp = isoKeypair(35);
-    const { keyId } = await isoRegister(env, kp, 'shape-regression-device');
-    await isoSession(env, kp, keyId);
-
-    // Session mint creates a principalKind='owner' grant. After D6 re-point auth.ts stamps
-    // principalId = accountId (32-hex). A bug stamping device.accountFingerprint (43-char base64url)
-    // instead would propagate silently through all route-level cross-account tests that happen to
-    // have one account per fingerprint — this assertion catches it at the SQL layer.
-    const grantRow = raw
-      .prepare("SELECT principalId FROM grants WHERE principalKind = 'owner' ORDER BY rowid DESC LIMIT 1")
-      .get() as { principalId: string } | undefined;
-    const accountRow = raw
-      .prepare('SELECT accountId FROM accounts LIMIT 1')
-      .get() as { accountId: string } | undefined;
-
-    // The device fingerprint is the value a buggy mint would stamp (base64url SHA-256 of pubkey, 43 chars).
-    const deviceRow = raw
-      .prepare('SELECT accountFingerprint FROM devices LIMIT 1')
-      .get() as { accountFingerprint: string } | undefined;
-
-    expect(grantRow).toBeDefined();
-    expect(accountRow).toBeDefined();
-    expect(deviceRow).toBeDefined();
-    // The two must agree — principalId was re-pointed to accountId by auth.ts session handler.
-    expect(grantRow!.principalId).toBe(accountRow!.accountId);
-    // Must NOT be the device fingerprint (base64url SHA-256(signingPublicKey), 43 chars).
-    // This is the direct proof: a regression stamping accountFingerprint instead of accountId fails here.
-    expect(grantRow!.principalId).not.toBe(deviceRow!.accountFingerprint);
-    // Fingerprint is always 43 chars (base64url 32 bytes); accountId is shorter (randomToken(16) = ~22 chars).
-    expect(grantRow!.principalId.length).toBeLessThan(deviceRow!.accountFingerprint.length);
-  });
-
-});
+// §J (principalId-vs-fingerprint stamp regression) was RETIRED with the signed-challenge stack: the
+// password mint stamps principalId = accountId directly (there is no device fingerprint to confuse it
+// with). The standing isolation bar below is unchanged.
 
 // ---------------------------------------------------------------------------
 // §K — never-client-trusted accountId spot-check (devSys a62df7b + gruntSys2 2a4120e)
@@ -374,18 +273,8 @@ describe("§K — never-client-trusted accountId: body {accountId: B} is ignored
     for (const sql of ALL_MIGRATIONS) raw.exec(sql);
     const env = makeEnv(raw);
 
-    const kpA = isoKeypair(36);
-    const kpB = isoKeypair(37);
-    const { keyId: keyIdA } = await isoRegister(env, kpA, 'nct-A');
-    await isoRegister(env, kpB, 'nct-B');
-    const { token: tokenA } = await isoSession(env, kpA, keyIdA);
-
-    // A registered first → row 0; B registered second → row 1.
-    const accounts = raw
-      .prepare('SELECT accountId FROM accounts ORDER BY rowid')
-      .all() as Array<{ accountId: string }>;
-    const aAccountId = accounts[0]!.accountId;
-    const bAccountId = accounts[1]!.accountId;
+    const { token: tokenA, accountId: aAccountId } = await signupToken(env, 'nct-a');
+    const { accountId: bAccountId } = await signupToken(env, 'nct-b');
 
     // A creates a note and injects B's accountId in the body — server must ignore it.
     const res = await app.request('/api/notes', {
@@ -414,17 +303,8 @@ describe("§K — never-client-trusted accountId: body {accountId: B} is ignored
     for (const sql of ALL_MIGRATIONS) raw.exec(sql);
     const env = makeEnv(raw);
 
-    const kpA = isoKeypair(36);
-    const kpB = isoKeypair(37);
-    const { keyId: keyIdA } = await isoRegister(env, kpA, 'nct-sync-A');
-    await isoRegister(env, kpB, 'nct-sync-B');
-    const { token: tokenA } = await isoSession(env, kpA, keyIdA);
-
-    const accounts = raw
-      .prepare('SELECT accountId FROM accounts ORDER BY rowid')
-      .all() as Array<{ accountId: string }>;
-    const aAccountId = accounts[0]!.accountId;
-    const bAccountId = accounts[1]!.accountId;
+    const { token: tokenA, accountId: aAccountId } = await signupToken(env, 'nct-sync-a');
+    const { accountId: bAccountId } = await signupToken(env, 'nct-sync-b');
 
     // A pushes a note and injects B's accountId in the body — server must ignore it.
     const pushRes = await isoPost(env, '/api/sync/push', {
@@ -455,32 +335,6 @@ describe("§K — never-client-trusted accountId: body {accountId: B} is ignored
 
 });
 
-describe("D6 cross-account isolation (standing bar) — device routes [GREEN now; must survive D6 re-point]", () => {
-
-  it("GET /api/auth/devices: A's token lists only A's devices; B's keyId absent", async () => {
-    const { env, tokenA, keyIdA, keyIdB } = await buildFixture();
-    const res = await app.request('/api/auth/devices', {
-      headers: { Authorization: `Bearer ${tokenA}` },
-    }, env);
-    expect(res.status).toBe(200);
-    const body = await res.json() as { devices: Array<{ keyId: string }> };
-    expect(body.devices.some((d) => d.keyId === keyIdA)).toBe(true);
-    expect(body.devices.some((d) => d.keyId === keyIdB)).toBe(false);
-  });
-
-  it("device.revoke: A step-up-revokes B's device → 404; B's device row unchanged", async () => {
-    const { raw, env, kpA, keyIdA, keyIdB } = await buildFixture();
-    const ch = await isoChallenge(env, { purpose: 'step-up', keyId: keyIdA });
-    const sig = isoSign(kpA.priv, canonicalAuthPayload({
-      purpose: 'step-up', audience: ISO_AUD, challengeId: ch.challengeId,
-      nonce: base64urlDecodeStrict(ch.nonce), keyId: keyIdA, op: 'delete', resource: { kind: 'workspace' },
-    }));
-    const res = await isoPost(env, `/api/auth/devices/${keyIdB}/revoke`, {
-      challengeId: ch.challengeId, keyId: keyIdA, op: 'delete', resource: { kind: 'workspace' }, signature: sig,
-    });
-    expect(res.status).toBe(404);
-    const row = raw.prepare('SELECT revokedAt FROM devices WHERE keyId = ?').get(keyIdB) as { revokedAt: string | null } | undefined;
-    expect(row?.revokedAt).toBeNull();
-  });
-
-});
+// The device-routes isolation describe (GET /api/auth/devices, device.revoke step-up) was RETIRED with
+// the signed-challenge stack — devices/keyId no longer exist under password auth. Cross-account
+// isolation of the DATA plane (notes/search/sync, above) is the standing bar that carries forward.

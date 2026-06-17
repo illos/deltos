@@ -158,14 +158,12 @@ export const can: CanCheck = async (principal, op, resource) => {
       return grantAllows(grant, op, resource, Date.now());
     }
     case 'signed-request':
-      // INTENTIONALLY v1-UNUSED — DO NOT delete in a dead-code sweep. Correct + tested (can.test.ts),
-      // but in v1 the revoke route verifies the step-up inline (authCrypto.verifyStepUp) and does not
-      // yet construct a `signed-request` principal, so no live request reaches this branch. Routing
-      // step-up through can() (so this becomes live) is a tracked devSys follow-up (F9 consolidation).
-      //
-      // Step-up: the signature was VERIFIED for `v.op` + `v.resource`. Bind it to THIS request
-      // at the chokepoint — a step-up signed for one (op, resource) can never authorize another,
-      // and there is no trust in middleware having matched them.
+      // DEAD post-pivot: the 2026-06-17 password pivot deleted the signed-challenge stack, so NOTHING
+      // constructs a `signed-request` principal any more (step-up is now a password/TOTP re-prompt). The
+      // branch is KEPT (the frozen PrincipalVerification union still carries the member; can.test.ts
+      // covers it) and stays fail-closed-by-construction. Removing the union member is a separate authz
+      // cleanup. Its binding semantics, were it ever revived: the signature was verified for `v.op` +
+      // `v.resource`, bound to THIS request so one (op, resource) can never authorize another.
       return v.op === op && resourceEquals(v.resource, resource);
     case 'unverified':
       // Dev-only local stub; refused in production by the chokepoint tripwire.

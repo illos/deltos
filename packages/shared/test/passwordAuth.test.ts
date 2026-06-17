@@ -53,10 +53,13 @@ describe('password-auth contract', () => {
     expect(TotpVerifyRequestSchema.safeParse({ code: '123456', extra: 1 }).success).toBe(false);
   });
 
-  it('access-token response shape = token + expiresAt + accountId + nullable username', () => {
-    const ok = { token: 't', expiresAt: '2026-01-01T00:00:00.000Z', accountId: 'a', username: null };
+  it('access-token response shape = token + expiresAt + accountId + nullable username + recoveryEstablished', () => {
+    const ok = { token: 't', expiresAt: '2026-01-01T00:00:00.000Z', accountId: 'a', username: null, recoveryEstablished: true };
     expect(AccessTokenResponseSchema.safeParse(ok).success).toBe(true);
-    expect(AccessTokenResponseSchema.safeParse({ ...ok, username: 'ada' }).success).toBe(true);
-    expect(AccessTokenResponseSchema.safeParse({ token: 't', expiresAt: 'x', accountId: 'a' }).success).toBe(false); // username required (nullable, not optional)
+    expect(AccessTokenResponseSchema.safeParse({ ...ok, username: 'ada', recoveryEstablished: false }).success).toBe(true);
+    // username required (nullable, not optional)
+    expect(AccessTokenResponseSchema.safeParse({ token: 't', expiresAt: 'x', accountId: 'a', recoveryEstablished: true }).success).toBe(false);
+    // recoveryEstablished (P0 belt) is required
+    expect(AccessTokenResponseSchema.safeParse({ token: 't', expiresAt: 'x', accountId: 'a', username: null }).success).toBe(false);
   });
 });

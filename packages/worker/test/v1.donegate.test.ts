@@ -34,19 +34,19 @@ import Database from 'better-sqlite3';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import {
-  canonicalAuthPayload, base64urlEncode, base64urlDecodeStrict,
-  type Scope,
-} from '@deltos/shared';
 import app from '../src/index.js';
 import type { Env } from '../src/env.js';
-import * as ed from '@noble/ed25519';
-import { sha512 } from '@noble/hashes/sha2.js';
-
-if (!ed.hashes.sha512) ed.hashes.sha512 = sha512;
+import { signupToken } from './helpers/passwordToken.js';
 
 // ---------------------------------------------------------------------------
 // Infrastructure (duplicated from isolation.acceptance.test.ts — test files cannot import each other)
+//
+// AUTH PIVOT (2026-06-17): the done-gate token-mint moved from signed-challenge register+session to
+// password /signup (+ /login for the "2nd device" = a 2nd login of the SAME username+password →
+// SAME accountId). The sync / CAS / auth-gating assertions are credential-agnostic and unchanged.
+// The retired device-determinism legs (distinct-keyId per registration, device→account fingerprint
+// stamp) were removed with the signed-challenge stack — "2nd-device recovery" is now proved by a 2nd
+// login resolving to the same account, the password-world analog of same-signing-key recovery.
 // ---------------------------------------------------------------------------
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -55,6 +55,8 @@ const ALL_MIGRATIONS = [
   '0001_stream-b-sync.sql',
   '0002_stream-a-auth.sql',
   '0003_account-identity.sql',
+  '0004_password-auth.sql',
+  '0005_recovery-established.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 const DG_AUD = 'deltos.v1.donegate';
@@ -90,20 +92,23 @@ function d1Over(raw: Database.Database): D1Database {
 }
 
 const makeEnv = (raw: Database.Database): Env =>
-  ({ DB: d1Over(raw), ENVIRONMENT: 'development', AUTH_AUDIENCE: DG_AUD } as unknown as Env);
+  ({
+    DB: d1Over(raw),
+    ENVIRONMENT: 'development',
+    AUTH_AUDIENCE: DG_AUD,
+    AUTH_PEPPER: 'donegate-test-pepper',
+  } as unknown as Env);
 
 // Production env: F13 tripwire active — unverified principals (no/invalid bearer) return 503 instead
-// of being allowed through as the dev stub. Used only in DGT-4 auth-gating tests.
+// of being allowed through as the dev stub. Used only in DGT-4 auth-gating tests. (AUTH_PEPPER set so
+// the one prod-env test that first creates a note via /signup can mint a token.)
 const makeProdEnv = (raw: Database.Database): Env =>
-  ({ DB: d1Over(raw), ENVIRONMENT: 'production', AUTH_AUDIENCE: DG_AUD } as unknown as Env);
-
-function dgKeypair(seed: number) {
-  const priv = new Uint8Array(32).fill(seed);
-  const pub = ed.getPublicKey(priv);
-  return { priv, pub, pubB64: base64urlEncode(pub) };
-}
-
-const dgSign = (priv: Uint8Array, msg: Uint8Array) => base64urlEncode(ed.sign(msg, priv));
+  ({
+    DB: d1Over(raw),
+    ENVIRONMENT: 'production',
+    AUTH_AUDIENCE: DG_AUD,
+    AUTH_PEPPER: 'donegate-test-pepper',
+  } as unknown as Env);
 
 const dgPost = (env: Env, path: string, body: unknown, token?: string) =>
   app.request(path, {
@@ -115,41 +120,20 @@ const dgPost = (env: Env, path: string, body: unknown, token?: string) =>
     body: JSON.stringify(body),
   }, env);
 
-async function dgChallenge(env: Env, body: unknown) {
-  const res = await dgPost(env, '/api/auth/challenge', body);
-  expect(res.status).toBe(200);
-  return res.json() as Promise<{ challengeId: string; nonce: string }>;
-}
+// The canonical done-gate password account. A 2nd "device" = a 2nd /login of the SAME credential,
+// which resolves to the SAME accountId (the password-world analog of same-signing-key recovery).
+const DG_USER = 'dg-user';
+const DG_PASS = 'dg-done-gate-password';
 
-async function dgRegister(env: Env, kp: ReturnType<typeof dgKeypair>, label: string) {
-  const ch = await dgChallenge(env, { purpose: 'register' });
-  const sig = dgSign(kp.priv, canonicalAuthPayload({
-    purpose: 'register', audience: DG_AUD, challengeId: ch.challengeId,
-    nonce: base64urlDecodeStrict(ch.nonce), signingPublicKey: kp.pub, deviceLabel: label,
-  }));
-  const res = await dgPost(env, '/api/auth/register', {
-    challengeId: ch.challengeId, signingPublicKey: kp.pubB64, deviceLabel: label, signature: sig,
-  });
-  expect(res.status).toBe(201);
-  return res.json() as Promise<{ keyId: string }>;
-}
+/** Sign up the canonical account → { token, accountId }. */
+const dgEnroll = (env: Env) => signupToken(env, DG_USER, DG_PASS);
 
-async function dgSession(
-  env: Env,
-  kp: ReturnType<typeof dgKeypair>,
-  keyId: string,
-  scope: Scope[] = ['read', 'write', 'create', 'delete', 'search'],
-) {
-  const ch = await dgChallenge(env, { purpose: 'session', keyId });
-  const sig = dgSign(kp.priv, canonicalAuthPayload({
-    purpose: 'session', audience: DG_AUD, challengeId: ch.challengeId,
-    nonce: base64urlDecodeStrict(ch.nonce), keyId, requestedScope: scope,
-  }));
-  const res = await dgPost(env, '/api/auth/session', {
-    challengeId: ch.challengeId, keyId, requestedScope: scope, signature: sig,
-  });
+/** A 2nd device = a fresh /login for the same username+password → the SAME account. */
+async function dgLogin(env: Env): Promise<{ token: string; accountId: string }> {
+  const res = await dgPost(env, '/api/auth/login', { username: DG_USER, password: DG_PASS });
   expect(res.status).toBe(200);
-  return res.json() as Promise<{ token: string }>;
+  const body = (await res.json()) as { token: string; accountId: string };
+  return { token: body.token, accountId: body.accountId };
 }
 
 // ---------------------------------------------------------------------------
@@ -162,9 +146,7 @@ const DG_NOTE_B   = '00000000-0000-4000-d000-000000000003'; // 2nd note for offl
 const DG_BLOCK    = '00000000-0000-4000-d000-000000000004';
 const DG_CONTENT  = 'deltos-v1-done-gate-note-content';
 
-// Seeds outside isolation harness range (33–35) — no fixture collision.
-const SEED_MAIN  = 40; // used for all single-device scenarios
-// Recovery: SAME seed = SAME signing key → SAME accountFingerprint → SAME accountId → 2nd device
+// "2nd-device recovery" is now a 2nd /login of the SAME username+password → SAME accountId.
 
 // ---------------------------------------------------------------------------
 // DGT-1 — authenticated sync round-trip
@@ -179,9 +161,7 @@ describe("DGT-1 — authenticated sync round-trip (enroll → create → pull �
     for (const sql of ALL_MIGRATIONS) raw.exec(sql);
     const env = makeEnv(raw);
 
-    const kp = dgKeypair(SEED_MAIN);
-    const { keyId } = await dgRegister(env, kp, 'dgt1-device');
-    const { token } = await dgSession(env, kp, keyId);
+    const { token } = await dgEnroll(env);
 
     // Create note via REST (note.create) — stamped with caller's accountId server-side.
     const createRes = await app.request('/api/notes', {
@@ -216,9 +196,7 @@ describe("DGT-1 — authenticated sync round-trip (enroll → create → pull �
     for (const sql of ALL_MIGRATIONS) raw.exec(sql);
     const env = makeEnv(raw);
 
-    const kp = dgKeypair(SEED_MAIN);
-    const { keyId } = await dgRegister(env, kp, 'dgt1b-device');
-    const { token } = await dgSession(env, kp, keyId);
+    const { token } = await dgEnroll(env);
 
     const pushRes = await dgPost(env, '/api/sync/push', {
       notebookId: DG_NOTEBOOK,
@@ -253,55 +231,36 @@ describe("DGT-1 — authenticated sync round-trip (enroll → create → pull �
 //   → creates new device row with same accountFingerprint → session mint → accountId matches.
 // ---------------------------------------------------------------------------
 
-describe("DGT-2 — 2nd-device recovery: same signing key → same accountId → prior notes visible", () => {
+describe("DGT-2 — 2nd-device recovery: a 2nd login (same username+password) → same accountId → prior notes visible", () => {
 
-  it("registering a 2nd device with the same signing key yields a distinct keyId", async () => {
+  // The signed-challenge "distinct keyId per registration" leg was RETIRED with the device registry —
+  // there are no per-device keyIds under password auth. The account-stability invariant it backstopped
+  // (2 logins → EXACTLY ONE account) is reframed below as a 2nd /login resolving to the same accountId.
+
+  it("a 2nd login of the same credential mints a session for the SAME account (one account, same principalId)", async () => {
     const raw = new Database(':memory:');
     for (const sql of ALL_MIGRATIONS) raw.exec(sql);
     const env = makeEnv(raw);
 
-    const kp = dgKeypair(SEED_MAIN); // same key for both devices
-    const { keyId: keyIdA } = await dgRegister(env, kp, 'recovery-device-A');
-    const { keyId: keyIdB } = await dgRegister(env, kp, 'recovery-device-B');
-    // Each registration produces its own keyId — distinct device handles.
-    expect(keyIdA).not.toBe(keyIdB);
-  });
+    const a = await dgEnroll(env); // "device A" = signup
+    const b = await dgLogin(env);  // "device B" = a 2nd login of the same credential
+    expect(b.accountId).toBe(a.accountId); // same account
 
-  it("device B (same key) mints a session; grants.principalId == device A's grants.principalId", async () => {
-    const raw = new Database(':memory:');
-    for (const sql of ALL_MIGRATIONS) raw.exec(sql);
-    const env = makeEnv(raw);
-
-    const kp = dgKeypair(SEED_MAIN);
-    const { keyId: keyIdA } = await dgRegister(env, kp, 'recovery-A');
-    await dgSession(env, kp, keyIdA);
-
-    const { keyId: keyIdB } = await dgRegister(env, kp, 'recovery-B');
-    await dgSession(env, kp, keyIdB);
-
-    // Both sessions must stamp the SAME accountId as principalId.
+    // Both sessions stamp the SAME accountId as the grant principalId, and there is EXACTLY ONE account.
     const rows = raw
       .prepare("SELECT principalId FROM grants WHERE principalKind = 'owner' ORDER BY rowid")
       .all() as Array<{ principalId: string }>;
-    expect(rows).toHaveLength(2);
-    expect(rows[0]!.principalId).toBe(rows[1]!.principalId);
-    // THE invariant DGT-2 exists to prove: 2 devices, 1 signing key → EXACTLY ONE account.
-    // Bind-once (accountCredentials PK) + resolveAccountIdByFingerprint reuse path enforce it;
-    // this assertion proves it directly rather than by implication from same-principalId alone.
-    const accountCount = raw
-      .prepare('SELECT COUNT(*) as n FROM accounts')
-      .get() as { n: number };
-    expect(accountCount.n).toBe(1);
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(rows.map((r) => r.principalId)).size).toBe(1);
+    expect((raw.prepare('SELECT COUNT(*) as n FROM accounts').get() as { n: number }).n).toBe(1);
   });
 
-  it("device B (same key) can pull notes created and synced by device A", async () => {
+  it("a 2nd login (device B) can pull notes created and synced by the first session (device A)", async () => {
     const raw = new Database(':memory:');
     for (const sql of ALL_MIGRATIONS) raw.exec(sql);
     const env = makeEnv(raw);
 
-    const kp = dgKeypair(SEED_MAIN);
-    const { keyId: keyIdA } = await dgRegister(env, kp, 'recovery-A2');
-    const { token: tokenA } = await dgSession(env, kp, keyIdA);
+    const { token: tokenA } = await dgEnroll(env);
 
     // A creates note + syncs.
     await dgPost(env, '/api/sync/push', {
@@ -309,9 +268,8 @@ describe("DGT-2 — 2nd-device recovery: same signing key → same accountId →
       entries: [{ id: DG_NOTE, baseVersion: 0, draft: { title: DG_CONTENT, properties: {}, body: [] } }],
     }, tokenA);
 
-    // B enrolls (same key) and pulls.
-    const { keyId: keyIdB } = await dgRegister(env, kp, 'recovery-B2');
-    const { token: tokenB } = await dgSession(env, kp, keyIdB);
+    // B = a 2nd login (same credential, same account) pulls A's notes.
+    const { token: tokenB } = await dgLogin(env);
 
     const pullRes = await app.request(
       `/api/sync/pull?notebookId=${DG_NOTEBOOK}&cursor=0`,
@@ -341,9 +299,7 @@ describe("DGT-3 — offline create/edit reconciliation (server view)", () => {
     for (const sql of ALL_MIGRATIONS) raw.exec(sql);
     const env = makeEnv(raw);
 
-    const kp = dgKeypair(SEED_MAIN);
-    const { keyId } = await dgRegister(env, kp, 'dgt3-device');
-    const { token } = await dgSession(env, kp, keyId);
+    const { token } = await dgEnroll(env);
 
     const pushRes = await dgPost(env, '/api/sync/push', {
       notebookId: DG_NOTEBOOK,
@@ -360,9 +316,7 @@ describe("DGT-3 — offline create/edit reconciliation (server view)", () => {
     for (const sql of ALL_MIGRATIONS) raw.exec(sql);
     const env = makeEnv(raw);
 
-    const kp = dgKeypair(SEED_MAIN);
-    const { keyId } = await dgRegister(env, kp, 'dgt3b-device');
-    const { token } = await dgSession(env, kp, keyId);
+    const { token } = await dgEnroll(env);
 
     // Create.
     const push1 = await dgPost(env, '/api/sync/push', {
@@ -401,9 +355,7 @@ describe("DGT-3 — offline create/edit reconciliation (server view)", () => {
     for (const sql of ALL_MIGRATIONS) raw.exec(sql);
     const env = makeEnv(raw);
 
-    const kp = dgKeypair(SEED_MAIN);
-    const { keyId } = await dgRegister(env, kp, 'dgt3c-device');
-    const { token } = await dgSession(env, kp, keyId);
+    const { token } = await dgEnroll(env);
 
     // Create at baseVersion=0.
     const push1 = await dgPost(env, '/api/sync/push', {
@@ -479,9 +431,7 @@ describe("DGT-4 — auth gating (F13 tripwire): unverified principals refused in
     for (const sql of ALL_MIGRATIONS) raw.exec(sql);
     // Create the note in dev env so the row exists — absence of note must not mask the 503.
     const devEnv = makeEnv(raw);
-    const kp = dgKeypair(SEED_MAIN);
-    const { keyId } = await dgRegister(devEnv, kp, 'dgt4-gating');
-    const { token } = await dgSession(devEnv, kp, keyId);
+    const { token } = await dgEnroll(devEnv);
     await app.request('/api/notes', {
       method: 'POST',
       headers: { 'content-type': 'application/json', Authorization: `Bearer ${token}` },
@@ -518,15 +468,13 @@ describe("DGT-4 — auth gating (F13 tripwire): unverified principals refused in
 
 describe("DGT-5 (capstone) — full v1 journey: enroll → create → sync → 2nd-device recover → note present", () => {
 
-  it("note created + synced by device A is present and content-matches on device B (same signing key)", async () => {
+  it("note created + synced by device A is present and content-matches on device B (2nd login, same account)", async () => {
     const raw = new Database(':memory:');
     for (const sql of ALL_MIGRATIONS) raw.exec(sql);
     const env = makeEnv(raw);
 
-    // ── Leg 1: enroll device A ────────────────────────────────────────────
-    const kp = dgKeypair(SEED_MAIN);
-    const { keyId: keyIdA } = await dgRegister(env, kp, 'capstone-device-A');
-    const { token: tokenA } = await dgSession(env, kp, keyIdA);
+    // ── Leg 1: enroll device A (signup) ───────────────────────────────────
+    const { token: tokenA } = await dgEnroll(env);
 
     // ── Leg 2: create note via REST + sync push ───────────────────────────
     const createRes = await app.request('/api/notes', {
@@ -549,16 +497,14 @@ describe("DGT-5 (capstone) — full v1 journey: enroll → create → sync → 2
       entries: [{ id: DG_NOTE_B, baseVersion: 0, draft: { title: 'capstone-sync-note', properties: {}, body: [] } }],
     }, tokenA);
 
-    // ── Leg 3: recover on device B (same signing key = same account) ──────
-    const { keyId: keyIdB } = await dgRegister(env, kp, 'capstone-device-B');
-    const { token: tokenB } = await dgSession(env, kp, keyIdB);
+    // ── Leg 3: recover on device B (2nd login of the same credential = same account) ──────
+    const { token: tokenB } = await dgLogin(env);
 
-    // B's accountId must match A's (same signing key → same fingerprint → same account).
+    // B's account must match A's (same username+password → same accountId), and there is one account.
     const grants = raw
-      .prepare("SELECT principalId FROM grants WHERE principalKind = 'owner' ORDER BY rowid")
+      .prepare("SELECT DISTINCT principalId FROM grants WHERE principalKind = 'owner'")
       .all() as Array<{ principalId: string }>;
-    expect(grants).toHaveLength(2);
-    expect(grants[0]!.principalId).toBe(grants[1]!.principalId);
+    expect(grants).toHaveLength(1);
 
     // ── Leg 4: pull on device B → both notes present, content matches ─────
     const pullRes = await app.request(

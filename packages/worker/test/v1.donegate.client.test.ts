@@ -20,23 +20,14 @@ import Database from 'better-sqlite3';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import * as ed from '@noble/ed25519';
-import { sha512 } from '@noble/hashes/sha2.js';
-import {
-  canonicalAuthPayload,
-  base64urlEncode,
-  base64urlDecodeStrict,
-  type Scope,
-  type Note,
-} from '@deltos/shared';
+import { type Note } from '@deltos/shared';
 import { syncNow, getSyncState, subscribeSyncState } from '@deltos/client/src/lib/syncEngine.js';
 import { mutateNotes } from '@deltos/client/src/db/mutate.js';
 import { db as clientDb } from '@deltos/client/src/db/schema.js';
 import { useAuthStore } from '@deltos/client/src/auth/store.js';
 import app from '../src/index.js';
 import type { Env } from '../src/env.js';
-
-if (!ed.hashes.sha512) ed.hashes.sha512 = sha512;
+import { signupToken } from './helpers/passwordToken.js';
 
 // --- resolution sanity (probe): cross-package + worker-app imports must resolve under vitest ---
 describe('Tier-A harness wiring', () => {
@@ -62,9 +53,10 @@ describe('Tier-A harness wiring', () => {
 // ---------------------------------------------------------------------------
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ALL_MIGRATIONS = ['0000_baseline.sql', '0001_stream-b-sync.sql', '0002_stream-a-auth.sql', '0003_account-identity.sql'].map(
-  (f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'),
-);
+const ALL_MIGRATIONS = [
+  '0000_baseline.sql', '0001_stream-b-sync.sql', '0002_stream-a-auth.sql', '0003_account-identity.sql',
+  '0004_password-auth.sql', '0005_recovery-established.sql',
+].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 const DG_AUD = 'deltos.v1.donegate';
 
 function d1Over(raw: Database.Database): D1Database {
@@ -88,49 +80,20 @@ function d1Over(raw: Database.Database): D1Database {
 }
 
 const makeEnv = (raw: Database.Database): Env =>
-  ({ DB: d1Over(raw), ENVIRONMENT: 'development', AUTH_AUDIENCE: DG_AUD } as unknown as Env);
+  ({
+    DB: d1Over(raw),
+    ENVIRONMENT: 'development',
+    AUTH_AUDIENCE: DG_AUD,
+    AUTH_PEPPER: 'donegate-client-test-pepper',
+  } as unknown as Env);
 
-function dgKeypair(seed: number) {
-  const priv = new Uint8Array(32).fill(seed);
-  const pub = ed.getPublicKey(priv);
-  return { priv, pub, pubB64: base64urlEncode(pub) };
-}
-const dgSign = (priv: Uint8Array, msg: Uint8Array) => base64urlEncode(ed.sign(msg, priv));
-const dgPost = (env: Env, path: string, body: unknown) =>
-  app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, env);
-
-async function dgChallenge(env: Env, body: unknown) {
-  const res = await dgPost(env, '/api/auth/challenge', body);
-  expect(res.status).toBe(200);
-  return res.json() as Promise<{ challengeId: string; nonce: string }>;
-}
-async function dgRegister(env: Env, kp: ReturnType<typeof dgKeypair>, label: string) {
-  const ch = await dgChallenge(env, { purpose: 'register' });
-  const sig = dgSign(kp.priv, canonicalAuthPayload({
-    purpose: 'register', audience: DG_AUD, challengeId: ch.challengeId,
-    nonce: base64urlDecodeStrict(ch.nonce), signingPublicKey: kp.pub, deviceLabel: label,
-  }));
-  const res = await dgPost(env, '/api/auth/register', { challengeId: ch.challengeId, signingPublicKey: kp.pubB64, deviceLabel: label, signature: sig });
-  expect(res.status).toBe(201);
-  return res.json() as Promise<{ keyId: string }>;
-}
-async function dgSession(env: Env, kp: ReturnType<typeof dgKeypair>, keyId: string) {
-  const scope: Scope[] = ['read', 'write', 'create', 'delete', 'search'];
-  const ch = await dgChallenge(env, { purpose: 'session', keyId });
-  const sig = dgSign(kp.priv, canonicalAuthPayload({
-    purpose: 'session', audience: DG_AUD, challengeId: ch.challengeId,
-    nonce: base64urlDecodeStrict(ch.nonce), keyId, requestedScope: scope,
-  }));
-  const res = await dgPost(env, '/api/auth/session', { challengeId: ch.challengeId, keyId, requestedScope: scope, signature: sig });
-  expect(res.status).toBe(200);
-  return res.json() as Promise<{ token: string }>;
-}
-/** Enroll a fresh account against the worker app; returns its bearer token + keyId. */
-async function dgEnroll(env: Env, seed: number) {
-  const kp = dgKeypair(seed);
-  const { keyId } = await dgRegister(env, kp, `device-${seed}`);
-  const { token } = await dgSession(env, kp, keyId);
-  return { token, keyId, kp };
+/**
+ * Enroll a fresh account against the worker app via password /signup; returns its bearer + accountId.
+ * (Post-pivot replacement for the signed-challenge register+session mint — `seed` keeps the username
+ * distinct so cross-account tests get separate accounts.)
+ */
+async function dgEnroll(env: Env, seed: number): Promise<{ token: string; accountId: string }> {
+  return signupToken(env, `dg-client-${seed}`);
 }
 
 const DG_NB = '00000000-0000-4000-d000-0000000000c1';
