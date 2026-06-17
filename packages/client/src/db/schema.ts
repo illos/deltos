@@ -54,6 +54,14 @@ export interface SyncQueueEntry {
   payload: Note;        // full note snapshot at write time
   baseVersion: number;  // note.version at write time — the atomic CAS precondition
   createdAt: string;    // ISO-8601, queue ordering key
+  /**
+   * Sync intent. Absent ≡ 'upsert' (insert/update — the default, backward-compatible). 'delete' =
+   * soft-delete (worker → deleteNote, CAS on baseVersion); 'restore' = undo a soft-delete (worker →
+   * resurrectNote: clear deletedAt + re-put content, CAS on baseVersion). pushQueued maps this to the
+   * wire SyncPushEntry.op (default 'upsert'). The op rides on the entry so the existing latest-wins
+   * dedup + accept/conflict drain asymmetry are untouched.
+   */
+  op?: 'delete' | 'restore';
 }
 
 class DeltosDB extends Dexie {
