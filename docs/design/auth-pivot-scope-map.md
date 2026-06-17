@@ -37,11 +37,21 @@ no durable device key. secSys's ruling (matches my A/B/C framing):
   (19 MiB), t=2, p=1 (OWASP floor); per-user random 16B salt; store the full **PHC string** (rehash-on-login
   to upgrade params); add an app **PEPPER** as a Worker secret (HMAC before hash → a D1-only leak can't be
   cracked offline). **Reality-check (mine, done):** Argon2id@those-params ≈ **325 ms/hash** on this devbox
-  CPU (pure-JS) — within the paid Workers CPU budget for a single login; **authoritative measure is on real
-  Workers** at build time (V8 isolate CPU accounting differs). Fallback ladder if real-Workers concurrency
-  CPU-cost bites: step params DOWN, or scrypt (N=2^16–2^17) from the same `@noble` lib (document the
-  downgrade); PBKDF2-HMAC-SHA256 ≥600k is the last-resort native floor. Algorithm choice (Argon2id) is fixed;
-  only params may tune.
+  CPU (pure-JS) — within the paid Workers CPU budget for a single login; the **authoritative measure is on
+  real Workers** at build time — and bounded by **MEMORY not just CPU**:
+  m=19 MiB/hash × ~128 MiB isolate ⇒ **~6 concurrent hashes** before memory pressure (measure concurrent-login
+  cost). 325 ms is ACCEPTABLE for this low-volume path (logins = new-device + reset only; day-to-day ungated)
+  **once the gate is in front of it** (below). Fallback ladder if real-Workers busts: step params DOWN →
+  **WASM Argon2id** (~10× faster, SERVER-SIDE only — does NOT touch the client bundle, so perf standing-value
+  is safe; a DELIBERATE, logged dependency exception, NOT the default) → `@noble` scrypt (N=2^16–2^17) →
+  PBKDF2-HMAC-SHA256 ≥600k floor. The Argon2id ALGORITHM is fixed; the ladder changes only impl/params.
+- **HARD CONDITION — gate BEFORE hash (secSys, bake in so it can't regress):** on the unauthenticated
+  login/reset endpoints the cheap gate (edge rate-limit / Turnstile / per-account backoff) MUST run BEFORE the
+  ~325 ms Argon2id — else one cheap HTTP request costs 325 ms server CPU = a **CPU-amplification DoS**. AND,
+  *inside* the gate, hash UNIFORMLY: compute a real-or-**DUMMY** Argon2id even when the username is unknown, so
+  response timing never leaks account existence (skipping the hash on unknown-user IS the timing oracle). The
+  two compose: the gate bounds *how often* you reach the hash (DoS defense); the always-hash bounds *what the
+  timing reveals* (enumeration defense). No amplification AND no enumeration.
 - **Same-origin CONFIRMED** (my check): `packages/worker/wrangler.jsonc` serves the client build via the
   `assets` binding with `run_worker_first: ["/api/*"]` + SPA fallback — so SameSite=Strict + the same-origin
   refresh work with NO CORS. (Full security model — TOTP-secret encryption, recovery-phrase reset binding,
@@ -149,14 +159,19 @@ rewrite of one contained layer**, de-risked by the reused authz spine.
 - **Login rate-limiting / abuse** — CF WAF + **per-account exponential backoff** + Turnstile; **no hard
   lockout** (a hard lockout is a DoS-on-the-victim vector). secSys ruling.
 - **Username becomes a LOGIN credential** (not just a directory alias). `claimUsername` is already
-  atomic-unique (reuse), but moves from an OPTIONAL post-session claim → REQUIRED at register, and becomes an
-  **auth identifier** → **login anti-enumeration**: wrong-username vs wrong-password must be indistinguishable
-  (uniform 401, constant-time-ish), in TENSION with register's necessary "username taken" signal. Reconcile
-  with secSys + F-acct-4 (which made username existence a non-oracle).
+  atomic-unique (reuse), but moves OPTIONAL post-session claim → REQUIRED at register, and becomes an auth
+  identifier. **L1 anti-enumeration — planSys RULINGS:** REGISTER **discloses** "username taken" (usability
+  necessity — relaxes F-acct-4's no-oracle BY DESIGN, accepted eyes-open) + **rate-limit the register
+  endpoint** (Turnstile available-not-mandatory v1). LOGIN = **uniform** "wrong username or password" (no
+  enumeration — F-acct-4 holds). RESET = **uniform / non-disclosing** (username + phrase must NOT confirm the
+  username exists). Open product sub-q (PENDING USER): usernames **public-handle vs private-login-id** —
+  default private-ish + rate-limit; **if public, L1 largely moots**.
 - **D1 migration** — no temp tables; verify `db:migrate:local`.
 - **TOTP** — RFC 6238 HMAC-SHA1 via WebCrypto (small); secret encryption at rest needed.
-- **Preserve the P0 lesson** — the rebuilt gate must keep "ungated day-to-day + latch the live ceremony so
-  the boot gate can't short-circuit it" (the enrolling-latch/`finalizeEnroll` shape), or the enroll-unmount
-  class of bug returns in the register flow.
+- **L2 GATE — planSys HARD acceptance item:** the rebuilt boot gate MUST (1) keep day-to-day **UNGATED**,
+  (2) **LATCH** the live register/login/reset ceremony — `isAuthed` flips to shell-rendering ONLY at
+  **ceremony-complete, on ALL paths** (the `enrolling`-latch/`finalizeEnroll` shape generalized), and (3)
+  **carry the `enrollCeremony` regression-test pattern forward** to the new routes. This is the P0
+  enroll-unmount class ([[enroll-ceremony-latch-fix]]) — it must not return in register.
 - **Confirm zero data-layer coupling** — notes/sync key on `accountId` from the session; the credential swap
   never reaches them. (Verified: data layer never sees the credential.)
