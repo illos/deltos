@@ -76,6 +76,20 @@ spine is auth-method-independent and **kept wholesale**, so this is a **zero-dat
 - The rebuilt boot gate MUST keep **day-to-day ungated** AND **latch the live ceremony**: the authed flag
   flips ONLY at ceremony-complete (register/login/reset), all paths — or the enroll-unmount **P0 bug class
   returns**. Carry the `enrollCeremony` regression-test pattern forward to the new routes.
+- **CROSS-BOOT latch (secSys P0-class finding, planSys ruling):** the latch is not only within-session — the
+  **durable refresh cookie MUST be set at FINALIZE (after phrase-ack), NOT at `/signup`/account-creation.**
+  Otherwise a user who abandons registration before saving the recovery phrase is silently re-authed on next
+  boot, never saves the phrase, and is **permanently locked out if they later forget the password** — a
+  sibling of the old unrecoverable-account P0.
+- **BELT — no account left silently unrecoverable:** mark a server-side **`recoveryEstablished` flag at
+  FINALIZE** (same ceremony-complete moment as the cookie). On ANY successful login where it's false (account
+  created but phrase never saved — e.g. an abandoned signup that set a password), **FORCE the recovery-phrase
+  screen** (generate a fresh phrase + the required save-ack, update the server verifier) BEFORE entry. This
+  guarantees every account ends up recoverable; it only ever triggers on the incomplete-signup edge, never
+  day-to-day. Cookie-at-finalize is the suspenders; the login force-phrase is the belt.
+- **Acceptance:** registration abandoned before phrase-ack → no durable cookie set → next boot is NOT silently
+  authed; that account's next successful login forces the phrase screen before entry; a fully-finalized
+  account is ungated as normal. Regression-test the abandon-before-phrase path.
 
 ## Acceptance criteria
 1. Register (username+password) → account created on the existing D6 spine (zero data migration); "taken"
