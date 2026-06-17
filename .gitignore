@@ -13,3 +13,6 @@ packages/client/dev-dist/
 # Editor / OS
 .DS_Store
 *.log
+
+# Local deploy/debug screenshots (transient, not source)
+deltos-live-*.png
