@@ -98,7 +98,7 @@ describe('register completes e2e (P0 ceremony-latch gate)', () => {
     // (2) .shell is absent — isAuthing=true pins the gate to the auth-gate case
     expect(document.querySelector('.shell')).toBeNull();
 
-    // Tick "I've written down all 24 words" → enable Continue
+    // Tick "I've saved my recovery phrase somewhere safe" → enable Continue
     await user.click(screen.getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: /^Continue$/i }));
 

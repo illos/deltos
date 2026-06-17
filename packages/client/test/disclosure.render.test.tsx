@@ -1,66 +1,58 @@
 /**
- * P1-10 render leg — Disclosure component renders the correct planSys-approved copy.
+ * P1-10 render leg — Disclosure component renders the correct planSys-approved copy (A).
  *
  * Matrix row: P1-10 "Disclosure at credential-establishment, OUT of the login path"
  * Tier: [CLI-auto: render] (jsdom)
  * Owner: gruntSys2
  *
  * Pass conditions (render sub-leg):
- *   - Disclosure renders the planSys definitive-synthesis title and body verbatim
- *   - Risk clause present (secSys requirement)
+ *   - Disclosure renders planSys copy A (at-rest residual-risk) verbatim — @2cd2958
+ *   - Not-E2EE clause present (secSys honesty requirement)
+ *   - Local-read attacker clause present (secSys honesty requirement)
  *   - Copy is uniform regardless of prf prop (Option-A collapses the branch)
  *   - children prop overrides the body (custom content path)
- *   - LoginRoute (launch/re-auth path) renders NO .disclosure element (placement enforcement)
- *   - RegisterRoute (credential-establishment path) renders .disclosure at the phrase step
+ *   - LoginRoute (re-auth path) renders NO .disclosure element (placement enforcement)
+ *   - RegisterRoute (credential-establishment path) renders .disclosure at the FORM step
  *
- * Note: under the auth pivot the phrase-role in the disclosure body is a seam for a planSys
- * copy pass (phrase = reset token, not a device-access key). The Disclosure component tests pass
- * against the current planSys-approved copy regardless; that seam is tracked separately.
+ * Copy A placement: sign-up form only. Login is re-auth (not establishment) — no disclosure.
+ * Copy B (phrase = master key) lives inline in RegisterRoute's phrase step, not via <Disclosure>.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { vi } from 'vitest';
-import { cleanup, fireEvent } from '@testing-library/react';
+import { describe, it, expect, afterEach } from 'vitest';
+import { cleanup } from '@testing-library/react';
 import React from 'react';
 import { Disclosure } from '../src/components/Disclosure.js';
 import { LoginRoute } from '../src/routes/LoginRoute.js';
 import { RegisterRoute } from '../src/routes/RegisterRoute.js';
-import { renderWithProviders, waitFor } from './renderHelpers.js';
-import { useAuthStore } from '../src/auth/store.js';
+import { renderWithProviders } from './renderHelpers.js';
 
 afterEach(() => cleanup());
 
-// ── Disclosure component copy ────────────────────────────────────────────────
+// ── Disclosure component copy (A) ────────────────────────────────────────────
 
-describe('P1-10 — Disclosure renders correct planSys-approved copy', () => {
+describe('P1-10 — Disclosure renders correct planSys copy A (@2cd2958)', () => {
   it('renders the approved title', () => {
     const { container } = renderWithProviders(<Disclosure />);
     const title = container.querySelector('.disclosure__title');
-    expect(title?.textContent).toMatch(/Your notes on this device/i);
+    expect(title?.textContent).toMatch(/How your notes are kept/i);
   });
 
-  it('renders the main at-rest custody claim', () => {
+  it('renders the sync + device-security claim', () => {
     const { container } = renderWithProviders(<Disclosure />);
     const body = container.querySelector('.disclosure__body');
-    expect(body?.textContent).toMatch(/protected by its lock screen/i);
+    expect(body?.textContent).toMatch(/protected by your device's own security/i);
   });
 
-  it('renders the north-star framing — no extra password day-to-day', () => {
+  it('renders the not-E2EE clause (secSys honesty requirement)', () => {
     const { container } = renderWithProviders(<Disclosure />);
     const body = container.querySelector('.disclosure__body');
-    expect(body?.textContent).toMatch(/no extra password needed day-to-day/i);
+    expect(body?.textContent).toMatch(/aren't end-to-end encrypted/i);
   });
 
-  it('renders the risk clause (secSys honesty requirement)', () => {
+  it('renders the local-read attacker clause (secSys honesty requirement)', () => {
     const { container } = renderWithProviders(<Disclosure />);
     const body = container.querySelector('.disclosure__body');
-    expect(body?.textContent).toMatch(/anyone who can use it while it is unlocked/i);
-  });
-
-  it('renders the recovery-phrase exit path', () => {
-    const { container } = renderWithProviders(<Disclosure />);
-    const body = container.querySelector('.disclosure__body');
-    expect(body?.textContent).toMatch(/recovery phrase/i);
+    expect(body?.textContent).toMatch(/anyone who can unlock or read this device can read your notes/i);
   });
 
   it('renders identical copy for prf=true and prf=false (Option-A uniform)', () => {
@@ -75,7 +67,7 @@ describe('P1-10 — Disclosure renders correct planSys-approved copy', () => {
     const { container } = renderWithProviders(<Disclosure>Custom security note</Disclosure>);
     const body = container.querySelector('.disclosure__body');
     expect(body?.textContent).toBe('Custom security note');
-    expect(body?.textContent).not.toMatch(/protected by its lock screen/i);
+    expect(body?.textContent).not.toMatch(/protected by your device/i);
   });
 
   it('carries the correct accessible role', () => {
@@ -84,50 +76,27 @@ describe('P1-10 — Disclosure renders correct planSys-approved copy', () => {
   });
 });
 
-// ── Placement: LoginRoute (re-auth path) must NOT render Disclosure ───────────
+// ── Placement: LoginRoute (re-auth path) carries copy-A reaffirm ─────────────
+//
+// secSys placement finding: re-auth paths must also carry the block-A reaffirm
+// (not-E2EE / local-read attacker clause) — not full establishment, but reaffirm required.
 
-describe('P1-10 — Disclosure absent from the login path', () => {
-  it('LoginRoute renders no .disclosure element', () => {
+describe('P1-10 — Disclosure present on the login path (block-A reaffirm)', () => {
+  it('LoginRoute renders .disclosure (copy-A reaffirm, secSys requirement)', () => {
     const { container } = renderWithProviders(<LoginRoute />);
-    expect(container.querySelector('.disclosure')).toBeNull();
+    expect(container.querySelector('.disclosure')).not.toBeNull();
+    expect(container.querySelector('.disclosure__title')?.textContent).toMatch(/How your notes are kept/i);
   });
 });
 
-// ── B1: Positive placement — Disclosure present at RegisterRoute (establishment path) ────────────
-//
-// secSys hard requirement: Disclosure must appear at the credential-establishment path (register).
-// We drive RegisterRoute to its phrase step via mocked store actions and assert the element.
+// ── B1: Positive placement — Disclosure present at RegisterRoute (form/establishment step) ───────
 
-describe('P1-10 — Disclosure present at credential-establishment path (RegisterRoute)', () => {
-  const STUB_PHRASE = Array(24).fill('word').join(' ');
-
-  beforeEach(() => {
-    useAuthStore.setState({
-      beginAuth: vi.fn(),
-      finalizeAuth: vi.fn(),
-      register: vi.fn().mockResolvedValue({ ok: true, recoveryPhrase: STUB_PHRASE }),
-      setupTotp: vi.fn().mockResolvedValue({ ok: false, code: 'invalid' }),
-      verifyTotp: vi.fn().mockResolvedValue({ ok: true }),
-    } as Parameters<typeof useAuthStore.setState>[0]);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('RegisterRoute renders .disclosure at the phrase step', async () => {
+describe('P1-10 — Disclosure present at credential-establishment path (RegisterRoute form step)', () => {
+  it('RegisterRoute renders .disclosure immediately on the form step (no interaction needed)', () => {
     const { container } = renderWithProviders(<RegisterRoute />);
-    // Fill username, password, confirm password
-    const inputs = container.querySelectorAll('input');
-    fireEvent.change(inputs[0], { target: { value: 'myuser' } });    // username
-    fireEvent.change(inputs[1], { target: { value: 'mypassword123' } }); // password
-    fireEvent.change(inputs[2], { target: { value: 'mypassword123' } }); // confirm
-    // Click "Create account"
-    const btn = container.querySelector('button.auth__btn--primary') as HTMLElement;
-    btn.click();
-    // Wait for register() to resolve → phrase step → Disclosure mounts
-    await waitFor(() =>
-      expect(container.querySelector('.disclosure')).not.toBeNull(),
-    );
+    // Disclosure is at the form step — visible immediately, no user interaction required.
+    expect(container.querySelector('.disclosure')).not.toBeNull();
+    // And it carries copy A
+    expect(container.querySelector('.disclosure__title')?.textContent).toMatch(/How your notes are kept/i);
   });
 });

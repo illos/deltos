@@ -8,8 +8,8 @@
  * TOTP anti-lockout (secSys): setupTotp() returns the QR URI; 2FA is ONLY enabled after the user
  * successfully confirms a code via verifyTotp() — never on QR scan alone.
  *
- * Disclosure seam: <Disclosure /> at the phrase step. planSys copy pass will update the body to
- * reflect the password-auth at-rest model (phrase = reset token, not a device-access key).
+ * Copy A (at-rest disclosure) on the form step; copy B (phrase = master key) inline at the phrase
+ * step; copy D (anti-lockout reassurance) at the TOTP-setup step. planSys @2cd2958.
  */
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
@@ -107,13 +107,14 @@ export function RegisterRoute() {
     return (
       <div className="auth">
         <h1 className="auth__title">Save your recovery phrase</h1>
+        {/* Copy B — planSys @2cd2958: phrase = master key, one-way derivation */}
         <p className="auth__subtitle">
-          These 24 words are the only way to reset your password if you forget it.
-          Write them down and keep them somewhere safe — deltos cannot recover them for you.
+          This phrase is the <strong>master key to your account</strong>. If you ever forget
+          your password, it's the only way back in — and it can reset your password and turn
+          off two-factor authentication, so it's as powerful as full access to your account.
+          We can't recover it for you, and we'll never show it again. Write it down and keep
+          it somewhere safe.
         </p>
-
-        {/* DISCLOSURE SEAM: planSys copy pass — update recovery-phrase clause for password-auth model */}
-        <Disclosure />
 
         <div className="auth__phrase" aria-label="Recovery phrase">
           {words.map((word, i) => (
@@ -136,13 +137,14 @@ export function RegisterRoute() {
           {phraseCopied ? 'Copied!' : 'Copy phrase'}
         </button>
 
+        {/* Required ack — copy B planSys @2cd2958 */}
         <label className="auth__checkbox-label">
           <input
             type="checkbox"
             checked={phraseSaved}
             onChange={(e) => setPhraseSaved(e.target.checked)}
           />
-          I've written down all 24 words in the correct order
+          I've saved my recovery phrase somewhere safe.
         </label>
 
         <button
@@ -181,6 +183,11 @@ export function RegisterRoute() {
         <p className="auth__subtitle">
           Open your authenticator app and scan this code, then enter the
           6-digit code it shows to confirm and enable 2FA.
+        </p>
+        {/* Copy D — planSys @2cd2958: anti-lockout reassurance */}
+        <p className="auth__hint">
+          If you ever lose your authenticator, your recovery phrase can turn off two-factor
+          and get you back in.
         </p>
         <div className="auth__qr">
           <QRCodeSVG value={step.uri} size={200} bgColor="transparent" fgColor="currentColor" />
@@ -221,6 +228,8 @@ export function RegisterRoute() {
       <p className="auth__subtitle">
         Your notes sync across devices and stay accessible offline.
       </p>
+      {/* Copy A — at-rest residual-risk disclosure (secSys establishment gate) */}
+      <Disclosure />
 
       <input
         className="auth__input"

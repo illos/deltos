@@ -111,6 +111,12 @@ export function ResetRoute() {
 
       {formError && <p className="auth__error">{formError}</p>}
 
+      {/* Copy C — planSys @2cd2958: honest revoke-all + 2FA-clear consequence */}
+      <p className="auth__hint">
+        Resetting with your recovery phrase sets a new password, turns off two-factor (you
+        can set it up again afterward), and signs you out on every device.
+      </p>
+
       <button
         className="auth__btn auth__btn--primary"
         onClick={handleReset}

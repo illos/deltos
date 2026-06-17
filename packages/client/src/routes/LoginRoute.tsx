@@ -11,6 +11,7 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../auth/store.js';
 import type { LoginResult } from '../auth/store.js';
+import { Disclosure } from '../components/Disclosure.js';
 
 type Step =
   | { tag: 'form'; error?: string }
@@ -152,6 +153,8 @@ export function LoginRoute() {
         <Link to="/reset" className="auth__link">Forgot your password?</Link>
         <Link to="/register" className="auth__link">Create an account</Link>
       </div>
+      {/* Copy A reaffirm — secSys placement requirement @2cd2958 */}
+      <Disclosure />
     </div>
   );
 }
