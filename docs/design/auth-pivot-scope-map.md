@@ -14,16 +14,38 @@ build. **Date:** 2026-06-17.
   browser sandbox** for v1, **E2EE deferred to v2**; (3) recovery phrase = high-entropy **reset token**.
 - **Migration = clean re-enroll** (dogfood-only, NO data migration).
 
-## ⚠ THE load-bearing open question — routed to secSys (ruling pending, gates the architecture)
-Passkeys gave **ungated-reload FREE**: a durable device key in IDB silently re-minted a session with NO
-token at rest (F7). Password has **no durable device key**, so ungated-reload now needs a **durable
-session/refresh mechanism** that survives reload + iOS eviction. Options put to secSys: **(A)** httpOnly +
-Secure + SameSite refresh **cookie** (not JS-readable, XSS-resilient, same-origin PWA, access token stays
-in-memory) — *my recommendation*; **(B)** refresh token in IDB (JS-readable, violates old F7); **(C)**
-password-derived key unwrapping a stored token (reload friction). secSys also rules on: does **F7 relax**
-now custody is device/OS-trust; refresh-credential at-rest protection; **password hashing on CF Workers**
-(no native Argon2 — PBKDF2-WebCrypto vs WASM-Argon2id vs scrypt, with the **perf standing value** in play).
-**The client reload path + the worker session model are built around whichever secSys picks.**
+## ✅ THE load-bearing question — RESOLVED (secSys ruling, build to this)
+Passkeys gave ungated-reload FREE (durable device key → silent re-mint, no token at rest, F7). Password has
+no durable device key. secSys's ruling (matches my A/B/C framing):
+- **MECHANISM = (A) httpOnly + Secure + SameSite=Strict refresh COOKIE**, Path-scoped to the refresh
+  endpoint, `Max-Age` = durable window (30–90d sliding/idle). Rejects (B) IDB token (JS-readable, XSS-
+  exfiltratable — strictly worse than the old in-memory token, a long-lived bearer in the same plaintext IDB
+  as the notes) and (C) password-derived unwrap (reload friction, violates ungated-reload). (A) reproduces
+  the passkey property: the cookie auto-rides the first refresh on cold boot → silent re-mint, survives
+  reload + iOS eviction (the cookie jar is not the evicted localStorage).
+- **F7 SUPERSEDED, not abandoned** → re-stated: *no JS-readable bearer at rest*. The **access token stays
+  in-memory** (short-TTL, `Authorization` header), the **sole durable credential is the httpOnly refresh
+  cookie** (never IDB/localStorage/sessionStorage). Stronger against XSS than the old in-memory token.
+- **Refresh-credential protection (hard conditions):** store only the **HASH** of the refresh token
+  server-side (reuse the existing **F6 `hashToken`** path — never raw), keyed account+device.
+  **Rotation-on-use + reuse-detection** (a presented-already-rotated token = theft → revoke the whole token
+  FAMILY + force re-login). **Revoke-all-families** on password reset/change, logout, 2FA enable/disable
+  (this is why refresh state is **server-side/stateful, NOT a stateless JWT**). Anti-CSRF belt
+  (origin/Referer check) on mutations even with SameSite=Strict; access path stays CSRF-immune (custom header).
+- **Password hashing = Argon2id via `@noble/hashes` argon2id** (CONFIRMED already a dep on worker+client
+  @2.2.0 — pure-JS, Workers-compatible, **no WASM, no new dependency, reuse-clean**). Params m=19456 KiB
+  (19 MiB), t=2, p=1 (OWASP floor); per-user random 16B salt; store the full **PHC string** (rehash-on-login
+  to upgrade params); add an app **PEPPER** as a Worker secret (HMAC before hash → a D1-only leak can't be
+  cracked offline). **Reality-check (mine, done):** Argon2id@those-params ≈ **325 ms/hash** on this devbox
+  CPU (pure-JS) — within the paid Workers CPU budget for a single login; **authoritative measure is on real
+  Workers** at build time (V8 isolate CPU accounting differs). Fallback ladder if real-Workers concurrency
+  CPU-cost bites: step params DOWN, or scrypt (N=2^16–2^17) from the same `@noble` lib (document the
+  downgrade); PBKDF2-HMAC-SHA256 ≥600k is the last-resort native floor. Algorithm choice (Argon2id) is fixed;
+  only params may tune.
+- **Same-origin CONFIRMED** (my check): `packages/worker/wrangler.jsonc` serves the client build via the
+  `assets` binding with `run_worker_first: ["/api/*"]` + SPA fallback — so SameSite=Strict + the same-origin
+  refresh work with NO CORS. (Full security model — TOTP-secret encryption, recovery-phrase reset binding,
+  breach posture — lands with pilot from secSys.)
 
 ---
 
@@ -85,14 +107,18 @@ the credential can change (signing-key → password) with **zero data migration*
 ## (b) NEW surface
 1. **POST /register** — {username, password} → create account + credential + mint session + return recovery
    reset phrase ONCE. (Username set at register; folds the atomic-unique `claimUsername` in.)
-2. **POST /login** — {username, password, totp?} → verify hash (+TOTP) → mint session + set refresh.
-3. **POST /session/refresh** — refresh credential → new access token. **THE ungated-reload path** (mechanism
-   = secSys's A/B/C).
-4. **POST /logout** — revoke refresh + grant.
+2. **POST /login** — {username, password, totp?} → verify Argon2id hash (+TOTP) → mint session + Set-Cookie
+   refresh. Per-account exponential backoff + Turnstile (no hard lockout); uniform 401 (anti-enumeration).
+3. **POST /session/refresh** — the httpOnly cookie auto-rides → verify hashed refresh + **rotate** (issue
+   new, invalidate prior; reuse-detection revokes the family) → new in-memory access token. **THE
+   ungated-reload path** (cookie scoped here only).
+4. **POST /logout** — revoke refresh family + grant; clear cookie.
 5. **TOTP** — POST /totp/setup (authed) → secret + otpauth URI/QR; POST /totp/verify → enable. Secret stored
    **encrypted** at rest.
-6. **Recovery reset** — POST /password/reset {recoveryPhrase, newPassword} → verify phrase (stored **hashed**,
-   like a password) → set new hash + invalidate sessions.
+6. **Recovery reset** — POST /password/reset {recoveryPhrase, newPassword} → verify phrase (stored as an
+   **Argon2id verifier**, like a password) → set new hash + **revoke all refresh families** + sessions.
+   (TOTP-secret encryption, recovery-phrase binding details, breach posture: secSys's security model —
+   reference, don't re-derive.)
 7. **Client** — RegisterRoute / LoginRoute / ResetRoute / TOTP-setup UI; password actions in `auth/store`;
    `shellGate` keyed on durable-session.
 
@@ -114,9 +140,14 @@ rewrite of one contained layer**, de-risked by the reused authz spine.
 5. **Clean re-enroll** (dogfood) — fresh DB, no data migration.
 
 **Landmines:**
-- **Password hashing on CF Workers** — no native Argon2id; PBKDF2-WebCrypto (native, weaker) vs WASM-Argon2id
-  (bundle cost — perf standing value) vs scrypt. secSys ruling.
-- **Durable-session vs F7** — secSys's A/B/C choice reshapes the entire client reload path; load-bearing.
+- **Password hashing on CF Workers** — RESOLVED: Argon2id via the already-vendored `@noble/hashes` (pure-JS,
+  no WASM/new dep). The remaining item is a **build-phase-1 CPU MEASUREMENT on real Workers** (tunes params
+  only; early local datapoint ≈325 ms/hash). Ladder: param step-down → `@noble` scrypt → PBKDF2 floor.
+- **Durable-session** — RESOLVED: (A) httpOnly refresh cookie + in-memory access token (see the resolved
+  section). F7 superseded → "no JS-readable bearer at rest". Refresh is **stateful server-side** (hashed,
+  rotated, family-revoked) — NOT a stateless JWT.
+- **Login rate-limiting / abuse** — CF WAF + **per-account exponential backoff** + Turnstile; **no hard
+  lockout** (a hard lockout is a DoS-on-the-victim vector). secSys ruling.
 - **Username becomes a LOGIN credential** (not just a directory alias). `claimUsername` is already
   atomic-unique (reuse), but moves from an OPTIONAL post-session claim → REQUIRED at register, and becomes an
   **auth identifier** → **login anti-enumeration**: wrong-username vs wrong-password must be indistinguishable
