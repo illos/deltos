@@ -30,21 +30,31 @@ spine is auth-method-independent and **kept wholesale**, so this is a **zero-dat
 - **Durable session (the load-bearing answer):** `httpOnly + Secure + SameSite=Strict` **refresh cookie**
   scoped to `/refresh` (30–90d sliding). Cold boot auto-rides `/refresh` → short-TTL **in-memory access
   token** → app opens to notes **ungated** (reproduces the passkey silent re-mint; survives reload + iOS
-  eviction). Refresh stored **hashed** server-side, **rotation + reuse-detection**, **revoke-all** on
-  reset/password-change/logout/2FA-change (stateful), + CSRF belt. **This SUPERSEDES
+  eviction). Refresh is **stateful + stored hashed server-side — NOT a stateless JWT** (revocation must be real),
+  with **rotation + reuse-detection**, a **CSRF belt**, and **revoke-all** firing on ALL FOUR
+  credential-change events: **reset / password-change / logout / 2FA-change**. **This SUPERSEDES
   [[session-token-in-memory-only]]** — access token stays in memory; the refresh bearer is an httpOnly
   cookie JS can't read → net **stronger vs XSS** than the old wrapped-key-in-IDB exposure.
 - **Password:** **Argon2id** via the already-vendored pure-JS `@noble/hashes` (**no new dep**) + **pepper as
   a Worker secret**. Param-tune by measuring CPU on real CF Workers; **fallback ladder** if pure-JS busts
   the Worker CPU budget = WASM Argon2id (server-side → does NOT touch the client bundle, perf-value safe) →
-  scrypt/PBKDF2 last. Rate-limit =
-  CF WAF + **per-account exponential backoff** + **Turnstile** ([[turnstile-spin]]); **NO hard lockout**
-  (avoids victim-DoS). Uniform invalid-credentials error.
+  scrypt/PBKDF2 last. Rate-limit = CF WAF + **per-account exponential backoff** + **Turnstile**
+  ([[turnstile-spin]]); **NO hard lockout** (avoids victim-DoS). Uniform invalid-credentials error.
+- **⚠️ ENDPOINT ORDERING (security-critical, secSys):** on **BOTH login AND reset**, the cheap gate
+  (edge rate-limit / Turnstile / per-account exponential backoff) **MUST run BEFORE the Argon2id hash.**
+  A ~325ms server-side hash (devSys early measurement) on an unauthenticated endpoint is a **CPU-amplification
+  DoS** if hashed-first. Compose with enumeration defense **IN THIS ORDER: gate first** (stops the DoS),
+  THEN **uniform real-or-dummy hashing INSIDE the gate** (always hash — real or decoy — so there's no
+  account-existence timing oracle). Build note: Argon2id `m=19456` ≈ 19MB/hash → a 128MB isolate caps
+  **~6 concurrent hashes** (memory-bound); 325ms is acceptable for the low-volume new-device+reset-only
+  path **once gated**, and unacceptable ungated.
 - **TOTP (optional):** encrypted-at-rest, replay-guarded, prompted on new-device/reset only.
 - **Recovery phrase:** high-entropy **Argon2id verifier keyed to accountId**. Reset = username+phrase →
   short-TTL single-use token → set new password + revoke-all sessions.
 - **At-rest:** rely-on-device **ACCEPTABLE** (no weaker than Option-A). Carry the **honest enrollment
-  disclosure** + the **SW-cache invariant** ([[pin-storage-1-sw-cache-invariant]]) forward; E2EE → v2.
+  disclosure forward, INCLUDING the explicit residual-risk clause** (local notes are protected by device/OS
+  + browser sandbox only — a local storage-read attacker could read them; not E2EE) + the **SW-cache
+  invariant** ([[pin-storage-1-sw-cache-invariant]]); E2EE → v2.
 
 ## Rulings planSys owns
 - **Anti-enumeration (devSys landmine 1):** **register discloses "username taken"** (usability necessity) —
@@ -74,6 +84,10 @@ spine is auth-method-independent and **kept wholesale**, so this is a **zero-dat
 7. Honest at-rest disclosure present; SW never caches `/api` into the shared bucket.
 8. No regression to the notes/sync/editor/swipe+trash layer (it's credential-agnostic).
 9. P0 discipline: ungated + latched ceremony, with the regression test.
+10. **Gate-before-hash:** login + reset run the cheap gate (rate-limit/Turnstile/backoff) BEFORE any
+    Argon2id work; hashing is uniform real-or-dummy inside the gate (no DoS amplification, no timing oracle).
+11. Refresh is **stateful + server-hashed (not a JWT)**; **revoke-all** verified on all four credential-change
+    events; at-rest disclosure carries the residual-risk clause.
 
 ## Build decomposition (pilot routes)
 - **worker + shared lane (devSys):** register/login/refresh/logout/reset/TOTP endpoints, Argon2id+pepper,
