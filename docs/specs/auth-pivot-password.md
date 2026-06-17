@@ -62,10 +62,15 @@ spine is auth-method-independent and **kept wholesale**, so this is a **zero-dat
   invariant** ([[pin-storage-1-sw-cache-invariant]]); E2EE → v2.
 
 ## Rulings planSys owns
-- **Anti-enumeration (devSys landmine 1):** **register discloses "username taken"** (usability necessity) —
-  this knowingly relaxes F-acct-4's no-oracle property (register becomes an unauthenticated availability
-  oracle), **mitigated by rate-limit + Turnstile**. **Login = uniform "wrong username or password"** (no
-  enumeration). **Reset = non-disclosing** (username+phrase failure must not confirm the username exists).
+- **Usernames = PUBLIC HANDLES (user decision, 2026-06-17):** the username is a **shareable, discoverable
+  identity** (sets up future notebook-sharing/collaboration; harmless while single-user). So existence is
+  **public by design** and the **enumeration concern dissolves** — devSys landmine 1 resolves the easy way.
+  Register is an **open handle-picker** (show taken/available freely; a "check availability" affordance is
+  good UX, not a leak). F-acct-4's no-oracle property is intentionally retired for the handle model.
+  **STILL KEEP** (these are DoS / timing / credential hygiene, NOT enumeration): **rate-limit register**
+  (anti-bulk-creation/abuse, Turnstile optional), **uniform invalid-credentials on login** (don't distinguish
+  username-vs-password), **uniform reset failure** (don't distinguish username-vs-phrase), and the
+  **gate-before-hash ordering** (the ~295ms Argon2 verifier is a DoS surface regardless of handle publicity).
 - **Recovery-phrase is the SINGLE MASTER recovery (secSys v1 ruling, planSys CONFIRMED):** a phrase-only
   reset **clears/re-enrolls 2FA** so a lost 2FA device never permanently locks the user out. Tradeoff,
   eyes-open: the phrase alone can bypass 2FA → 2FA is a second factor against *password* compromise, not
@@ -118,7 +123,8 @@ spine is auth-method-independent and **kept wholesale**, so this is a **zero-dat
   Workers class — same discipline as the real-D1 lessons).
 - **Migration:** clean re-enroll (dogfood-only, no data migration).
 
-## Open items (non-blocking; build to defaults)
-- **Username public-handle vs private-login-id** (user, pending) — if public handles, the enumeration
-  concern evaporates. Default: private-ish + rate-limit.
-- **Phrase-clears-2FA** — confirmed as default; pending an explicit user nod (above).
+## Open items — BOTH RESOLVED (user, 2026-06-17)
+- **Username = PUBLIC HANDLE** ✅ — shareable/discoverable identity; enumeration-obscuring dropped, register
+  is an open handle-picker; rate-limit/uniform-errors/gate-before-hash kept for DoS/timing only. (See ruling above.)
+- **Phrase-clears-2FA = CONFIRMED** ✅ — recovery phrase resets password AND 2FA (never-locked-out); the
+  disclosure copy B+C "turns off two-factor" clauses are permanent.
