@@ -211,6 +211,11 @@ async function issueRefresh(
     issuedAtMs: nowMs,
     expiresAtMs: nowMs + REFRESH_TTL_MS,
   });
+  setRefreshCookie(c, refreshToken);
+}
+
+/** Set the durable refresh cookie (httpOnly+Secure+SameSite=Strict, Path-scoped to /refresh). */
+function setRefreshCookie(c: AppContext, refreshToken: string): void {
   setCookie(c, REFRESH_COOKIE_NAME, refreshToken, {
     httpOnly: true,
     secure: true,
@@ -517,8 +522,18 @@ passwordAuth.post(
       if (principal.kind !== 'owner') return apiError(c, 403, 'forbidden', 'only an account may finalize');
       const s = store(c);
       const nowMs = Date.now();
-      await s.setRecoveryEstablished(principal.id, true, iso(nowMs));
-      await issueRefresh(c, s, principal.id, authCrypto.randomToken(16), nowMs);
+      // ATOMIC (secSys (b)): flip recoveryEstablished=true AND insert the durable-session row in one
+      // transaction, then set the cookie — the BELT flag and the SUSPENDERS cookie can never diverge.
+      const refreshToken = authCrypto.randomToken(32);
+      await s.finalizeRecovery({
+        accountId: principal.id,
+        tokenHash: authCrypto.hashToken(refreshToken),
+        familyId: authCrypto.randomToken(16),
+        issuedAtMs: nowMs,
+        expiresAtMs: nowMs + REFRESH_TTL_MS,
+        updatedAt: iso(nowMs),
+      });
+      setRefreshCookie(c, refreshToken);
       return c.json({ ok: true });
     },
   }),

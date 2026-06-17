@@ -241,6 +241,22 @@ export interface AuthStore {
    */
   setRecoveryEstablished(accountId: string, established: boolean, updatedAt: string): Promise<void>;
 
+  /**
+   * FINALIZE atomically (secSys (b)): set `recoveryEstablished=true` AND insert the durable refresh
+   * session in ONE transaction (one db.batch), so the BELT flag and the SUSPENDERS cookie-backing row
+   * can never diverge — there is no window where a durable session exists for an account whose recovery
+   * is not yet established (the exact gap the cold-boot fail-safe rests on). The route sets the cookie
+   * header after this commits.
+   */
+  finalizeRecovery(row: {
+    accountId: string;
+    tokenHash: string;
+    familyId: string;
+    issuedAtMs: number;
+    expiresAtMs: number;
+    updatedAt: string;
+  }): Promise<void>;
+
   /** Persist a freshly-minted refresh session (only the token HASH is stored — F6). */
   insertRefreshSession(row: {
     tokenHash: string;
@@ -589,6 +605,22 @@ export function createAuthStore(db: DbAdapter): AuthStore {
         {
           sql: `UPDATE passwordCredentials SET recoveryEstablished = ?, updatedAt = ? WHERE accountId = ?`,
           params: [established ? 1 : 0, updatedAt, accountId],
+        },
+      ]);
+    },
+
+    async finalizeRecovery(row) {
+      // ONE batch = ONE transaction: the BELT flag and the durable-session row land together or not at all.
+      await db.batch([
+        {
+          sql: `UPDATE passwordCredentials SET recoveryEstablished = 1, updatedAt = ? WHERE accountId = ?`,
+          params: [row.updatedAt, row.accountId],
+        },
+        {
+          sql: `INSERT INTO refreshSessions
+                  (tokenHash, familyId, accountId, issuedAtMs, expiresAtMs, rotatedAt, revokedAt, label)
+                VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL)`,
+          params: [row.tokenHash, row.familyId, row.accountId, row.issuedAtMs, row.expiresAtMs],
         },
       ]);
     },
