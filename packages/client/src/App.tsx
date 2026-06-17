@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom';
+import type { Note } from '@deltos/shared';
 import { NewNote } from './routes/NewNote.js';
 import { NoteRoute } from './routes/NoteRoute.js';
 import { EnrollRoute } from './routes/EnrollRoute.js';
@@ -12,9 +13,12 @@ import { SyncIndicator } from './components/SyncIndicator.js';
 import { SessionStatus } from './components/SessionStatus.js';
 import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
 import { ConflictBadgeSlot } from './components/ConflictBadgeSlot.js';
+import { SwipeRow } from './components/SwipeRow.js';
 import { useAuthStore } from './auth/store.js';
 import { selectBootView } from './auth/shellGate.js';
 import { useNotes } from './db/storeHooks.js';
+import { mutateNotes } from './db/mutate.js';
+import { showToast, showActionToast } from './lib/toastEvents.js';
 
 /**
  * App shell — the local-first host chrome that every surface mounts inside (spec Part 1a).
@@ -92,6 +96,21 @@ function AppRoutes() {
 
 function HomeView() {
   const notes = useNotes(getDefaultNotebookId());
+  // Single-open invariant: only one swipe row open at a time
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  const handleDelete = useCallback((note: Note) => {
+    mutateNotes.softDelete(note).catch(console.error);
+    showActionToast(`"${note.title || 'Untitled'}" deleted`, {
+      label: 'Undo',
+      fn: () => { mutateNotes.restore(note).catch(console.error); },
+    });
+  }, []);
+
+  const handleDuplicate = useCallback((note: Note) => {
+    mutateNotes.duplicate(note).then(() => showToast('Duplicated')).catch(console.error);
+  }, []);
+
   return (
     <div className="home">
       <div className="home__header">
@@ -104,11 +123,18 @@ function HomeView() {
         <ul className="home__notes">
           {notes.map(note => (
             <li key={note.id}>
-              <Link to={`/note/${note.id}`} className="home__note-link">
-                {note.title || 'Untitled'}
-              </Link>
-              {/* Part 2 slot: gruntSys2's conflict badge renders here off note.hasConflict. */}
-              <ConflictBadgeSlot note={note} />
+              <SwipeRow
+                isOpen={openId === note.id}
+                onOpen={() => setOpenId(note.id)}
+                onClose={() => setOpenId(null)}
+                onDelete={() => handleDelete(note)}
+                onDuplicate={() => handleDuplicate(note)}
+              >
+                <Link to={`/note/${note.id}`} className="home__note-link">
+                  {note.title || 'Untitled'}
+                </Link>
+                <ConflictBadgeSlot note={note} />
+              </SwipeRow>
             </li>
           ))}
         </ul>

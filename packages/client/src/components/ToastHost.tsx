@@ -14,6 +14,20 @@ import {
   type ToastMessage,
 } from '../lib/toastEvents.js';
 
+// Action button rendered inline inside a toast (e.g. Undo). Dismisses on tap then calls fn.
+function ToastAction({ toast }: { toast: ToastMessage }) {
+  const action = toast.action;
+  if (!action) return null;
+  return (
+    <button
+      className="toast__action"
+      onClick={(e) => { e.stopPropagation(); dismissToast(toast.id); action.fn(); }}
+    >
+      {action.label}
+    </button>
+  );
+}
+
 export function ToastHost() {
   const [toasts, setToasts] = useState<readonly ToastMessage[]>(getToasts);
   const navigate = useNavigate();
@@ -35,6 +49,7 @@ export function ToastHost() {
           }}
         >
           <span className="toast__message">{toast.message}</span>
+          <ToastAction toast={toast} />
           <button
             className="toast__close"
             aria-label="Dismiss"

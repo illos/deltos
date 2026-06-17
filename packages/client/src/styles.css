@@ -526,6 +526,86 @@ a.auth__link { display: inline; }
   color: var(--muted);
 }
 
+/* ── Swipe row (note list) ──────────────────────────────────────────── */
+
+.swipe-row {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.4rem;
+}
+
+/* Delete exit: fade then height-collapse; list gaps after React removes the element */
+.swipe-row--deleting {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+/* Back layer: buttons sit behind the foreground, revealed as foreground slides right */
+.swipe-row__back {
+  position: absolute;
+  inset: 0;
+}
+
+/* Right-swipe panel: Copy + Delete, anchored to left edge (revealed by right drag) */
+.swipe-row__back-right {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+/* Left-swipe seam: future Pin slot, anchored to right edge (rubber-bands in v1) */
+.swipe-row__back-left {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+}
+
+.swipe-row__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  min-width: 60px;
+  overflow: hidden;
+  white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.swipe-row__btn--copy   { background: #3b82f6; color: #fff; }
+.swipe-row__btn--delete { background: #ef4444; color: #fff; }
+
+/* Foreground: slides imperatively over the back layer; explicit bg to cover buttons */
+.swipe-row__foreground {
+  position: relative;
+  z-index: 1;
+  background: var(--bg, #11131a);
+  touch-action: pan-y;
+  will-change: transform;
+  border-radius: 0.4rem;
+}
+
+/* Added by JS around a snap; removed on transitionend */
+.swipe-row__foreground--snapping {
+  transition: transform 320ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* Invisible overlay when open: captures tap to close instead of navigating */
+.swipe-row__tap-close {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* ── Toast notifications ────────────────────────────────────────────── */
 
 .toast-host {
@@ -564,6 +644,19 @@ a.auth__link { display: inline; }
   flex: 1;
   font-size: 0.9rem;
   line-height: 1.4;
+}
+
+.toast__action {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid rgba(255,255,255,0.25);
+  color: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.2rem 0.55rem;
+  border-radius: 0.3rem;
+  cursor: pointer;
+  touch-action: manipulation;
 }
 
 .toast__close {

@@ -15,6 +15,8 @@ export interface ToastMessage {
   message: string;
   /** Optional note ID — ToastHost uses it to make the toast tappable (navigate to note). */
   noteId?: string;
+  /** Optional inline action (e.g. Undo). Rendered as a button; dismisses the toast when tapped. */
+  action?: { label: string; fn: () => void };
 }
 
 type ToastListener = (toasts: readonly ToastMessage[]) => void;
@@ -40,6 +42,15 @@ export function showToast(message: string, noteId?: string): string {
 export function dismissToast(id: string): void {
   _toasts = _toasts.filter((t) => t.id !== id);
   _notify();
+}
+
+/** Show a toast with an inline action button (e.g. Undo). Returns the toast id. */
+export function showActionToast(message: string, action: { label: string; fn: () => void }): string {
+  const id = crypto.randomUUID();
+  _toasts = [..._toasts, { id, message, action }];
+  _notify();
+  setTimeout(() => dismissToast(id), TOAST_TTL_MS);
+  return id;
 }
 
 /**
