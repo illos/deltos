@@ -7,6 +7,7 @@ import { EnrollRoute } from './routes/EnrollRoute.js';
 import { UnlockRoute } from './routes/UnlockRoute.js';
 import { RecoverRoute } from './routes/RecoverRoute.js';
 import { QrReceiveRoute } from './routes/QrReceiveRoute.js';
+import { TrashRoute } from './routes/TrashRoute.js';
 import { startSyncTriggers, syncNow } from './lib/syncEngine.js';
 import { getDefaultNotebookId } from './lib/notebooks.js';
 import { SyncIndicator } from './components/SyncIndicator.js';
@@ -139,6 +140,10 @@ function HomeView() {
           ))}
         </ul>
       )}
+
+      <div className="home__footer">
+        <Link to="/trash" className="home__trash-link">Trash</Link>
+      </div>
     </div>
   );
 }
@@ -175,6 +180,7 @@ function AuthedShell() {
           <Route path="/unlock" element={<UnlockRoute />} />
           <Route path="/recover" element={<RecoverRoute />} />
           <Route path="/qr-receive" element={<QrReceiveRoute />} />
+          <Route path="/trash" element={<TrashRoute />} />
           {/* Already enrolled: a fresh-account enroll is meaningless here — send home. */}
           <Route path="/enroll" element={<Navigate to="/" replace />} />
         </Routes>

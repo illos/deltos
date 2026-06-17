@@ -30,6 +30,19 @@ export function useNotes(notebookId: NotebookId): Note[] {
   return notes;
 }
 
+/**
+ * Reactively read all trashed notes in a notebook.
+ * TODO devSys2: replace the useEffect body with:
+ *   return getStore().observeTrashedNotes(notebookId, setNotes);
+ */
+export function useTrashedNotes(notebookId: NotebookId): Note[] {
+  const [notes, setNotes] = useState<Note[]>([]);
+  useEffect(() => {
+    void notebookId; void setNotes; // wired by devSys2
+  }, [notebookId]);
+  return notes;
+}
+
 /** Reactively read the outbound sync-queue depth (for the sync indicator). */
 export function useSyncQueueCount(): number {
   const [count, setCount] = useState(0);
