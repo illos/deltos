@@ -19,6 +19,12 @@ const testConfig: UserConfig['test'] = {
 };
 
 export default defineConfig({
+  // vite's own UserConfigExport has no `test` key (vitest reads it at runtime); typing it here would
+  // pull vitest/config's defineConfig, which resolves a DIFFERENT vite version than the app's and
+  // mismatches the plugin types. So suppress the one runtime-valid excess key — self-correcting: if
+  // vite ever types `test`, this @ts-expect-error goes unused and errors, flagging the cleanup. This
+  // keeps `pnpm typecheck` (tsconfig.node.json) fully green so the gate means deploy-clean.
+  // @ts-expect-error — `test` is read by vitest at runtime; not in vite's config type.
   test: testConfig,
   plugins: [
     react(),

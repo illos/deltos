@@ -1,19 +1,18 @@
 import { liveQuery } from 'dexie';
 import type { Note, NoteId, NotebookId, SyncStatus } from '@deltos/shared';
-import { trashedAt } from '@deltos/shared';
+import { isTrashed, trashedAt } from '@deltos/shared';
 import { db } from './schema.js';
 import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry } from './schema.js';
 import type { ConflictResolution, LocalStore, Unsubscribe } from './localStore.js';
 
 /**
- * Strict, FAIL-SAFE "is this note in the trash?" (Fork P) — the ONE source shared by the main-list
- * exclusion (observeNotes) and the trash-view inclusion (observeTrashedNotes), so the two directions
- * cannot drift. Uses `trashedAt()` (not `isTrashed()`): it returns null for an absent OR a malformed/
- * non-date sys:trashedAt value, so a CORRUPT trash flag reads as NOT trashed → the note stays VISIBLE
- * in the main list (and out of the trash view, so it's shown normally — never lost). secSys (B):
- * default VISIBLE, a garbage value can never silently hide a note.
+ * "Is this note in the trash?" (Fork P) — the ONE source shared by the main-list exclusion
+ * (observeNotes) and the trash-view inclusion (observeTrashedNotes), so the two directions cannot
+ * drift. `isTrashed()` is strict-and-FAIL-SAFE (defined via trashedAt() !== null): an absent OR a
+ * malformed/non-date sys:trashedAt value reads as NOT trashed → a CORRUPT trash flag leaves the note
+ * VISIBLE in the main list (and out of the trash view, so it shows normally — never lost). secSys (B).
  */
-const isInTrash = (n: ClientNote): boolean => trashedAt(n.properties) !== null;
+const isInTrash = (n: ClientNote): boolean => isTrashed(n.properties);
 
 /**
  * The Dexie/IndexedDB implementation of {@link LocalStore}. This is the ONE place Dexie types live;
