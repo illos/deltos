@@ -6,12 +6,15 @@
  *   SA-T2 restore    → un-trashed: back in the main list, gone from the trash view, no key residue.
  *   SA-T3 duplicate  → new id, both rows, copied content, reserved (sys:) keys STRIPPED (a copy of a
  *                      TRASHED note is always LIVE + clean).
+ *   SA-T4 no-loss    → trash toggle WHILE a pending (unsynced) edit exists: the edit is NOT dropped
+ *                      (the trash upsert carries the latest content; own queue entries).
  *   secSys-A         → trash/restore enqueue at the LIVE persisted version (CAS base, not LWW): a
  *                      stale caller note.version cannot become the base → a replayed toggle CAS-misses.
  *   secSys-B         → FAIL-SAFE list filter: a malformed/garbage sys:trashedAt value defaults to
  *                      VISIBLE (never silently hidden) and stays out of the trash view (not lost).
  *
- * The server round-trip on real D1 + in-flight sync races are devSys's SA-T5/T6 + swipeDeleteSync.
+ * The server round-trip on real D1 (worker CAS) + the deeper in-flight sync-engine races are devSys's
+ * lane (the worker-side regression suite).
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -113,6 +116,29 @@ describe('SA-T3 — duplicate: new id, both rows, reserved keys stripped (live +
     const dupEntries = await db.syncQueue.where('recordId').equals(dup.id).toArray();
     expect(dupEntries).toHaveLength(1);
     expect(dupEntries[0].baseVersion).toBe(0);                          // INSERT
+  });
+});
+
+describe('SA-T4 — trash toggle while a pending edit exists: no data loss', () => {
+  it('softDelete after an unsynced edit retains the edit content + trashes it; both entries enqueued (own ids)', async () => {
+    const { db } = await import('../src/db/schema.js');
+    await seedSynced(1, 'A');
+
+    // Pending edit (not yet synced) — content advances to 'AB'.
+    await mutateNotes.put(makeNote(NOTE_ID, 1, 'AB'));
+    // Now trash the edited note (the UI passes the current, edited note).
+    await mutateNotes.softDelete(makeNote(NOTE_ID, 1, 'AB'));
+
+    const row = (await db.notes.get(NOTE_ID)) as ClientNote;
+    expect(row.title).toBe('AB');                          // the edit is NOT lost
+    expect(trashedAt(row.properties)).toBeTruthy();        // and it's trashed
+    const entries = await db.syncQueue.where('recordId').equals(NOTE_ID).toArray();
+    expect(entries.length).toBeGreaterThanOrEqual(2);      // edit entry + trash entry survive
+    expect(new Set(entries.map((e) => e.id)).size).toBe(entries.length); // distinct entry ids
+    // The trash entry (an ordinary upsert) carries the LATEST content — pushing 'AB' + trashed, no loss.
+    const trashEntry = entries.find((e) => trashedAt(e.payload.properties) !== null);
+    expect(trashEntry).toBeDefined();
+    expect(trashEntry!.payload.title).toBe('AB');
   });
 });
 
