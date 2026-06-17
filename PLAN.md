@@ -133,6 +133,20 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   live collaboration (promote-to-DO), import, **behavior/automation dimension** (reactions /
   recurrence / scheduled triggers / notifications — the named-now third extension dimension, NOT
   `commands`), schema migration.
+- **Location-based notes (user 2026-06-17 — ALWAYS-ON by user decision):** auto-capture device location on
+  each note via the PWA **Geolocation API** (HTTPS ✓; one-shot **foreground** read; iOS-PWA permission
+  flakiness = test on-device). Store **structured coords** (indexed field, NOT the freeform property bag —
+  it's queried). **Proximity-based filter/group** ("notes near here / same area / this trip") computed
+  **LOCALLY** — no external geocoding, private + cheap. **PRIVACY POSTURE (eyes-open):** user chose
+  always-on over planSys's opt-in rec, having acknowledged the concern; consequence = location history
+  lands on the server under **non-E2EE sync → STRENGTHENS the v2 E2EE case**. Responsible always-on still
+  carries: (a) an **honest disclosure** that every note records location, (b) a **global off-switch** in
+  settings (default-on ≠ no escape hatch), (c) per-note location stays **strippable**. **Background/arrival
+  geofencing = NATIVE-FUTURE only** (a PWA reads location only while open).
+- **Location mapping (user 2026-06-17 — explicit future feature):** a **map view** of notes by location +
+  **reverse-geocoded town/place labels** (the named-place layer the local proximity filter doesn't need).
+  Sits AFTER basic capture/filter; geocoding = an external-call/privacy cost to weigh at build. Pairs with
+  the public-handle sharing direction ("notes from our trip").
 
 ## Open decisions (decide at the relevant slice — not current blockers)
 - **Editor engine** — Phase 1, informed by S2. The next user-facing call.
