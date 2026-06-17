@@ -28,6 +28,7 @@ import {
 } from './db/accountScope.js';
 import { sync } from './routes/sync.js';
 import { auth } from './routes/auth.js';
+import { passwordAuth } from './routes/passwordAuth.js';
 
 const app = new Hono<AppEnv>();
 
@@ -71,6 +72,15 @@ app.route('/api/sync', sync);
 // ---------------------------------------------------------------------------
 
 app.route('/api/auth', auth);
+
+// ---------------------------------------------------------------------------
+// Password-auth routes (the 2026-06-17 pivot) — username+password (+optional TOTP), recovery-phrase
+// reset, durable httpOnly-refresh-cookie sessions. Mounted alongside the signed-challenge routes on
+// collision-free paths (signup/login/refresh/logout/reset/totp/*) for an additive landing; the
+// signed-challenge deletion is a coordinated cutover once the client lane cuts over.
+// ---------------------------------------------------------------------------
+
+app.route('/api/auth', passwordAuth);
 
 // ---------------------------------------------------------------------------
 // Helpers

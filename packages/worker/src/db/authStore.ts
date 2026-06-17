@@ -197,6 +197,97 @@ export interface AuthStore {
 
   /** Reclaim expired challenge rows (the TTL bounds lifetime; this reclaims space). */
   sweepExpiredChallenges(serverNowMs: number): Promise<void>;
+
+  // --- password auth (migration 0004) -------------------------------------------------------------
+  // The credential layer for the auth pivot: a per-account password verifier + recovery verifier +
+  // optional TOTP, the durable refresh-session store, and the abuse-throttle gate. Keyed on the stable
+  // `accountId` (the D6 data-ownership key) — login resolves username -> accountId via `usernames`.
+
+  /** accountId -> the account holding a normalized username, or null. The login/reset identifier path. */
+  resolveAccountIdByUsername(usernameNormalized: string): Promise<string | null>;
+
+  /** Create the account's password credential (+ recovery verifier). One per account (PK on accountId). */
+  createPasswordCredential(row: {
+    accountId: string;
+    passwordPhc: string;
+    recoveryPhc: string;
+    createdAt: string;
+  }): Promise<void>;
+
+  /** The account's credential record, or null if it has none. `totpEnabled` is surfaced as a boolean. */
+  getCredentialByAccount(accountId: string): Promise<PasswordCredentialRow | null>;
+
+  /** Replace the stored password hash (reset / password-change / rehash-on-login param upgrade). */
+  updatePasswordHash(accountId: string, passwordPhc: string, updatedAt: string): Promise<void>;
+
+  /** Replace the recovery verifier (reset re-mints the phrase; phrase rotation). */
+  updateRecoveryHash(accountId: string, recoveryPhc: string, updatedAt: string): Promise<void>;
+
+  /** Stash an encrypted TOTP secret WITHOUT enabling 2FA (confirm-before-activate). */
+  setTotpSecret(accountId: string, totpSecretEnc: string, updatedAt: string): Promise<void>;
+
+  /** Activate 2FA after a confirm-code verified, stamping the initial replay-guard step. */
+  enableTotp(accountId: string, lastAcceptedStep: number, updatedAt: string): Promise<void>;
+
+  /** Disable 2FA: clear the secret, the enabled flag, and the replay guard (reset / explicit disable). */
+  disableTotp(accountId: string, updatedAt: string): Promise<void>;
+
+  /** Advance the TOTP replay guard after a code is accepted at login (reject any step <= this next time). */
+  advanceTotpStep(accountId: string, lastAcceptedStep: number, updatedAt: string): Promise<void>;
+
+  /** Persist a freshly-minted refresh session (only the token HASH is stored — F6). */
+  insertRefreshSession(row: {
+    tokenHash: string;
+    familyId: string;
+    accountId: string;
+    issuedAtMs: number;
+    expiresAtMs: number;
+    label?: string | null;
+  }): Promise<void>;
+
+  /** Resolve a refresh session by token hash, REGARDLESS of rotated/revoked/expired — the route decides. */
+  getRefreshSession(tokenHash: string): Promise<{
+    familyId: string;
+    accountId: string;
+    expiresAtMs: number;
+    rotatedAt: string | null;
+    revokedAt: string | null;
+  } | null>;
+
+  /** Mark a refresh token spent by a rotation (its successor now exists). Idempotent on rotatedAt. */
+  markRefreshRotated(tokenHash: string, rotatedAt: string): Promise<void>;
+
+  /** Reuse-detection: revoke EVERY non-revoked token in a rotation family (a stolen token was replayed). */
+  revokeRefreshFamily(familyId: string, revokedAt: string): Promise<void>;
+
+  /**
+   * Revoke-all: kill every non-revoked refresh family for an account (fires on the FOUR credential-change
+   * events — reset / password-change / logout / 2FA-change). Returns the rows affected so the route/test
+   * can assert a real revocation happened.
+   */
+  revokeAllRefreshForAccount(accountId: string, revokedAt: string): Promise<number>;
+
+  /** Revoke an account's outstanding access grants (owner session tokens) — completes a revoke-all. */
+  revokeGrantsByAccount(accountId: string, revokedAt: string): Promise<void>;
+
+  /** Read the abuse-throttle bucket (gate-before-hash), or null if the bucket is clean. */
+  getThrottle(bucket: string): Promise<{ failures: number; nextAllowedMs: number } | null>;
+
+  /** Record a failed attempt: bump `failures`, set the next-allowed instant (exponential backoff). Upsert. */
+  recordThrottleFailure(bucket: string, failures: number, nextAllowedMs: number, updatedAt: string): Promise<void>;
+
+  /** Clear a throttle bucket after a successful auth (so a legit user is never progressively slowed). */
+  clearThrottle(bucket: string): Promise<void>;
+}
+
+/** A password credential record (migration 0004). `totpEnabled` is the 0/1 column surfaced as a boolean. */
+export interface PasswordCredentialRow {
+  accountId: string;
+  passwordPhc: string;
+  recoveryPhc: string;
+  totpSecretEnc: string | null;
+  totpEnabled: boolean;
+  totpLastStep: number | null;
 }
 
 export function createAuthStore(db: DbAdapter): AuthStore {
@@ -436,6 +527,213 @@ export function createAuthStore(db: DbAdapter): AuthStore {
           params: [serverNowMs],
         },
       ]);
+    },
+
+    // --- password auth (migration 0004) -----------------------------------------------------------
+
+    async resolveAccountIdByUsername(usernameNormalized) {
+      const row = await db.first<{ accountId: string }>(
+        `SELECT accountId FROM usernames WHERE usernameNormalized = ?`,
+        [usernameNormalized],
+      );
+      return row?.accountId ?? null;
+    },
+
+    async createPasswordCredential(row) {
+      await db.batch([
+        {
+          sql: `INSERT INTO passwordCredentials
+                  (accountId, passwordPhc, recoveryPhc, totpSecretEnc, totpEnabled, totpLastStep, createdAt, updatedAt)
+                VALUES (?, ?, ?, NULL, 0, NULL, ?, ?)`,
+          params: [row.accountId, row.passwordPhc, row.recoveryPhc, row.createdAt, row.createdAt],
+        },
+      ]);
+    },
+
+    async getCredentialByAccount(accountId) {
+      const row = await db.first<{
+        accountId: string;
+        passwordPhc: string;
+        recoveryPhc: string;
+        totpSecretEnc: string | null;
+        totpEnabled: number;
+        totpLastStep: number | null;
+      }>(
+        `SELECT accountId, passwordPhc, recoveryPhc, totpSecretEnc, totpEnabled, totpLastStep
+           FROM passwordCredentials WHERE accountId = ?`,
+        [accountId],
+      );
+      if (!row) return null;
+      return {
+        accountId: row.accountId,
+        passwordPhc: row.passwordPhc,
+        recoveryPhc: row.recoveryPhc,
+        totpSecretEnc: row.totpSecretEnc,
+        totpEnabled: row.totpEnabled === 1,
+        totpLastStep: row.totpLastStep,
+      };
+    },
+
+    async updatePasswordHash(accountId, passwordPhc, updatedAt) {
+      await db.batch([
+        {
+          sql: `UPDATE passwordCredentials SET passwordPhc = ?, updatedAt = ? WHERE accountId = ?`,
+          params: [passwordPhc, updatedAt, accountId],
+        },
+      ]);
+    },
+
+    async updateRecoveryHash(accountId, recoveryPhc, updatedAt) {
+      await db.batch([
+        {
+          sql: `UPDATE passwordCredentials SET recoveryPhc = ?, updatedAt = ? WHERE accountId = ?`,
+          params: [recoveryPhc, updatedAt, accountId],
+        },
+      ]);
+    },
+
+    async setTotpSecret(accountId, totpSecretEnc, updatedAt) {
+      // Stash the secret but do NOT enable — confirm-before-activate (anti-lockout). Also resets the
+      // replay guard for the fresh secret so the confirm code is not pre-emptively gated.
+      await db.batch([
+        {
+          sql: `UPDATE passwordCredentials
+                   SET totpSecretEnc = ?, totpEnabled = 0, totpLastStep = NULL, updatedAt = ?
+                 WHERE accountId = ?`,
+          params: [totpSecretEnc, updatedAt, accountId],
+        },
+      ]);
+    },
+
+    async enableTotp(accountId, lastAcceptedStep, updatedAt) {
+      await db.batch([
+        {
+          sql: `UPDATE passwordCredentials SET totpEnabled = 1, totpLastStep = ?, updatedAt = ? WHERE accountId = ?`,
+          params: [lastAcceptedStep, updatedAt, accountId],
+        },
+      ]);
+    },
+
+    async disableTotp(accountId, updatedAt) {
+      await db.batch([
+        {
+          sql: `UPDATE passwordCredentials
+                   SET totpSecretEnc = NULL, totpEnabled = 0, totpLastStep = NULL, updatedAt = ?
+                 WHERE accountId = ?`,
+          params: [updatedAt, accountId],
+        },
+      ]);
+    },
+
+    async advanceTotpStep(accountId, lastAcceptedStep, updatedAt) {
+      // Only ever move the guard FORWARD (a concurrent login must not roll it back and reopen replay).
+      await db.batch([
+        {
+          sql: `UPDATE passwordCredentials
+                   SET totpLastStep = ?, updatedAt = ?
+                 WHERE accountId = ? AND (totpLastStep IS NULL OR totpLastStep < ?)`,
+          params: [lastAcceptedStep, updatedAt, accountId, lastAcceptedStep],
+        },
+      ]);
+    },
+
+    async insertRefreshSession(row) {
+      await db.batch([
+        {
+          sql: `INSERT INTO refreshSessions
+                  (tokenHash, familyId, accountId, issuedAtMs, expiresAtMs, rotatedAt, revokedAt, label)
+                VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)`,
+          params: [
+            row.tokenHash,
+            row.familyId,
+            row.accountId,
+            row.issuedAtMs,
+            row.expiresAtMs,
+            row.label ?? null,
+          ],
+        },
+      ]);
+    },
+
+    async getRefreshSession(tokenHash) {
+      const row = await db.first<{
+        familyId: string;
+        accountId: string;
+        expiresAtMs: number;
+        rotatedAt: string | null;
+        revokedAt: string | null;
+      }>(
+        `SELECT familyId, accountId, expiresAtMs, rotatedAt, revokedAt
+           FROM refreshSessions WHERE tokenHash = ?`,
+        [tokenHash],
+      );
+      return row ?? null;
+    },
+
+    async markRefreshRotated(tokenHash, rotatedAt) {
+      await db.batch([
+        {
+          sql: `UPDATE refreshSessions SET rotatedAt = ? WHERE tokenHash = ? AND rotatedAt IS NULL`,
+          params: [rotatedAt, tokenHash],
+        },
+      ]);
+    },
+
+    async revokeRefreshFamily(familyId, revokedAt) {
+      await db.batch([
+        {
+          sql: `UPDATE refreshSessions SET revokedAt = ? WHERE familyId = ? AND revokedAt IS NULL`,
+          params: [revokedAt, familyId],
+        },
+      ]);
+    },
+
+    async revokeAllRefreshForAccount(accountId, revokedAt) {
+      const [res] = await db.batch([
+        {
+          sql: `UPDATE refreshSessions SET revokedAt = ? WHERE accountId = ? AND revokedAt IS NULL`,
+          params: [revokedAt, accountId],
+        },
+      ]);
+      return res?.rowsWritten ?? 0;
+    },
+
+    async revokeGrantsByAccount(accountId, revokedAt) {
+      // Owner session grants carry principalId = accountId (the re-point). Killing them completes a
+      // revoke-all so a stolen in-memory access token also dies, not just the refresh families.
+      await db.batch([
+        {
+          sql: `UPDATE grants SET revokedAt = ?
+                 WHERE principalKind = 'owner' AND principalId = ? AND revokedAt IS NULL`,
+          params: [revokedAt, accountId],
+        },
+      ]);
+    },
+
+    async getThrottle(bucket) {
+      const row = await db.first<{ failures: number; nextAllowedMs: number }>(
+        `SELECT failures, nextAllowedMs FROM authThrottle WHERE bucket = ?`,
+        [bucket],
+      );
+      return row ?? null;
+    },
+
+    async recordThrottleFailure(bucket, failures, nextAllowedMs, updatedAt) {
+      await db.batch([
+        {
+          sql: `INSERT INTO authThrottle (bucket, failures, nextAllowedMs, updatedAt)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(bucket) DO UPDATE SET
+                  failures = excluded.failures,
+                  nextAllowedMs = excluded.nextAllowedMs,
+                  updatedAt = excluded.updatedAt`,
+          params: [bucket, failures, nextAllowedMs, updatedAt],
+        },
+      ]);
+    },
+
+    async clearThrottle(bucket) {
+      await db.batch([{ sql: `DELETE FROM authThrottle WHERE bucket = ?`, params: [bucket] }]);
     },
   };
 }

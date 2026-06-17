@@ -16,6 +16,27 @@ export interface Env {
    * into every signed auth payload (PROP-4 / F8). A configured per-deployment constant; the server uses
    * THIS, never the request Host header, when reconstructing the canonical TLV to verify a signature, so
    * a signature minted for one deployment cannot be replayed against another. One value, never a set.
+   *
+   * In the password pivot it is ALSO the canonical Origin host for the CSRF belt (the refresh/logout
+   * cookie path checks `Origin` against this) — same one-value-per-deployment discipline.
    */
   AUTH_AUDIENCE?: string;
+  /**
+   * Worker-secret PEPPER for Argon2id (auth pivot, AP-6). HMAC'd into the password/recovery pre-image
+   * BEFORE the hash, so a D1-only leak (PHC strings) is NOT offline-crackable — the attacker lacks this.
+   * A `wrangler secret`, NEVER in `vars`. The password endpoints fail-CLOSED (503) if it is unset.
+   */
+  AUTH_PEPPER?: string;
+  /**
+   * Worker-secret AES key for TOTP-secret-at-rest encryption (AP-14). Any-length string; a 32-byte key
+   * is derived via SHA-256. A `wrangler secret`. The TOTP endpoints fail-CLOSED (503) if it is unset.
+   */
+  TOTP_ENC_KEY?: string;
+  /**
+   * Optional Cloudflare Turnstile secret for the anti-abuse gate on the unauthenticated
+   * register/login/reset paths (available-not-mandatory in v1). When UNSET, Turnstile is skipped (the
+   * per-account exponential backoff remains the primary gate); when set, a missing/invalid token is
+   * rejected by the gate BEFORE any Argon2id work (gate-before-hash).
+   */
+  TURNSTILE_SECRET?: string;
 }
