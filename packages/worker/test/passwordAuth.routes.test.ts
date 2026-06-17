@@ -27,6 +27,7 @@ const migrations = [
   '0002_stream-a-auth.sql',
   '0003_account-identity.sql',
   '0004_password-auth.sql',
+  '0005_recovery-established.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function d1Over(raw: Database.Database): D1Database {
@@ -115,6 +116,19 @@ interface SignupResult {
 async function signup(env: Env, username: string, password: string): Promise<SignupResult> {
   const res = await post(env, '/api/auth/signup', { username, password });
   expect(res.status, await res.clone().text()).toBe(201);
+  const body = (await res.json()) as SignupResult;
+  // Simulate the user save-acking the recovery phrase → FINALIZE, so the account is fully recoverable
+  // and subsequent logins behave normally (durable cookie + recoveryEstablished=true). The access token
+  // stays valid across finalize. Tests of the ABANDONED path (no finalize) call /signup directly instead.
+  const fin = await post(env, '/api/auth/finalize', {}, { Authorization: `Bearer ${body.token}` });
+  expect(fin.status, await fin.clone().text()).toBe(200);
+  return body;
+}
+
+/** Sign up WITHOUT finalizing — the abandoned-registration path (phrase never save-acked). */
+async function signupNoFinalize(env: Env, username: string, password: string): Promise<SignupResult> {
+  const res = await post(env, '/api/auth/signup', { username, password });
+  expect(res.status, await res.clone().text()).toBe(201);
   return (await res.json()) as SignupResult;
 }
 
@@ -126,7 +140,7 @@ const bodyText = async (res: Response) => `${res.status} ${await res.clone().tex
 // ===========================================================================
 describe('AP-T1 — POST /signup', () => {
   it(
-    'creates an account, claims the username, mints a session + refresh cookie, returns the phrase once',
+    'creates an account, claims the username, returns the phrase + access token, but NO durable cookie (P0 suspenders)',
     async () => {
       const env = makeEnv(freshDb());
       const res = await post(env, '/api/auth/signup', { username: 'Alice', password: 'correct-horse' });
@@ -136,13 +150,41 @@ describe('AP-T1 — POST /signup', () => {
       expect(body.username).toBe('Alice'); // display form preserved
       expect(body.recoveryPhrase).toMatch(/^[a-z2-7]{4}(-[a-z2-7]{4})+$/);
       expect(body.token).toMatch(/.+/);
-      // refresh cookie is httpOnly + Secure + SameSite=Strict + Path-scoped to /refresh (AP-8)
-      const sc = setCookieHeaders(res).find((s) => s.startsWith('deltos_rt='));
+      // P0 SUSPENDERS: signup must NOT set the durable refresh cookie (cross-boot durability waits for finalize).
+      expect(refreshCookieValue(res)).toBeNull();
+    },
+    T,
+  );
+
+  it(
+    'FINALIZE sets recoveryEstablished + the durable refresh cookie (httpOnly+Secure+SameSite=Strict, /refresh-scoped)',
+    async () => {
+      const raw = freshDb();
+      const env = makeEnv(raw);
+      const signupRes = await post(env, '/api/auth/signup', { username: 'finalizer', password: 'finalize-pass-1' });
+      const body = (await signupRes.json()) as SignupResult;
+      // before finalize: recoveryEstablished is false on the row
+      expect(
+        (raw.prepare('SELECT recoveryEstablished FROM passwordCredentials WHERE accountId=?').get(body.accountId) as {
+          recoveryEstablished: number;
+        }).recoveryEstablished,
+      ).toBe(0);
+
+      const fin = await post(env, '/api/auth/finalize', {}, { Authorization: `Bearer ${body.token}` });
+      expect(fin.status, await bodyText(fin)).toBe(200);
+      // now the durable cookie is set with the right attributes (AP-8) ...
+      const sc = setCookieHeaders(fin).find((s) => s.startsWith('deltos_rt='));
       expect(sc).toBeDefined();
       expect(sc).toMatch(/HttpOnly/i);
       expect(sc).toMatch(/Secure/i);
       expect(sc).toMatch(/SameSite=Strict/i);
       expect(sc).toMatch(/Path=\/api\/auth\/refresh/i);
+      // ... and the flag flipped true
+      expect(
+        (raw.prepare('SELECT recoveryEstablished FROM passwordCredentials WHERE accountId=?').get(body.accountId) as {
+          recoveryEstablished: number;
+        }).recoveryEstablished,
+      ).toBe(1);
     },
     T,
   );
@@ -563,6 +605,78 @@ describe('AP-T12 — no raw bearer at rest (server side)', () => {
       // refresh token never persisted raw
       const sessions = raw.prepare('SELECT tokenHash FROM refreshSessions').all() as Array<{ tokenHash: string }>;
       expect(sessions.some((s) => s.tokenHash === rt)).toBe(false);
+    },
+    T,
+  );
+});
+
+// ===========================================================================
+// P0 BELT (spec §P0) — abandoned-signup recoverability: no silent re-auth, forced fresh-phrase on login
+// ===========================================================================
+describe('P0 belt — recoveryEstablished', () => {
+  it(
+    'a finalized account logs in normally: recoveryEstablished=true + durable cookie',
+    async () => {
+      const env = makeEnv(freshDb());
+      await signup(env, 'fin-user', 'fin-password-1'); // signup() finalizes
+      const login = await post(env, '/api/auth/login', { username: 'fin-user', password: 'fin-password-1' });
+      expect(login.status, await bodyText(login)).toBe(200);
+      const body = (await login.json()) as { recoveryEstablished: boolean };
+      expect(body.recoveryEstablished).toBe(true);
+      expect(refreshCookieValue(login)).toBeTruthy();
+    },
+    T,
+  );
+
+  it(
+    'an ABANDONED signup (no finalize) logs in with recoveryEstablished=false and NO durable cookie (forces the phrase screen)',
+    async () => {
+      const env = makeEnv(freshDb());
+      await signupNoFinalize(env, 'abandoner', 'abandon-pass-1');
+      const login = await post(env, '/api/auth/login', { username: 'abandoner', password: 'abandon-pass-1' });
+      expect(login.status, await bodyText(login)).toBe(200);
+      const body = (await login.json()) as { recoveryEstablished: boolean };
+      // The belt: login succeeds but signals the client to force the recovery-phrase screen ...
+      expect(body.recoveryEstablished).toBe(false);
+      // ... and grants NO durable cookie (no silent cross-boot re-auth for an unrecoverable account).
+      expect(refreshCookieValue(login)).toBeNull();
+    },
+    T,
+  );
+
+  it(
+    'the forced-phrase flow: /recovery/rotate mints a FRESH phrase that resets work; then /finalize establishes recovery',
+    async () => {
+      const raw = freshDb();
+      const env = makeEnv(raw);
+      const acct = await signupNoFinalize(env, 'rotator', 'rotate-pass-1');
+
+      // The original signup phrase is abandoned; rotate to a fresh one (the forced screen).
+      const rotateRes = await post(env, '/api/auth/recovery/rotate', {}, { Authorization: `Bearer ${acct.token}` });
+      expect(rotateRes.status, await bodyText(rotateRes)).toBe(200);
+      const { recoveryPhrase: freshPhrase } = (await rotateRes.json()) as { recoveryPhrase: string };
+      expect(freshPhrase).toMatch(/^[a-z2-7]{4}(-[a-z2-7]{4})+$/);
+      expect(freshPhrase).not.toBe(acct.recoveryPhrase);
+      // rotate alone does NOT establish recovery (flag flips only at ack/finalize)
+      expect(
+        (raw.prepare('SELECT recoveryEstablished FROM passwordCredentials WHERE accountId=?').get(acct.accountId) as {
+          recoveryEstablished: number;
+        }).recoveryEstablished,
+      ).toBe(0);
+
+      // Finalize (after the ack) establishes recovery + sets the durable cookie. Done BEFORE the reset
+      // assertions below, since a successful reset revoke-alls this access token.
+      const fin = await post(env, '/api/auth/finalize', {}, { Authorization: `Bearer ${acct.token}` });
+      expect(fin.status, await bodyText(fin)).toBe(200);
+      expect(refreshCookieValue(fin)).toBeTruthy();
+
+      // The FRESH phrase is the one that now works for reset (verifier was rotated); the OLD one does not.
+      expect(
+        (await post(env, '/api/auth/reset', { username: 'rotator', recoveryPhrase: acct.recoveryPhrase, newPassword: 'np-old-1' })).status,
+      ).toBe(401);
+      expect(
+        (await post(env, '/api/auth/reset', { username: 'rotator', recoveryPhrase: freshPhrase, newPassword: 'np-fresh-1' })).status,
+      ).toBe(200);
     },
     T,
   );

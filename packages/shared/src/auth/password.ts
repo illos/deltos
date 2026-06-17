@@ -55,6 +55,14 @@ export const AccessTokenResponseSchema = z.object({
   accountId: z.string(),
   /** The account's claimed username (display form), or null if none. */
   username: z.string().nullable(),
+  /**
+   * P0 BELT (secSys cross-boot finding, planSys ruling — spec §P0). FALSE iff the recovery phrase was
+   * generated but never save-acked (an abandoned signup that set a password). When a LOGIN returns
+   * `false`, the client MUST force the recovery-phrase screen (`POST /recovery/rotate` → show the fresh
+   * phrase → ack → `POST /finalize`) BEFORE entry; a `false` login also gets NO durable refresh cookie.
+   * Refresh responses are always `true` (a durable session only exists post-finalize).
+   */
+  recoveryEstablished: z.boolean(),
 });
 export type AccessTokenResponse = z.infer<typeof AccessTokenResponseSchema>;
 
@@ -153,3 +161,25 @@ export type TotpVerifyRequest = z.infer<typeof TotpVerifyRequestSchema>;
 /** Disable 2FA: re-prove with a current code (a credential-change → triggers revoke-all). */
 export const TotpDisableRequestSchema = z.object({ code: TotpCodeSchema }).strict();
 export type TotpDisableRequest = z.infer<typeof TotpDisableRequestSchema>;
+
+// ── Finalize + recovery rotation (P0 BELT — spec §P0) ────────────────────────────────────────────────
+
+/**
+ * `POST /finalize` — the CEREMONY-COMPLETE commit, called by the client AFTER the user save-acks the
+ * recovery phrase. Authenticated (the in-session access bearer); no body. The server sets
+ * `recoveryEstablished = true` AND sets the durable refresh cookie (cross-boot durability waits for
+ * this, so an abandoned registration never silently re-auths). Idempotent.
+ */
+export const FinalizeRequestSchema = z.object({}).strict();
+export type FinalizeRequest = z.infer<typeof FinalizeRequestSchema>;
+
+/**
+ * `POST /recovery/rotate` — generate a FRESH recovery phrase + rotate the server verifier, returning
+ * the phrase EXACTLY ONCE. Authenticated; no body. Used by the forced-phrase screen when a login finds
+ * `recoveryEstablished = false` (the abandoned phrase can't be re-shown — only its verifier is stored).
+ * Does NOT itself set `recoveryEstablished`; the subsequent `/finalize` (after the save-ack) does.
+ */
+export const RecoveryRotateRequestSchema = z.object({}).strict();
+export type RecoveryRotateRequest = z.infer<typeof RecoveryRotateRequestSchema>;
+export const RecoveryRotateResponseSchema = z.object({ recoveryPhrase: z.string() });
+export type RecoveryRotateResponse = z.infer<typeof RecoveryRotateResponseSchema>;

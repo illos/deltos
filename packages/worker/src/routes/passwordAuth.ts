@@ -8,6 +8,8 @@ import {
   TotpSetupRequestSchema,
   TotpVerifyRequestSchema,
   TotpDisableRequestSchema,
+  FinalizeRequestSchema,
+  RecoveryRotateRequestSchema,
   normalizeUsername,
   SCOPES,
   type Resource,
@@ -281,8 +283,11 @@ passwordAuth.post('/signup', async (c) => {
     createdAt: iso(nowMs),
   });
 
+  // P0 SUSPENDERS (spec §P0): NO durable refresh cookie here. Signup returns only the IN-MEMORY access
+  // token (carries the in-session register→show-phrase→ack flow) + the recovery phrase. The cross-boot
+  // durable cookie is set at FINALIZE, after the user save-acks the phrase — so a registration abandoned
+  // before the ack never silently re-auths on next boot. `recoveryEstablished` stays false until finalize.
   const access = await mintAccessToken(s, accountId, nowMs);
-  await issueRefresh(c, s, accountId, authCrypto.randomToken(16), nowMs);
   return c.json(
     {
       accountId,
@@ -348,15 +353,28 @@ passwordAuth.post('/login', async (c) => {
     await s.advanceTotpStep(accountId, totp.step, iso(nowMs)); // replay guard moves forward
   }
 
-  // Success. Clear the throttle, rehash-on-login if params drifted, mint a fresh session.
+  // Success. Clear the throttle, rehash-on-login if params drifted, mint a fresh access token.
   await s.clearThrottle(bucket);
   if (verdict.needsRehash) {
     await s.updatePasswordHash(accountId, hashPassword(parsed.data.password, pepper, ARGON2_PARAMS), iso(nowMs));
   }
   const username = (await s.getUsernameByAccount(accountId))?.usernameDisplay ?? null;
   const access = await mintAccessToken(s, accountId, nowMs);
-  await issueRefresh(c, s, accountId, authCrypto.randomToken(16), nowMs);
-  return c.json({ token: access.token, expiresAt: access.expiresAt, accountId, username });
+
+  // P0 BELT (spec §P0): a durable refresh cookie + ungated entry are granted ONLY for a fully-recoverable
+  // account. If `recoveryEstablished` is false (an abandoned signup — password set, phrase never saved),
+  // issue NO durable cookie; the response flag tells the client to FORCE the recovery-phrase screen
+  // (/recovery/rotate → save-ack → /finalize) before entry. A normal account gets the durable cookie.
+  if (credential.recoveryEstablished) {
+    await issueRefresh(c, s, accountId, authCrypto.randomToken(16), nowMs);
+  }
+  return c.json({
+    token: access.token,
+    expiresAt: access.expiresAt,
+    accountId,
+    username,
+    recoveryEstablished: credential.recoveryEstablished,
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -392,7 +410,14 @@ passwordAuth.post('/refresh', async (c) => {
   await issueRefresh(c, s, session.accountId, session.familyId, nowMs);
   const username = (await s.getUsernameByAccount(session.accountId))?.usernameDisplay ?? null;
   const access = await mintAccessToken(s, session.accountId, nowMs);
-  return c.json({ token: access.token, expiresAt: access.expiresAt, accountId: session.accountId, username });
+  // A durable refresh session only ever exists post-finalize, so recoveryEstablished is necessarily true here.
+  return c.json({
+    token: access.token,
+    expiresAt: access.expiresAt,
+    accountId: session.accountId,
+    username,
+    recoveryEstablished: true,
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -475,9 +500,55 @@ passwordAuth.post('/reset', async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// TOTP — authenticated (the bearer resolves the account via guard()). Confirm-before-activate.
+// Authenticated ceremony endpoints — the bearer resolves the account via guard().
 // ---------------------------------------------------------------------------
 const workspaceResource = (): Resource => ({ kind: 'workspace' });
+
+// POST /api/auth/finalize — the CEREMONY-COMPLETE commit (after the user save-acks the recovery phrase).
+// Sets recoveryEstablished=true (BELT) AND the durable refresh cookie (SUSPENDERS) together. Idempotent.
+passwordAuth.post(
+  '/finalize',
+  guard({
+    op: 'write',
+    schema: FinalizeRequestSchema,
+    input: () => ({}),
+    resource: workspaceResource,
+    handle: async (_req, c, principal) => {
+      if (principal.kind !== 'owner') return apiError(c, 403, 'forbidden', 'only an account may finalize');
+      const s = store(c);
+      const nowMs = Date.now();
+      await s.setRecoveryEstablished(principal.id, true, iso(nowMs));
+      await issueRefresh(c, s, principal.id, authCrypto.randomToken(16), nowMs);
+      return c.json({ ok: true });
+    },
+  }),
+);
+
+// POST /api/auth/recovery/rotate — generate a FRESH recovery phrase + rotate the verifier, returning the
+// phrase ONCE. Used by the forced-phrase screen when a login finds recoveryEstablished=false (the
+// abandoned phrase can't be re-shown). Does NOT set recoveryEstablished — the following /finalize does.
+passwordAuth.post(
+  '/recovery/rotate',
+  guard({
+    op: 'write',
+    schema: RecoveryRotateRequestSchema,
+    input: () => ({}),
+    resource: workspaceResource,
+    handle: async (_req, c, principal) => {
+      const pepper = requireSecret(c, 'AUTH_PEPPER');
+      if (typeof pepper !== 'string') return pepper;
+      if (principal.kind !== 'owner') return apiError(c, 403, 'forbidden', 'only an account may rotate recovery');
+      const s = store(c);
+      const recoveryPhrase = generateRecoveryPhrase();
+      await s.updateRecoveryHash(
+        principal.id,
+        hashRecoveryPhrase(recoveryPhrase, principal.id, pepper, ARGON2_PARAMS),
+        iso(Date.now()),
+      );
+      return c.json({ recoveryPhrase });
+    },
+  }),
+);
 
 // POST /api/auth/totp/setup — mint + stash an encrypted secret WITHOUT enabling; return secret + URI.
 passwordAuth.post(

@@ -235,6 +235,12 @@ export interface AuthStore {
   /** Advance the TOTP replay guard after a code is accepted at login (reject any step <= this next time). */
   advanceTotpStep(accountId: string, lastAcceptedStep: number, updatedAt: string): Promise<void>;
 
+  /**
+   * Mark the recovery-phrase save-ack ceremony complete (the P0 BELT — migration 0005). Set TRUE at
+   * FINALIZE; until then a login forces the fresh-phrase screen. Idempotent.
+   */
+  setRecoveryEstablished(accountId: string, established: boolean, updatedAt: string): Promise<void>;
+
   /** Persist a freshly-minted refresh session (only the token HASH is stored — F6). */
   insertRefreshSession(row: {
     tokenHash: string;
@@ -288,6 +294,8 @@ export interface PasswordCredentialRow {
   totpSecretEnc: string | null;
   totpEnabled: boolean;
   totpLastStep: number | null;
+  /** P0 BELT (0005): false until the phrase-ack ceremony completes at FINALIZE. */
+  recoveryEstablished: boolean;
 }
 
 export function createAuthStore(db: DbAdapter): AuthStore {
@@ -558,8 +566,9 @@ export function createAuthStore(db: DbAdapter): AuthStore {
         totpSecretEnc: string | null;
         totpEnabled: number;
         totpLastStep: number | null;
+        recoveryEstablished: number;
       }>(
-        `SELECT accountId, passwordPhc, recoveryPhc, totpSecretEnc, totpEnabled, totpLastStep
+        `SELECT accountId, passwordPhc, recoveryPhc, totpSecretEnc, totpEnabled, totpLastStep, recoveryEstablished
            FROM passwordCredentials WHERE accountId = ?`,
         [accountId],
       );
@@ -571,7 +580,17 @@ export function createAuthStore(db: DbAdapter): AuthStore {
         totpSecretEnc: row.totpSecretEnc,
         totpEnabled: row.totpEnabled === 1,
         totpLastStep: row.totpLastStep,
+        recoveryEstablished: row.recoveryEstablished === 1,
       };
+    },
+
+    async setRecoveryEstablished(accountId, established, updatedAt) {
+      await db.batch([
+        {
+          sql: `UPDATE passwordCredentials SET recoveryEstablished = ?, updatedAt = ? WHERE accountId = ?`,
+          params: [established ? 1 : 0, updatedAt, accountId],
+        },
+      ]);
     },
 
     async updatePasswordHash(accountId, passwordPhc, updatedAt) {
