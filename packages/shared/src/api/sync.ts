@@ -24,8 +24,11 @@ import { NoteResponseSchema } from './operations.js';
  * next pull). `'restore'` is the SA-T6 matrix branch (the earlier "resurrect" phrasing in the kickoff
  * relay was superseded; client + worker + matrix all use the literal `'restore'`).
  *
- * DEFAULTS to `'upsert'` so it is fully backward-compatible: a pre-extension client omits the field and
- * every existing entry parses as an upsert — no migration, no break to in-flight queues.
+ * OPTIONAL (absent ⇒ treat as `'upsert'`) so it is fully backward-compatible at BOTH the wire and the
+ * type level: a pre-extension client omits the field, and existing in-process `SyncPushEntry` literals
+ * (the REST `note.create` insert path, test fixtures) need no `op` to typecheck. Worker branches coalesce
+ * `entry.op ?? 'upsert'`. (Kept optional rather than `.default('upsert')` precisely so those literal
+ * constructors compile — a `.default` makes the inferred field required.)
  */
 export const SyncPushOpSchema = z.enum(['upsert', 'delete', 'restore']);
 export type SyncPushOp = z.infer<typeof SyncPushOpSchema>;
@@ -44,7 +47,7 @@ export const SyncPushEntrySchema = z.object({
   id: NoteIdSchema,
   draft: NoteDraftSchema.omit({ id: true, notebookId: true }),
   baseVersion: VersionSchema,
-  op: SyncPushOpSchema.default('upsert'),
+  op: SyncPushOpSchema.optional(),
 });
 export type SyncPushEntry = z.infer<typeof SyncPushEntrySchema>;
 
