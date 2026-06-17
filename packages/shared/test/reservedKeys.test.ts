@@ -20,6 +20,7 @@ import {
   containsReservedKey,
 } from '../src/spine/reservedKeys.js';
 import type { PropertyBag } from '../src/spine/property.js';
+import { SetPropertyRequestSchema } from '../src/api/operations.js';
 
 const NOW = '2026-06-17T12:00:00.000Z';
 
@@ -87,6 +88,16 @@ describe('reserved system-key namespace', () => {
     expect(UserPropertyKeySchema.safeParse('status').success).toBe(true);
     expect(UserPropertyKeySchema.safeParse(SYS_TRASHED_AT_KEY).success).toBe(false);
     expect(UserPropertyKeySchema.safeParse(`${RESERVED_KEY_PREFIX}anything`).success).toBe(false);
+  });
+
+  it('property.set endpoint REJECTS a reserved key (guardrail-c at the explicit-key write path)', () => {
+    // PUT /api/notes/:id/properties/sys:trashedAt must 400 — the server CAN reject here (explicit key
+    // param), unlike the upsert path. SetPropertyRequestSchema.key uses UserPropertyKeySchema.
+    const noteId = '00000000-0000-4000-8000-000000000001';
+    const base = { noteId, value: { type: 'boolean', value: true } as const };
+    expect(SetPropertyRequestSchema.safeParse({ ...base, key: SYS_TRASHED_AT_KEY }).success).toBe(false);
+    expect(SetPropertyRequestSchema.safeParse({ ...base, key: `${RESERVED_KEY_PREFIX}anything` }).success).toBe(false);
+    expect(SetPropertyRequestSchema.safeParse({ ...base, key: 'status' }).success).toBe(true);
   });
 
   it('SA-9 mutate-boundary guard: a user-originated bag with a reserved key is REJECTED', () => {

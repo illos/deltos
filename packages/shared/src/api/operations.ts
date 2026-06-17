@@ -3,6 +3,7 @@ import { NoteIdSchema, NotebookIdSchema, BlockIdSchema } from '../spine/ids.js';
 import { VersionSchema } from '../spine/identity.js';
 import { BlockSchema } from '../spine/block.js';
 import { PropertyValueSchema } from '../spine/property.js';
+import { UserPropertyKeySchema } from '../spine/reservedKeys.js';
 import { NoteSchema, NoteDraftSchema, NoteSummarySchema } from '../spine/note.js';
 import { OpSchema } from './grant.js';
 import type { Op } from './grant.js';
@@ -59,10 +60,15 @@ export const AppendBlockRequestSchema = z.object({
 });
 export type AppendBlockRequest = z.infer<typeof AppendBlockRequestSchema>;
 
-/** Set one property key to a typed value (idempotent). */
+/**
+ * Set one property key to a typed value (idempotent). `key` uses {@link UserPropertyKeySchema}, so the
+ * server REJECTS (400) a reserved system key (e.g. `sys:trashedAt`) at this explicit-key write path —
+ * closing guardrail-(c): a system flag can never be set/cleared as a normal property. (Unlike the sync
+ * upsert path, this endpoint carries the key explicitly, so the boundary can reject it cleanly.)
+ */
 export const SetPropertyRequestSchema = z.object({
   noteId: NoteIdSchema,
-  key: z.string().min(1),
+  key: UserPropertyKeySchema,
   value: PropertyValueSchema,
   expectedVersion: ExpectedVersionSchema.optional(),
 });
