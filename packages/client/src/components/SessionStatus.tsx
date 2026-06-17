@@ -3,22 +3,18 @@ import { useAuthStore } from '../auth/store.js';
 import './SessionStatus.css';
 
 /**
- * Quiet, NON-BLOCKING background-session status (spec Part 1a §Behavior 2–3). It is NEVER a gate:
- * the notes shell is fully usable on local data regardless of session state.
+ * Quiet, NON-BLOCKING background-session status. Never a gate — the shell is always usable.
  *
- *  - active / establishing / booting / offline → renders nothing. A healthy (or merely transiently
- *    offline) session is invisible; sync transport state — pending / syncing / offline — is the
- *    SyncIndicator's job. This component is strictly the AUTH nudge.
- *  - needs-unlock → a tappable nudge routing to the unlock gesture. For Part 1a the at-rest key
- *    unwrap still needs a gesture; Part 1b (Option-A autoUnlock) makes re-auth silent and this nudge
- *    will rarely appear.
+ *  - active / booting / offline → renders nothing. SyncIndicator covers the transport state.
+ *  - unauthed → a tappable nudge. The refresh cookie has expired; the user needs to log in again
+ *    to re-establish sync. This is rare (30–90d sliding window) and non-blocking.
  */
 export function SessionStatus() {
   const sessionState = useAuthStore((s) => s.sessionState);
-  if (sessionState !== 'needs-unlock') return null;
+  if (sessionState !== 'unauthed') return null;
   return (
     <Link
-      to="/unlock"
+      to="/login"
       className="session-status session-status--needs-unlock"
       title="Tap to sign in and resume sync"
     >

@@ -589,6 +589,22 @@ a.auth__link { display: inline; }
   outline-offset: 1px;
 }
 
+/* 6-digit TOTP code input — large monospace digits, centred */
+.auth__totp-input {
+  font-size: 2rem;
+  letter-spacing: 0.35em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Phrase textarea (ResetRoute) — taller, normal word spacing */
+.auth__phrase-input {
+  font-family: inherit;
+  font-size: 1rem;
+  letter-spacing: normal;
+  min-height: 5rem;
+}
+
 /* Saved-phrase checkbox label */
 .auth__checkbox-label {
   display: flex;

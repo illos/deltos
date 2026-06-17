@@ -3,10 +3,9 @@ import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
 import { NewNote } from './routes/NewNote.js';
 import { NoteRoute } from './routes/NoteRoute.js';
-import { EnrollRoute } from './routes/EnrollRoute.js';
-import { UnlockRoute } from './routes/UnlockRoute.js';
-import { RecoverRoute } from './routes/RecoverRoute.js';
-import { QrReceiveRoute } from './routes/QrReceiveRoute.js';
+import { RegisterRoute } from './routes/RegisterRoute.js';
+import { LoginRoute } from './routes/LoginRoute.js';
+import { ResetRoute } from './routes/ResetRoute.js';
 import { TrashRoute } from './routes/TrashRoute.js';
 import { startSyncTriggers, syncNow } from './lib/syncEngine.js';
 import { getDefaultNotebookId } from './lib/notebooks.js';
@@ -22,28 +21,19 @@ import { mutateNotes } from './db/mutate.js';
 import { showToast, showActionToast } from './lib/toastEvents.js';
 
 /**
- * App shell — the local-first host chrome that every surface mounts inside (spec Part 1a).
+ * App shell — the local-first host chrome that every surface mounts inside.
  *
- * LOCAL-FIRST, AUTH IN THE BACKGROUND. The shell renders notes from the local store immediately;
- * auth + sync are demoted to a background concern that never blocks launch:
- *   - `init()` reads only the LOCAL durable identity (isEnrolled + keyId from IndexedDB, no network),
- *     then kicks a background session re-mint it does NOT await — so the shell paints before any
- *     auth round-trip (render-before-data).
- *   - The boot view is chosen purely by {@link selectBootView}(isEnrolled, enrolling): a local key
- *     present → the notes shell, regardless of session/unlock state; no local key → the ONE blocking
- *     gate (enroll, with recover / QR links). Session/unlock state never gates the UI. The `enrolling`
- *     latch pins the enroll surface through a live ceremony so the gate can't short-circuit it.
- *   - A failed / pending background session is a quiet, non-blocking nudge ({@link SessionStatus}),
- *     never an eviction to a recovery screen. This is what closes E4 properly — there is no
- *     "device hasn't been registered" boot gate; it survives only as the no-local-key recovery path.
+ * UNGATED DAY-TO-DAY. The notes shell renders as soon as a durable session is confirmed:
+ *   - `init()` rides POST /api/auth/refresh (the httpOnly cookie auto-attaches) → re-mints an
+ *     in-memory access token. If the cookie is valid → shell, no prompt. If not → auth gate.
+ *   - The boot view is chosen by {@link selectBootView}(isAuthed, isAuthing): durable session live
+ *     → the notes shell; no session → the register/login/reset gate. The `isAuthing` latch pins
+ *     the auth surface through a live ceremony so the gate can't short-circuit it (P0 anti-unmount).
+ *   - A failed/expired background session is a quiet, non-blocking nudge ({@link SessionStatus}),
+ *     never a forced eviction — sync retries on reconnect.
  *
  * Routing uses BrowserRouter (history API). The service worker's SPA navigation fallback serves
- * index.html for all in-scope navigations, so direct loads of /note/:id work offline. Auth routes
- * (/enroll, /unlock, /recover, /qr-receive) are served the same way.
- *
- * PIN-ID-9 note: WebAuthn create()/get() must fire as the FIRST await in a user gesture. All button
- * handlers in EnrollRoute / UnlockRoute / RecoverRoute / QrReceiveRoute are synchronous — they call
- * the store action immediately, with no preceding await.
+ * index.html for all in-scope navigations, so direct loads of /note/:id work offline.
  */
 export function App() {
   const init = useAuthStore((s) => s.init);
@@ -60,15 +50,13 @@ export function App() {
 }
 
 function AppRoutes() {
-  const isEnrolled = useAuthStore((s) => s.isEnrolled);
-  // A live enroll/recover/QR ceremony pins the enroll surface end-to-end (shellGate) so the gate
-  // can't unmount it after the credential is created but before the phrase is shown + the device is
-  // registered + a session is minted (the P0 mid-ceremony-unmount bug).
-  const enrolling = useAuthStore((s) => s.enrolling);
+  const isAuthed = useAuthStore((s) => s.isAuthed);
+  // A live auth ceremony (register/login/reset) pins the gate to the auth surface so the shell
+  // can't short-circuit a ceremony before it fully completes (P0 anti-unmount latch).
+  const isAuthing = useAuthStore((s) => s.isAuthing);
 
-  switch (selectBootView(isEnrolled, enrolling)) {
-    // Boot: the ONLY thing gating first paint is the LOCAL durable-identity read (no network, works
-    // offline). The static index.html skeleton has already painted; this is a brief neutral hold.
+  switch (selectBootView(isAuthed, isAuthing)) {
+    // Cold-boot /refresh still in flight — a brief neutral hold before the gate decision resolves.
     case 'boot':
       return (
         <div className="auth">
@@ -76,20 +64,18 @@ function AppRoutes() {
         </div>
       );
 
-    // No local key — genuine first-run OR the user cleared browsing data → the ONE blocking gate:
-    // enroll, with recover / QR-join links. This is the only logout path (spec Part 1a §Behavior 4).
-    case 'enroll-gate':
+    // No durable session (and no live ceremony) → the register / login / reset gate.
+    case 'auth-gate':
       return (
         <Routes>
-          <Route path="/enroll" element={<EnrollRoute />} />
-          <Route path="/recover" element={<RecoverRoute />} />
-          <Route path="/qr-receive" element={<QrReceiveRoute />} />
-          <Route path="*" element={<Navigate to="/enroll" replace />} />
+          <Route path="/register" element={<RegisterRoute />} />
+          <Route path="/login" element={<LoginRoute />} />
+          <Route path="/reset" element={<ResetRoute />} />
+          <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       );
 
-    // Local identity present → render the notes shell immediately, regardless of session/unlock
-    // state. Auth + sync run in the background underneath it.
+    // Durable session live → render notes immediately, ungated.
     case 'shell':
       return <AuthedShell />;
   }
@@ -174,15 +160,13 @@ function AuthedShell() {
         <Routes>
           <Route path="/new" element={<NewNote />} />
           <Route path="/note/:id" element={<NoteRoute />} />
-          <Route path="/" element={<HomeView />} />
-          {/* Reachable, NOT forced — the SessionStatus nudge routes here for the unlock gesture;
-              recover / QR-join remain available to an already-enrolled device (e.g. adding a key). */}
-          <Route path="/unlock" element={<UnlockRoute />} />
-          <Route path="/recover" element={<RecoverRoute />} />
-          <Route path="/qr-receive" element={<QrReceiveRoute />} />
           <Route path="/trash" element={<TrashRoute />} />
-          {/* Already enrolled: a fresh-account enroll is meaningless here — send home. */}
-          <Route path="/enroll" element={<Navigate to="/" replace />} />
+          <Route path="/" element={<HomeView />} />
+          {/* Auth routes are the gate — redirect home in the shell (session re-established by init on reload). */}
+          <Route path="/login" element={<Navigate to="/" replace />} />
+          <Route path="/register" element={<Navigate to="/" replace />} />
+          <Route path="/reset" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
 

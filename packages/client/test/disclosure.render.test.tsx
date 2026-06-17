@@ -1,7 +1,7 @@
 /**
  * P1-10 render leg — Disclosure component renders the correct planSys-approved copy.
  *
- * Matrix row: P1-10 "Disclosure at enroll/recovery, OUT of the launch path"
+ * Matrix row: P1-10 "Disclosure at credential-establishment, OUT of the login path"
  * Tier: [CLI-auto: render] (jsdom)
  * Owner: gruntSys2
  *
@@ -10,15 +10,12 @@
  *   - Risk clause present (secSys requirement)
  *   - Copy is uniform regardless of prf prop (Option-A collapses the branch)
  *   - children prop overrides the body (custom content path)
- *   - UnlockRoute (launch path) renders NO .disclosure element (placement enforcement)
+ *   - LoginRoute (launch/re-auth path) renders NO .disclosure element (placement enforcement)
+ *   - RegisterRoute (credential-establishment path) renders .disclosure at the phrase step
  *
- * Node-level placement logic (disclosure fires at enroll/recovery, not silent re-auth)
- * is devSys's lane — see shellGate.test.ts.
- *
- * Query strategy: we use container.querySelector('.disclosure__title') / '.disclosure__body'
- * rather than global screen.getByText — the latter matches every ancestor element whose
- * textContent includes the pattern (container, MemoryRouter wrapper, body...), causing
- * multiple-elements-found errors even for a single rendered tree.
+ * Note: under the auth pivot the phrase-role in the disclosure body is a seam for a planSys
+ * copy pass (phrase = reset token, not a device-access key). The Disclosure component tests pass
+ * against the current planSys-approved copy regardless; that seam is tracked separately.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -26,9 +23,8 @@ import { vi } from 'vitest';
 import { cleanup, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { Disclosure } from '../src/components/Disclosure.js';
-import { EnrollRoute } from '../src/routes/EnrollRoute.js';
-import { RecoverRoute } from '../src/routes/RecoverRoute.js';
-import { QrReceiveRoute } from '../src/routes/QrReceiveRoute.js';
+import { LoginRoute } from '../src/routes/LoginRoute.js';
+import { RegisterRoute } from '../src/routes/RegisterRoute.js';
 import { renderWithProviders, waitFor } from './renderHelpers.js';
 import { useAuthStore } from '../src/auth/store.js';
 
@@ -88,53 +84,30 @@ describe('P1-10 — Disclosure renders correct planSys-approved copy', () => {
   });
 });
 
-// ── Placement: UnlockRoute (launch path) must NOT render Disclosure ──────────
+// ── Placement: LoginRoute (re-auth path) must NOT render Disclosure ───────────
 
-describe('P1-10 — Disclosure absent from the launch/unlock path', () => {
-  beforeEach(() => {
-    useAuthStore.setState({
-      keyId: 'stub-key-id',
-      usesPrf: null,
-      justMigratedToDeviceLocal: false,
-      unlock: vi.fn(),
-      mintSession: vi.fn(),
-      register: vi.fn(),
-      clearMigrationNotice: vi.fn(),
-    } as Parameters<typeof useAuthStore.setState>[0]);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('UnlockRoute renders no .disclosure element', async () => {
-    const { UnlockRoute } = await import('../src/routes/UnlockRoute.js');
-    const { container } = renderWithProviders(<UnlockRoute />);
+describe('P1-10 — Disclosure absent from the login path', () => {
+  it('LoginRoute renders no .disclosure element', () => {
+    const { container } = renderWithProviders(<LoginRoute />);
     expect(container.querySelector('.disclosure')).toBeNull();
   });
 });
 
-// ── B1: Positive placement — Disclosure present at every establishment path ───
+// ── B1: Positive placement — Disclosure present at RegisterRoute (establishment path) ────────────
 //
-// secSys hard requirement: Disclosure must appear at enroll, recovery, AND QR-join.
-// We drive each route to its disclosure step via mocked store actions and assert
-// the .disclosure element is present.
+// secSys hard requirement: Disclosure must appear at the credential-establishment path (register).
+// We drive RegisterRoute to its phrase step via mocked store actions and assert the element.
 
-describe('P1-10 — Disclosure present at credential-establishment paths', () => {
-  const STUB_MNEMONIC = Array(24).fill('word').join(' ');
+describe('P1-10 — Disclosure present at credential-establishment path (RegisterRoute)', () => {
+  const STUB_PHRASE = Array(24).fill('word').join(' ');
 
   beforeEach(() => {
     useAuthStore.setState({
-      keyId: 'stub-key-id',
-      usesPrf: null,
-      justMigratedToDeviceLocal: false,
-      enroll: vi.fn().mockResolvedValue({ mnemonic: STUB_MNEMONIC, usesPrf: false }),
-      enrollExisting: vi.fn().mockResolvedValue({ usesPrf: false }),
-      register: vi.fn().mockResolvedValue(undefined),
-      mintSession: vi.fn().mockResolvedValue(undefined),
-      unlock: vi.fn().mockResolvedValue('ok'),
-      claimUsername: vi.fn().mockResolvedValue({ ok: true }),
-      clearMigrationNotice: vi.fn(),
+      beginAuth: vi.fn(),
+      finalizeAuth: vi.fn(),
+      register: vi.fn().mockResolvedValue({ ok: true, recoveryPhrase: STUB_PHRASE }),
+      setupTotp: vi.fn().mockResolvedValue({ ok: false, code: 'invalid' }),
+      verifyTotp: vi.fn().mockResolvedValue({ ok: true }),
     } as Parameters<typeof useAuthStore.setState>[0]);
   });
 
@@ -142,80 +115,19 @@ describe('P1-10 — Disclosure present at credential-establishment paths', () =>
     vi.restoreAllMocks();
   });
 
-  it('EnrollRoute renders .disclosure at the mnemonic step', async () => {
-    const { container } = renderWithProviders(<EnrollRoute />);
-    // "Set up with Passkey" → enroll() resolves → mnemonic step → Disclosure mounts
+  it('RegisterRoute renders .disclosure at the phrase step', async () => {
+    const { container } = renderWithProviders(<RegisterRoute />);
+    // Fill username, password, confirm password
+    const inputs = container.querySelectorAll('input');
+    fireEvent.change(inputs[0], { target: { value: 'myuser' } });    // username
+    fireEvent.change(inputs[1], { target: { value: 'mypassword123' } }); // password
+    fireEvent.change(inputs[2], { target: { value: 'mypassword123' } }); // confirm
+    // Click "Create account"
     const btn = container.querySelector('button.auth__btn--primary') as HTMLElement;
     btn.click();
+    // Wait for register() to resolve → phrase step → Disclosure mounts
     await waitFor(() =>
       expect(container.querySelector('.disclosure')).not.toBeNull(),
     );
-  });
-
-  it('RecoverRoute renders .disclosure at the disclosure step', async () => {
-    const { container } = renderWithProviders(<RecoverRoute />);
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-    fireEvent.change(textarea, { target: { value: STUB_MNEMONIC } });
-    const btn = container.querySelector('button.auth__btn--primary') as HTMLElement;
-    btn.click();
-    await waitFor(() =>
-      expect(container.querySelector('.disclosure')).not.toBeNull(),
-    );
-  });
-
-  it('QrReceiveRoute renders .disclosure after the confirm step', async () => {
-    const { container } = renderWithProviders(<QrReceiveRoute />);
-    // Step 1: paste mnemonic → "Next" → confirm step
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement;
-    fireEvent.change(textarea, { target: { value: STUB_MNEMONIC } });
-    const nextBtn = container.querySelector('button.auth__btn--primary') as HTMLElement;
-    nextBtn.click();
-    // Step 2: "Code confirmed — continue" → enrollExisting() resolves → disclosure step
-    await waitFor(() =>
-      expect(container.querySelector('.auth__confirm-code')).not.toBeNull(),
-    );
-    const confirmBtn = container.querySelector('button.auth__btn--primary') as HTMLElement;
-    confirmBtn.click();
-    await waitFor(() =>
-      expect(container.querySelector('.disclosure')).not.toBeNull(),
-    );
-  });
-});
-
-// ── B2: MigrationNotice — renders planSys-approved (B) copy on migrationNotice step ──
-//
-// secSys requirement: the one-time Option-A migration notice must render the honest
-// residual-risk copy approved by planSys and honesty-of-record-checked by secSys.
-
-describe('P1-10 — MigrationNotice renders planSys-approved copy on migration unlock', () => {
-  beforeEach(() => {
-    useAuthStore.setState({
-      keyId: 'stub-key-id',
-      usesPrf: null,
-      justMigratedToDeviceLocal: true,
-      unlock: vi.fn().mockResolvedValue('ok'),
-      mintSession: vi.fn().mockResolvedValue(undefined),
-      register: vi.fn().mockResolvedValue(undefined),
-      clearMigrationNotice: vi.fn(),
-    } as Parameters<typeof useAuthStore.setState>[0]);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('UnlockRoute shows .migration-notice with device-lock custody copy', async () => {
-    const { UnlockRoute } = await import('../src/routes/UnlockRoute.js');
-    const { container } = renderWithProviders(<UnlockRoute />);
-    const unlockBtn = container.querySelector('button.auth__btn--primary') as HTMLElement;
-    unlockBtn.click();
-    await waitFor(() =>
-      expect(container.querySelector('.migration-notice')).not.toBeNull(),
-    );
-    const body = container.querySelector('.migration-notice__body');
-    expect(body?.textContent).toMatch(/how your notes are protected on this device/i);
-    expect(body?.textContent).toMatch(/device.s lock screen/i);
-    expect(body?.textContent).toMatch(/or copy its storage, could read your notes/i);
-    expect(body?.textContent).toMatch(/Your notes and recovery phrase are unchanged/i);
   });
 });
