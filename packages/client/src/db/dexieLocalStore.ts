@@ -1,8 +1,19 @@
 import { liveQuery } from 'dexie';
 import type { Note, NoteId, NotebookId, SyncStatus } from '@deltos/shared';
+import { trashedAt } from '@deltos/shared';
 import { db } from './schema.js';
 import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry } from './schema.js';
 import type { ConflictResolution, LocalStore, Unsubscribe } from './localStore.js';
+
+/**
+ * Strict, FAIL-SAFE "is this note in the trash?" (Fork P) — the ONE source shared by the main-list
+ * exclusion (observeNotes) and the trash-view inclusion (observeTrashedNotes), so the two directions
+ * cannot drift. Uses `trashedAt()` (not `isTrashed()`): it returns null for an absent OR a malformed/
+ * non-date sys:trashedAt value, so a CORRUPT trash flag reads as NOT trashed → the note stays VISIBLE
+ * in the main list (and out of the trash view, so it's shown normally — never lost). secSys (B):
+ * default VISIBLE, a garbage value can never silently hide a note.
+ */
+const isInTrash = (n: ClientNote): boolean => trashedAt(n.properties) !== null;
 
 /**
  * The Dexie/IndexedDB implementation of {@link LocalStore}. This is the ONE place Dexie types live;
@@ -44,9 +55,24 @@ export const dexieLocalStore: LocalStore = {
   observeNotes(notebookId: NotebookId, cb: (notes: ClientNote[]) => void): Unsubscribe {
     const sub = liveQuery(async () => {
       const notes = await db.notes.where('notebookId').equals(notebookId).toArray();
-      // Hide client tombstone-state rows (PIN-SYNC-3: a conflict against a server-deleted note retains
-      // the row marked deletedAt for badge + keep-mine resurrection, but it must not appear in the list).
-      return notes.filter((n) => !n.deletedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      // The MAIN list excludes (a) client tombstone-state rows (PIN-SYNC-3: a conflict against a
+      // server-deleted note keeps the row marked deletedAt for badge + keep-mine resurrection) and
+      // (b) trashed notes (Fork P soft-delete). isInTrash is the shared, fail-safe predicate.
+      return notes
+        .filter((n) => !n.deletedAt && !isInTrash(n))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    }).subscribe({ next: cb });
+    return () => sub.unsubscribe();
+  },
+
+  observeTrashedNotes(notebookId: NotebookId, cb: (notes: ClientNote[]) => void): Unsubscribe {
+    // The TRASH VIEW — the exact inverse of observeNotes' trash exclusion (same isInTrash source).
+    // Sorted by when trashed (most-recently-trashed first) via the sys:trashedAt timestamp.
+    const sub = liveQuery(async () => {
+      const notes = await db.notes.where('notebookId').equals(notebookId).toArray();
+      return notes
+        .filter((n) => !n.deletedAt && isInTrash(n))
+        .sort((a, b) => (trashedAt(b.properties) ?? '').localeCompare(trashedAt(a.properties) ?? ''));
     }).subscribe({ next: cb });
     return () => sub.unsubscribe();
   },

@@ -1,18 +1,23 @@
 /**
- * Swipe-actions Lane-1 data-layer regression tests.
+ * Swipe-actions Lane-1 data-layer regression tests (Fork P — trash flag in PropertyBag).
  *
- *   SA-T3 duplicate → new id, both rows present, copied content, enqueued as a fresh upsert.
+ *   SA-T1 softDelete → trashed: hidden from the main list, shown in the trash view, ROW PERSISTS
+ *                      (recoverable), enqueued as a plain upsert at the live CAS base.
+ *   SA-T2 restore    → un-trashed: back in the main list, gone from the trash view, no key residue.
+ *   SA-T3 duplicate  → new id, both rows, copied content, reserved (sys:) keys STRIPPED (a copy of a
+ *                      TRASHED note is always LIVE + clean).
+ *   secSys-A         → trash/restore enqueue at the LIVE persisted version (CAS base, not LWW): a
+ *                      stale caller note.version cannot become the base → a replayed toggle CAS-misses.
+ *   secSys-B         → FAIL-SAFE list filter: a malformed/garbage sys:trashedAt value defaults to
+ *                      VISIBLE (never silently hidden) and stays out of the trash view (not lost).
  *
- * SA-T1 (delete), SA-T2 (undo), SA-T4 (delete-while-pending-edit) are HELD: a user pivot reshaped
- * delete from the `deletedAt` tombstone model to TRASH-AS-VERSION (delete = a trash-tagged version,
- * list filters by tag; restore clears the tag). The softDelete/restore scaffolding in mutate.ts +
- * the SyncQueueEntry.op tag are kept (not reverted) pending the settled design; their regression
- * tests will be (re)written against the trash-as-version model. Duplicate is unaffected by the pivot.
+ * The server round-trip on real D1 + in-flight sync races are devSys's SA-T5/T6 + swipeDeleteSync.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import 'fake-indexeddb/auto';
-import type { Note, NoteId, NotebookId } from '@deltos/shared';
+import type { Note, NoteId, NotebookId, PropertyBag } from '@deltos/shared';
+import { setTrashedAt, trashedAt, isTrashed, SYS_TRASHED_AT_KEY } from '@deltos/shared';
 import { useAuthStore } from '../src/auth/store.js';
 import { getStore } from '../src/db/store.js';
 import { mutateNotes } from '../src/db/mutate.js';
@@ -30,20 +35,19 @@ beforeEach(async () => {
 
 afterEach(() => vi.restoreAllMocks());
 
-function makeNote(id: string, version: number, title: string): Note {
+function makeNote(id: string, version: number, title: string, properties: PropertyBag = {}): Note {
   return {
-    id: id as NoteId, notebookId: NB, title, properties: {}, body: [],
+    id: id as NoteId, notebookId: NB, title, properties, body: [],
     version, createdAt: NOW, updatedAt: NOW, syncStatus: 'synced',
   };
 }
 
-/** One reactive snapshot of the notebook's visible notes (observeNotes filters tombstones). */
-function notesNow(): Promise<ClientNote[]> {
-  return new Promise((resolve) => {
-    const unsub = getStore().observeNotes(NB, (notes) => { unsub(); resolve(notes); });
-  });
+function liveOnce(): Promise<ClientNote[]> {
+  return new Promise((resolve) => { const u = getStore().observeNotes(NB, (n) => { u(); resolve(n); }); });
 }
-
+function trashOnce(): Promise<ClientNote[]> {
+  return new Promise((resolve) => { const u = getStore().observeTrashedNotes(NB, (n) => { u(); resolve(n); }); });
+}
 async function seedSynced(version = 1, title = 'My note') {
   const { db } = await import('../src/db/schema.js');
   const note = makeNote(NOTE_ID, version, title);
@@ -51,22 +55,87 @@ async function seedSynced(version = 1, title = 'My note') {
   return note;
 }
 
-describe('SA-T3 — duplicate: new id, both rows, fresh upsert', () => {
-  it('creates a new note (new id, copied content, version 0) — both rows present + enqueued', async () => {
+describe('SA-T1 — softDelete: trashed (hidden + recoverable + enqueued at live base)', () => {
+  it('sets sys:trashedAt, persists the row, hides from the list / shows in trash, enqueues a plain upsert', async () => {
     const { db } = await import('../src/db/schema.js');
-    const note = await seedSynced(3, 'Original');
+    const note = await seedSynced(1);
 
-    const dup = await mutateNotes.duplicate(note);
+    await mutateNotes.softDelete(note);
+
+    const row = (await db.notes.get(NOTE_ID)) as ClientNote;
+    expect(row).toBeDefined();                                   // ROW PERSISTS (recoverable)
+    expect(trashedAt(row.properties)).toBeTruthy();              // trash flag set
+    expect((await liveOnce()).find((n) => n.id === NOTE_ID)).toBeUndefined();  // out of the main list
+    expect((await trashOnce()).find((n) => n.id === NOTE_ID)).toBeDefined();   // in the trash view
+    const entries = await db.syncQueue.where('recordId').equals(NOTE_ID).toArray();
+    expect(entries).toHaveLength(1);
+    expect((entries[0] as { op?: unknown }).op).toBeUndefined(); // plain upsert (no op)
+    expect(entries[0].baseVersion).toBe(1);                      // live CAS base
+    expect(trashedAt(entries[0].payload.properties)).toBeTruthy(); // the pushed payload carries the flag
+  });
+});
+
+describe('SA-T2 — restore (undo): un-trashed (back in list, no residue)', () => {
+  it('clears sys:trashedAt (omitted), returns to the list / leaves trash, enqueues a plain upsert', async () => {
+    const { db } = await import('../src/db/schema.js');
+    const note = await seedSynced(1);
+    await mutateNotes.softDelete(note);
+
+    await mutateNotes.restore(note);
+
+    const row = (await db.notes.get(NOTE_ID)) as ClientNote;
+    expect(trashedAt(row.properties)).toBeNull();                // flag cleared
+    expect(SYS_TRASHED_AT_KEY in row.properties).toBe(false);    // key OMITTED — no residue
+    expect((await liveOnce()).find((n) => n.id === NOTE_ID)).toBeDefined();    // back in the list
+    expect((await trashOnce()).find((n) => n.id === NOTE_ID)).toBeUndefined(); // gone from trash
+    // A restore entry was enqueued whose payload carries a CLEAN bag (no trash key) — order-independent.
+    const entries = await db.syncQueue.where('recordId').equals(NOTE_ID).toArray();
+    expect(entries.some((e) => !(SYS_TRASHED_AT_KEY in e.payload.properties))).toBe(true);
+  });
+});
+
+describe('SA-T3 — duplicate: new id, both rows, reserved keys stripped (live + clean copy)', () => {
+  it('a duplicate of a TRASHED note is LIVE (no sys: keys), new id, copied content, both rows present', async () => {
+    const { db } = await import('../src/db/schema.js');
+    await seedSynced(3, 'Original');
+    await mutateNotes.softDelete(await db.notes.get(NOTE_ID) as Note); // give it a sys:trashedAt
+    const trashedRow = (await db.notes.get(NOTE_ID)) as Note;
+
+    const dup = await mutateNotes.duplicate(trashedRow);
 
     expect(dup.id).not.toBe(NOTE_ID);
-    expect(dup.title).toBe('Original');                         // copied content
-    expect(dup.version).toBe(0);                                // fresh note → server INSERT
-    expect(await db.notes.count()).toBe(2);                     // both rows present
-    const list = await notesNow();
-    expect(list.map((n) => n.id).sort()).toEqual([NOTE_ID, dup.id].sort());
+    expect(dup.title).toBe('Original');
+    expect(dup.version).toBe(0);
+    expect(isTrashed(dup.properties)).toBe(false);                       // not trashed
+    expect(Object.keys(dup.properties).some((k) => k.startsWith('sys:'))).toBe(false); // NO reserved keys
+    expect((await liveOnce()).find((n) => n.id === dup.id)).toBeDefined();             // in the LIVE list
+    expect((await trashOnce()).find((n) => n.id === dup.id)).toBeUndefined();          // not trashed
     const dupEntries = await db.syncQueue.where('recordId').equals(dup.id).toArray();
     expect(dupEntries).toHaveLength(1);
-    expect(dupEntries[0].op).toBeUndefined();                   // upsert (absent op)
-    expect(dupEntries[0].baseVersion).toBe(0);                  // INSERT
+    expect(dupEntries[0].baseVersion).toBe(0);                          // INSERT
+  });
+});
+
+describe('secSys-A — toggle uses the live CAS base, never last-write-wins', () => {
+  it('softDelete enqueues at the LIVE persisted version even when the caller passes a stale note.version', async () => {
+    const { db } = await import('../src/db/schema.js');
+    await seedSynced(5, 'X');                          // server-confirmed at version 5
+    const stale = makeNote(NOTE_ID, 1, 'X');           // caller still holds version 1
+
+    await mutateNotes.softDelete(stale);
+
+    const entry = (await db.syncQueue.where('recordId').equals(NOTE_ID).toArray())[0];
+    expect(entry.baseVersion).toBe(5);                 // live base, NOT the stale 1 → CAS, not LWW
+  });
+});
+
+describe('secSys-B — fail-safe: a garbage trash value stays VISIBLE', () => {
+  it('a malformed (non-date) sys:trashedAt value reads as NOT trashed: visible in the list, absent from trash', async () => {
+    const { db } = await import('../src/db/schema.js');
+    const corruptProps = { [SYS_TRASHED_AT_KEY]: { type: 'text', value: 'corrupt' } } as unknown as PropertyBag;
+    await db.notes.put(makeNote(NOTE_ID, 1, 'Garbage', corruptProps));
+
+    expect((await liveOnce()).find((n) => n.id === NOTE_ID)).toBeDefined();    // VISIBLE (never silently hidden)
+    expect((await trashOnce()).find((n) => n.id === NOTE_ID)).toBeUndefined(); // and not lost into trash
   });
 });

@@ -170,7 +170,6 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
       notebookId,
       entries: batch.map((e) => ({
         id: e.payload.id,
-        op: e.op ?? 'upsert', // sync intent: 'delete' soft-deletes, 'restore' undoes; absent = upsert
         draft: {
           title: e.payload.title,
           properties: e.payload.properties,
