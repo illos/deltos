@@ -1,7 +1,9 @@
 # Auth Pivot (username + password + optional TOTP) — executable acceptance matrix
 
 **Owner:** scopeSys (analyst). **Status:** DRAFT — 2026-06-17. The spec-level **done-gate** for
-`docs/specs/auth-pivot-password.md` (@7997906), built against devSys's scope map
+`docs/specs/auth-pivot-password.md` (@8e38ce0 — covers the ordered Argon2id ladder: rung 1 pure-JS
+param-tune [free] → rung 2 WASM [logged dep-exception] → rung 3 scrypt/PBKDF2; + TOTP confirm-before-activate),
+built against devSys's scope map
 (`docs/design/auth-pivot-scope-map.md` @2fb0cfc) and secSys's binding rulings (`[[auth-pivot-security-model]]`).
 Same shape as the matrices I own (`v1-shell-conflict-acceptance-matrix.md`, `swipe-actions-acceptance-matrix.md`).
 This pivot **supersedes the passkey model** ([[stream-a-identity-plan]]) — it is a **zero-data-migration
