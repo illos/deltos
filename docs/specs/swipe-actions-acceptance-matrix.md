@@ -53,6 +53,44 @@ fast-follow**, not a blocker for this slice.
 
 ---
 
+## Gate-check record — 2026-06-17 @fc11051 (build LIVE on deltos.blackgate.studio)
+
+scopeSys independently re-ran the suites: **client 240/240, worker 252/252 (+30 todo), shared 100/100**,
+prod build clean.
+
+**Tier-A automatable gate = GREEN.** CLOSED by the automated suite (no dogfood needed):
+- **SA-T1/T2/T3** (`packages/client/test/swipeActions.test.ts`) — softDelete→`sys:trashedAt` set + row
+  persists + hidden/in-trash + plain upsert at the **live CAS base**; restore→key **omitted** (no residue);
+  duplicate→new id + content copied + **reserved `sys:` keys stripped** + INSERT.
+- **secSys-A** — toggle enqueues at the **live persisted version**, not a stale caller version (CAS, not LWW).
+- **secSys-B** — fail-safe: a garbage `sys:trashedAt` reads **NOT trashed → stays VISIBLE** (never silently
+  hidden), absent from trash.
+- **SA-9 / SA-T7** (`packages/shared/test/reservedKeys.test.ts`) — general `sys:` namespace; `userProperties`
+  = the single **UI-hide + export-exclude** chokepoint; `UserPropertyKeySchema`/`UserPropertyBagSchema`
+  **reject** a user write into the namespace at the **mutate boundary**; secSys **no-literal-drift** contract
+  (writer key ≡ export-filter constant → a system key can never reach export).
+- **SA-T5/T6 (CAS on real D1)** — CLOSED **transitively**: the `trashed` flag rides the **exact `updateNote`
+  CAS** already real-D1-proven (`casRowsWritten` mock + `bbb149d` live-verified deploy); Fork P added **no
+  new CAS surface**, so no bespoke real-D1 leg is required.
+
+**SA-8 perf — GREEN (both halves):** measured = **233.6 KB gzip served / +~8.6 KB raw for the whole
+feature / NO new dependency** — within budget (pilot, reported to planSys). Felt half = [DEV] below.
+
+**Flag resolutions:**
+- **SA-9 client-side placement → secSys PASS (RECORDED).** Enforcement at the **client** mutate boundary is
+  correct within the documented within-account low-surface trust model; **do not reopen Fork P** — the
+  cross-account boundary is held on every path. secSys additionally closed a **server `property.set`
+  reserved-key-acceptance hole** (1-line, honors guardrail-(c)) — a server-side reinforcement of SA-9.
+- **SA-T4 labeled belt → assigned to devSys2** (one explicit trash-toggle-while-pending-edit assertion). The
+  by-construction coverage (trash = ordinary upsert → existing edit-while-syncing drain invariants apply) is
+  confirmed; the belt makes the marquee no-loss row a labeled test rather than an inherited one.
+
+**Gate now hinges ONLY on the [DEV] dogfood:** SA-1/2/5/6 gesture feel, SA-3 undo-toast, SA-8 felt-load
+(still beats Apple Notes), and the **live end-to-end real-D1 round-trip** (trash→sticks-across-reload→trash
+view→restore→back). The **trash view** (`TrashRoute.tsx` + `observeTrashedNotes`, SA-V1/V2) **landed early**.
+
+---
+
 ## Acceptance matrix — one row per criterion (SA-1 … SA-9)
 
 | ID | Criterion (spec AC) | Tier | What to test | How to verify | Owning lane |
