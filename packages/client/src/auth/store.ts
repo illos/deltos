@@ -1,433 +1,201 @@
-/**
- * Zustand auth store — single source of truth for the app's auth state.
- *
- * keyId is persisted to localStorage AND durably in IndexedDB (KeyStore.setServerKeyId, the E4
- * durability fix @2d629a6) so a cold-start session re-mint survives iOS localStorage eviction.
- * bearerToken, identity, and sessionState are in-memory ONLY (lost on refresh — F7 HARD GATE: the
- * session token has no at-rest home anywhere, ever).
- *
- * ── Local-first shell (v1 course-correction, spec Part 1a) ──────────────────────────────────────
- * Auth is a BACKGROUND concern, never a boot gate. `init()` reads the LOCAL durable identity
- * (isEnrolled + keyId from IndexedDB — no network) so the shell can render notes from the local
- * store immediately; it then kicks `establishSession()` to (re-)mint a session in the background.
- * `sessionState` is a QUIET status the shell surfaces non-blockingly — it never gates the notes UI.
- * The ONLY blocking auth screen is the first-run / cleared-data enroll path (App.tsx gates on
- * `!isEnrolled`, not on session state).
- *
- * secSys HARD LINE (Part 1a custody constraint): the render path must NEVER unwrap the signing key.
- * Notes render from plaintext local Dexie; the key unwrap happens ONLY inside the background re-auth
- * (`establishSession` → only when the KeyStore is already unlocked), never on first paint.
- *
- * PIN-ID-9 contract (WebAuthn transient activation):
- *   The enroll / enrollExisting / unlock actions are called DIRECTLY from button onClick
- *   handlers with no preceding async work. Each immediately delegates to the KeyStore which
- *   calls WebAuthn create()/get() as its FIRST await — within the gesture's activation window.
- *   Do NOT insert any await (network call, state check) before the KeyStore call in a gesture
- *   handler, or iOS Safari will reject the WebAuthn ceremony with NotAllowedError.
- */
 import { create } from 'zustand';
-import { SCOPES } from '@deltos/shared';
-import { keyStore } from './keyStoreInstance.js';
-import { buildRegisterRequest } from '../identity/register.js';
-import { buildSessionRequest } from '../identity/session.js';
-import { getEnrollmentPrfStatus } from '../identity/webAuthnKeyStore.js';
-import type { Identity } from '../identity/keyStore.js';
-
-const KEY_ID_STORAGE_KEY = 'deltos:keyId';
-
-function getStoredKeyId(): string | null {
-  try { return localStorage.getItem(KEY_ID_STORAGE_KEY); } catch { return null; }
-}
-function storeKeyId(id: string): void {
-  try { localStorage.setItem(KEY_ID_STORAGE_KEY, id); } catch { /* ignore */ }
-}
+import type { AccessTokenResponse, RegisterResponse, TotpSetupResponse } from '@deltos/shared';
 
 /**
- * Quiet, in-memory background-session status. NEVER gates the notes UI (the shell renders from the
- * local store regardless); the shell surfaces it non-blockingly (SessionStatus nudge).
- *  - `booting`       — initial; the local durable-identity read has not resolved yet.
- *  - `establishing`  — background signed-challenge re-auth in flight (key already in memory).
- *  - `active`        — a live in-memory bearer token; sync can flow.
- *  - `needs-unlock`  — re-auth needs a user gesture to unwrap the key (Part 1a; Part 1b's Option-A
- *                      autoUnlock makes this silent). Surfaced as a tappable nudge, never a gate.
- *  - `offline`       — the mint failed on the network; retried with backoff. No eviction to recovery.
+ * Client auth store — USERNAME + PASSWORD (auth pivot; supersedes the passkey/WebAuthn stack).
+ *
+ * Durable session, NO token at rest (the load-bearing answer to "ungated day-to-day + survives reload"):
+ *   - The ACCESS token (`bearerToken`) is the `Authorization: Bearer` the sync engine sends. It lives
+ *     ONLY here, in memory — never IndexedDB / localStorage / cache. Lost on reload, by design.
+ *   - The REFRESH bearer is an httpOnly + Secure + SameSite=Strict cookie scoped to /refresh that JS
+ *     CANNOT read. On cold boot {@link init} rides POST /api/auth/refresh (the browser attaches the
+ *     cookie automatically, same-origin) to re-mint a fresh access token → the app opens to notes with
+ *     NO prompt (reproduces the old passkey silent re-mint; survives reload + iOS storage eviction).
+ *   - Net stronger vs XSS than the old wrapped-key-in-IDB: there is no reusable secret JS can exfiltrate.
+ *
+ * Day-to-day is UNGATED — password is for register / new-device login / reset only, never an app-open
+ * prompt. The ONLY blocking auth screen is the register/login gate when there is NO durable session.
+ *
+ * P0 LATCH (carry the enroll-unmount lesson forward): the boot gate opens to the shell only when
+ * `isAuthed && !isAuthing`. A route runs a ceremony as: {@link beginAuth} (isAuthing=true) → action →
+ * [show the recovery phrase, for register] → {@link finalizeAuth} (isAuthing=false + isAuthed=true, one
+ * update). isAuthed therefore flips to the shell ONLY at ceremony-complete, on EVERY path; and
+ * isAuthing pins the route even if a background {@link init} refresh resolves mid-ceremony. Never open
+ * the shell at an intermediate step, or the gate unmounts the route mid-ceremony (the P0 bug class).
  */
-export type SessionState = 'booting' | 'establishing' | 'active' | 'needs-unlock' | 'offline';
 
-// --- Background re-auth retry (backoff) -------------------------------------------------------
-// Only the NETWORK-failure path retries (sessionState 'offline'): the key is already in memory, so a
-// later attempt can succeed once connectivity returns. The 'needs-unlock' path does NOT retry — it
-// needs a user gesture, surfaced as a nudge. F7 is unaffected: nothing here touches the token at rest.
-const REAUTH_BACKOFF_START_MS = 2_000;
-const REAUTH_BACKOFF_MAX_MS = 30_000;
-let _reauthTimer: ReturnType<typeof setTimeout> | null = null;
-let _reauthBackoffMs = REAUTH_BACKOFF_START_MS;
+const API = '/api/auth';
 
-function scheduleReauth(run: () => void): void {
-  if (_reauthTimer) return; // a retry is already pending
-  const delay = _reauthBackoffMs;
-  _reauthBackoffMs = Math.min(_reauthBackoffMs * 2, REAUTH_BACKOFF_MAX_MS);
-  _reauthTimer = setTimeout(() => { _reauthTimer = null; run(); }, delay);
-}
-
-function resetReauthBackoff(): void {
-  _reauthBackoffMs = REAUTH_BACKOFF_START_MS;
-  if (_reauthTimer) { clearTimeout(_reauthTimer); _reauthTimer = null; }
-}
-
-/** A fetch transport failure (offline / server unreachable) vs an HTTP error response. */
-function isFetchTransportError(e: unknown): boolean {
-  return e instanceof TypeError && /fetch/i.test(e.message);
-}
-
-export type ClaimUsernameResult =
-  | { ok: true; username: string }
-  | { ok: false; code: 'name-taken' | 'account-has-username' | 'invalid' | 'not-authed' | 'network' };
+/** Detailed session status — drives the quiet status pill + the sync-on-active trigger. Never gates. */
+export type SessionState = 'booting' | 'active' | 'unauthed' | 'offline';
 
 export interface AuthState {
-  /**
-   * null = not yet checked (initial loading). false = no completed identity. true = a completed
-   * identity exists. DURING a live enroll ceremony this stays false until {@link AuthActions.finalizeEnroll}
-   * flips it at completion (planSys fix-shape invariant: isEnrolled means CEREMONY COMPLETE — recovery
-   * phrase shown+acknowledged + register + mintSession done — NOT credential-created-at-passkey-step).
-   * On a cold {@link AuthActions.init} it is derived from blob-existence; the {@link enrolling} latch
-   * is what distinguishes a mid-ceremony session from a completed-then-reloaded one (see shellGate).
-   */
-  isEnrolled: boolean | null;
-  /**
-   * A live enroll / recover / QR-join ceremony is in progress in THIS session. Pins the enroll
-   * surface end-to-end (shellGate) so the boot gate can NOT unmount a ceremony that has created a
-   * credential but not yet shown+acknowledged the phrase, registered, and minted (the P0). In-memory
-   * only (reset on reload — a cold load then keys on blob-existence). Set by {@link AuthActions.enroll}
-   * / {@link AuthActions.enrollExisting}; cleared by {@link AuthActions.finalizeEnroll}.
-   */
-  enrolling: boolean;
-  isUnlocked: boolean;
-  identity: Identity | null;
-  /** Server-issued device handle, persisted to localStorage. null = not registered yet. */
-  keyId: string | null;
-  /** In-memory bearer token (lost on refresh). null = no active session. */
+  /** Boot-gate input: null = booting (resolving /refresh); else see the shell rule (isAuthed && !isAuthing). */
+  isAuthed: boolean | null;
+  /** A live auth ceremony (register/login/reset) is in progress THIS session — the gate-pin latch. */
+  isAuthing: boolean;
+  /** In-memory ACCESS token (Authorization: Bearer). NEVER persisted. null = no live session this tick. */
   bearerToken: string | null;
-  /** Stable credential-independent account key from session response. Local note tagging only — never sent to server on writes. */
+  /** The signed-in account (data-ownership key; the data layer scopes on this, never the credential). */
   accountId: string | null;
-  /** null = unknown; true = PRF bound; false = device-local (D5 disclosure required). */
-  usesPrf: boolean | null;
-  /** Quiet background-session status (see {@link SessionState}). Never gates the notes UI. */
+  /** The login identifier / public-ish handle. */
+  username: string | null;
   sessionState: SessionState;
-  /**
-   * True for exactly one unlock: an already-PRF-enrolled device just silently downgraded to
-   * device-local custody via the Option-A rewrap-on-next-unlock migration. Drives the one-time
-   * device-local notice at the migration unlock (secSys honesty-of-record finding; planSys ruled
-   * SHOW ONCE). Cleared by {@link clearMigrationNotice} once shown.
-   */
-  justMigratedToDeviceLocal: boolean;
   error: string | null;
 }
 
-interface AuthActions {
+export type RegisterResult =
+  | { ok: true; recoveryPhrase: string }
+  | { ok: false; code: 'username_taken' | 'weak_password' | 'invalid' | 'rate_limited' | 'network' };
+export type LoginResult =
+  | { ok: true }
+  | { ok: false; code: 'invalid' | 'totp_required' | 'totp_invalid' | 'rate_limited' | 'network' };
+export type ResetResult =
+  | { ok: true }
+  | { ok: false; code: 'invalid' | 'rate_limited' | 'network' };
+export type TotpSetupResult =
+  | { ok: true; secret: string; uri: string }
+  | { ok: false; code: 'invalid' | 'network' };
+export type TotpVerifyResult = { ok: true } | { ok: false; code: 'totp_invalid' | 'network' };
+
+export interface AuthActions {
   /**
-   * Read the LOCAL durable identity (isEnrolled + keyId from IndexedDB — no network) and populate
-   * the gate inputs, then kick {@link establishSession} in the BACKGROUND. Resolves as soon as the
-   * local read is done — it NEVER awaits the session mint, so the shell renders before any auth
-   * round-trip (render-before-data). Call once at app boot.
+   * Cold boot: ride the httpOnly refresh cookie (POST /refresh, no body) to re-mint an in-memory
+   * access token. Success → isAuthed true (UNGATED). No/expired cookie → isAuthed false (the gate).
+   * Resolves fast; the shell renders off the gate rule. Never throws. Suppressed while a ceremony runs.
    */
   init(): Promise<void>;
-
-  /**
-   * Background signed-challenge re-auth from the stored key. NON-BLOCKING and NON-THROWING: on
-   * success → sessionState 'active' + an in-memory token; with no key in memory / no keyId →
-   * 'needs-unlock' (a quiet nudge, never a gate); on network failure → 'offline' + backoff retry
-   * (no eviction to a recovery screen).
-   *
-   * secSys Part-1a custody line: this is the ONLY place the signing key is used — and only when the
-   * KeyStore is ALREADY unlocked. It never unwraps the key, and is never on the first-paint path.
-   */
-  establishSession(): Promise<void>;
-
-  /**
-   * Enroll a new identity on this device (brand-new account).
-   * Returns the mnemonic (ONCE — the only time it leaves the custody boundary) and the
-   * PRF binding status (for D5 disclosure rendering).
-   *
-   * MUST be called directly from a button onClick — no preceding awaits (PIN-ID-9).
-   */
-  enroll(): Promise<{ mnemonic: string; usesPrf: boolean }>;
-
-  /**
-   * Re-bind an existing identity to this device via a known mnemonic (recovery or QR-join).
-   *
-   * MUST be called directly from a button onClick — no preceding awaits (PIN-ID-9).
-   */
-  enrollExisting(mnemonic: string): Promise<{ usesPrf: boolean }>;
-
-  /**
-   * Unlock using the stored passkey (WebAuthn get()). Returns 'ok' or 'cancelled'.
-   *
-   * MUST be called directly from a button onClick — no preceding awaits (PIN-ID-9).
-   */
-  unlock(): Promise<'ok' | 'cancelled'>;
-
-  /**
-   * Register this device with the server after a successful local enroll*.
-   * Stores the returned keyId in localStorage for future unlock → session flows.
-   * deviceLabel is auto-detected from the user agent; UI may let the user customise it.
-   */
-  register(deviceLabel: string): Promise<void>;
-
-  /**
-   * Mint a bearer session token by signing a server-issued challenge.
-   * The token is stored in-memory (bearerToken). Requires isUnlocked + keyId.
-   */
-  mintSession(): Promise<void>;
-
-  /**
-   * Claim a username for this account via POST /api/auth/username.
-   * F-acct-4: availability is revealed ONLY through this authenticated claim, never an oracle.
-   */
-  claimUsername(username: string): Promise<ClaimUsernameResult>;
-
-  /**
-   * Mark the enroll ceremony COMPLETE: clear the {@link AuthState.enrolling} latch and flip
-   * {@link AuthState.isEnrolled} true in one atomic update, releasing the boot gate to the shell.
-   *
-   * The enroll / recover / QR-join routes MUST call this immediately BEFORE their terminal
-   * navigate('/') (every success AND skip path), in the same tick — so the gate is already 'shell'
-   * when '/' is hit (otherwise the still-latched enroll-gate's catch-all bounces '/' back to /enroll).
-   * It is the ONLY place isEnrolled flips true during a live ceremony, which is what upholds the
-   * fix-shape invariant (phrase shown+acknowledged + register + mint all precede the call).
-   */
-  finalizeEnroll(): void;
-
-  lock(): void;
+  /** Create the account + mint the session; returns the recovery phrase to show ONCE. Does NOT open the
+   *  shell — the route shows + has the user acknowledge the phrase, then calls finalizeAuth. */
+  register(username: string, password: string, turnstileToken?: string): Promise<RegisterResult>;
+  /** Username + password (+ TOTP if enabled). Uniform 'invalid' on any wrong credential (no enumeration);
+   *  code 'totp_required' = prompt for the 2FA code then call again. On ok the session is minted (the
+   *  route then calls finalizeAuth to open the shell). */
+  login(username: string, password: string, totp?: string, turnstileToken?: string): Promise<LoginResult>;
+  /** Revoke-all server-side + clear the in-memory session. Gate → closed. */
+  logout(): Promise<void>;
+  /** Username + recovery phrase → set a new password (+ clear/re-enrol 2FA), revoke-all, sign in.
+   *  NON-DISCLOSING: a wrong username/phrase returns the same uniform 'invalid'. */
+  resetWithPhrase(username: string, phrase: string, newPassword: string, turnstileToken?: string): Promise<ResetResult>;
+  /** Begin TOTP enrolment (authed) — returns the shared secret + otpauth URI for the QR. Does NOT enable
+   *  2FA; enable only happens on a confirmed code via {@link verifyTotp} (anti-lockout). */
+  setupTotp(): Promise<TotpSetupResult>;
+  /** Confirm a code from the authenticator app → ENABLE TOTP (only here, after a valid code). */
+  verifyTotp(code: string): Promise<TotpVerifyResult>;
+  /** Ceremony latch: a route MUST call this at ceremony start (pins the gate to the auth route). */
+  beginAuth(): void;
+  /** Ceremony-complete latch flip: clears isAuthing + opens the shell (isAuthed=true), in one update. */
+  finalizeAuth(): void;
   clearError(): void;
-  /** Dismiss the one-time device-local migration notice (after it has been shown once). */
-  clearMigrationNotice(): void;
+}
+
+/** Authed JSON fetch (same-origin → the refresh cookie rides automatically; the access token bearers). */
+function authFetch(path: string, body?: unknown, token?: string | null): Promise<Response> {
+  return fetch(`${API}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
 }
 
 export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
-  isEnrolled: null,
-  enrolling: false,
-  isUnlocked: false,
-  identity: null,
-  keyId: getStoredKeyId(),
+  isAuthed: null,
+  isAuthing: false,
   bearerToken: null,
   accountId: null,
-  usesPrf: null,
+  username: null,
   sessionState: 'booting',
-  justMigratedToDeviceLocal: false,
   error: null,
 
   async init() {
     try {
-      // LOCAL durable reads only — no network. These decide the boot gate (enroll vs shell) and
-      // tell the app whose notes to show, so the shell can paint before any auth round-trip.
-      const enrolled = await keyStore.isEnrolled();
-      // Resolve keyId: localStorage fast-read first; fall back to durable IDB on eviction.
-      let keyId = getStoredKeyId();
-      let usesPrf: boolean | null = null;
-      if (enrolled) {
-        const prfStatus = await getEnrollmentPrfStatus();
-        usesPrf = prfStatus?.usesPrf ?? null;
-        if (!keyId) {
-          const idbKeyId = await keyStore.getServerKeyId();
-          if (idbKeyId) {
-            keyId = idbKeyId;
-            storeKeyId(idbKeyId); // mirror back to localStorage for next fast-path read
-          }
-        }
-      }
-      set({ isEnrolled: enrolled, keyId, usesPrf });
-      // Background re-auth — deliberately NOT awaited: the shell renders from the local store now,
-      // and the session is established underneath it. A failure here never blocks or evicts.
-      if (enrolled) void get().establishSession();
-    } catch (e) {
-      set({ isEnrolled: false, error: String(e) });
+      const res = await authFetch('/refresh');
+      if (!res.ok) { if (!get().isAuthing) set({ isAuthed: false, sessionState: 'unauthed' }); return; }
+      const s = (await res.json()) as AccessTokenResponse;
+      // A live ceremony owns the gate — don't let a background refresh open the shell underneath it.
+      const opening = get().isAuthing ? {} : { isAuthed: true, sessionState: 'active' as const };
+      set({ bearerToken: s.token, accountId: s.accountId, username: s.username, ...opening });
+    } catch {
+      // Network failure on cold boot — no session to render, but it isn't a credential failure.
+      if (!get().isAuthing) set({ isAuthed: false, sessionState: 'offline' });
     }
   },
 
-  async establishSession() {
-    const { isEnrolled, keyId, bearerToken } = get();
-    if (!isEnrolled) return;                       // no local identity — the enroll gate handles this
-    if (bearerToken) { set({ sessionState: 'active' }); return; } // already authed this session
-
-    // No registered device handle → the gesture path (UnlockRoute) re-registers; quiet nudge.
-    if (!keyId) {
-      set({ sessionState: 'needs-unlock' });
-      return;
-    }
-
-    // Part 1b (Option-A): SILENTLY unwrap the device-local key with NO gesture, in the background
-    // (after first paint — never on the render path). A device-local blob unlocks silently; a
-    // not-yet-migrated PRF blob returns null → graceful-degrade to the gesture nudge (which migrates
-    // it on the next unlock). This is the zero-day-to-day-friction path (the north star).
-    if (!keyStore.isUnlocked()) {
-      const identity = await keyStore.autoUnlock();
-      if (!identity) {
-        set({ sessionState: 'needs-unlock' });
-        return;
-      }
-      set({ isUnlocked: true, identity });
-    }
-
-    set({ sessionState: 'establishing' });
-    try {
-      await get().mintSession();                   // sets bearerToken + accountId + sessionState 'active'
-      resetReauthBackoff();
-    } catch (e) {
-      if (isFetchTransportError(e)) {
-        // Offline / server down — keep working locally and retry with backoff. No recovery screen.
-        set({ sessionState: 'offline' });
-        scheduleReauth(() => void get().establishSession());
-      } else {
-        // HTTP-level rejection (e.g. the device was revoked server-side) — fall back to the gesture
-        // path, still non-blocking.
-        set({ sessionState: 'needs-unlock' });
-      }
-    }
-  },
-
-  async enroll() {
-    // Latch the ceremony BEFORE the WebAuthn await — pins the enroll surface so the gate can't
-    // unmount it once the blob is sealed. isEnrolled is NOT set here (deferred to finalizeEnroll at
-    // ceremony completion — the fix-shape invariant). set() is synchronous, so this does not break
-    // PIN-ID-9 (no await precedes the keyStore call).
-    set({ error: null, enrolling: true });
-    const result = await keyStore.enrollNew(); // WebAuthn create() is the FIRST await (PIN-ID-9)
-    const prfStatus = await getEnrollmentPrfStatus();
-    const usesPrf = prfStatus?.usesPrf ?? false;
-    set({ isUnlocked: true, identity: result.identity, usesPrf });
-    return { mnemonic: result.mnemonic, usesPrf };
-  },
-
-  async enrollExisting(mnemonic: string) {
-    // Same latch as enroll() — RecoverRoute + QrReceiveRoute share the credential→register→mint
-    // sequence and the identical mid-ceremony unmount race. isEnrolled deferred to finalizeEnroll.
-    set({ error: null, enrolling: true });
-    const identity = await keyStore.enrollExisting(mnemonic); // WebAuthn create() first await (PIN-ID-9)
-    const prfStatus = await getEnrollmentPrfStatus();
-    const usesPrf = prfStatus?.usesPrf ?? false;
-    set({ isUnlocked: true, identity, usesPrf });
-    return { usesPrf };
-  },
-
-  async unlock() {
+  async register(username, password, turnstileToken) {
     set({ error: null });
-    const wasPrf = get().usesPrf; // disclosed custody BEFORE this unlock (true = PRF-bound)
-    const identity = await keyStore.unlock(); // WebAuthn get() first await (PIN-ID-9); may rewrap-migrate
-    if (!identity) return 'cancelled';
-    const prfStatus = await getEnrollmentPrfStatus();
-    const usesPrf = prfStatus?.usesPrf ?? null;
-    // Option-A migration just happened iff the device WAS PRF-bound and is NOW device-local — the
-    // unlock() rewrap flipped prf→false. Surface the one-time device-local notice (planSys: show once).
-    set({ isUnlocked: true, identity, usesPrf, justMigratedToDeviceLocal: wasPrf === true && usesPrf === false });
-    return 'ok';
-  },
-
-  async register(deviceLabel: string) {
-    const req = await buildRegisterRequest({ keyStore, deviceLabel });
-    const resp = await fetch('/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req),
-    });
-    if (!resp.ok) {
-      const raw = await resp.json().catch(() => ({})) as Record<string, unknown>;
-      const msg = (raw.error as { message?: string } | undefined)?.message
-        ?? `registration failed: HTTP ${resp.status}`;
-      throw new Error(msg);
+    let res: Response;
+    try { res = await authFetch('/register', { username, password, ...(turnstileToken ? { turnstileToken } : {}) }); }
+    catch { return { ok: false, code: 'network' }; }
+    if (!res.ok) {
+      const code = res.status === 409 ? 'username_taken'
+        : res.status === 429 ? 'rate_limited'
+        : res.status === 400 ? 'weak_password'
+        : 'invalid';
+      return { ok: false, code };
     }
-    const { keyId } = (await resp.json()) as { keyId: string; accountFingerprint: string };
-    await keyStore.setServerKeyId(keyId); // durable IDB storage (survives iOS localStorage eviction)
-    storeKeyId(keyId);                    // localStorage mirror (fast cold-start read)
-    set({ keyId });
+    const s = (await res.json()) as RegisterResponse;
+    // Session minted, but the shell stays closed until finalizeAuth (the recovery phrase must be shown +
+    // acknowledged first — the P0 anti-unmount discipline). The route runs beginAuth → register → ack →
+    // finalizeAuth; isAuthing is already set by beginAuth.
+    set({ bearerToken: s.token, accountId: s.accountId, username: s.username });
+    return { ok: true, recoveryPhrase: s.recoveryPhrase };
   },
 
-  async mintSession() {
-    const { keyId } = get();
-    if (!keyId) throw new Error('no keyId — register this device first');
-    const req = await buildSessionRequest({
-      keyStore,
-      keyId,
-      requestedScope: [...SCOPES], // request all scopes; server clamps via F5
-    });
-    const resp = await fetch('/api/auth/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req),
-    });
-    if (!resp.ok) {
-      const raw = await resp.json().catch(() => ({})) as Record<string, unknown>;
-      const msg = (raw.error as { message?: string } | undefined)?.message
-        ?? `session mint failed: HTTP ${resp.status}`;
-      throw new Error(msg);
+  async login(username, password, totp, turnstileToken) {
+    set({ error: null });
+    let res: Response;
+    try { res = await authFetch('/login', { username, password, ...(totp ? { totp } : {}), ...(turnstileToken ? { turnstileToken } : {}) }); }
+    catch { return { ok: false, code: 'network' }; }
+    if (!res.ok) {
+      if (res.status === 429) return { ok: false, code: 'rate_limited' };
+      const raw = await res.json().catch(() => ({})) as { error?: { code?: string } };
+      const c = raw.error?.code;
+      if (c === 'totp_required') return { ok: false, code: 'totp_required' };
+      if (c === 'totp_invalid') return { ok: false, code: 'totp_invalid' };
+      return { ok: false, code: 'invalid' }; // uniform — no username enumeration
     }
-    const { token, accountId } = (await resp.json()) as { token: string; expiresAt: string; accountId: string };
-    // F7: the token lives ONLY here, in memory. It is never written to localStorage / Dexie / cache.
-    set({ bearerToken: token, accountId, sessionState: 'active' });
+    const s = (await res.json()) as AccessTokenResponse;
+    set({ bearerToken: s.token, accountId: s.accountId, username: s.username });
+    return { ok: true };
   },
 
-  async claimUsername(username: string): Promise<ClaimUsernameResult> {
-    const { bearerToken } = get();
-    if (!bearerToken) return { ok: false, code: 'not-authed' };
-    const resp = await fetch('/api/auth/username', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${bearerToken}`,
-      },
-      body: JSON.stringify({ username }),
-    });
-    if (resp.status === 201 || resp.status === 200) {
-      const body = await resp.json() as { username: string };
-      return { ok: true, username: body.username };
+  async logout() {
+    try { await authFetch('/logout', undefined, get().bearerToken); } catch { /* clear locally regardless */ }
+    set({ bearerToken: null, accountId: null, username: null, isAuthed: false, isAuthing: false, sessionState: 'unauthed' });
+  },
+
+  async resetWithPhrase(username, phrase, newPassword, turnstileToken) {
+    set({ error: null });
+    let res: Response;
+    try { res = await authFetch('/reset', { username, recoveryPhrase: phrase, newPassword, ...(turnstileToken ? { turnstileToken } : {}) }); }
+    catch { return { ok: false, code: 'network' }; }
+    if (!res.ok) {
+      if (res.status === 429) return { ok: false, code: 'rate_limited' };
+      return { ok: false, code: 'invalid' }; // non-disclosing — never confirms the username exists
     }
-    const raw = await resp.json().catch(() => ({ error: { code: 'unknown' } })) as {
-      error?: { code?: string };
-    };
-    const code = raw.error?.code ?? 'unknown';
-    if (resp.status === 409 && code === 'username_exists') {
-      return { ok: false, code: 'account-has-username' };
-    }
-    if (resp.status === 409) return { ok: false, code: 'name-taken' };
-    if (resp.status === 400) return { ok: false, code: 'invalid' };
-    return { ok: false, code: 'network' };
+    const s = (await res.json()) as AccessTokenResponse;
+    set({ bearerToken: s.token, accountId: s.accountId, username: s.username });
+    return { ok: true };
   },
 
-  finalizeEnroll() {
-    // Atomic: release the latch AND flip isEnrolled in one update so the gate transitions straight
-    // enroll-gate → shell with no intermediate frame (the routes call this just before navigate('/')).
-    set({ enrolling: false, isEnrolled: true });
+  async setupTotp() {
+    let res: Response;
+    try { res = await authFetch('/totp/setup', {}, get().bearerToken); }
+    catch { return { ok: false, code: 'network' }; }
+    if (!res.ok) return { ok: false, code: 'invalid' };
+    const b = (await res.json()) as TotpSetupResponse;
+    return { ok: true, secret: b.secret, uri: b.otpauthUri };
   },
 
-  lock() {
-    keyStore.lock();
-    resetReauthBackoff();
-    set({ isUnlocked: false, identity: null, bearerToken: null, accountId: null, usesPrf: null, sessionState: 'needs-unlock' });
+  async verifyTotp(code) {
+    let res: Response;
+    try { res = await authFetch('/totp/verify', { code }, get().bearerToken); }
+    catch { return { ok: false, code: 'network' }; }
+    if (!res.ok) return { ok: false, code: 'totp_invalid' };
+    return { ok: true };
   },
 
+  beginAuth() { set({ isAuthing: true }); },
+  finalizeAuth() { set({ isAuthing: false, isAuthed: true, sessionState: 'active' }); },
   clearError() { set({ error: null }); },
-
-  clearMigrationNotice() { set({ justMigratedToDeviceLocal: false }); },
 }));
-
-// Background re-auth recovery: when connectivity returns, retry the session mint for an enrolled
-// device that has no live token yet (the key must already be in memory — establishSession enforces
-// that and falls back to a quiet nudge otherwise). Guarded so it is a no-op in non-browser (test) envs.
-if (typeof window !== 'undefined') {
-  window.addEventListener('online', () => {
-    const s = useAuthStore.getState();
-    if (s.isEnrolled && !s.bearerToken) void s.establishSession();
-  });
-}
-
-/** Detect a plausible device label from the browser UA (for the registration deviceLabel field). */
-export function detectDeviceLabel(): string {
-  const ua = navigator.userAgent;
-  if (/iPhone/.test(ua)) return 'iPhone';
-  if (/iPad/.test(ua)) return 'iPad';
-  if (/Android/.test(ua)) return 'Android';
-  if (/Macintosh/.test(ua)) return 'Mac';
-  if (/Windows NT/.test(ua)) return 'Windows PC';
-  if (/Linux/.test(ua)) return 'Linux';
-  return 'My Device';
-}

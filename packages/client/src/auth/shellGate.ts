@@ -1,43 +1,40 @@
 /**
- * Pure boot-view selector for the local-first shell (spec Part 1a §Behavior 4–5).
+ * Pure boot-view selector for the local-first shell, keyed on the DURABLE SESSION (auth pivot —
+ * username+password; supersedes the passkey enroll/unlock model).
  *
- * Two inputs, both LOCAL (no network); session / unlock state NEVER feeds this decision — auth is a
- * background concern, so a locked-but-enrolled device still renders the notes shell (the session is
- * established in the background; a failure is a quiet nudge, never a gate). This is what closes E4
- * *properly*: there is no "device hasn't been registered" boot gate any more — only the two real
- * logout paths.
+ * Two inputs, both from the auth store (no extra network here — the cold-boot /refresh ride lives in
+ * {@link AuthActions.init}; this is a pure function of its result + the ceremony latch):
  *
- *   1. `enrolling` — a LIVE enroll ceremony (enroll / recover / QR-join) is in progress in THIS
- *      session. It pins the enroll surface end-to-end so the gate can NOT short-circuit a ceremony
- *      that has created a credential but has not yet shown+acknowledged the recovery phrase,
- *      registered the device, and minted a session (planSys fix-shape invariant). Without this latch
- *      the credential-created step flips `isEnrolled` true → 'shell' → the enroll route unmounts
- *      mid-ceremony → the recovery phrase never renders + register/mint never run = an unrecoverable,
- *      unregistered account (the P0). It is in-memory only (reset on reload — see below).
- *   2. `isEnrolled` — an at-rest credential blob exists in IndexedDB. On a COLD load (no live
- *      ceremony) this is the durable local-first signal: a blob present → render notes now, even if
- *      the device is not yet registered (keyId absent). Such a half-enrolled blob self-heals via the
- *      background `needs-unlock` nudge → UnlockRoute, which re-registers the same key (same account,
- *      notes preserved); blocking it would buy nothing — the recovery phrase is unrecoverable from a
- *      blob regardless, so showing the notes + the nudge is the correct local-first outcome.
+ *   1. `isAuthing` — a LIVE auth ceremony (register / login / reset) is in progress in THIS session.
+ *      It PINS the auth surface end-to-end so the gate can NOT short-circuit a ceremony that has
+ *      minted an in-memory session but not yet shown+acknowledged the recovery phrase (register) or
+ *      finished its step (login/reset). Without this latch, the session-minted step would flip
+ *      `isAuthed`/render the shell → the auth route unmounts mid-ceremony → the recovery phrase never
+ *      renders = the P0 enroll-unmount bug class, carried forward verbatim. In-memory only (a reload
+ *      drops it, by design — see {@link AuthActions.init}, which also refuses to open the shell while
+ *      `isAuthing` so a background refresh can't race the latch).
+ *   2. `isAuthed` — a durable session is live: an in-memory access token exists, either freshly minted
+ *      by a ceremony (flipped at {@link AuthActions.finalizeAuth}) or re-minted on cold boot by the
+ *      `/refresh` ride. `null` = the cold-boot refresh is still in flight (a brief neutral skeleton).
  *
- * Note the semantic split this creates by design: DURING a live ceremony `isEnrolled` stays false
- * until {@link AuthActions.finalizeEnroll} flips it at completion (honouring the invariant), whereas
- * a cold `init()` derives `isEnrolled` from blob-existence. The `enrolling` latch is the only thing
- * that distinguishes "mid-first-ceremony" from "completed identity, reloaded".
+ * Day-to-day is UNGATED: once `isAuthed` is true (including the silent cold-boot re-mint), the notes
+ * shell renders with NO password prompt — password is for register / new-device login / reset only.
+ * The ONLY blocking auth screen is the gate shown when there is no durable session and no live
+ * ceremony.
  */
 export type BootView =
-  /** Local durable-identity read still in flight (no network) — a brief neutral skeleton. */
+  /** Cold-boot /refresh still in flight (no network decision yet) — a brief neutral skeleton. */
   | 'boot'
-  /** No local key: genuine first-run OR cleared browsing data → enroll (with recover / QR links). */
-  | 'enroll-gate'
-  /** Local identity present → render notes immediately, regardless of session/unlock state. */
+  /** No durable session (and no live ceremony) → the register / login / reset gate. */
+  | 'auth-gate'
+  /** Durable session live → render notes immediately, ungated. */
   | 'shell';
 
-export function selectBootView(isEnrolled: boolean | null, enrolling: boolean): BootView {
-  // A live ceremony owns the screen end-to-end — never short-circuit it to the shell, regardless of
-  // whether a credential blob has already been sealed this session.
-  if (enrolling) return 'enroll-gate';
-  if (isEnrolled === null) return 'boot';
-  return isEnrolled ? 'shell' : 'enroll-gate';
+export function selectBootView(isAuthed: boolean | null, isAuthing: boolean): BootView {
+  // A live ceremony owns the screen end-to-end — never short-circuit it to the shell, even once the
+  // in-memory session has been minted (the recovery phrase / final step must complete first). This is
+  // the P0 latch: the shell opens ONLY at finalizeAuth, which clears isAuthing in the same update.
+  if (isAuthing) return 'auth-gate';
+  if (isAuthed === null) return 'boot';
+  return isAuthed ? 'shell' : 'auth-gate';
 }

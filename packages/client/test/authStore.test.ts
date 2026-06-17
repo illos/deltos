@@ -1,247 +1,184 @@
 /**
- * Background-session seam — establishSession state machine + render-before-data + F7 (acceptance
- * matrix P1-1, P1-3, P1-4, P1-9).
+ * Client auth store — USERNAME + PASSWORD actions (auth pivot; supersedes the passkey enroll store).
  *
- * These exercise the AUTH-store logic that drives the local-first shell, in the node env (no DOM):
- *   - P1-1  render-before-data — init() resolves WITHOUT awaiting the session mint (the mint can hang
- *           forever and the launch decision still completes).
- *   - P1-3  silent background re-auth — with the key already in memory + a stored keyId, the session
- *           is minted from the stored key with no further user action.
- *   - P1-4  failure stays non-blocking — a network failure → sessionState 'offline', no throw, no
- *           eviction (isEnrolled stays true); a key not in memory → a quiet 'needs-unlock' nudge.
- *   - P1-9  F7 — a minted token is NEVER written to localStorage.
- *
- * keyStore / identity builders are mocked so the seam's branching is tested in isolation from crypto.
+ * Proves, at the store layer (no DOM), the two load-bearing contracts:
+ *   1. DURABLE SESSION, no token at rest — init() rides POST /refresh (the httpOnly cookie) on cold
+ *      boot to re-mint the in-memory access token and open UNGATED; a failed/absent cookie → the gate;
+ *      a network failure → offline (not a credential failure).
+ *   2. P0 LATCH — register/login/reset mint the in-memory session but NEVER open the shell; the shell
+ *      opens ONLY at finalizeAuth (which clears isAuthing). A background init() refresh that resolves
+ *      while a ceremony is live must NOT flip the shell open underneath it (the enroll-unmount class).
+ * Plus: discriminated {ok,code} results (no throws) so routes can render inline credential errors;
+ * uniform/non-disclosing failures on login + reset.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { useAuthStore } from '../src/auth/store.js';
 
-// --- localStorage shim (node env has none) — also the F7 assertion surface -----------------------
-const lsBacking = new Map<string, string>();
-const fakeLocalStorage = {
-  getItem: vi.fn((k: string) => (lsBacking.has(k) ? lsBacking.get(k)! : null)),
-  setItem: vi.fn((k: string, v: string) => { lsBacking.set(k, v); }),
-  removeItem: vi.fn((k: string) => { lsBacking.delete(k); }),
-  clear: vi.fn(() => { lsBacking.clear(); }),
+const DEFAULTS = {
+  isAuthed: null as boolean | null,
+  isAuthing: false,
+  bearerToken: null as string | null,
+  accountId: null as string | null,
+  username: null as string | null,
+  sessionState: 'booting' as const,
+  error: null as string | null,
 };
-// @ts-expect-error — minimal Storage shim for the store's getStoredKeyId/storeKeyId.
-globalThis.localStorage = fakeLocalStorage;
 
-// --- mocked dependencies (hoisted so vi.mock factories can reference them) ------------------------
-const mocks = vi.hoisted(() => ({
-  keyStore: {
-    isEnrolled: vi.fn(),
-    isUnlocked: vi.fn(),
-    autoUnlock: vi.fn(),
-    getServerKeyId: vi.fn(),
-    setServerKeyId: vi.fn(),
-    lock: vi.fn(),
-    enrollNew: vi.fn(),
-    enrollExisting: vi.fn(),
-    unlock: vi.fn(),
-    currentIdentity: vi.fn(),
-    sign: vi.fn(),
-    getSigningPublicKey: vi.fn(),
-  },
-  getEnrollmentPrfStatus: vi.fn(),
-  buildSessionRequest: vi.fn(),
-  buildRegisterRequest: vi.fn(),
-}));
-
-vi.mock('../src/auth/keyStoreInstance.js', () => ({ keyStore: mocks.keyStore }));
-vi.mock('../src/identity/webAuthnKeyStore.js', () => ({ getEnrollmentPrfStatus: mocks.getEnrollmentPrfStatus }));
-vi.mock('../src/identity/session.js', () => ({ buildSessionRequest: mocks.buildSessionRequest }));
-vi.mock('../src/identity/register.js', () => ({ buildRegisterRequest: mocks.buildRegisterRequest }));
-
-const fetchMock = vi.fn();
-
-/** Re-import the store fresh so each test starts from the initial zustand state. */
-async function freshStore() {
-  vi.resetModules();
-  const mod = await import('../src/auth/store.js');
-  return mod.useAuthStore;
+/** Minimal Response stand-in for the store's authFetch (only .ok/.status/.json are read). */
+function res(status: number, body: unknown = {}): Response {
+  return { ok: status >= 200 && status < 300, status, json: async () => body } as unknown as Response;
 }
-
-function okSession() {
-  return {
-    ok: true,
-    json: async () => ({ token: 'tok-secret-1', expiresAt: '2026-07-16T00:00:00.000Z', accountId: 'acc-1' }),
-  };
+function mockFetch(handler: (url: string, init: RequestInit) => Response | Promise<Response>) {
+  vi.stubGlobal('fetch', vi.fn((url: string, init: RequestInit) => Promise.resolve(handler(url, init))));
 }
+const SESSION = { token: 'access-tok', expiresAt: '2026-07-01T00:00:00Z', accountId: 'acct-1', username: 'ada' };
 
 beforeEach(() => {
-  vi.clearAllMocks();
-  lsBacking.clear();
-  // @ts-expect-error — node has no fetch by default; install the mock.
-  globalThis.fetch = fetchMock;
-  mocks.getEnrollmentPrfStatus.mockResolvedValue({ usesPrf: false });
-  mocks.buildSessionRequest.mockResolvedValue({ keyId: 'k1', signature: 'sig', payload: 'p' });
-  mocks.keyStore.autoUnlock.mockResolvedValue(null); // default: silent unwrap unavailable
+  useAuthStore.setState(DEFAULTS, false);
 });
+afterEach(() => vi.unstubAllGlobals());
 
-describe('establishSession — background re-auth state machine (P1-3, P1-4)', () => {
-  it('key in memory + stored keyId + mint OK → active session, token held in memory', async () => {
-    const useAuthStore = await freshStore();
-    mocks.keyStore.isUnlocked.mockReturnValue(true);
-    fetchMock.mockResolvedValue(okSession());
-    useAuthStore.setState({ isEnrolled: true, keyId: 'k1' });
+const s = () => useAuthStore.getState();
 
-    await useAuthStore.getState().establishSession();
-
-    const s = useAuthStore.getState();
-    expect(s.sessionState).toBe('active');
-    expect(s.bearerToken).toBe('tok-secret-1');
-    expect(s.accountId).toBe('acc-1');
+describe('init() — cold-boot /refresh ride (ungated durable session)', () => {
+  it('valid refresh cookie → in-memory token minted, shell OPEN (isAuthed true), active', async () => {
+    mockFetch(() => res(200, SESSION));
+    await s().init();
+    expect(s().bearerToken).toBe('access-tok');
+    expect(s().accountId).toBe('acct-1');
+    expect(s().isAuthed).toBe(true);            // UNGATED open — no password prompt
+    expect(s().sessionState).toBe('active');
   });
 
-  it('key not in memory + silent autoUnlock succeeds → active, NO gesture (Part 1b north star)', async () => {
-    const useAuthStore = await freshStore();
-    mocks.keyStore.isUnlocked.mockReturnValue(false);
-    mocks.keyStore.autoUnlock.mockResolvedValue({ id: 'acct-id' }); // device-local silent unwrap
-    fetchMock.mockResolvedValue(okSession());
-    useAuthStore.setState({ isEnrolled: true, keyId: 'k1' });
-
-    await useAuthStore.getState().establishSession();
-
-    const s = useAuthStore.getState();
-    expect(mocks.keyStore.autoUnlock).toHaveBeenCalled();
-    expect(s.isUnlocked).toBe(true);
-    expect(s.sessionState).toBe('active');
-    expect(s.bearerToken).toBe('tok-secret-1');
+  it('no/expired refresh cookie (401) → the gate (isAuthed false, unauthed), no token', async () => {
+    mockFetch(() => res(401));
+    await s().init();
+    expect(s().bearerToken).toBeNull();
+    expect(s().isAuthed).toBe(false);
+    expect(s().sessionState).toBe('unauthed');
   });
 
-  it('key not in memory + autoUnlock null (un-migrated PRF / no device key) → needs-unlock, no mint', async () => {
-    const useAuthStore = await freshStore();
-    mocks.keyStore.isUnlocked.mockReturnValue(false);
-    mocks.keyStore.autoUnlock.mockResolvedValue(null);
-    useAuthStore.setState({ isEnrolled: true, keyId: 'k1' });
-
-    await useAuthStore.getState().establishSession();
-
-    expect(useAuthStore.getState().sessionState).toBe('needs-unlock'); // graceful degrade to gesture
-    expect(fetchMock).not.toHaveBeenCalled();
+  it('network failure on cold boot → offline (NOT a credential failure), still no token', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))));
+    await s().init();
+    expect(s().isAuthed).toBe(false);
+    expect(s().sessionState).toBe('offline');
   });
 
-  it('no stored keyId (never registered) → needs-unlock, no mint attempted', async () => {
-    const useAuthStore = await freshStore();
-    mocks.keyStore.isUnlocked.mockReturnValue(true);
-    useAuthStore.setState({ isEnrolled: true, keyId: null });
-
-    await useAuthStore.getState().establishSession();
-
-    expect(useAuthStore.getState().sessionState).toBe('needs-unlock');
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('network failure → offline, no throw, no eviction (isEnrolled stays true) (P1-4)', async () => {
-    const useAuthStore = await freshStore();
-    mocks.keyStore.isUnlocked.mockReturnValue(true);
-    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
-    useAuthStore.setState({ isEnrolled: true, keyId: 'k1' });
-
-    await expect(useAuthStore.getState().establishSession()).resolves.toBeUndefined();
-
-    const s = useAuthStore.getState();
-    expect(s.sessionState).toBe('offline');
-    expect(s.bearerToken).toBeNull();
-    expect(s.isEnrolled).toBe(true); // never evicted to a recovery screen
-  });
-
-  it('HTTP rejection (e.g. revoked device) → needs-unlock fallback, still non-blocking', async () => {
-    const useAuthStore = await freshStore();
-    mocks.keyStore.isUnlocked.mockReturnValue(true);
-    fetchMock.mockResolvedValue({ ok: false, status: 401, json: async () => ({ error: { message: 'revoked' } }) });
-    useAuthStore.setState({ isEnrolled: true, keyId: 'k1' });
-
-    await useAuthStore.getState().establishSession();
-
-    expect(useAuthStore.getState().sessionState).toBe('needs-unlock');
+  it('P0: a background refresh resolving DURING a ceremony does NOT open the shell', async () => {
+    mockFetch(() => res(200, SESSION));
+    s().beginAuth();                            // a route owns the gate
+    await s().init();                           // background refresh resolves underneath
+    expect(s().isAuthed).not.toBe(true);        // shell stays closed — the latch holds
+    expect(s().isAuthing).toBe(true);
   });
 });
 
-describe('init — render-before-data: the launch decision never awaits the network (P1-1)', () => {
-  it('resolves with isEnrolled set even while the session mint hangs forever', async () => {
-    const useAuthStore = await freshStore();
-    mocks.keyStore.isEnrolled.mockResolvedValue(true);
-    mocks.keyStore.getServerKeyId.mockResolvedValue('k1');
-    mocks.keyStore.isUnlocked.mockReturnValue(true);
-    fetchMock.mockReturnValue(new Promise(() => { /* never resolves — server hung */ }));
-
-    await useAuthStore.getState().init(); // must resolve regardless of the hung mint
-
-    const s = useAuthStore.getState();
-    expect(s.isEnrolled).toBe(true);     // the shell can render now
-    expect(s.keyId).toBe('k1');          // durable identity read populated the gate inputs
-    expect(s.bearerToken).toBeNull();    // session NOT yet established — it runs in the background
+describe('register() — mints session, does NOT open the shell (latch discipline)', () => {
+  it('success → {ok, recoveryPhrase}; token set but isAuthed NOT flipped until finalizeAuth', async () => {
+    mockFetch(() => res(200, { ...SESSION, recoveryPhrase: 'alpha bravo charlie' }));
+    s().beginAuth();
+    const r = await s().register('ada', 'password123');
+    expect(r).toEqual({ ok: true, recoveryPhrase: 'alpha bravo charlie' });
+    expect(s().bearerToken).toBe('access-tok'); // session minted
+    expect(s().isAuthed).not.toBe(true);        // but the shell is STILL closed (phrase must show first)
+    s().finalizeAuth();
+    expect(s().isAuthed).toBe(true);            // only NOW
+    expect(s().isAuthing).toBe(false);
+    expect(s().sessionState).toBe('active');
   });
 
-  it('not enrolled → no background session kicked (the enroll gate handles it)', async () => {
-    const useAuthStore = await freshStore();
-    mocks.keyStore.isEnrolled.mockResolvedValue(false);
-
-    await useAuthStore.getState().init();
-
-    expect(useAuthStore.getState().isEnrolled).toBe(false);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-});
-
-describe('unlock — Option-A migration notice (planSys: show once)', () => {
-  it('PRF→device-local downgrade on this unlock → justMigratedToDeviceLocal true', async () => {
-    const useAuthStore = await freshStore();
-    mocks.keyStore.unlock.mockResolvedValue({ id: 'acct-id' });
-    mocks.getEnrollmentPrfStatus.mockResolvedValue({ usesPrf: false }); // post-unlock = device-local
-    useAuthStore.setState({ usesPrf: true }); // pre-unlock disclosed custody = PRF
-
-    const result = await useAuthStore.getState().unlock();
-
-    expect(result).toBe('ok');
-    expect(useAuthStore.getState().justMigratedToDeviceLocal).toBe(true);
+  it('409 → {ok:false, code:username_taken} (register is the one disclosing endpoint)', async () => {
+    mockFetch(() => res(409));
+    expect(await s().register('ada', 'pw')).toEqual({ ok: false, code: 'username_taken' });
   });
 
-  it('already device-local (no downgrade) → no migration notice', async () => {
-    const useAuthStore = await freshStore();
-    mocks.keyStore.unlock.mockResolvedValue({ id: 'acct-id' });
-    mocks.getEnrollmentPrfStatus.mockResolvedValue({ usesPrf: false });
-    useAuthStore.setState({ usesPrf: false }); // was already device-local
-
-    await useAuthStore.getState().unlock();
-
-    expect(useAuthStore.getState().justMigratedToDeviceLocal).toBe(false);
-  });
-
-  it('cancelled unlock → no migration notice', async () => {
-    const useAuthStore = await freshStore();
-    mocks.keyStore.unlock.mockResolvedValue(null); // user dismissed the passkey prompt
-    useAuthStore.setState({ usesPrf: true });
-
-    const result = await useAuthStore.getState().unlock();
-
-    expect(result).toBe('cancelled');
-    expect(useAuthStore.getState().justMigratedToDeviceLocal).toBe(false);
-  });
-
-  it('clearMigrationNotice() dismisses the one-time notice', async () => {
-    const useAuthStore = await freshStore();
-    useAuthStore.setState({ justMigratedToDeviceLocal: true });
-    useAuthStore.getState().clearMigrationNotice();
-    expect(useAuthStore.getState().justMigratedToDeviceLocal).toBe(false);
+  it('400 → weak_password; 429 → rate_limited; network throw → network', async () => {
+    mockFetch(() => res(400));
+    expect((await s().register('ada', 'x')).code === 'weak_password').toBe(true);
+    mockFetch(() => res(429));
+    expect((await s().register('ada', 'x')).code === 'rate_limited').toBe(true);
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('x'))));
+    expect((await s().register('ada', 'x')).code === 'network').toBe(true);
   });
 });
 
-describe('F7 — session token is in-memory only (P1-9)', () => {
-  it('a minted token is never written to localStorage', async () => {
-    const useAuthStore = await freshStore();
-    mocks.keyStore.isUnlocked.mockReturnValue(true);
-    fetchMock.mockResolvedValue(okSession());
-    useAuthStore.setState({ isEnrolled: true, keyId: 'k1' });
+describe('login() — uniform invalid; TOTP step behind a correct password', () => {
+  it('success → {ok}; in-memory token set, shell NOT opened by the action', async () => {
+    mockFetch(() => res(200, SESSION));
+    const r = await s().login('ada', 'password123');
+    expect(r).toEqual({ ok: true });
+    expect(s().bearerToken).toBe('access-tok');
+    expect(s().isAuthed).not.toBe(true);        // the route opens the shell via finalizeAuth, not login
+  });
 
-    await useAuthStore.getState().establishSession();
-    expect(useAuthStore.getState().bearerToken).toBe('tok-secret-1'); // present in memory
+  it('wrong credentials → UNIFORM {ok:false, code:invalid} (no enumeration)', async () => {
+    mockFetch(() => res(401, { error: { code: 'bad_credentials' } }));
+    expect(await s().login('ada', 'nope')).toEqual({ ok: false, code: 'invalid' });
+  });
 
-    // No localStorage write carried the token value, at any key.
-    for (const [, value] of fakeLocalStorage.setItem.mock.calls) {
-      expect(value).not.toContain('tok-secret-1');
-    }
-    expect([...lsBacking.values()]).not.toContain('tok-secret-1');
+  it('totp_required / totp_invalid markers surface as their codes', async () => {
+    mockFetch(() => res(401, { error: { code: 'totp_required' } }));
+    expect((await s().login('ada', 'pw')).code).toBe('totp_required');
+    mockFetch(() => res(401, { error: { code: 'totp_invalid' } }));
+    expect((await s().login('ada', 'pw', '000000')).code).toBe('totp_invalid');
+  });
+
+  it('forwards the totp code only when supplied', async () => {
+    let sent: Record<string, unknown> = {};
+    mockFetch((_u, init) => { sent = JSON.parse(init.body as string); return res(200, SESSION); });
+    await s().login('ada', 'pw', '123456');
+    expect(sent.totp).toBe('123456');
+  });
+});
+
+describe('resetWithPhrase() — non-disclosing', () => {
+  it('failure → UNIFORM {ok:false, code:invalid} regardless of which factor was wrong', async () => {
+    mockFetch(() => res(401));
+    expect(await s().resetWithPhrase('ada', 'wrong phrase', 'newpassword1')).toEqual({ ok: false, code: 'invalid' });
+  });
+  it('success → {ok}; new in-memory session minted', async () => {
+    mockFetch(() => res(200, SESSION));
+    expect(await s().resetWithPhrase('ada', 'right phrase', 'newpassword1')).toEqual({ ok: true });
+    expect(s().bearerToken).toBe('access-tok');
+  });
+});
+
+describe('logout() — clears the in-memory session + closes the gate', () => {
+  it('clears token/account and drops isAuthed to false even if the network call fails', async () => {
+    useAuthStore.setState({ bearerToken: 'live', accountId: 'acct-1', isAuthed: true, sessionState: 'active' }, false);
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))));
+    await s().logout();
+    expect(s().bearerToken).toBeNull();
+    expect(s().accountId).toBeNull();
+    expect(s().isAuthed).toBe(false);
+    expect(s().isAuthing).toBe(false);
+  });
+});
+
+describe('TOTP setup/verify — anti-lockout shape', () => {
+  it('setupTotp returns the secret + otpauth uri (mapped to uri)', async () => {
+    mockFetch(() => res(200, { secret: 'BASE32SECRET', otpauthUri: 'otpauth://totp/deltos:ada?secret=BASE32SECRET' }));
+    useAuthStore.setState({ bearerToken: 'live' }, false);
+    const r = await s().setupTotp();
+    expect(r).toEqual({ ok: true, secret: 'BASE32SECRET', uri: 'otpauth://totp/deltos:ada?secret=BASE32SECRET' });
+  });
+  it('verifyTotp ok only on a confirmed code (enable-on-valid is the anti-lockout gate)', async () => {
+    mockFetch(() => res(200));
+    expect(await s().verifyTotp('123456')).toEqual({ ok: true });
+    mockFetch(() => res(400));
+    expect(await s().verifyTotp('000000')).toEqual({ ok: false, code: 'totp_invalid' });
+  });
+});
+
+describe('beginAuth/finalizeAuth — the latch primitives', () => {
+  it('beginAuth pins isAuthing; finalizeAuth opens the shell in ONE update', () => {
+    s().beginAuth();
+    expect(s().isAuthing).toBe(true);
+    expect(s().isAuthed).not.toBe(true);
+    s().finalizeAuth();
+    expect(s().isAuthing).toBe(false);
+    expect(s().isAuthed).toBe(true);
+    expect(s().sessionState).toBe('active');
   });
 });
