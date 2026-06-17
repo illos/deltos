@@ -124,7 +124,10 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   async register(username, password, turnstileToken) {
     set({ error: null });
     let res: Response;
-    try { res = await authFetch('/register', { username, password, ...(turnstileToken ? { turnstileToken } : {}) }); }
+    // NOTE: the worker mounts password-register at /signup (collision-free additive landing — the
+    // legacy signed-challenge /register is still mounted alongside it; see passwordAuth.ts). Stay on
+    // /signup until devSys retires the legacy auth router and confirms the final path.
+    try { res = await authFetch('/signup', { username, password, ...(turnstileToken ? { turnstileToken } : {}) }); }
     catch { return { ok: false, code: 'network' }; }
     if (!res.ok) {
       const code = res.status === 409 ? 'username_taken'

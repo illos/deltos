@@ -29,7 +29,6 @@ import {
   type Scope,
   type Note,
 } from '@deltos/shared';
-import { generateMnemonic, deriveKeyHierarchy } from '@deltos/client/src/identity/keyDerivation.js';
 import { syncNow, getSyncState, subscribeSyncState } from '@deltos/client/src/lib/syncEngine.js';
 import { mutateNotes } from '@deltos/client/src/db/mutate.js';
 import { db as clientDb } from '@deltos/client/src/db/schema.js';
@@ -42,8 +41,6 @@ if (!ed.hashes.sha512) ed.hashes.sha512 = sha512;
 // --- resolution sanity (probe): cross-package + worker-app imports must resolve under vitest ---
 describe('Tier-A harness wiring', () => {
   it('resolves @deltos/client source imports + the worker app from the worker test pkg', () => {
-    expect(typeof generateMnemonic).toBe('function');
-    expect(typeof deriveKeyHierarchy).toBe('function');
     expect(typeof syncNow).toBe('function');
     expect(typeof getSyncState).toBe('function');
     expect(typeof mutateNotes.put).toBe('function');
@@ -52,37 +49,10 @@ describe('Tier-A harness wiring', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// DG-1b — enrollNew vs enrollExisting: fresh-account intent ≠ recovery; recovering the SAME
-// mnemonic yields the SAME identity (no silent account orphan). Pure derivation determinism
-// (deriveKeyHierarchy is jsdom-safe crypto; the WebAuthn ceremony is not exercised here). [PIN-ID-8]
-// Spec: gruntSys2.
-// ---------------------------------------------------------------------------
-
-describe('DG-1b — enroll determinism (enrollNew vs enrollExisting)', () => {
-  it('the SAME mnemonic re-derives the SAME identity.id + signing pubkey (recovery, no orphan)', async () => {
-    const m1 = generateMnemonic();
-    const h1 = await deriveKeyHierarchy(m1);
-    const h2 = await deriveKeyHierarchy(m1); // enrollExisting path: same mnemonic
-
-    expect(h2.id).toBe(h1.id); // accountFingerprint = base64url(SHA-256(signing pubkey)) — stable
-    expect(h2.signing.publicKey).toEqual(h1.signing.publicKey); // byte-identical
-  });
-
-  it('a DIFFERENT mnemonic produces a DIFFERENT identity.id (distinct accounts, no clobber)', async () => {
-    const h1 = await deriveKeyHierarchy(generateMnemonic());
-    const h3 = await deriveKeyHierarchy(generateMnemonic()); // enrollNew: fresh entropy
-
-    expect(h3.id).not.toBe(h1.id);
-  });
-
-  it('generateMnemonic yields a fresh 24-word phrase each call (enrollNew = fresh entropy)', () => {
-    const a = generateMnemonic();
-    const b = generateMnemonic();
-    expect(a.split(/\s+/)).toHaveLength(24);
-    expect(a).not.toBe(b);
-  });
-});
+// DG-1b — enroll determinism (mnemonic re-derives the same identity) is RETIRED by the 2026-06-17
+// auth pivot: client-side key derivation is gone (the recovery phrase is now a server-side Argon2id
+// reset verifier, not a crypto root). Its successor lives in scopeSys's auth-pivot acceptance matrix
+// (register/recovery semantics, AP-*), exercised against the worker password handlers — not here.
 
 // ---------------------------------------------------------------------------
 // SYNC-E2E infrastructure — the REAL client syncEngine driven against the REAL worker app.
@@ -308,15 +278,16 @@ describe('DG-5c-echo — cross-account isolation (client engine pull)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// DG-3d (F7) — the session/bearer token is IN-MEMORY ONLY, never persisted at rest. The real
-// mintSession is WebAuthn-coupled (buildSessionRequest → keyStore), so the headless test asserts the
-// store's persistence INVARIANT (mintSession's ONLY persistence is `set({bearerToken})` — no
-// localStorage write, verified in auth/store.ts); the on-device capstone exercises the full ceremony.
-// Spec: gruntSys2. [[session-token-in-memory-only]]
+// DG-3d (F7) — the ACCESS (bearer) token is IN-MEMORY ONLY, never persisted at rest. The auth pivot
+// keeps this invariant: the access token lives only in the store (set via the password actions /
+// cold-boot refresh); the durable credential is the httpOnly refresh COOKIE, which JS can't read and
+// is never in localStorage. The headless test asserts the store's persistence invariant; logout()
+// clears the in-memory token. The on-device capstone exercises the full ceremony.
+// Spec: gruntSys2. [[auth-pivot-security-model]]
 // ---------------------------------------------------------------------------
 
 describe('DG-3d (F7) — token in-memory only, never at rest', () => {
-  it('a set bearerToken is never written to localStorage; lock() clears it', () => {
+  it('a set bearerToken is never written to localStorage; logout() clears it', async () => {
     const TOKEN = 'secret-grant-token-zzz';
     useAuthStore.setState({ bearerToken: TOKEN, accountId: 'acct-f7' });
     expect(useAuthStore.getState().bearerToken).toBe(TOKEN); // in-memory is fine
@@ -324,8 +295,8 @@ describe('DG-3d (F7) — token in-memory only, never at rest', () => {
     expect(Object.values(lsStore).some((v) => v.includes(TOKEN))).toBe(false); // not at rest
     expect(lsStore['bearerToken']).toBeUndefined();
 
-    useAuthStore.getState().lock();
-    expect(useAuthStore.getState().bearerToken).toBeNull(); // lock clears in-memory
+    await useAuthStore.getState().logout(); // clears the in-memory session (locally, even if the net call fails)
+    expect(useAuthStore.getState().bearerToken).toBeNull();
     expect(Object.values(lsStore).some((v) => v.includes(TOKEN))).toBe(false); // still not at rest
   });
 });
