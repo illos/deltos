@@ -50,15 +50,21 @@ export function userProperties(bag: PropertyBag): PropertyBag {
   return out;
 }
 
-/** Is this note currently trashed? (the `sys:trashedAt` system flag is present.) */
-export function isTrashed(bag: PropertyBag): boolean {
-  return bag[SYS_TRASHED_AT_KEY] !== undefined;
-}
-
-/** The trash timestamp (ISO), or null if the note is not trashed. */
+/** The trash timestamp (ISO), or null if the note is not trashed (key absent OR not a valid date value). */
 export function trashedAt(bag: PropertyBag): string | null {
   const v = bag[SYS_TRASHED_AT_KEY];
   return v?.type === 'date' ? v.value : null;
+}
+
+/**
+ * Is this note currently trashed? FAIL-SAFE + consistent with {@link trashedAt}: true ONLY for a
+ * well-formed date-typed flag. A corrupt / non-date value under the key reads as NOT trashed, so the
+ * note stays VISIBLE in the list rather than being silently hidden (a hidden note is data-loss-shaped;
+ * a stray visible one is recoverable). secSys-B list fail-safe (devSys2). Defined via trashedAt so the
+ * predicate and the timestamp can never diverge.
+ */
+export function isTrashed(bag: PropertyBag): boolean {
+  return trashedAt(bag) !== null;
 }
 
 /**

@@ -67,6 +67,16 @@ describe('reserved system-key namespace', () => {
     expect(restored).toEqual(userBag());
   });
 
+  it('isTrashed is FAIL-SAFE: a corrupt non-date value under the key reads NOT-trashed (stays visible)', () => {
+    // secSys-B: a hidden note is data-loss-shaped; a corrupt flag must keep the note visible, not bury it.
+    const corrupt: PropertyBag = { [SYS_TRASHED_AT_KEY]: { type: 'boolean', value: true } };
+    expect(isTrashed(corrupt)).toBe(false);
+    expect(trashedAt(corrupt)).toBeNull();
+    // isTrashed and trashedAt never diverge (the predicate is defined via the timestamp).
+    const good = setTrashedAt({}, NOW);
+    expect(isTrashed(good)).toBe(trashedAt(good) !== null);
+  });
+
   it('setTrashedAt is pure — does not mutate its input', () => {
     const original = userBag();
     setTrashedAt(original, NOW);
