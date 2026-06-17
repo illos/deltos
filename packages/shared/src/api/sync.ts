@@ -17,14 +17,34 @@ import { NoteResponseSchema } from './operations.js';
 // ---------------------------------------------------------------------------
 
 /**
+ * The mutation intent of a queued write (swipe-delete / undo extension). `'upsert'` is the historical
+ * behavior; `'delete'` and `'restore'` carry the soft-delete + undo signal the push path previously
+ * could NOT express (the draft alone has no `deletedAt`, and the worker push handler only ever
+ * inserted/updated — so a client soft-delete never reached the server and the note resurrected on the
+ * next pull). `'restore'` is the SA-T6 matrix branch (the earlier "resurrect" phrasing in the kickoff
+ * relay was superseded; client + worker + matrix all use the literal `'restore'`).
+ *
+ * DEFAULTS to `'upsert'` so it is fully backward-compatible: a pre-extension client omits the field and
+ * every existing entry parses as an upsert — no migration, no break to in-flight queues.
+ */
+export const SyncPushOpSchema = z.enum(['upsert', 'delete', 'restore']);
+export type SyncPushOp = z.infer<typeof SyncPushOpSchema>;
+
+/**
  * One queued write to push. `baseVersion` is the CAS precondition:
  *   0  = new note (server will INSERT; conflicts if the id already exists)
  *   N  = update at this version (server will CAS on version = N; conflicts if moved)
+ *
+ * `op` selects the worker branch: `'upsert'` → insert/update (base 0 → INSERT, else CAS UPDATE);
+ * `'delete'` → CAS soft-delete (sets `deletedAt`, WHERE keeps `deletedAt IS NULL` — only a live row);
+ * `'restore'` → CAS un-delete (clears `deletedAt`, WHERE drops the `deletedAt IS NULL` guard since the
+ * target row IS tombstoned, relying on the version CAS alone). All branches are account-scoped server-side.
  */
 export const SyncPushEntrySchema = z.object({
   id: NoteIdSchema,
   draft: NoteDraftSchema.omit({ id: true, notebookId: true }),
   baseVersion: VersionSchema,
+  op: SyncPushOpSchema.default('upsert'),
 });
 export type SyncPushEntry = z.infer<typeof SyncPushEntrySchema>;
 
