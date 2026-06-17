@@ -38,10 +38,14 @@ export function ResetRoute() {
     if (newPassword.length < 8) { setStep({ tag: 'form', error: 'Password must be at least 8 characters' }); return; }
     beginAuth();
     setStep({ tag: 'busy' });
-    resetWithPhrase(username.trim(), phrase.trim(), newPassword).then((result) => {
+    resetWithPhrase(username.trim(), phrase.trim(), newPassword).then(async (result) => {
       if (result.ok) {
-        finalizeAuth();
-        navigate('/', { replace: true });
+        const r = await finalizeAuth();
+        if (r.ok) {
+          navigate('/', { replace: true });
+        } else {
+          setStep({ tag: 'form', error: 'Connection error — please try again' });
+        }
       } else {
         setStep({ tag: 'form', error: resetErrorMsg(result.code) });
       }

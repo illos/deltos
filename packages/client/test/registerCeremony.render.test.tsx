@@ -38,6 +38,7 @@ beforeEach(async () => {
     bearerToken: null,
     accountId: null,
     username: null,
+    recoveryEstablished: null,
     sessionState: 'booting',
     error: null,
     // init: simulate cold boot with no session → isAuthed=false
@@ -46,7 +47,10 @@ beforeEach(async () => {
     }),
     // P0 latch actions — same semantics as the real implementation
     beginAuth: vi.fn(() => { useAuthStore.setState({ isAuthing: true }); }),
-    finalizeAuth: vi.fn(() => { useAuthStore.setState({ isAuthed: true, isAuthing: false, sessionState: 'active' }); }),
+    finalizeAuth: vi.fn(async () => {
+      useAuthStore.setState({ isAuthed: true, isAuthing: false, sessionState: 'active', recoveryEstablished: true });
+      return { ok: true } as const;
+    }),
     // register: succeeds with the sample phrase (no network required)
     register: vi.fn(async () => ({ ok: true, recoveryPhrase: SAMPLE_PHRASE } as const)),
     // other auth actions: stubs (not exercised in the register ceremony path)

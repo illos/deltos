@@ -1,8 +1,12 @@
 /**
  * LoginRoute — username + password (+ optional TOTP) authentication.
  *
- * P0 LATCH: beginAuth() at ceremony start; finalizeAuth() only on ok. The latch pins the gate
- * to this route — the shell never opens at an intermediate step.
+ * P0 LATCH: beginAuth() at ceremony start; finalizeAuth() only on ok + no recoveryRequired.
+ * The latch pins the gate to this route — the shell never opens at an intermediate step.
+ *
+ * recoveryRequired=true (P0-belt): login succeeded but the account never finalized a phrase.
+ * Navigate to /forced-phrase (still within auth-gate, isAuthing=true pins it); finalizeAuth
+ * waits until the phrase is saved+acked there.
  *
  * Uniform error on invalid credentials (no username enumeration). totp_required triggers the
  * inline TOTP field; the route re-calls login(username, password, code) with the code.
@@ -39,10 +43,20 @@ export function LoginRoute() {
   const handleLogin = () => {
     beginAuth();
     setStep({ tag: 'busy' });
-    login(username.trim(), password).then((result) => {
+    login(username.trim(), password).then(async (result) => {
       if (result.ok) {
-        finalizeAuth();
-        navigate('/', { replace: true });
+        if (result.recoveryRequired) {
+          // Forced-phrase belt: account has no finalized phrase — route there before entry.
+          // isAuthing=true keeps the gate pinned; finalizeAuth happens at save+ack in ForcedPhraseRoute.
+          navigate('/forced-phrase', { replace: true });
+        } else {
+          const r = await finalizeAuth();
+          if (r.ok) {
+            navigate('/', { replace: true });
+          } else {
+            setStep({ tag: 'form', error: 'Connection error — please try again' });
+          }
+        }
       } else if (result.code === 'totp_required') {
         setStep({ tag: 'totp', username: username.trim(), password, code: '', error: undefined, submitting: false });
       } else {
@@ -54,11 +68,19 @@ export function LoginRoute() {
   const handleTotpSubmit = () => {
     if (step.tag !== 'totp') return;
     setStep({ ...step, submitting: true, error: undefined });
-    login(step.username, step.password, step.code).then((result) => {
+    login(step.username, step.password, step.code).then(async (result) => {
       if (!step || step.tag !== 'totp') return;
       if (result.ok) {
-        finalizeAuth();
-        navigate('/', { replace: true });
+        if (result.recoveryRequired) {
+          navigate('/forced-phrase', { replace: true });
+        } else {
+          const r = await finalizeAuth();
+          if (r.ok) {
+            navigate('/', { replace: true });
+          } else {
+            setStep({ ...step, submitting: false, error: 'Connection error — please try again' });
+          }
+        }
       } else {
         setStep({ ...step, submitting: false, error: loginErrorMsg(result.code) });
       }

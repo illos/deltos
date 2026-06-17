@@ -6,9 +6,11 @@ import { NoteRoute } from './routes/NoteRoute.js';
 import { RegisterRoute } from './routes/RegisterRoute.js';
 import { LoginRoute } from './routes/LoginRoute.js';
 import { ResetRoute } from './routes/ResetRoute.js';
+import { ForcedPhraseRoute } from './routes/ForcedPhraseRoute.js';
 import { TrashRoute } from './routes/TrashRoute.js';
 import { startSyncTriggers, syncNow } from './lib/syncEngine.js';
 import { getDefaultNotebookId } from './lib/notebooks.js';
+import { notePreview, formatSmartDate } from './lib/notePreview.js';
 import { SyncIndicator } from './components/SyncIndicator.js';
 import { SessionStatus } from './components/SessionStatus.js';
 import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
@@ -54,8 +56,10 @@ function AppRoutes() {
   // A live auth ceremony (register/login/reset) pins the gate to the auth surface so the shell
   // can't short-circuit a ceremony before it fully completes (P0 anti-unmount latch).
   const isAuthing = useAuthStore((s) => s.isAuthing);
+  // P0-belt: an explicit server false forces the phrase screen before shell entry (abandoned-signup).
+  const recoveryEstablished = useAuthStore((s) => s.recoveryEstablished);
 
-  switch (selectBootView(isAuthed, isAuthing)) {
+  switch (selectBootView(isAuthed, isAuthing, recoveryEstablished)) {
     // Cold-boot /refresh still in flight — a brief neutral hold before the gate decision resolves.
     case 'boot':
       return (
@@ -65,17 +69,25 @@ function AppRoutes() {
       );
 
     // No durable session (and no live ceremony) → the register / login / reset gate.
+    // /forced-phrase is in this block so LoginRoute can navigate there when recoveryRequired=true
+    // while isAuthing=true keeps the gate pinned (ForcedPhraseRoute finalizes to open the shell).
     case 'auth-gate':
       return (
         <Routes>
           <Route path="/register" element={<RegisterRoute />} />
           <Route path="/login" element={<LoginRoute />} />
           <Route path="/reset" element={<ResetRoute />} />
+          <Route path="/forced-phrase" element={<ForcedPhraseRoute />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       );
 
-    // Durable session live → render notes immediately, ungated.
+    // Cold-boot recovery-gate: session is live but recoveryEstablished=false (abandoned-signup belt).
+    // Render the forced-phrase screen directly (no route needed — isAuthed=true, not in auth-gate).
+    case 'recovery-gate':
+      return <ForcedPhraseRoute />;
+
+    // Durable session live + recovery established → render notes immediately, ungated.
     case 'shell':
       return <AuthedShell />;
   }
@@ -108,22 +120,30 @@ function HomeView() {
         <p className="home__lede">No notes yet.</p>
       ) : (
         <ul className="home__notes">
-          {notes.map(note => (
-            <li key={note.id}>
-              <SwipeRow
-                isOpen={openId === note.id}
-                onOpen={() => setOpenId(note.id)}
-                onClose={() => setOpenId(null)}
-                onDelete={() => handleDelete(note)}
-                onDuplicate={() => handleDuplicate(note)}
-              >
-                <Link to={`/note/${note.id}`} className="home__note-link">
-                  {note.title || 'Untitled'}
-                </Link>
-                <ConflictBadgeSlot note={note} />
-              </SwipeRow>
-            </li>
-          ))}
+          {notes.map(note => {
+            const { displayTitle, previewLine } = notePreview(note);
+            const smartDate = formatSmartDate(note.updatedAt);
+            return (
+              <li key={note.id}>
+                <SwipeRow
+                  isOpen={openId === note.id}
+                  onOpen={() => setOpenId(note.id)}
+                  onClose={() => setOpenId(null)}
+                  onDelete={() => handleDelete(note)}
+                  onDuplicate={() => handleDuplicate(note)}
+                >
+                  <Link to={`/note/${note.id}`} className="home__note-link">
+                    <span className="home__note-title">{displayTitle}</span>
+                    <span className="home__note-meta">
+                      <span className="home__note-date">{smartDate}</span>
+                      {previewLine && <span className="home__note-preview">{previewLine}</span>}
+                    </span>
+                  </Link>
+                  <ConflictBadgeSlot note={note} />
+                </SwipeRow>
+              </li>
+            );
+          })}
         </ul>
       )}
 

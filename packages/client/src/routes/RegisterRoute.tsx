@@ -8,8 +8,8 @@
  * TOTP anti-lockout (secSys): setupTotp() returns the QR URI; 2FA is ONLY enabled after the user
  * successfully confirms a code via verifyTotp() — never on QR scan alone.
  *
- * Copy A (at-rest disclosure) on the form step; copy B (phrase = master key) inline at the phrase
- * step; copy D (anti-lockout reassurance) at the TOTP-setup step. planSys @2cd2958.
+ * Copy A (at-rest disclosure) on the form step; copy B (phrase = master key) inside PhraseStep;
+ * copy D (anti-lockout reassurance) at the TOTP-setup step. planSys @2cd2958.
  */
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
@@ -17,12 +17,13 @@ import { QRCodeSVG } from 'qrcode.react';
 import { useAuthStore } from '../auth/store.js';
 import type { RegisterResult, TotpSetupResult, TotpVerifyResult } from '../auth/store.js';
 import { Disclosure } from '../components/Disclosure.js';
+import { PhraseStep } from '../components/PhraseStep.js';
 
 type Step =
   | { tag: 'form'; error?: string }
   | { tag: 'busy'; msg: string }
   | { tag: 'phrase'; recoveryPhrase: string }
-  | { tag: 'totp-prompt' }
+  | { tag: 'totp-prompt'; error?: string }
   | { tag: 'totp-setup'; uri: string; code: string; codeError: string | undefined; submitting: boolean };
 
 function registerErrorMsg(code: Extract<RegisterResult, { ok: false }>['code']): string {
@@ -43,8 +44,6 @@ export function RegisterRoute() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
-  const [phraseSaved, setPhraseSaved] = useState(false);
-  const [phraseCopied, setPhraseCopied] = useState(false);
 
   const handleRegister = () => {
     if (password !== confirm) { setStep({ tag: 'form', error: "Passwords don't match" }); return; }
@@ -71,18 +70,28 @@ export function RegisterRoute() {
     }).catch(() => setStep({ tag: 'totp-prompt' }));
   };
 
-  const handleSkipTotp = () => {
-    finalizeAuth(); // ceremony complete — open the shell
-    navigate('/', { replace: true });
+  const handleSkipTotp = async () => {
+    setStep({ tag: 'busy', msg: 'Finishing setup…' });
+    const r = await finalizeAuth(); // ceremony complete — commit cookie + open the shell
+    if (r.ok) {
+      navigate('/', { replace: true });
+    } else {
+      setStep({ tag: 'totp-prompt', error: 'Connection error — please try again' });
+    }
   };
 
   const handleVerifyTotp = () => {
     if (step.tag !== 'totp-setup') return;
     setStep({ ...step, submitting: true, codeError: undefined });
-    verifyTotp(step.code).then((result: TotpVerifyResult) => {
+    verifyTotp(step.code).then(async (result: TotpVerifyResult) => {
       if (result.ok) {
-        finalizeAuth(); // TOTP confirmed and enabled — ceremony complete
-        navigate('/', { replace: true });
+        const r = await finalizeAuth(); // TOTP confirmed and enabled — ceremony complete
+        if (r.ok) {
+          navigate('/', { replace: true });
+        } else {
+          if (step.tag !== 'totp-setup') return;
+          setStep({ ...step, submitting: false, codeError: 'Connection error — please try again' });
+        }
       } else {
         if (step.tag !== 'totp-setup') return;
         setStep({ ...step, submitting: false, codeError: 'Incorrect code — please try again' });
@@ -103,58 +112,12 @@ export function RegisterRoute() {
   }
 
   if (step.tag === 'phrase') {
-    const words = step.recoveryPhrase.split(' ');
+    // Advance to totp-prompt on ack (finalizeAuth waits for the TOTP step, not here).
     return (
-      <div className="auth">
-        <h1 className="auth__title">Save your recovery phrase</h1>
-        {/* Copy B — planSys @2cd2958: phrase = master key, one-way derivation */}
-        <p className="auth__subtitle">
-          This phrase is the <strong>master key to your account</strong>. If you ever forget
-          your password, it's the only way back in — and it can reset your password and turn
-          off two-factor authentication, so it's as powerful as full access to your account.
-          We can't recover it for you, and we'll never show it again. Write it down and keep
-          it somewhere safe.
-        </p>
-
-        <div className="auth__phrase" aria-label="Recovery phrase">
-          {words.map((word, i) => (
-            <span key={i} className="auth__phrase-word">
-              <span className="auth__phrase-num">{i + 1}</span>
-              {word}
-            </span>
-          ))}
-        </div>
-
-        <button
-          className="auth__btn"
-          onClick={() => {
-            void navigator.clipboard.writeText(step.recoveryPhrase).then(() => {
-              setPhraseCopied(true);
-              setTimeout(() => setPhraseCopied(false), 2000);
-            });
-          }}
-        >
-          {phraseCopied ? 'Copied!' : 'Copy phrase'}
-        </button>
-
-        {/* Required ack — copy B planSys @2cd2958 */}
-        <label className="auth__checkbox-label">
-          <input
-            type="checkbox"
-            checked={phraseSaved}
-            onChange={(e) => setPhraseSaved(e.target.checked)}
-          />
-          I've saved my recovery phrase somewhere safe.
-        </label>
-
-        <button
-          className="auth__btn auth__btn--primary"
-          onClick={() => setStep({ tag: 'totp-prompt' })}
-          disabled={!phraseSaved}
-        >
-          Continue
-        </button>
-      </div>
+      <PhraseStep
+        phrase={step.recoveryPhrase}
+        onAck={() => setStep({ tag: 'totp-prompt' })}
+      />
     );
   }
 
@@ -166,10 +129,11 @@ export function RegisterRoute() {
           An authenticator app generates a one-time code required at login —
           in addition to your password. You can set this up later from account settings.
         </p>
+        {step.error && <p className="auth__error">{step.error}</p>}
         <button className="auth__btn auth__btn--primary" onClick={handleSetUpTotp}>
           Set up 2FA
         </button>
-        <button className="auth__link" onClick={handleSkipTotp}>
+        <button className="auth__link" onClick={() => { void handleSkipTotp(); }}>
           Skip for now
         </button>
       </div>
@@ -212,7 +176,7 @@ export function RegisterRoute() {
         >
           {step.submitting ? 'Verifying…' : 'Verify and enable 2FA'}
         </button>
-        <button className="auth__link" onClick={handleSkipTotp}>
+        <button className="auth__link" onClick={() => { void handleSkipTotp(); }}>
           Skip 2FA for now
         </button>
       </div>
