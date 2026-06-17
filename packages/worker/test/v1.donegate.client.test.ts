@@ -8,6 +8,8 @@
  *
  * Single-editor: devSys2. Client-lane scenario specs (DG-1b/2b/3d-F7) from gruntSys2; sync/editor
  * scenarios (DG-2d/3d-header/3e + the sync-e2e DG-3a/2c/5c-echo) are mine.
+ * auth-plumbing: devSys — the token-mint (dgEnroll) was migrated to password /signup via
+ * helpers/passwordToken.js at the auth-pivot cutover; touch that helper, not a signed-challenge mint.
  *
  * Coverage: DG-1b enrollNew/enrollExisting determinism · DG-2b offline persistence LOGIC ·
  * DG-2d block-id stability · DG-3d auth-header + F7 token-never-at-rest · DG-3e sync-indicator ·

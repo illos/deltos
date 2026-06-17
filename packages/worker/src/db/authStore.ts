@@ -104,6 +104,14 @@ export interface AuthStore {
   createAccount(row: { accountId: string; createdAt: string }): Promise<void>;
 
   /**
+   * Delete a freshly-created account that never bound a credential/username/data — the signup
+   * orphan-cleanup path (secSys hygiene): when a username claim loses the race to "taken", the account
+   * row created moments earlier is reaped inline so no unreachable orphan accumulates (no sweep job).
+   * Guarded to rows with NO credential so it can never delete a live account.
+   */
+  deleteOrphanAccount(accountId: string): Promise<void>;
+
+  /**
    * Bind a credential (signing-key fingerprint) to an account. BIND-ONCE: the PK on accountFingerprint
    * makes a second bind of the same credential throw — a credential maps to exactly one account, and
    * re-pointing it is forbidden (secSys S2/S3). Binding to an EXISTING account requires possession proof
@@ -382,6 +390,19 @@ export function createAuthStore(db: DbAdapter): AuthStore {
         {
           sql: `INSERT INTO accounts (accountId, createdAt) VALUES (?, ?)`,
           params: [row.accountId, row.createdAt],
+        },
+      ]);
+    },
+
+    async deleteOrphanAccount(accountId) {
+      // Fail-safe: only delete an account with NO password credential (and the route only calls this on
+      // an account it created microseconds earlier that lost the username race) — never a live account.
+      await db.batch([
+        {
+          sql: `DELETE FROM accounts
+                 WHERE accountId = ?
+                   AND NOT EXISTS (SELECT 1 FROM passwordCredentials WHERE accountId = ?)`,
+          params: [accountId, accountId],
         },
       ]);
     },

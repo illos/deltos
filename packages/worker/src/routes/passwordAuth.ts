@@ -274,8 +274,9 @@ passwordAuth.post('/signup', async (c) => {
   });
   if (claim.status !== 'claimed') {
     // Taken (or, defensively, a racing duplicate). DISCLOSE "taken" — the accepted L1 relax of F-acct-4,
-    // mitigated by the IP gate + Turnstile. (The just-created account is an orphan: no credential, no
-    // username, owns no data — harmless and unreachable; a sweep can reclaim it later.)
+    // mitigated by the IP gate + Turnstile. Reap the account row created moments ago inline so no
+    // unreachable orphan accumulates (secSys hygiene; the delete is guarded to credential-less rows).
+    await s.deleteOrphanAccount(accountId);
     await recordFailure(s, `signup:${clientIp(c)}`, LOGIN_BACKOFF, nowMs);
     return apiError(c, 409, 'username_taken', 'that username is taken');
   }

@@ -190,13 +190,16 @@ describe('AP-T1 — POST /signup', () => {
   );
 
   it(
-    'DISCLOSES "username taken" (AP-1d, the eyes-open L1 relax)',
+    'DISCLOSES "username taken" (AP-1d) and leaves NO orphan account (secSys hygiene)',
     async () => {
-      const env = makeEnv(freshDb());
+      const raw = freshDb();
+      const env = makeEnv(raw);
       await signup(env, 'bob', 'password-one');
       const res = await post(env, '/api/auth/signup', { username: 'BOB', password: 'password-two' });
       expect(res.status).toBe(409);
       expect(((await res.json()) as { error: { code: string } }).error.code).toBe('username_taken');
+      // The failed (taken) signup must not leave an orphan account — only bob's account exists.
+      expect((raw.prepare('SELECT COUNT(*) as n FROM accounts').get() as { n: number }).n).toBe(1);
     },
     T,
   );
