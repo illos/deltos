@@ -50,10 +50,51 @@ is green, AP-M1 reports a real-Workers Argon2id cost within the gated budget, AN
 ungated-reload-across-eviction + the ceremony feel + the on-screen at-rest disclosure.**
 
 **Build progress (2026-06-17):** ✅ **AP-7/AP-M1 CLOSED** — Argon2id measured ~295ms/hash on real workerd,
-pure-JS rung-1 held (no dep-exception). ✅ **Worker handlers green `@bb1033c`** (298 passed). IN FLIGHT:
-devSys legacy-auth retire (closing step) → worker post-retire green; client route swap (devSys2/gruntSys2);
-secSys spec+build review. Full scopeSys gate-check fires once worker-post-retire + client are both green +
-secSys-reviewed (pilot will ping).
+pure-JS rung-1 held (no dep-exception). All lanes landed + secSys-reviewed → see gate-check record below.
+
+---
+
+## Gate-check record — 2026-06-17 (worker @9b77f4f, client @8161547, forced-phrase @f45b140; secSys PASS)
+
+**GATE VERDICT: 🟢 GREEN — cleared for deploy.** Every Tier-A [SRV]+[CLI-auto] leg is verified **against
+landed code** (not just green counts), AP-M1 is closed (pure-JS Argon2id ~295ms, no dep), and secSys's whole
+auth-pivot security review = **PASS** (client 6 legs + P0-belt + worker, verified server-side). scopeSys
+independently re-ran the suites: **worker 188/188, client 110/110, shared 67/67** (counts dropped from the
+pre-retire numbers because the legacy-auth retire deleted the obsolete passkey suites). Verified per leg via
+direct code inspection + the asserting test:
+
+**Worker / shared (devSys @9b77f4f) — VERIFIED:**
+- **AP-1d** open handle-picker (gate-rate-limited) `passwordAuth.ts:248-306` / `AP-T1`.
+- **AP-2** uniform login 401 (unknown-user / wrong-pw / bad-TOTP byte-identical) `:312-383` / `AP-T2`.
+- **AP-3** uniform reset failure `:461-505` / `AP-T3`.
+- **AP-4** gate-before-hash — `gate()` precedes Argon2id on signup/login/reset (263→287, 330→344, 477→491) / `AP-T4`.
+- **AP-5** dummy-hash on unknown user, no early return (`dummyHash` 344, `dummyRecoveryHash` 491) / `AP-T5`.
+- **AP-6** Argon2id `@noble` + pepper-HMAC + PHC + rehash-on-login / `AP-T6`. **AP-7** `ARGON2_PARAMS` pinned, AP-M1 closed.
+- **AP-9** refresh stored hashed, rotation-on-use, reuse-detection revokes the family (`:408`) / `AP-T7`.
+- **AP-10** revoke-all on **all four** events — code at logout `:452`, reset/password-change `:501`, 2FA-enable `:619`, 2FA-disable `:650`. ⚠️ **see gap below.**
+- **AP-11** CSRF origin-check on cookie mutations + SameSite=Strict + Path-scoped / `AP-T7`.
+- **AP-14** TOTP AES-GCM-encrypted at rest + `lastAcceptedStep` replay-guard + confirm-before-activate / `AP-T9`.
+- **AP-15** phrase verifier keyed to accountId + single-use short-TTL token + revoke-all + clears-2FA + reset-backoff ≥ login / `AP-T10`.
+- **AP-19** migrations 0004/0005 (credentials + refreshSessions + authThrottle), no temp tables.
+
+**Client (devSys2/gruntSys2 @8161547 / @f45b140) — VERIFIED:**
+- **AP-12** `shellGate.selectBootView` ungated on durable session; `init()` rides `/refresh` → in-memory token / `shellGate.test.ts`.
+- **AP-13** no bearer at rest — `bearerToken` is Zustand in-memory only; **no** localStorage/sessionStorage/Dexie token write (localStorage holds only the non-auth notebook cursor) / `authStore.test.ts`.
+- **AP-16** L2 latch — `beginAuth`/`finalizeAuth` atomic; `isAuthing` pins the gate; `isAuthed` flips only at ceremony-complete on register/login/reset / `registerCeremony.render.test.tsx` + `forcedPhrase.render.test.tsx` (the @f45b140 P0-belt abandon-path test).
+- **AP-17** disclosure copy carries the residual-risk + not-E2EE + local-read clauses; **SW `/api` denylist** holds (`sw.ts` NavigationRoute `denylist:[/^\/api\//]`) / `disclosure.render.test.tsx`. `identity/*` passkey stack **deleted**.
+
+**⚠️ ONE non-blocking gap (labeled-coverage, not a code/security gap):** AP-10 is the **marquee** leg
+(revoke-all on all 4 credential-change events). The **code is correct for all four** (call sites above) and
+**secSys verified it server-side (PASS)**, but the **AP-T8 automated suite explicitly asserts revoke-all
+only for logout + reset/password-change** — the **two 2FA-change paths (totp enable / totp disable) call
+`revokeAll` but have no labeled regression test.** Recommend a cheap belt (same shape as the swipe SA-T4
+belt): one test that mints a refresh session, toggles 2FA, and asserts the family is revoked — ×2.
+**Non-blocking for deploy** (code correct + secSys-verified), but the marquee row deserves a labeled test.
+
+**Tier-B [DEV] (AP-D1..D4) — post-deploy on-device:** ungated reload across a real iOS eviction, TOTP vs a
+real authenticator, the register/login/reset ceremony feel, the on-screen disclosure. These verify on the
+live PWA *after* fresh-pilot deploys — the deploy is the vehicle to the dogfood, so they are not pre-deploy
+blockers; they are the final close.
 
 ---
 
