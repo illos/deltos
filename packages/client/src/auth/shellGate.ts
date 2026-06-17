@@ -27,14 +27,26 @@ export type BootView =
   | 'boot'
   /** No durable session (and no live ceremony) → the register / login / reset gate. */
   | 'auth-gate'
-  /** Durable session live → render notes immediately, ungated. */
+  /** A durable session exists but the account never FINALIZED a recovery phrase → force the
+   *  recovery-phrase screen before entry (the P0-belt cross-boot path). */
+  | 'recovery-gate'
+  /** Durable session live + recovery established → render notes immediately, ungated. */
   | 'shell';
 
-export function selectBootView(isAuthed: boolean | null, isAuthing: boolean): BootView {
+export function selectBootView(
+  isAuthed: boolean | null,
+  isAuthing: boolean,
+  // Optional so existing 2-arg callers stay correct: only an explicit server `false` gates (the belt
+  // fires on an abandoned-signup edge, never on a finalized account or an unknown/transitional value).
+  recoveryEstablished: boolean | null = true,
+): BootView {
   // A live ceremony owns the screen end-to-end — never short-circuit it to the shell, even once the
   // in-memory session has been minted (the recovery phrase / final step must complete first). This is
   // the P0 latch: the shell opens ONLY at finalizeAuth, which clears isAuthing in the same update.
   if (isAuthing) return 'auth-gate';
   if (isAuthed === null) return 'boot';
-  return isAuthed ? 'shell' : 'auth-gate';
+  if (!isAuthed) return 'auth-gate';
+  // A live session that never finalized recovery is force-routed to establish a phrase before entry.
+  if (recoveryEstablished === false) return 'recovery-gate';
+  return 'shell';
 }

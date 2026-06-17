@@ -20,6 +20,7 @@ const DEFAULTS = {
   bearerToken: null as string | null,
   accountId: null as string | null,
   username: null as string | null,
+  recoveryEstablished: null as boolean | null,
   sessionState: 'booting' as const,
   error: null as string | null,
 };
@@ -31,7 +32,16 @@ function res(status: number, body: unknown = {}): Response {
 function mockFetch(handler: (url: string, init: RequestInit) => Response | Promise<Response>) {
   vi.stubGlobal('fetch', vi.fn((url: string, init: RequestInit) => Promise.resolve(handler(url, init))));
 }
-const SESSION = { token: 'access-tok', expiresAt: '2026-07-01T00:00:00Z', accountId: 'acct-1', username: 'ada' };
+const SESSION = { token: 'access-tok', expiresAt: '2026-07-01T00:00:00Z', accountId: 'acct-1', username: 'ada', recoveryEstablished: true };
+/** A session for an account that never finalized a recovery phrase (the abandoned-signup belt edge). */
+const SESSION_NO_RECOVERY = { ...SESSION, recoveryEstablished: false };
+/** Route-aware fetch mock: /finalize + /recovery/rotate get their own response; everything else `rest`. */
+function mockRoutes(map: Record<string, Response>, rest: Response) {
+  vi.stubGlobal('fetch', vi.fn((url: string) => {
+    const hit = Object.keys(map).find((p) => url.endsWith(p));
+    return Promise.resolve(hit ? map[hit] : rest);
+  }));
+}
 
 beforeEach(() => {
   useAuthStore.setState(DEFAULTS, false);
@@ -76,15 +86,18 @@ describe('init() — cold-boot /refresh ride (ungated durable session)', () => {
 
 describe('register() — mints session, does NOT open the shell (latch discipline)', () => {
   it('success → {ok, recoveryPhrase}; token set but isAuthed NOT flipped until finalizeAuth', async () => {
-    mockFetch(() => res(200, { ...SESSION, recoveryPhrase: 'alpha bravo charlie' }));
+    // signup returns the phrase (no cookie); /finalize (POSTed by finalizeAuth) sets cookie + flag.
+    mockRoutes({ '/finalize': res(200, { ok: true }) }, res(200, { ...SESSION, recoveryPhrase: 'alpha bravo charlie' }));
     s().beginAuth();
     const r = await s().register('ada', 'password123');
     expect(r).toEqual({ ok: true, recoveryPhrase: 'alpha bravo charlie' });
     expect(s().bearerToken).toBe('access-tok'); // session minted
     expect(s().isAuthed).not.toBe(true);        // but the shell is STILL closed (phrase must show first)
-    s().finalizeAuth();
+    expect(s().recoveryEstablished).toBe(false); // not finalized yet
+    expect(await s().finalizeAuth()).toEqual({ ok: true });
     expect(s().isAuthed).toBe(true);            // only NOW
     expect(s().isAuthing).toBe(false);
+    expect(s().recoveryEstablished).toBe(true); // finalize set the flag
     expect(s().sessionState).toBe('active');
   });
 
@@ -104,10 +117,10 @@ describe('register() — mints session, does NOT open the shell (latch disciplin
 });
 
 describe('login() — uniform invalid; TOTP step behind a correct password', () => {
-  it('success → {ok}; in-memory token set, shell NOT opened by the action', async () => {
+  it('success (recovery established) → {ok, recoveryRequired:false}; token set, shell NOT opened by login', async () => {
     mockFetch(() => res(200, SESSION));
     const r = await s().login('ada', 'password123');
-    expect(r).toEqual({ ok: true });
+    expect(r).toEqual({ ok: true, recoveryRequired: false });
     expect(s().bearerToken).toBe('access-tok');
     expect(s().isAuthed).not.toBe(true);        // the route opens the shell via finalizeAuth, not login
   });
@@ -172,13 +185,63 @@ describe('TOTP setup/verify — anti-lockout shape', () => {
 });
 
 describe('beginAuth/finalizeAuth — the latch primitives', () => {
-  it('beginAuth pins isAuthing; finalizeAuth opens the shell in ONE update', () => {
+  it('beginAuth pins isAuthing; finalizeAuth POSTs /finalize then opens the shell in ONE update', async () => {
+    mockFetch(() => res(200, { ok: true }));   // /finalize
     s().beginAuth();
     expect(s().isAuthing).toBe(true);
     expect(s().isAuthed).not.toBe(true);
-    s().finalizeAuth();
+    expect(await s().finalizeAuth()).toEqual({ ok: true });
     expect(s().isAuthing).toBe(false);
     expect(s().isAuthed).toBe(true);
     expect(s().sessionState).toBe('active');
+  });
+
+  it('finalize NETWORK failure → {ok:false}; shell STAYS closed (no cookie-less session leaks in)', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))));
+    s().beginAuth();
+    expect(await s().finalizeAuth()).toEqual({ ok: false, code: 'network' });
+    expect(s().isAuthed).not.toBe(true);        // not opened
+    expect(s().isAuthing).toBe(true);           // still latched — the route can retry
+  });
+});
+
+// ── P0-BELT — force a recovery phrase before entry when none was finalized (cross-boot) ──────────────
+describe('recoveryEstablished belt — no account left silently unrecoverable', () => {
+  it('login on an account with NO finalized phrase → {ok, recoveryRequired:TRUE}; shell stays closed', async () => {
+    mockFetch(() => res(200, SESSION_NO_RECOVERY));
+    const r = await s().login('ada', 'password123');
+    expect(r).toEqual({ ok: true, recoveryRequired: true });
+    expect(s().recoveryEstablished).toBe(false);
+    expect(s().isAuthed).not.toBe(true);        // the route force-routes to the forced-phrase screen
+  });
+
+  it('init() fail-safe: a refresh reporting recoveryEstablished=false leaves the flag false (→ recovery-gate)', async () => {
+    mockFetch(() => res(200, SESSION_NO_RECOVERY));
+    await s().init();
+    expect(s().recoveryEstablished).toBe(false); // selectBootView routes this to the forced-phrase screen
+  });
+
+  it('establishRecovery() rotates to a FRESH phrase (does NOT set the flag — that waits for finalize)', async () => {
+    mockFetch(() => res(200, { recoveryPhrase: 'fresh delta echo foxtrot' }));
+    useAuthStore.setState({ bearerToken: 'live', recoveryEstablished: false }, false);
+    const r = await s().establishRecovery();
+    expect(r).toEqual({ ok: true, recoveryPhrase: 'fresh delta echo foxtrot' });
+    expect(s().recoveryEstablished).toBe(false); // unchanged — only finalizeAuth flips it
+  });
+
+  it('forced-phrase flow e2e: login(req) → establishRecovery → finalizeAuth → flag true + shell open', async () => {
+    mockRoutes(
+      { '/recovery/rotate': res(200, { recoveryPhrase: 'fresh golf hotel india' }), '/finalize': res(200, { ok: true }) },
+      res(200, SESSION_NO_RECOVERY),  // /login
+    );
+    s().beginAuth();
+    const login = await s().login('ada', 'pw');
+    expect(login).toEqual({ ok: true, recoveryRequired: true });
+    const phrase = await s().establishRecovery();
+    expect(phrase.ok && phrase.recoveryPhrase).toBe('fresh golf hotel india');
+    expect(s().isAuthed).not.toBe(true);         // still gated through the phrase step
+    expect(await s().finalizeAuth()).toEqual({ ok: true });
+    expect(s().recoveryEstablished).toBe(true);
+    expect(s().isAuthed).toBe(true);             // entered only after the fresh phrase was established+acked
   });
 });

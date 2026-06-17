@@ -40,4 +40,26 @@ describe('selectBootView — durable-session boot gate', () => {
       expect(selectBootView(null, true)).toBe('auth-gate');
     });
   });
+
+  describe('recovery-gate — P0 belt: a session with no finalized phrase is force-routed', () => {
+    it('session live but recoveryEstablished=false → recovery-gate (not shell)', () => {
+      expect(selectBootView(true, false, false)).toBe('recovery-gate');
+    });
+
+    it('recoveryEstablished=true → shell (the normal finalized account)', () => {
+      expect(selectBootView(true, false, true)).toBe('shell');
+    });
+
+    it('omitted recoveryEstablished defaults to established → shell (2-arg callers unchanged)', () => {
+      expect(selectBootView(true, false)).toBe('shell');
+    });
+
+    it('the isAuthing latch still wins over the recovery-gate (ceremony owns the screen)', () => {
+      expect(selectBootView(true, true, false)).toBe('auth-gate');
+    });
+
+    it('no session → auth-gate regardless of the recovery flag', () => {
+      expect(selectBootView(false, false, false)).toBe('auth-gate');
+    });
+  });
 });

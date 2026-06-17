@@ -38,8 +38,15 @@ export interface AuthState {
   bearerToken: string | null;
   /** The signed-in account (data-ownership key; the data layer scopes on this, never the credential). */
   accountId: string | null;
-  /** The login identifier / public-ish handle. */
+  /** The login identifier / public handle. */
   username: string | null;
+  /**
+   * Has this account FINALIZED a recovery phrase? (P0-belt — cross-boot, secSys finding.) An account
+   * created but abandoned before the phrase save+ack has this FALSE; on any successful login (or a
+   * fail-safe cold-boot refresh) we force the recovery-phrase screen BEFORE shell entry, so no account
+   * is ever left silently unrecoverable. true (or null=unknown) → ungated as normal, never prompted.
+   */
+  recoveryEstablished: boolean | null;
   sessionState: SessionState;
   error: string | null;
 }
@@ -48,8 +55,14 @@ export type RegisterResult =
   | { ok: true; recoveryPhrase: string }
   | { ok: false; code: 'username_taken' | 'weak_password' | 'invalid' | 'rate_limited' | 'network' };
 export type LoginResult =
-  | { ok: true }
+  /** recoveryRequired = the account has no finalized recovery phrase → route to the forced-phrase
+   *  screen and DO NOT finalizeAuth until it is established+acked (the P0-belt). */
+  | { ok: true; recoveryRequired: boolean }
   | { ok: false; code: 'invalid' | 'totp_required' | 'totp_invalid' | 'rate_limited' | 'network' };
+export type EstablishRecoveryResult =
+  | { ok: true; recoveryPhrase: string }
+  | { ok: false; code: 'invalid' | 'network' };
+export type FinalizeResult = { ok: true } | { ok: false; code: 'invalid' | 'network' };
 export type ResetResult =
   | { ok: true }
   | { ok: false; code: 'invalid' | 'rate_limited' | 'network' };
@@ -69,8 +82,8 @@ export interface AuthActions {
    *  shell — the route shows + has the user acknowledge the phrase, then calls finalizeAuth. */
   register(username: string, password: string, turnstileToken?: string): Promise<RegisterResult>;
   /** Username + password (+ TOTP if enabled). Uniform 'invalid' on any wrong credential (no enumeration);
-   *  code 'totp_required' = prompt for the 2FA code then call again. On ok the session is minted (the
-   *  route then calls finalizeAuth to open the shell). */
+   *  code 'totp_required' = prompt for the 2FA code then call again. On ok the session is minted; if
+   *  recoveryRequired the route shows the forced-phrase screen, else it calls finalizeAuth to enter. */
   login(username: string, password: string, totp?: string, turnstileToken?: string): Promise<LoginResult>;
   /** Revoke-all server-side + clear the in-memory session. Gate → closed. */
   logout(): Promise<void>;
@@ -82,10 +95,21 @@ export interface AuthActions {
   setupTotp(): Promise<TotpSetupResult>;
   /** Confirm a code from the authenticator app → ENABLE TOTP (only here, after a valid code). */
   verifyTotp(code: string): Promise<TotpVerifyResult>;
+  /** Forced-phrase belt: mint a FRESH recovery phrase (server) + update the verifier, returned to show
+   *  ONCE on the forced screen. Does NOT finalize — the route shows the phrase, then calls finalizeAuth
+   *  on save+ack. Used when login/init reports recoveryRequired (no finalized phrase). */
+  establishRecovery(): Promise<EstablishRecoveryResult>;
   /** Ceremony latch: a route MUST call this at ceremony start (pins the gate to the auth route). */
   beginAuth(): void;
-  /** Ceremony-complete latch flip: clears isAuthing + opens the shell (isAuthed=true), in one update. */
-  finalizeAuth(): void;
+  /**
+   * Ceremony-complete latch flip — clears isAuthing + opens the shell (isAuthed=true) + marks recovery
+   * established, in one update. ASYNC: the durable refresh cookie + the server recoveryEstablished flag
+   * are set at FINALIZE (cookie-at-finalize, planSys ruling — not at signup), so this awaits that
+   * server commit before opening. Call it only after the phrase is saved+acked. AWAIT it in every
+   * route + handle a {ok:false} (network) by staying on the screen so the user can retry — never open
+   * the shell without the server finalize (that would leave a no-cookie, flag-false session).
+   */
+  finalizeAuth(): Promise<FinalizeResult>;
   clearError(): void;
 }
 
@@ -98,12 +122,19 @@ function authFetch(path: string, body?: unknown, token?: string | null): Promise
   });
 }
 
+/** Read the recoveryEstablished flag off an auth response (on AccessTokenResponse: login + refresh).
+ *  null = absent (never gate on an unknown — the belt only ever fires on an explicit server `false`). */
+function readRecoveryFlag(s: { recoveryEstablished?: boolean }): boolean | null {
+  return typeof s.recoveryEstablished === 'boolean' ? s.recoveryEstablished : null;
+}
+
 export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   isAuthed: null,
   isAuthing: false,
   bearerToken: null,
   accountId: null,
   username: null,
+  recoveryEstablished: null,
   sessionState: 'booting',
   error: null,
 
@@ -113,8 +144,10 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       if (!res.ok) { if (!get().isAuthing) set({ isAuthed: false, sessionState: 'unauthed' }); return; }
       const s = (await res.json()) as AccessTokenResponse;
       // A live ceremony owns the gate — don't let a background refresh open the shell underneath it.
+      // recoveryEstablished rides the refresh (always true in devSys's impl — a durable cookie only
+      // exists post-finalize); the gate routes a false to the forced-phrase screen as a fail-safe belt.
       const opening = get().isAuthing ? {} : { isAuthed: true, sessionState: 'active' as const };
-      set({ bearerToken: s.token, accountId: s.accountId, username: s.username, ...opening });
+      set({ bearerToken: s.token, accountId: s.accountId, username: s.username, recoveryEstablished: readRecoveryFlag(s), ...opening });
     } catch {
       // Network failure on cold boot — no session to render, but it isn't a credential failure.
       if (!get().isAuthing) set({ isAuthed: false, sessionState: 'offline' });
@@ -137,10 +170,11 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       return { ok: false, code };
     }
     const s = (await res.json()) as RegisterResponse;
-    // Session minted, but the shell stays closed until finalizeAuth (the recovery phrase must be shown +
-    // acknowledged first — the P0 anti-unmount discipline). The route runs beginAuth → register → ack →
-    // finalizeAuth; isAuthing is already set by beginAuth.
-    set({ bearerToken: s.token, accountId: s.accountId, username: s.username });
+    // Session minted (access token only — signup never Set-Cookies; the durable cookie waits for
+    // finalize), but the shell stays closed until finalizeAuth (the recovery phrase must be shown +
+    // acknowledged first — the P0 anti-unmount discipline). recoveryEstablished is false until finalize.
+    // The route runs beginAuth → register → [show phrase] → finalizeAuth; isAuthing is set by beginAuth.
+    set({ bearerToken: s.token, accountId: s.accountId, username: s.username, recoveryEstablished: false });
     return { ok: true, recoveryPhrase: s.recoveryPhrase };
   },
 
@@ -158,13 +192,17 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       return { ok: false, code: 'invalid' }; // uniform — no username enumeration
     }
     const s = (await res.json()) as AccessTokenResponse;
-    set({ bearerToken: s.token, accountId: s.accountId, username: s.username });
-    return { ok: true };
+    const recoveryEstablished = readRecoveryFlag(s);
+    set({ bearerToken: s.token, accountId: s.accountId, username: s.username, recoveryEstablished });
+    // recoveryRequired = the account was created but never finalized a recovery phrase (abandoned
+    // signup that set a password). The route forces the phrase screen before entry (the P0-belt);
+    // a flag=true login is ungated as normal. flag=false login also defers the cookie to finalize.
+    return { ok: true, recoveryRequired: recoveryEstablished === false };
   },
 
   async logout() {
     try { await authFetch('/logout', undefined, get().bearerToken); } catch { /* clear locally regardless */ }
-    set({ bearerToken: null, accountId: null, username: null, isAuthed: false, isAuthing: false, sessionState: 'unauthed' });
+    set({ bearerToken: null, accountId: null, username: null, recoveryEstablished: null, isAuthed: false, isAuthing: false, sessionState: 'unauthed' });
   },
 
   async resetWithPhrase(username, phrase, newPassword, turnstileToken) {
@@ -177,7 +215,9 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       return { ok: false, code: 'invalid' }; // non-disclosing — never confirms the username exists
     }
     const s = (await res.json()) as AccessTokenResponse;
-    set({ bearerToken: s.token, accountId: s.accountId, username: s.username });
+    // A reset re-establishes the password via the phrase the user just proved — the account remains
+    // recoverable; the server reports recoveryEstablished on the response (true) and the route enters.
+    set({ bearerToken: s.token, accountId: s.accountId, username: s.username, recoveryEstablished: readRecoveryFlag(s) });
     return { ok: true };
   },
 
@@ -198,7 +238,29 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     return { ok: true };
   },
 
+  async establishRecovery() {
+    // Forced-phrase belt: rotate to a FRESH recovery phrase server-side (the original is gone). The
+    // rotate endpoint updates the Argon2id verifier + returns the phrase ONCE; it does NOT set the
+    // flag/cookie — those wait for /finalize at save+ack, so recoveryEstablished flips only at ack.
+    let res: Response;
+    try { res = await authFetch('/recovery/rotate', {}, get().bearerToken); }
+    catch { return { ok: false, code: 'network' }; }
+    if (!res.ok) return { ok: false, code: 'invalid' };
+    const b = (await res.json()) as { recoveryPhrase: string };
+    return { ok: true, recoveryPhrase: b.recoveryPhrase };
+  },
+
   beginAuth() { set({ isAuthing: true }); },
-  finalizeAuth() { set({ isAuthing: false, isAuthed: true, sessionState: 'active' }); },
+  async finalizeAuth() {
+    // Cookie-at-finalize: POST /finalize (authed, empty body) sets the durable refresh cookie AND
+    // recoveryEstablished=true together — the ceremony-complete moment. Only on its success do we open
+    // the shell; a failure stays on the screen (no cookie-less, flag-false session leaks into the app).
+    let res: Response;
+    try { res = await authFetch('/finalize', {}, get().bearerToken); }
+    catch { return { ok: false, code: 'network' }; }
+    if (!res.ok) return { ok: false, code: 'invalid' };
+    set({ isAuthing: false, isAuthed: true, recoveryEstablished: true, sessionState: 'active' });
+    return { ok: true };
+  },
   clearError() { set({ error: null }); },
 }));
