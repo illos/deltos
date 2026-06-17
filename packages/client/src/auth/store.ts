@@ -52,7 +52,9 @@ export interface AuthState {
 }
 
 export type RegisterResult =
-  | { ok: true; recoveryPhrase: string }
+  // Option-B single-hash signup: signup mints the session only; the recovery phrase comes from
+  // establishRecovery (/recovery/rotate) on the happy path — so no phrase rides this result.
+  | { ok: true }
   | { ok: false; code: 'username_taken' | 'weak_password' | 'invalid' | 'rate_limited' | 'network' };
 export type LoginResult =
   /** recoveryRequired = the account has no finalized recovery phrase → route to the forced-phrase
@@ -62,7 +64,11 @@ export type LoginResult =
 export type EstablishRecoveryResult =
   | { ok: true; recoveryPhrase: string }
   | { ok: false; code: 'invalid' | 'network' };
-export type FinalizeResult = { ok: true } | { ok: false; code: 'invalid' | 'network' };
+export type FinalizeResult =
+  | { ok: true }
+  // recovery_not_established = /finalize's secSys guard fired (no rotate ran first) — never on the
+  // happy/forced paths, which always establishRecovery before finalize; surfaced for safety.
+  | { ok: false; code: 'invalid' | 'network' | 'recovery_not_established' };
 export type ResetResult =
   | { ok: true }
   | { ok: false; code: 'invalid' | 'rate_limited' | 'network' };
@@ -170,12 +176,13 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       return { ok: false, code };
     }
     const s = (await res.json()) as RegisterResponse;
-    // Session minted (access token only — signup never Set-Cookies; the durable cookie waits for
-    // finalize), but the shell stays closed until finalizeAuth (the recovery phrase must be shown +
-    // acknowledged first — the P0 anti-unmount discipline). recoveryEstablished is false until finalize.
-    // The route runs beginAuth → register → [show phrase] → finalizeAuth; isAuthing is set by beginAuth.
+    // Session minted — access token only (signup never Set-Cookies; the durable cookie waits for
+    // finalize) AND no recovery phrase (Option-B single-hash signup: the verifier isn't hashed here —
+    // the phrase is minted by establishRecovery/rotate next, like the forced-phrase flow). The shell
+    // stays closed until finalizeAuth; recoveryEstablished is false until then. The route runs
+    // beginAuth → register → establishRecovery → [show phrase] → finalizeAuth.
     set({ bearerToken: s.token, accountId: s.accountId, username: s.username, recoveryEstablished: false });
-    return { ok: true, recoveryPhrase: s.recoveryPhrase };
+    return { ok: true };
   },
 
   async login(username, password, totp, turnstileToken) {
@@ -258,6 +265,9 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     let res: Response;
     try { res = await authFetch('/finalize', {}, get().bearerToken); }
     catch { return { ok: false, code: 'network' }; }
+    // secSys guard: 409 = no recovery verifier established yet (rotate must precede finalize). The
+    // happy + forced paths always establishRecovery first, so this never fires there — surfaced anyway.
+    if (res.status === 409) return { ok: false, code: 'recovery_not_established' };
     if (!res.ok) return { ok: false, code: 'invalid' };
     set({ isAuthing: false, isAuthed: true, recoveryEstablished: true, sessionState: 'active' });
     return { ok: true };

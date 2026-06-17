@@ -51,8 +51,10 @@ beforeEach(async () => {
       useAuthStore.setState({ isAuthed: true, isAuthing: false, sessionState: 'active', recoveryEstablished: true });
       return { ok: true } as const;
     }),
-    // register: succeeds with the sample phrase (no network required)
-    register: vi.fn(async () => ({ ok: true, recoveryPhrase: SAMPLE_PHRASE } as const)),
+    // register: signup succeeds + mints the session (Option-B single-hash: NO phrase on this result)
+    register: vi.fn(async () => ({ ok: true } as const)),
+    // establishRecovery: the happy-path phrase source now (via /recovery/rotate), same as forced-phrase
+    establishRecovery: vi.fn(async () => ({ ok: true, recoveryPhrase: SAMPLE_PHRASE } as const)),
     // other auth actions: stubs (not exercised in the register ceremony path)
     login: vi.fn(async () => ({ ok: false, code: 'invalid' } as const)),
     logout: vi.fn(async () => {}),

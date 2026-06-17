@@ -37,7 +37,7 @@ function registerErrorMsg(code: Extract<RegisterResult, { ok: false }>['code']):
 }
 
 export function RegisterRoute() {
-  const { beginAuth, finalizeAuth, register, setupTotp, verifyTotp } = useAuthStore();
+  const { beginAuth, finalizeAuth, register, establishRecovery, setupTotp, verifyTotp } = useAuthStore();
   const navigate = useNavigate();
 
   const [step, setStep] = useState<Step>({ tag: 'form' });
@@ -51,11 +51,18 @@ export function RegisterRoute() {
     beginAuth(); // P0 latch — pins the gate to this route until finalizeAuth
     setStep({ tag: 'busy', msg: 'Creating your account…' });
     register(username.trim(), password).then((result) => {
-      if (result.ok) {
-        setStep({ tag: 'phrase', recoveryPhrase: result.recoveryPhrase });
-      } else {
-        setStep({ tag: 'form', error: registerErrorMsg(result.code) });
-      }
+      if (!result.ok) { setStep({ tag: 'form', error: registerErrorMsg(result.code) }); return; }
+      // Option-B single-hash signup: signup no longer returns a phrase (it doesn't hash a verifier —
+      // free-plan CPU). Mint+show it via establishRecovery (/recovery/rotate), exactly as the
+      // forced-phrase flow does. finalizeAuth (which guards on an established verifier) runs only
+      // after the phrase is acknowledged + any TOTP step — never before establishRecovery.
+      return establishRecovery().then((phrase) => {
+        if (phrase.ok) {
+          setStep({ tag: 'phrase', recoveryPhrase: phrase.recoveryPhrase });
+        } else {
+          setStep({ tag: 'form', error: 'Connection error — please try again' });
+        }
+      });
     }).catch(() => setStep({ tag: 'form', error: 'Connection error — please try again' }));
   };
 

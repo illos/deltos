@@ -85,17 +85,24 @@ describe('init() — cold-boot /refresh ride (ungated durable session)', () => {
 });
 
 describe('register() — mints session, does NOT open the shell (latch discipline)', () => {
-  it('success → {ok, recoveryPhrase}; token set but isAuthed NOT flipped until finalizeAuth', async () => {
-    // signup returns the phrase (no cookie); /finalize (POSTed by finalizeAuth) sets cookie + flag.
-    mockRoutes({ '/finalize': res(200, { ok: true }) }, res(200, { ...SESSION, recoveryPhrase: 'alpha bravo charlie' }));
+  it('Option-B happy path: signup mints session (NO phrase) → establishRecovery → finalize opens shell', async () => {
+    // single-hash signup: /signup returns just the session (no recoveryPhrase); the phrase is minted
+    // by /recovery/rotate; /finalize (guarded) sets cookie + flag — identical to the forced-phrase flow.
+    mockRoutes(
+      { '/recovery/rotate': res(200, { recoveryPhrase: 'alpha bravo charlie' }), '/finalize': res(200, { ok: true }) },
+      res(200, SESSION), // /signup — no recoveryPhrase on the body anymore
+    );
     s().beginAuth();
     const r = await s().register('ada', 'password123');
-    expect(r).toEqual({ ok: true, recoveryPhrase: 'alpha bravo charlie' });
+    expect(r).toEqual({ ok: true });            // signup no longer carries a phrase
     expect(s().bearerToken).toBe('access-tok'); // session minted
-    expect(s().isAuthed).not.toBe(true);        // but the shell is STILL closed (phrase must show first)
-    expect(s().recoveryEstablished).toBe(false); // not finalized yet
+    expect(s().recoveryEstablished).toBe(false);
+    expect(s().isAuthed).not.toBe(true);        // shell closed until finalize
+    const phrase = await s().establishRecovery();
+    expect(phrase.ok && phrase.recoveryPhrase).toBe('alpha bravo charlie');
+    expect(s().recoveryEstablished).toBe(false); // rotate does NOT set the flag
     expect(await s().finalizeAuth()).toEqual({ ok: true });
-    expect(s().isAuthed).toBe(true);            // only NOW
+    expect(s().isAuthed).toBe(true);            // only after establish + finalize
     expect(s().isAuthing).toBe(false);
     expect(s().recoveryEstablished).toBe(true); // finalize set the flag
     expect(s().sessionState).toBe('active');
@@ -202,6 +209,13 @@ describe('beginAuth/finalizeAuth — the latch primitives', () => {
     expect(await s().finalizeAuth()).toEqual({ ok: false, code: 'network' });
     expect(s().isAuthed).not.toBe(true);        // not opened
     expect(s().isAuthing).toBe(true);           // still latched — the route can retry
+  });
+
+  it('finalize 409 guard (no rotate ran first) → {ok:false, code:recovery_not_established}; stays closed', async () => {
+    mockFetch(() => res(409, { error: { code: 'recovery_not_established' } }));
+    s().beginAuth();
+    expect(await s().finalizeAuth()).toEqual({ ok: false, code: 'recovery_not_established' });
+    expect(s().isAuthed).not.toBe(true);
   });
 });
 
