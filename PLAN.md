@@ -625,3 +625,26 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   ships proactively, no per-deploy greenlight ([[standing-authorization]]); only genuine data-safety gates
   a push (here: the interim deletedAt-delete didn't stick online + would resurrect → shipped complete Fork P
   instead).
+- 2026-06-17 — **🔐 AUTH-MODEL PIVOT DECIDED (user, firm) — drop passkeys; go username+password.** The user
+  finds the passkey / secret-key / QR model "opaque and unpleasant" and is pivoting the login path to:
+  **username + password** primary credential, **optional TOTP 2FA**, **recovery phrase demoted to a
+  forgot-password reset token** (no longer the crypto root). **CONTAINED to the auth/identity layer** —
+  notes / sync / conflict-as-version / editor / swipe+trash are orthogonal and UNTOUCHED. **SUBSUMES the
+  QR-finish task** (new device just logs in — no QR display/scanner needed; QR-join, passkeys, signed-
+  challenge, Option-A custody, PRF seam all RETIRED). **Three design calls CONFIRMED (user, "yes to all"):**
+  (1) day-to-day stays UNGATED — password is for sync / new-device / reset only, never an app-open prompt
+  (preserves the [[auth-friction-philosophy]] principle; only the MECHANISM pivots passkey→password);
+  (2) at-rest local notes rely on device/OS + browser-sandbox security for v1 (E2EE deferred to v2 — the
+  wrapped-blob custody is dropped); (3) recovery phrase = a high-entropy password-reset token, not the seed.
+  **KEY OPEN TENSION for the scope pass:** passkeys gave ungated-reload "for free" (durable device key →
+  silent signed-challenge re-mint, no token at rest, honoring [[session-token-in-memory-only]]). Password
+  has no durable device key → ungated-reload needs a DURABLE SESSION/REFRESH mechanism (httpOnly secure
+  cookie same-origin? refresh token in IDB?), which RE-OPENS the token-at-rest secSys condition — secSys
+  must resolve. **HONEST TRADEOFF (logged):** passwords are familiar but reintroduce phishing / reuse /
+  server-side-hash-custody risks passkeys avoided; optional 2FA mitigates; defensible for a notes app,
+  eyes-open. **NEXT:** planSys commissioned a devSys (build-scope: reused-vs-rewritten across `auth/store.ts`,
+  `identity/*`, `routes/auth.ts`, enroll/unlock/recover/qr routes, worker challenge/session crypto, the
+  frozen auth contract) + secSys (security model: Argon2id hashing + rate-limit + 2FA + reset-phrase binding
+  + the ungated-reload-vs-token-at-rest resolution + at-rest posture) SCOPE PASS → estimate back to user →
+  spec → build. Migration = clean re-enroll (dogfood-only, no data migration). Supersedes [[stream-a-identity-plan]],
+  Option-A custody, PRF, QR-join.
