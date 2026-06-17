@@ -566,3 +566,24 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   real-device re-dogfood**. CF deploy pulled FORWARD from post-v1 (user 2026-06-16: live-hardware load
   testing is first-class for this load-sensitive app; Tailscale can't represent real edge/cellular; DB-safe
   — code deploys don't touch D1, migrations additive/forward-only, local-first replica survives a reset).
+- 2026-06-17 — **🎉 LIVE LOAD-FEEL = WIN + 🎯 NEXT MILESTONE defined (user).** On-device the user calls the
+  experience *"incredibly good"* — load/upload times **BEAT APPLE NOTES on their iPhone.** Validates the
+  whole local-first / render-before-data / course-correction bet; load-time-sensitivity goal MET on real
+  hardware. P1 phantom-conflict ALSO user-confirmed gone (online/offline/offline-mid-edit). **🌟 NEW
+  STANDING VALUE — PERFORMANCE/ANTI-BLOAT (user, governs all future work):** *"make sure things don't get
+  bloated and slow down as we layer features on"* — the beat-Apple-Notes load bar must HOLD; no feature
+  ships if it regresses the load-feel; lean bundle + instant-load intact. Tie-breaker like the auth-friction
+  north-star. Tracked: `[[performance-is-a-standing-value]]`. **🎯 NEXT MILESTONE (user-defined) — "BASIC
+  NOTES, day-to-day usable":** full usable login · password recovery · edit settings · create / delete /
+  edit / view notes · view note **HISTORY** · MAYBE basic in-note editor tools. *"Nail that → usable day to
+  day, then layer features as we go."* REFOCUSES the near-term roadmap: harden the Phase-1 slice into a
+  genuinely daily-usable basic-notes app BEFORE the old Phase-2 (notebooks/decoupling/plugins). **Status
+  read (confirm w/ team inventory):** ✅ login / create / edit / view = DONE; 🔶 password-recovery (phrase
+  works; needs 2nd-device validation + recovery-screen fixes: dead "recover-with-passkey" button, clean
+  phrase copy, download/print) + DELETE-notes affordance (+trash?); 🆕 EDIT-SETTINGS surface, note-HISTORY
+  browse/restore UI (**pulls the deferred Phase-3 version-history FORWARD** onto the conflict-as-version
+  data model already built), basic EDITOR-TOOLS (formatting; "maybe"). **Interpretations to confirm:**
+  history = per-note version timeline view/restore; settings = account/username + sign-out + appearance +
+  app-info (minimal); editor-tools = bold/italic/headings/lists/checkboxes. **NEXT:** team build-status
+  inventory → planner writes ORDERED specs → hand to pilot AFTER the in-flight dogfood fixes (clean-copy,
+  dead button, conflict-screen-on-exit, onboarding-refinement, autofocus) settle.
