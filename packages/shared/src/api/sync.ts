@@ -17,37 +17,18 @@ import { NoteResponseSchema } from './operations.js';
 // ---------------------------------------------------------------------------
 
 /**
- * The mutation intent of a queued write (swipe-delete / undo extension). `'upsert'` is the historical
- * behavior; `'delete'` and `'restore'` carry the soft-delete + undo signal the push path previously
- * could NOT express (the draft alone has no `deletedAt`, and the worker push handler only ever
- * inserted/updated — so a client soft-delete never reached the server and the note resurrected on the
- * next pull). `'restore'` is the SA-T6 matrix branch (the earlier "resurrect" phrasing in the kickoff
- * relay was superseded; client + worker + matrix all use the literal `'restore'`).
- *
- * OPTIONAL (absent ⇒ treat as `'upsert'`) so it is fully backward-compatible at BOTH the wire and the
- * type level: a pre-extension client omits the field, and existing in-process `SyncPushEntry` literals
- * (the REST `note.create` insert path, test fixtures) need no `op` to typecheck. Worker branches coalesce
- * `entry.op ?? 'upsert'`. (Kept optional rather than `.default('upsert')` precisely so those literal
- * constructors compile — a `.default` makes the inferred field required.)
- */
-export const SyncPushOpSchema = z.enum(['upsert', 'delete', 'restore']);
-export type SyncPushOp = z.infer<typeof SyncPushOpSchema>;
-
-/**
  * One queued write to push. `baseVersion` is the CAS precondition:
  *   0  = new note (server will INSERT; conflicts if the id already exists)
  *   N  = update at this version (server will CAS on version = N; conflicts if moved)
  *
- * `op` selects the worker branch: `'upsert'` → insert/update (base 0 → INSERT, else CAS UPDATE);
- * `'delete'` → CAS soft-delete (sets `deletedAt`, WHERE keeps `deletedAt IS NULL` — only a live row);
- * `'restore'` → CAS un-delete (clears `deletedAt`, WHERE drops the `deletedAt IS NULL` guard since the
- * target row IS tombstoned, relying on the version CAS alone). All branches are account-scoped server-side.
+ * Note: swipe-delete/undo (Fork P) needs NO wire signal here — trash is a `sys:trashedAt` flag in the
+ * note's property bag, so it rides a normal content upsert. (An `op` discriminator was briefly added for
+ * the abandoned deletedAt-tombstone approach, then removed when Fork P was chosen.)
  */
 export const SyncPushEntrySchema = z.object({
   id: NoteIdSchema,
   draft: NoteDraftSchema.omit({ id: true, notebookId: true }),
   baseVersion: VersionSchema,
-  op: SyncPushOpSchema.optional(),
 });
 export type SyncPushEntry = z.infer<typeof SyncPushEntrySchema>;
 
