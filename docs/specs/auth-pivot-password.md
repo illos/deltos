@@ -36,9 +36,12 @@ spine is auth-method-independent and **kept wholesale**, so this is a **zero-dat
   [[session-token-in-memory-only]]** — access token stays in memory; the refresh bearer is an httpOnly
   cookie JS can't read → net **stronger vs XSS** than the old wrapped-key-in-IDB exposure.
 - **Password:** **Argon2id** via the already-vendored pure-JS `@noble/hashes` (**no new dep**) + **pepper as
-  a Worker secret**. Param-tune by measuring CPU on real CF Workers; **fallback ladder** if pure-JS busts
-  the Worker CPU budget = WASM Argon2id (server-side → does NOT touch the client bundle, perf-value safe) →
-  scrypt/PBKDF2 last. Rate-limit = CF WAF + **per-account exponential backoff** + **Turnstile**
+  a Worker secret**. Param-tune by measuring CPU on real CF Workers. **Fallback ladder (in order, each rung
+  only if the prior busts the Worker CPU budget at min-sane params):** (1) **param-tune/step-down on pure-JS
+  `@noble` Argon2id** — the FREE first move, no new dep, stays on Argon2id (reach here BEFORE any dep);
+  (2) **WASM Argon2id** — only if pure-JS can't hit acceptable cost; server-side so it doesn't touch the
+  client bundle (perf-value safe), but it **IS a new dependency = a deliberate, logged reuse-discipline
+  exception, NOT free**; (3) scrypt/PBKDF2 last. Rate-limit = CF WAF + **per-account exponential backoff** + **Turnstile**
   ([[turnstile-spin]]); **NO hard lockout** (avoids victim-DoS). Uniform invalid-credentials error.
 - **⚠️ ENDPOINT ORDERING (security-critical, secSys):** on **BOTH login AND reset**, the cheap gate
   (edge rate-limit / Turnstile / per-account exponential backoff) **MUST run BEFORE the Argon2id hash.**
@@ -48,7 +51,9 @@ spine is auth-method-independent and **kept wholesale**, so this is a **zero-dat
   account-existence timing oracle). Build note: Argon2id `m=19456` ≈ 19MB/hash → a 128MB isolate caps
   **~6 concurrent hashes** (memory-bound); 325ms is acceptable for the low-volume new-device+reset-only
   path **once gated**, and unacceptable ungated.
-- **TOTP (optional):** encrypted-at-rest, replay-guarded, prompted on new-device/reset only.
+- **TOTP (optional):** encrypted-at-rest (Worker-secret key), replay-guarded (`lastAcceptedStep`), prompted
+  on new-device/reset only. **BUILD-NOTE (secSys — easiest to drop):** confirm a valid code BEFORE activating
+  2FA (anti-lockout). Full detail in the `auth-pivot-security-model` memory.
 - **Recovery phrase:** high-entropy **Argon2id verifier keyed to accountId**. Reset = username+phrase →
   short-TTL single-use token → set new password + revoke-all sessions.
 - **At-rest:** rely-on-device **ACCEPTABLE** (no weaker than Option-A). Carry the **honest enrollment
