@@ -78,14 +78,16 @@ export const RegisterRequestSchema = z
 export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 
 /**
- * Register response. The recovery phrase leaves the server EXACTLY ONCE here (the user must record it);
- * it is stored only as an Argon2id verifier and never returned again. Also returns the access token so
- * register flows straight into a session (and the server Set-Cookies the refresh).
+ * Register response. Returns the in-memory access token so register flows straight into the in-session
+ * ceremony. The recovery phrase is NOT here: to keep `/signup` a SINGLE Argon2id hash (free-plan CPU
+ * ceiling — the recovery verifier was a second ~290ms hash), the recovery phrase is established by the
+ * SEPARATE `POST /recovery/rotate` step (which mints the phrase + the Argon2id verifier) and surfaced
+ * there. The client flow is `signup → recovery/rotate (show phrase) → ack → finalize`. No durable cookie
+ * here either (P0 suspenders — that waits for finalize).
  */
 export const RegisterResponseSchema = z.object({
   accountId: z.string(),
   username: z.string(),
-  recoveryPhrase: z.string(),
   token: z.string(),
   expiresAt: z.string(),
 });

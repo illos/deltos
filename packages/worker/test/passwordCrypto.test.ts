@@ -9,6 +9,8 @@ import {
   verifyRecoveryPhrase,
   normalizeRecoveryPhrase,
   base32Lower,
+  isPhc,
+  UNESTABLISHED_VERIFIER,
   DEFAULT_ARGON2_PARAMS,
 } from '../src/passwordCrypto.js';
 
@@ -74,6 +76,20 @@ describe('password hashing (Argon2id + pepper + PHC)', () => {
 
   it('dummyHash runs without throwing (the unknown-user timing-parity path)', () => {
     expect(() => dummyHash('whatever', PEPPER, FAST)).not.toThrow();
+  });
+});
+
+describe('isPhc / UNESTABLISHED_VERIFIER (Option-B sentinel invariant)', () => {
+  it('the sentinel is NEVER a parseable PHC — recoveryEstablished can never falsely imply a verifier', () => {
+    // secSys-required pin: parsePhc(sentinel) === null (asserted via the exported predicate).
+    expect(isPhc(UNESTABLISHED_VERIFIER)).toBe(false);
+    expect(isPhc('')).toBe(false);
+    expect(isPhc('not-a-phc')).toBe(false);
+    expect(isPhc('$scrypt$v=19$m=256,t=1,p=1$a$b')).toBe(false);
+  });
+  it('a real Argon2id verifier IS a parseable PHC', () => {
+    expect(isPhc(hashPassword('pw', PEPPER, FAST))).toBe(true);
+    expect(isPhc(hashRecoveryPhrase(generateRecoveryPhrase(), 'acct', PEPPER, FAST))).toBe(true);
   });
 });
 

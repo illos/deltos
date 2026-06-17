@@ -97,6 +97,23 @@ function parsePhc(phc: string): ParsedPhc | null {
   }
 }
 
+/**
+ * Does `s` parse as a REAL Argon2id PHC verifier? The server uses this (NOT a string-equality check) to
+ * decide whether a recovery verifier is established (Option B): /finalize refuses unless this is true, so
+ * `recoveryEstablished=true` always IMPLIES a real verifier; /reset routes a non-PHC stored value through
+ * the dummy-hash branch so a pending account costs the same Argon2id time (no timing oracle). Robust to
+ * ANY non-PHC placeholder, not just the canonical sentinel.
+ */
+export function isPhc(s: string): boolean {
+  return parsePhc(s) !== null;
+}
+
+/**
+ * The fails-CLOSED placeholder stored in `recoveryPhc` between /signup and /recovery/rotate (Option B).
+ * NOT a parseable PHC (`isPhc` is false) — kept here so the writer (signup) + the crypto predicate agree.
+ */
+export const UNESTABLISHED_VERIFIER = 'unestablished';
+
 /** Length-checked, branch-free XOR accumulate — no early exit on the first differing byte. */
 export function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;

@@ -23,6 +23,8 @@ import {
   hashRecoveryPhrase,
   verifyRecoveryPhrase,
   dummyRecoveryHash,
+  isPhc,
+  UNESTABLISHED_VERIFIER,
 } from '../passwordCrypto.js';
 import {
   generateSecret,
@@ -74,6 +76,7 @@ const passwordAuth = new Hono<AppEnv>();
 
 const UNIFORM_LOGIN_ERROR = 'wrong username or password';
 const UNIFORM_RESET_ERROR = 'reset could not be completed';
+
 
 const iso = (ms: number) => new Date(ms).toISOString();
 const store = (c: AppContext): AuthStore => createAuthStore(d1Adapter(c.env.DB));
@@ -281,24 +284,26 @@ passwordAuth.post('/signup', async (c) => {
     return apiError(c, 409, 'username_taken', 'that username is taken');
   }
 
-  const recoveryPhrase = generateRecoveryPhrase(); // leaves the server EXACTLY ONCE, here
+  // SINGLE Argon2id (password only) — the free-plan CPU ceiling can't afford a second hash. The recovery
+  // verifier is established by the SEPARATE /recovery/rotate step (which mints the phrase + its Argon2id
+  // verifier); here recoveryPhc is a non-PHC SENTINEL that fails CLOSED (parsePhc → null → verify false)
+  // until rotate replaces it, so /reset against an un-established account can never succeed.
   await s.createPasswordCredential({
     accountId,
     passwordPhc: hashPassword(parsed.data.password, pepper, ARGON2_PARAMS),
-    recoveryPhc: hashRecoveryPhrase(recoveryPhrase, accountId, pepper, ARGON2_PARAMS),
+    recoveryPhc: UNESTABLISHED_VERIFIER,
     createdAt: iso(nowMs),
   });
 
   // P0 SUSPENDERS (spec §P0): NO durable refresh cookie here. Signup returns only the IN-MEMORY access
-  // token (carries the in-session register→show-phrase→ack flow) + the recovery phrase. The cross-boot
-  // durable cookie is set at FINALIZE, after the user save-acks the phrase — so a registration abandoned
-  // before the ack never silently re-auths on next boot. `recoveryEstablished` stays false until finalize.
+  // token (carries the in-session register→rotate→show-phrase→ack flow). The cross-boot durable cookie is
+  // set at FINALIZE, after the user save-acks the phrase — so a registration abandoned before the ack
+  // never silently re-auths on next boot. `recoveryEstablished` stays false until finalize.
   const access = await mintAccessToken(s, accountId, nowMs);
   return c.json(
     {
       accountId,
       username: norm.value.display,
-      recoveryPhrase,
       token: access.token,
       expiresAt: access.expiresAt,
     },
@@ -486,8 +491,11 @@ passwordAuth.post('/reset', async (c) => {
   const accountId = norm.ok ? await s.resolveAccountIdByUsername(norm.value.normalized) : null;
   const credential = accountId ? await s.getCredentialByAccount(accountId) : null;
 
-  // UNIFORM real-or-dummy recovery hash (no existence oracle).
-  if (!accountId || !credential) {
+  // UNIFORM real-or-dummy recovery hash (no existence oracle). A non-PHC stored verifier (the Option-B
+  // sentinel for an account whose recovery is not yet established) MUST also burn the dummy hash — else a
+  // pending account returns ~0ms vs ~290ms for an established one = a persistent timing oracle for the
+  // un-established state (secSys (a)). So route unknown-account AND sentinel-verifier through the dummy.
+  if (!accountId || !credential || !isPhc(credential.recoveryPhc)) {
     dummyRecoveryHash(parsed.data.recoveryPhrase, pepper, ARGON2_PARAMS);
     return fail();
   }
@@ -523,6 +531,16 @@ passwordAuth.post(
       if (principal.kind !== 'owner') return apiError(c, 403, 'forbidden', 'only an account may finalize');
       const s = store(c);
       const nowMs = Date.now();
+      // BELT GUARD (Option B): recoveryEstablished=true must IMPLY a real recovery verifier exists. Since
+      // the verifier is now established at /recovery/rotate (not inline at /signup), REFUSE to finalize an
+      // account whose recoveryPhc is still the sentinel — otherwise finalize-without-rotate would mark an
+      // account "established" with no recoverable phrase + no re-prompt (the exact P0 the belt prevents).
+      // Parse-based (secSys): refuse unless recoveryPhc is a REAL PHC verifier — robust to ANY non-PHC
+      // placeholder, never dependent on client call-ordering. recoveryEstablished=true ⟹ a real verifier.
+      const cred = await s.getCredentialByAccount(principal.id);
+      if (!cred || !isPhc(cred.recoveryPhc)) {
+        return apiError(c, 409, 'recovery_not_established', 'establish a recovery phrase before finalizing');
+      }
       // ATOMIC (secSys (b)): flip recoveryEstablished=true AND insert the durable-session row in one
       // transaction, then set the cookie — the BELT flag and the SUSPENDERS cookie can never diverge.
       const refreshToken = authCrypto.randomToken(32);

@@ -61,8 +61,16 @@ export const TOTP_ISSUER = 'deltos';
  * real-CF-Workers CPU/memory cost and TUNES these to budget via the ladder (rung 1 = step these down on
  * pure-JS `@noble`, free; WASM only as a logged dep exception). The algorithm is fixed. A login under
  * stale params auto-rehashes to whatever this is (rehash-on-login).
+ *
+ * READY TOGGLE — AP-M1 ladder rung-1 step-down (DO NOT enable without a secSys nod). The full-strength
+ * default is ~290ms CPU/hash on real workerd, which sits at the Workers FREE-plan CPU edge. For free-plan
+ * MARGIN, swap to one of these measured-on-workerd alternatives (each ~halves the CPU, stays at/above the
+ * OWASP interactive floor); irrelevant if the account moves to Workers Paid (full params + limits.cpu_ms):
+ *   { m: 19456, t: 1, p: 1 } // ~152ms (half the time cost)
+ *   { m: 12288, t: 2, p: 1 } // ~189ms (lower memory)
+ *   { m: 9216,  t: 2, p: 1 } // ~139ms (lower memory)
  */
-export const ARGON2_PARAMS: Argon2Params = DEFAULT_ARGON2_PARAMS;
+export const ARGON2_PARAMS: Argon2Params = DEFAULT_ARGON2_PARAMS; // {19456,2,1} — full strength, ~290ms
 
 /**
  * Per-account exponential backoff — the cheap GATE that runs BEFORE Argon2id (AP-4, the CPU-amplification
