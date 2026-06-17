@@ -432,6 +432,8 @@ a.auth__link { display: inline; }
   color: var(--muted);
   min-width: 1.2rem;
   flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* QR code container */

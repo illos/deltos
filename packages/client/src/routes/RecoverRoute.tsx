@@ -27,6 +27,7 @@ export function RecoverRoute() {
   const { enrollExisting, register, mintSession, finalizeEnroll } = useAuthStore();
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>({ tag: 'entry' });
+  const [hasMnemonic, setHasMnemonic] = useState(false);
   const mnemonicRef = useRef<HTMLTextAreaElement>(null);
 
   // PIN-ID-9: synchronous handler — no preceding await before enrollExisting() call.
@@ -118,10 +119,11 @@ export function RecoverRoute() {
         autoCapitalize="none"
         autoCorrect="off"
         spellCheck={false}
+        onChange={() => setHasMnemonic(!!mnemonicRef.current?.value.trim())}
       />
 
-      <button className="auth__btn auth__btn--primary" onClick={handleRecover}>
-        Recover with Passkey
+      <button className="auth__btn auth__btn--primary" onClick={handleRecover} disabled={!hasMnemonic}>
+        Recover
       </button>
 
       <div className="auth__links">

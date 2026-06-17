@@ -58,6 +58,7 @@ export function EnrollRoute() {
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>({ tag: 'welcome' });
   const [phraseSaved, setPhraseSaved] = useState(false);
+  const [phraseCopied, setPhraseCopied] = useState(false);
   const [showQr, setShowQr] = useState(false);
 
   // Username step local state
@@ -165,6 +166,18 @@ export function EnrollRoute() {
             </span>
           ))}
         </div>
+
+        <button
+          className="auth__btn"
+          onClick={() => {
+            void navigator.clipboard.writeText(step.mnemonic).then(() => {
+              setPhraseCopied(true);
+              setTimeout(() => setPhraseCopied(false), 2000);
+            });
+          }}
+        >
+          {phraseCopied ? 'Copied!' : 'Copy phrase'}
+        </button>
 
         {/* QR-send: encoded mnemonic for another device to scan (in-person QR-join) */}
         <button
