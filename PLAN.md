@@ -592,3 +592,36 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   unified-title at spec time. **NEXT:** team build-status
   inventory → planner writes ORDERED specs → hand to pilot AFTER the in-flight dogfood fixes (clean-copy,
   dead button, conflict-screen-on-exit, onboarding-refinement, autofocus) settle.
+- 2026-06-17 — **🆕 SWIPE ACTIONS on the note list (mobile) — SPEC-READY → pilot.** User handed a
+  feature-export packet (`_inbox/SWIPE_ACTIONS_EXPORT.md`, from TRKR) and asked for iOS-Mail-style swipe
+  rows on the note list, mobile-first. Spec: `docs/specs/swipe-actions-note-list.md`. **Decisions (user):**
+  (1) **swipe RIGHT verbatim** — soft swipe reveals **Copy + Delete**, hard fling commits Delete with the
+  stretchy-delete feel; (2) **swipe LEFT reserved** (future Pin / other — seam only, no action v1); (3)
+  **mobile only** for now (desktop keeps tap-to-open). **Delivers the milestone's missing DELETE
+  affordance** + a duplicate. **Architecture call (planSys, perf standing-value):** NO framer-motion / no
+  new dep — hand-roll with Pointer Events + imperative CSS-transform (no re-renders during drag) + CSS/rAF
+  snap (~150–200 LOC, ~0 bundle delta); the packet is a **behavioral reference only** (React 18 +
+  framer-motion → our React 19 + hand-rolled CSS forces a rewrite; reuse-discipline). **Key build nuance:**
+  the existing `deleteNote()` is a hard local delete with NO enqueue (it applies *server* tombstones) — a
+  user swipe-delete needs a NEW **sync-correct soft-delete+undo** path (mark `deletedAt` + enqueue,
+  mirroring `putNoteAndEnqueue`; undo = resurrect) → Lane 1 = devSys2/devSys (data, regression-tested
+  against REAL D1 per `[[d1-rowswritten-index-inflation]]`), Lane 2 = gruntSys2 (gesture/UI), secSys light
+  account-scope confirm. Perf-budget gate on hand-back (report bundle delta; load-feel must hold).
+  **→ 🚀 SHIPPED LIVE (2026-06-17, @fc11051, version c6c5d394) on https://deltos.blackgate.studio.**
+  Final storage model = **Fork P** (a reserved system-key `sys:trashedAt` in the note PROPERTIES bag — the
+  ONLY sync-correct simple vehicle, since `noteVersions` is client-only/unsynced; rides the P1-hardened
+  `updateNote`/`rows_written>0` CAS, ZERO migration, no op-verb — @e4ad1ad op-enum reverted). The trash
+  marker lives under a **reserved system-namespace** (hidden from property UI + excluded from md/frontmatter
+  export NOW + not user-editable). Delete is **sticky + recoverable** (undo toast immediately, or the
+  **Trash view** via footer link); duplicate works. **PERF BUDGET PASS** (perf standing-value held):
+  served JS 233.6 KB gzip, **+~8.6 KB raw whole-feature / single-digit-KB gzip, NO new dependency**
+  (hand-rolled gesture, no framer-motion), load-feel unchanged. **OPEN:** (a) on-device FEEL-TUNING relay
+  (planSys ↔ user; thresholds SNAP_OPEN=60/FAR_RIGHT=240/OPEN_RIGHT=120 + easing → gruntSys2); (b) real-D1
+  trash round-trip (SA-T5/T6) exercised live by the user's session; (c) **swipe LEFT action still
+  reserved/undecided** (Pin candidate). **Decision arc (storage):** F(version-record)→P(props)→F1(synced
+  column)→**P(props+reserved-namespace)** — converged once devSys verified noteVersions doesn't sync + the
+  history-bonus was void; P won on anti-bloat + reuse-of-hardened-D1-path + the user's own "special tag"
+  model. **Process correction (user, firm):** push-when-ready is STANDING — ready+green+non-destructive
+  ships proactively, no per-deploy greenlight ([[standing-authorization]]); only genuine data-safety gates
+  a push (here: the interim deletedAt-delete didn't stick online + would resurrect → shipped complete Fork P
+  instead).
