@@ -16,6 +16,8 @@ import {
   trashedAt,
   setTrashedAt,
   UserPropertyKeySchema,
+  UserPropertyBagSchema,
+  containsReservedKey,
 } from '../src/spine/reservedKeys.js';
 import type { PropertyBag } from '../src/spine/property.js';
 
@@ -75,5 +77,16 @@ describe('reserved system-key namespace', () => {
     expect(UserPropertyKeySchema.safeParse('status').success).toBe(true);
     expect(UserPropertyKeySchema.safeParse(SYS_TRASHED_AT_KEY).success).toBe(false);
     expect(UserPropertyKeySchema.safeParse(`${RESERVED_KEY_PREFIX}anything`).success).toBe(false);
+  });
+
+  it('SA-9 mutate-boundary guard: a user-originated bag with a reserved key is REJECTED', () => {
+    // A buggy/malicious client trying to set the trash flag as a normal property is caught at the
+    // user-content write boundary — not merely hidden in the UI.
+    const sneaky = setTrashedAt(userBag(), NOW); // bag carrying sys:trashedAt
+    expect(containsReservedKey(sneaky)).toBe(true);
+    expect(UserPropertyBagSchema.safeParse(sneaky).success).toBe(false);
+    // A clean user bag passes.
+    expect(containsReservedKey(userBag())).toBe(false);
+    expect(UserPropertyBagSchema.safeParse(userBag()).success).toBe(true);
   });
 });

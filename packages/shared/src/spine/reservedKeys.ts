@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { PropertyBag } from './property.js';
+import { PropertyBagSchema, type PropertyBag } from './property.js';
 
 /**
  * Reserved SYSTEM property-key namespace (planSys HARD GUARDRAIL — v1 acceptance item).
@@ -83,3 +83,26 @@ export const UserPropertyKeySchema = z
   .refine((k) => !isReservedKey(k), {
     message: `property key must not use the reserved "${RESERVED_KEY_PREFIX}" namespace`,
   });
+
+/** True iff `bag` carries ANY reserved system key — the imperative form of the mutate-boundary guard. */
+export function containsReservedKey(bag: PropertyBag): boolean {
+  return Object.keys(bag).some(isReservedKey);
+}
+
+/**
+ * A USER-ORIGINATED property bag — asserts NO reserved key is present (SA-9). The user property-edit
+ * MUTATE BOUNDARY (the editor's set-properties write path) MUST validate against this — NOT merely hide
+ * reserved keys in the UI — so a buggy or malicious client cannot set/clear a system key (e.g. the trash
+ * flag) by writing it as a normal property. The ONLY sanctioned writer of a reserved key is the
+ * dedicated helper ({@link setTrashedAt}); user-content writes go through this guard.
+ *
+ * Fork-P scope note: the trash flag travels the SAME `upsert` as content, so the SERVER cannot
+ * distinguish a legitimate trash toggle from a user edit without the protocol awareness Fork P
+ * deliberately avoids. SA-9 is therefore a CLIENT mutate-boundary guard (enforced via this schema on the
+ * user-content write path), not a server-side invariant — within-account, the documented low-surface
+ * trust model (spec §Security) still holds.
+ */
+export const UserPropertyBagSchema = PropertyBagSchema.refine(
+  (bag) => !containsReservedKey(bag),
+  { message: `property bag must not contain reserved "${RESERVED_KEY_PREFIX}" keys` },
+);
