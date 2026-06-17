@@ -12,7 +12,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { SyncPushEntry } from '@deltos/shared';
-import { updateNote } from '../src/db/mutate.js';
+import { updateNote, deleteNote } from '../src/db/mutate.js';
 import type { DbAdapter, NoteRow } from '../src/db/schema.js';
 
 const ENTRY: SyncPushEntry & { notebookId: string } = {
@@ -52,6 +52,19 @@ describe('updateNote CAS hit-detection — robust to D1 rows_written index infla
 
   it('rowsWritten === 0 (the CAS matched no row) is a CONFLICT', async () => {
     const out = await updateNote(mockDb(0, ROW(5, 9)), ENTRY, 'acct-1', 'now');
+    expect(out.outcome).toBe('conflict');
+  });
+});
+
+describe('deleteNote CAS hit-detection — same D1 rows_written invariant (scopeSys/devSys symmetry ask)', () => {
+  it('rowsWritten > 1 (real-D1 index writes) on a matched soft-delete CAS is ACCEPTED, not a conflict', async () => {
+    const out = await deleteNote(mockDb(4, ROW(2, 6)), 'note-1', 'nb-1', 'acct-1', 1, 'now');
+    expect(out.outcome).toBe('accepted');
+    expect(out.outcome === 'accepted' ? out.syncSeq : -1).toBe(6);
+  });
+
+  it('rowsWritten === 0 against a live row (deletedAt null) is a CONFLICT', async () => {
+    const out = await deleteNote(mockDb(0, ROW(5, 9)), 'note-1', 'nb-1', 'acct-1', 1, 'now');
     expect(out.outcome).toBe('conflict');
   });
 });
