@@ -168,9 +168,9 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
   for (let i = 0; i < entries.length; i += BATCH) {
     const batch = entries.slice(i, i + BATCH);
     const body: SyncPushRequest = {
-      notebookId,
       entries: batch.map((e) => ({
         id: e.payload.id,
+        notebookId: e.payload.notebookId,
         draft: {
           title: e.payload.title,
           properties: e.payload.properties,
@@ -178,6 +178,7 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
         },
         baseVersion: baseFor.get(e.id) ?? e.baseVersion,
       })),
+      notebookEntries: [],
     };
 
     const res = await fetch(`${apiBase}/sync/push`, {
