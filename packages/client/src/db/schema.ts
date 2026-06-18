@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { Note, NoteId, NotebookId } from '@deltos/shared';
+import type { NotebookPushEntry } from '@deltos/shared';
 
 /**
  * The client's stored note shape: the spine {@link Note} plus client-only state. `syncStatus` is
@@ -31,13 +32,19 @@ export interface NoteVersion {
 }
 
 /**
- * A locally-mirrored notebook entry. Notebooks are server-authoritative; the client holds a
- * read-only mirror populated on boot and reconnect. Never written via syncQueue.
+ * A locally-mirrored notebook entry. Synced entity with full server state; the client also
+ * queues mutations via notebookQueue and merges pull results into this table.
  */
 export interface NotebookRow {
   id: NotebookId;
   name: string;
+  defaultCollectionView: string;
+  isDefault: boolean;
+  version: number;
+  createdAt: string;
   updatedAt: string;
+  deletedAt: string | null;
+  syncSeq: number;
 }
 
 /**
@@ -64,6 +71,18 @@ export interface SyncQueueEntry {
   payload: Note;        // full note snapshot at write time
   baseVersion: number;  // note.version at write time — the atomic CAS precondition
   createdAt: string;    // ISO-8601, queue ordering key
+  isMove?: boolean;     // true when the note's notebookId changed (explicit move signal)
+}
+
+/**
+ * One entry in the outbound notebook sync queue. The sync engine dedupes by recordId before
+ * pushing. Only writer is mutateNotebooks (create/rename/delete).
+ */
+export interface NotebookQueueEntry {
+  id: string;            // queue-scoped UUID
+  recordId: NotebookId;  // notebook id — dedup key
+  payload: NotebookPushEntry;
+  createdAt: string;
 }
 
 class DeltosDB extends Dexie {
@@ -72,6 +91,7 @@ class DeltosDB extends Dexie {
   notebooks!: EntityTable<NotebookRow, 'id'>;
   noteVersions!: EntityTable<NoteVersion, 'id'>;
   deviceState!: EntityTable<DeviceStateRow, 'key'>;
+  notebookQueue!: EntityTable<NotebookQueueEntry, 'id'>;
 
   constructor() {
     super('deltos');
@@ -99,6 +119,9 @@ class DeltosDB extends Dexie {
     this.version(5).stores({
       // Per-device key-value state (never synced): current-notebook pointer, etc.
       deviceState: 'key',
+    });
+    this.version(6).stores({
+      notebookQueue: 'id, recordId, createdAt',
     });
   }
 }

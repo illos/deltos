@@ -22,7 +22,7 @@ import { ConflictBadgeSlot } from './components/ConflictBadgeSlot.js';
 import { SwipeRow } from './components/SwipeRow.js';
 import { useAuthStore } from './auth/store.js';
 import { selectBootView } from './auth/shellGate.js';
-import { useNotes } from './db/storeHooks.js';
+import { useNotes, useCurrentNotebook } from './db/storeHooks.js';
 import { mutateNotes } from './db/mutate.js';
 import { showToast, showActionToast } from './lib/toastEvents.js';
 
@@ -168,6 +168,8 @@ function AuthedShell() {
   const _ready = useNotebookStore((s) => s._ready);
   const currentNotebookId = useNotebookStore((s) => s.currentNotebookId);
   const initNotebook = useNotebookStore((s) => s.init);
+  const notebook = useCurrentNotebook();
+  const notebookName = notebook?.name ?? '…';
 
   // Load the device-local current notebook from IDB on first mount (with localStorage migration).
   useEffect(() => { void initNotebook(); }, [initNotebook]);
@@ -204,9 +206,18 @@ function AuthedShell() {
   return (
     <div className="shell">
       <header className="shell__bar">
+        {/* TODO #21: wire onClick to open the left nav drawer */}
+        <button className="shell__nb-trigger" onClick={() => {/* drawer — #21 */}} aria-label={`Switch notebook (${notebookName})`}>
+          <span className="shell__nb-name">{notebookName}</span>
+          <span className="shell__nb-chevron"> ▾</span>
+        </button>
         <Link to="/" className="shell__mark">δ deltos</Link>
-        <SessionStatus />
-        <SyncIndicator />
+        <div className="shell__bar-end">
+          {/* TODO #21: wire search affordance */}
+          <button className="shell__search-btn" aria-label="Search" onClick={() => {/* search — later */}}>🔍</button>
+          <SessionStatus />
+          <SyncIndicator />
+        </div>
       </header>
 
       <main className="shell__main">
@@ -222,6 +233,8 @@ function AuthedShell() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+
+      <Link to="/new" className="shell__fab" aria-label="New note">＋</Link>
 
       {/* TOAST-HOST MOUNT SLOT — gruntSys2 fills this with the conflict ToastHost for Part 2.
           Leave the slot; do not build the toast here. */}

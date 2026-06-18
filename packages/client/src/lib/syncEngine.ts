@@ -1,7 +1,7 @@
 import { getStore } from '../db/store.js';
 import { useAuthStore } from '../auth/store.js';
 import { showConflictToast } from './toastEvents.js';
-import type { SyncQueueEntry } from '../db/schema.js';
+import type { SyncQueueEntry, NotebookQueueEntry, NotebookRow } from '../db/schema.js';
 import type { Note, NoteId, NotebookId, SyncStatus } from '@deltos/shared';
 import { NoteResponseSchema } from '@deltos/shared';
 import type {
@@ -9,7 +9,10 @@ import type {
   SyncPushResponse,
   SyncPullResponse,
   SyncNote,
+  SyncNotebook,
+  NotebookPushResult,
 } from '@deltos/shared';
+import { useNotebookStore } from './notebookStore.js';
 
 /**
  * The `Authorization: Bearer <grant-token>` header for sync requests. The token is read FRESH from
@@ -108,6 +111,7 @@ async function runSync(notebookId: NotebookId, apiBase: string): Promise<void> {
   try {
     setState('syncing');
     await pushQueued(notebookId, apiBase);
+    await pushNotebooks(apiBase);
     await pullUpdates(notebookId, apiBase);
     const remaining = await getStore().queueCount(); // any queue left?
     setState(remaining > 0 ? 'pending' : 'idle');
@@ -170,7 +174,9 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
     const body: SyncPushRequest = {
       entries: batch.map((e) => ({
         id: e.payload.id,
-        notebookId: e.payload.notebookId,
+        // INSERT (baseVersion 0) always declares its notebook; plain UPDATE omits so the server keeps the
+        // existing assignment; an explicit move sets isMove in the queue entry (detected in putNoteAndEnqueue).
+        ...(e.baseVersion === 0 || e.isMove ? { notebookId: e.payload.notebookId } : {}),
         draft: {
           title: e.payload.title,
           properties: e.payload.properties,
@@ -260,7 +266,8 @@ async function pullUpdates(notebookId: NotebookId, apiBase: string): Promise<voi
 
     const json: SyncPullResponse = await res.json();
 
-    await mergePull(json.notes, notebookId);
+    await mergePull(json.notes);
+    await mergeNotebooks(json.notebooks);
 
     next = json.nextCursor;
     hasMore = json.hasMore;
@@ -278,7 +285,7 @@ async function pullUpdates(notebookId: NotebookId, apiBase: string): Promise<voi
  *
  * Exported for direct testing (syncEngine.test.ts).
  */
-export async function mergePull(notes: SyncNote[], _notebookId: NotebookId): Promise<void> {
+export async function mergePull(notes: SyncNote[]): Promise<void> {
   // The engine splits the wire notes into live puts vs tombstone deletes; the store's
   // mergeServerNotes applies both atomically AND computes the pending-edit guard inside its own
   // notes+queue transaction (closing the TOCTOU window — see dexieLocalStore.mergeServerNotes).
@@ -303,6 +310,97 @@ export async function mergePull(notes: SyncNote[], _notebookId: NotebookId): Pro
   }
 
   await getStore().mergeServerNotes(liveNotes, tombstones);
+}
+
+// ---------------------------------------------------------------------------
+// Notebook sync helpers
+// ---------------------------------------------------------------------------
+
+async function mergeNotebooks(notebooks: SyncNotebook[]): Promise<void> {
+  if (notebooks.length === 0) return;
+  const deletedIds: NotebookId[] = [];
+  for (const nb of notebooks) {
+    const row: NotebookRow = {
+      id: nb.id as NotebookId,
+      name: nb.name,
+      defaultCollectionView: nb.defaultCollectionView,
+      isDefault: nb.isDefault,
+      version: nb.version,
+      createdAt: nb.createdAt,
+      updatedAt: nb.updatedAt,
+      deletedAt: nb.deletedAt,
+      syncSeq: nb.syncSeq,
+    };
+    await getStore().putNotebook(row);
+    if (nb.deletedAt !== null) deletedIds.push(nb.id as NotebookId);
+  }
+  // Reconcile current-notebook pointer: if the current notebook was deleted, switch to the default.
+  if (deletedIds.length > 0) {
+    const { currentNotebookId, setCurrentNotebook } = useNotebookStore.getState();
+    if (currentNotebookId && deletedIds.includes(currentNotebookId)) {
+      const defaultNb = notebooks.find((nb) => nb.isDefault && nb.deletedAt === null);
+      if (defaultNb) await setCurrentNotebook(defaultNb.id as NotebookId);
+    }
+  }
+}
+
+async function dedupeNotebookQueue(): Promise<NotebookQueueEntry[]> {
+  const all = await getStore().notebookQueueEntries();
+  const byNotebook = new Map<string, NotebookQueueEntry>();
+  for (const e of all) {
+    const existing = byNotebook.get(e.recordId);
+    if (!existing || e.createdAt > existing.createdAt) byNotebook.set(e.recordId, e);
+  }
+  return [...byNotebook.values()];
+}
+
+async function pushNotebooks(apiBase: string): Promise<void> {
+  const entries = await dedupeNotebookQueue();
+  if (entries.length === 0) return;
+
+  const body: SyncPushRequest = {
+    entries: [],
+    notebookEntries: entries.map((e) => e.payload),
+  };
+
+  const res = await fetch(`${apiBase}/sync/push`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`push notebooks ${res.status}`);
+
+  const json: SyncPushResponse = await res.json();
+
+  for (const result of json.notebookResults) {
+    const pushed = entries.find((e) => e.payload.id === result.id);
+    if (!pushed) continue;
+    if (result.outcome === 'accepted') {
+      await getStore().updateNotebookVersion(result.id as NotebookId, result.version);
+    } else {
+      // Conflict: adopt server state OR restore on default_undeletable.
+      const conflictResult = result as Extract<NotebookPushResult, { outcome: 'conflict' }>;
+      if (conflictResult.serverNotebook) {
+        const sn = conflictResult.serverNotebook;
+        await getStore().putNotebook({
+          id: sn.id as NotebookId,
+          name: sn.name,
+          defaultCollectionView: sn.defaultCollectionView,
+          isDefault: sn.isDefault,
+          version: sn.version,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          deletedAt: null,
+          syncSeq: 0,
+        });
+      } else if (conflictResult.reason === 'default_undeletable') {
+        // Delete was rejected — restore the row
+        const nb = await getStore().getNotebook(result.id as NotebookId);
+        if (nb) await getStore().putNotebook({ ...nb, deletedAt: null });
+      }
+    }
+    await getStore().drainNotebookQueueEntry(pushed.id);
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import type { Note, NoteId, NotebookId } from '@deltos/shared';
-import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry } from './schema.js';
+import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry, NotebookQueueEntry } from './schema.js';
 
 /** Conflict resolution actions (UX-called) — values match the spec + UX button labels. */
 export type ConflictResolution = 'keep-mine' | 'keep-theirs' | 'keep-both';
@@ -110,7 +110,20 @@ export interface LocalStore {
    */
   mergeServerNotes(liveNotes: Note[], tombstones: NoteId[]): Promise<void>;
 
-  // --- notebooks: the read-only server mirror ---
+  // --- notebooks mirror ---
   getNotebook(id: NotebookId): Promise<NotebookRow | undefined>;
   putNotebook(row: NotebookRow): Promise<void>;
+  /** Reactive list of all live (non-deleted) notebooks, sorted by name asc. */
+  observeNotebooks(cb: (notebooks: NotebookRow[]) => void): Unsubscribe;
+  /**
+   * Atomic notebook write + queue entry: notebook row + queue entry land in one transaction.
+   * Only writer for notebook CRUD (create/rename/delete via mutateNotebooks).
+   */
+  putNotebookAndEnqueue(row: NotebookRow, entry: NotebookQueueEntry): Promise<void>;
+  /** All notebook queue entries (the sync engine dedupes before pushing). */
+  notebookQueueEntries(): Promise<NotebookQueueEntry[]>;
+  /** Remove a single notebook queue entry after it has been pushed (accepted or conflict-resolved). */
+  drainNotebookQueueEntry(id: string): Promise<void>;
+  /** Update the notebook's confirmed server version after a push is accepted. */
+  updateNotebookVersion(id: NotebookId, version: number): Promise<void>;
 }

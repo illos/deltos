@@ -1,15 +1,14 @@
-import { useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useParams, Link, useSearchParams, Navigate } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
 import { NoteIdSchema } from '@deltos/shared';
-import { useNote } from '../db/storeHooks.js';
+import { useNote, useNotebooks } from '../db/storeHooks.js';
 import { mutateNotes } from '../db/mutate.js';
 import { notifyQueueWrite } from '../lib/syncEngine.js';
-import { getDefaultNotebookId } from '../lib/notebooks.js';
 import { NoteEditor } from '../editor/NoteEditor.js';
 import { resolveNoteView } from '../editor/views.js';
 import { ConflictView } from '../components/ConflictView.js';
-import type { ClientNote } from '../db/schema.js';
+import type { ClientNote, NotebookRow } from '../db/schema.js';
 
 /**
  * Loads a note by ID through the LocalStore seam and renders the appropriate view.
@@ -28,11 +27,13 @@ export function NoteRoute() {
   // ConflictView is gated behind an explicit ?resolve param — never auto-triggered by sync.
   // Paths that set it: badge-tap (ConflictBadgeSlot) and back-with-conflict (← Notes below).
   const isResolving = searchParams.has('resolve');
+  const [showMove, setShowMove] = useState(false);
+  const notebooks = useNotebooks();
 
   // Stable save handler: write to Dexie then kick Stream B's debounced sync.
   const handleSave = useCallback(async (note: Note) => {
     await mutateNotes.put(note);
-    notifyQueueWrite(getDefaultNotebookId());
+    notifyQueueWrite(note.notebookId);
   }, []);
 
   const noteId = id ? NoteIdSchema.safeParse(id) : null;
@@ -70,6 +71,13 @@ export function NoteRoute() {
     );
   }
 
+  const handleMove = useCallback(async (currentNote: Note, targetNotebook: NotebookRow) => {
+    if (targetNotebook.id === currentNote.notebookId) { setShowMove(false); return; }
+    await mutateNotes.put({ ...currentNote, notebookId: targetNotebook.id });
+    notifyQueueWrite(targetNotebook.id);
+    setShowMove(false);
+  }, []);
+
   const ViewComponent = resolveNoteView(note, NoteEditor);
   return (
     <>
@@ -81,6 +89,26 @@ export function NoteRoute() {
       >
         ← Notes
       </Link>
+      {showMove && (
+        <div className="editor__move-picker" role="dialog" aria-label="Move note to notebook">
+          <p className="editor__move-title">Move to notebook</p>
+          <ul className="editor__move-list">
+            {notebooks.map((nb) => (
+              <li key={nb.id}>
+                <button
+                  className={`editor__move-nb${nb.id === note.notebookId ? ' editor__move-nb--current' : ''}`}
+                  onClick={() => { void handleMove(note, nb); }}
+                  disabled={nb.id === note.notebookId}
+                >
+                  {nb.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button className="editor__move-cancel" onClick={() => setShowMove(false)}>Cancel</button>
+        </div>
+      )}
+      <button className="editor__move-btn" onClick={() => setShowMove(true)}>Move to notebook…</button>
       <ViewComponent note={note} onSave={handleSave} />
     </>
   );

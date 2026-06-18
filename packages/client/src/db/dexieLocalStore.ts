@@ -2,7 +2,7 @@ import { liveQuery } from 'dexie';
 import type { Note, NoteId, NotebookId, SyncStatus } from '@deltos/shared';
 import { isTrashed, trashedAt } from '@deltos/shared';
 import { db } from './schema.js';
-import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry } from './schema.js';
+import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry, NotebookQueueEntry } from './schema.js';
 import type { ConflictResolution, LocalStore, Unsubscribe } from './localStore.js';
 
 /**
@@ -156,9 +156,10 @@ export const dexieLocalStore: LocalStore = {
     await db.transaction('rw', db.notes, db.syncQueue, async () => {
       const existing = await db.notes.get(note.id);
       const version = existing ? existing.version : note.version;
+      const isMove = existing ? existing.notebookId !== note.notebookId : false;
       const synced: Note = { ...note, version };
       await db.notes.put(synced);
-      await db.syncQueue.add({ ...entry, payload: synced, baseVersion: version });
+      await db.syncQueue.add({ ...entry, payload: synced, baseVersion: version, ...(isMove ? { isMove: true } : {}) });
     });
   },
 
@@ -263,5 +264,36 @@ export const dexieLocalStore: LocalStore = {
 
   async putNotebook(row: NotebookRow): Promise<void> {
     await db.notebooks.put(row);
+  },
+
+  observeNotebooks(cb: (notebooks: NotebookRow[]) => void): Unsubscribe {
+    const sub = liveQuery(async () => {
+      const all = await db.notebooks.toArray();
+      return all
+        .filter((nb) => nb.deletedAt === null)
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }).subscribe({ next: cb });
+    return () => sub.unsubscribe();
+  },
+
+  async putNotebookAndEnqueue(row: NotebookRow, entry: NotebookQueueEntry): Promise<void> {
+    await db.transaction('rw', db.notebooks, db.notebookQueue, async () => {
+      await db.notebooks.put(row);
+      await db.notebookQueue.add(entry);
+    });
+  },
+
+  notebookQueueEntries(): Promise<NotebookQueueEntry[]> {
+    return db.notebookQueue.toArray();
+  },
+
+  async drainNotebookQueueEntry(id: string): Promise<void> {
+    await db.notebookQueue.delete(id);
+  },
+
+  async updateNotebookVersion(id: NotebookId, version: number): Promise<void> {
+    await db.notebooks.where('id').equals(id).modify((nb: NotebookRow) => {
+      nb.version = version;
+    });
   },
 };
