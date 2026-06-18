@@ -18,6 +18,12 @@
       "migrations_dir": "migrations",
     },
   ],
+  // Workers PAID (user upgrade 2026-06-18): raise the CPU ceiling so full-strength Argon2id
+  // (m=19456,t=2,p=1) signup/login/reset no longer trips the free-plan ~10ms cap (CF 1102
+  // exceededCpu). Full secSys-load-bearing params stay — Paid funds the cost.
+  "limits": {
+    "cpu_ms": 30000,
+  },
   "vars": {
     // F13 fail-CLOSED tripwire: prod refuses the dev-only unverified principal.
     "ENVIRONMENT": "production",
