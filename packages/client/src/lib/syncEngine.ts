@@ -320,8 +320,10 @@ export const SYNC_PUSH_CADENCE = { idleSettleMs: 2000, maxWaitMs: 5000 } as cons
  * Visibility-gated pull cadence (planSys-blessed; tunable — do not bury the literal).
  * visibleIntervalMs: periodic pull ONLY while the page is visible (battery/cost: don't poll a
  * backgrounded tab). Suspended on visibilitychange→hidden, resumed on →visible.
+ * 2s chosen to keep merge-conflict windows short (conflicts are non-destructive, so frequency
+ * trades battery for convergence speed — user preference).
  */
-export const SYNC_PULL_CADENCE = { visibleIntervalMs: 5_000 } as const;
+export const SYNC_PULL_CADENCE = { visibleIntervalMs: 2_000 } as const;
 
 let _idleTimer: ReturnType<typeof setTimeout> | null = null;
 let _maxWaitTimer: ReturnType<typeof setTimeout> | null = null;
