@@ -41,6 +41,16 @@ export interface NotebookRow {
 }
 
 /**
+ * Per-device key-value state that is NEVER synced. Used for device-local pointers such as the
+ * current-notebook selection (NOT localStorage — iOS evicts localStorage on storage pressure;
+ * IDB survives. See e4-cold-reload-fix / cold-reload-rehydration-guard memories).
+ */
+export interface DeviceStateRow {
+  key: string;
+  value: string;
+}
+
+/**
  * One entry in the outbound sync queue. The sync engine (Stream B) is the sole reader/drainer.
  * `mutateNotes.put()` is the only writer — never call db.notes.put() directly.
  *
@@ -61,6 +71,7 @@ class DeltosDB extends Dexie {
   syncQueue!: EntityTable<SyncQueueEntry, 'id'>;
   notebooks!: EntityTable<NotebookRow, 'id'>;
   noteVersions!: EntityTable<NoteVersion, 'id'>;
+  deviceState!: EntityTable<DeviceStateRow, 'key'>;
 
   constructor() {
     super('deltos');
@@ -84,6 +95,10 @@ class DeltosDB extends Dexie {
       // PART 2 conflict-as-version: retained whole-note snapshots keyed to the SAME note id.
       // [noteId+accountId] compound index serves the accountId-scoped per-note read (client D6).
       noteVersions: 'id, noteId, [noteId+accountId]',
+    });
+    this.version(5).stores({
+      // Per-device key-value state (never synced): current-notebook pointer, etc.
+      deviceState: 'key',
     });
   }
 }

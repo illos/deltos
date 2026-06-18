@@ -1,21 +1,14 @@
-import { NotebookIdSchema } from '@deltos/shared';
 import type { NotebookId } from '@deltos/shared';
-import { newNotebookId } from './ids.js';
-
-const STORAGE_KEY = 'deltos.defaultNotebookId';
+import { useNotebookStore } from './notebookStore.js';
 
 /**
- * Phase 1 stub: returns a stable default notebook ID, persisted in localStorage.
- * Stream A (identity layer) replaces this with a real notebook bound to the account once
- * passkey unlock and device registration are wired in.
+ * Returns the current notebook ID. Only valid inside AuthedShell after `notebookStore.init()`
+ * has resolved and `currentNotebookId` is non-null (i.e. routes only render in that state).
+ *
+ * Phase-1 stub used localStorage; this version reads from the Zustand/IDB-backed store.
  */
 export function getDefaultNotebookId(): NotebookId {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (raw) {
-    const parsed = NotebookIdSchema.safeParse(raw);
-    if (parsed.success) return parsed.data;
-  }
-  const id = newNotebookId();
-  localStorage.setItem(STORAGE_KEY, id);
+  const id = useNotebookStore.getState().currentNotebookId;
+  if (!id) throw new Error('[deltos] getDefaultNotebookId() called before notebook is ready');
   return id;
 }

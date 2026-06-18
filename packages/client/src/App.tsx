@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
+import type { NotebookId } from '@deltos/shared';
 import { NewNote } from './routes/NewNote.js';
 import { NoteRoute } from './routes/NoteRoute.js';
 import { RegisterRoute } from './routes/RegisterRoute.js';
@@ -8,8 +9,11 @@ import { LoginRoute } from './routes/LoginRoute.js';
 import { ResetRoute } from './routes/ResetRoute.js';
 import { ForcedPhraseRoute } from './routes/ForcedPhraseRoute.js';
 import { TrashRoute } from './routes/TrashRoute.js';
+import { AllNotebooksScreen } from './views/AllNotebooksScreen.js';
 import { startSyncTriggers, syncNow } from './lib/syncEngine.js';
-import { getDefaultNotebookId } from './lib/notebooks.js';
+import { resolveCollectionView } from './lib/collectionViews.js';
+import type { CollectionViewProps } from './lib/collectionViews.js';
+import { useNotebookStore } from './lib/notebookStore.js';
 import { notePreview, formatSmartDate } from './lib/notePreview.js';
 import { SyncIndicator } from './components/SyncIndicator.js';
 import { SessionStatus } from './components/SessionStatus.js';
@@ -93,7 +97,12 @@ function AppRoutes() {
   }
 }
 
-function HomeView() {
+/**
+ * The v1 standard-list collection view. Registered as the fallback for `resolveCollectionView`;
+ * future views (kanban, board, etc.) register with a specific `matches` predicate and take
+ * priority. In v1 the notebookId prop is accepted but not used — notes are account-scoped.
+ */
+function HomeView({ notebookId: _notebookId }: CollectionViewProps) {
   const notes = useNotes();
   // Single-open invariant: only one swipe row open at a time
   const [openId, setOpenId] = useState<string | null>(null);
@@ -156,17 +165,41 @@ function HomeView() {
 
 function AuthedShell() {
   const sessionState = useAuthStore((s) => s.sessionState);
+  const _ready = useNotebookStore((s) => s._ready);
+  const currentNotebookId = useNotebookStore((s) => s.currentNotebookId);
+  const initNotebook = useNotebookStore((s) => s.init);
 
+  // Load the device-local current notebook from IDB on first mount (with localStorage migration).
+  useEffect(() => { void initNotebook(); }, [initNotebook]);
+
+  // Start sync triggers only after the notebook ID is known. Restarts on notebook switch.
   useEffect(() => {
-    return startSyncTriggers(getDefaultNotebookId());
-  }, []);
+    if (!currentNotebookId) return;
+    return startSyncTriggers(currentNotebookId);
+  }, [currentNotebookId]);
 
   // When the background session goes live (e.g. after a gesture-unlock from the nudge), drain the
-  // queue immediately rather than waiting for the 30s poll. syncNow is single-flight-guarded, so the
+  // queue immediately rather than waiting for the 2s poll. syncNow is single-flight-guarded, so the
   // StrictMode double-invoke and concurrent triggers collapse to one push.
   useEffect(() => {
-    if (sessionState === 'active') syncNow(getDefaultNotebookId());
-  }, [sessionState]);
+    if (sessionState === 'active' && currentNotebookId) syncNow(currentNotebookId);
+  }, [sessionState, currentNotebookId]);
+
+  // Notebook state is loading — brief IDB read (< 10ms on device).
+  if (!_ready) {
+    return (
+      <div className="auth">
+        <div className="auth__spinner" aria-label="Loading" />
+      </div>
+    );
+  }
+
+  // No notebook set (new device, or dangling pointer) → notebook picker.
+  if (!currentNotebookId) return <AllNotebooksScreen />;
+
+  // Notebook ready: resolve the collection view for this notebook (v1 always returns HomeView).
+  const notebookId: NotebookId = currentNotebookId;
+  const CollectionView = resolveCollectionView(notebookId, HomeView);
 
   return (
     <div className="shell">
@@ -181,7 +214,7 @@ function AuthedShell() {
           <Route path="/new" element={<NewNote />} />
           <Route path="/note/:id" element={<NoteRoute />} />
           <Route path="/trash" element={<TrashRoute />} />
-          <Route path="/" element={<HomeView />} />
+          <Route path="/" element={<CollectionView notebookId={notebookId} />} />
           {/* Auth routes are the gate — redirect home in the shell (session re-established by init on reload). */}
           <Route path="/login" element={<Navigate to="/" replace />} />
           <Route path="/register" element={<Navigate to="/" replace />} />

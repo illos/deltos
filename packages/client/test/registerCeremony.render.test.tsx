@@ -67,6 +67,8 @@ beforeEach(async () => {
   const { db } = await import('../src/db/schema.js');
   await Promise.all(db.tables.map((t) => t.clear()));
   localStorage.clear();
+  // Seed a device-local notebook pointer so AuthedShell lands on the shell, not AllNotebooksScreen.
+  await db.deviceState.put({ key: 'current-notebook', value: '00000000-0000-4000-8000-000000000001' });
 
   // Stub fetch so the shell (HomeView/syncEngine) doesn't crash when it mounts.
   global.fetch = vi.fn(async (url: string | URL) => {
