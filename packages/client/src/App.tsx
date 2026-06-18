@@ -101,10 +101,12 @@ function AppRoutes() {
 /**
  * The v1 standard-list collection view. Registered as the fallback for `resolveCollectionView`;
  * future views (kanban, board, etc.) register with a specific `matches` predicate and take
- * priority. In v1 the notebookId prop is accepted but not used — notes are account-scoped.
+ * priority. Filters the account-wide note store by notebookId so switching notebooks changes
+ * the list. useNotes() stays account-wide (NavContent needs cross-notebook counts).
  */
-function HomeView({ notebookId: _notebookId }: CollectionViewProps) {
-  const notes = useNotes();
+function HomeView({ notebookId }: CollectionViewProps) {
+  const allNotes = useNotes();
+  const notes = allNotes.filter((n) => n.notebookId === notebookId);
   // Single-open invariant: only one swipe row open at a time
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -164,6 +166,10 @@ function HomeView({ notebookId: _notebookId }: CollectionViewProps) {
   );
 }
 
+// Sentinel used as the sync deduplication key on a fresh device before the default
+// notebook arrives via the first pull. The actual account scope comes from the bearer token.
+const INITIAL_SYNC_SENTINEL = '00000000-0000-4000-8000-000000000000' as NotebookId;
+
 function AuthedShell() {
   const sessionState = useAuthStore((s) => s.sessionState);
   const _ready = useNotebookStore((s) => s._ready);
@@ -176,18 +182,21 @@ function AuthedShell() {
   // Load the device-local current notebook from IDB on first mount (with localStorage migration).
   useEffect(() => { void initNotebook(); }, [initNotebook]);
 
-  // Start sync triggers only after the notebook ID is known. Restarts on notebook switch.
+  // Start sync triggers as soon as the notebook pointer IDB read is done — even on a fresh
+  // device with no current notebook. Sync is account-scoped (bearer token); notebookId is
+  // only a push hint. The first pull delivers notebooks → mergeNotebooks auto-selects the
+  // default → currentNotebookId goes from null → real ID → effect restarts with the real key.
+  const syncKey = currentNotebookId ?? INITIAL_SYNC_SENTINEL;
   useEffect(() => {
-    if (!currentNotebookId) return;
-    return startSyncTriggers(currentNotebookId);
-  }, [currentNotebookId]);
+    if (!_ready) return;
+    return startSyncTriggers(syncKey);
+  }, [_ready, syncKey]);
 
-  // When the background session goes live (e.g. after a gesture-unlock from the nudge), drain the
-  // queue immediately rather than waiting for the 2s poll. syncNow is single-flight-guarded, so the
-  // StrictMode double-invoke and concurrent triggers collapse to one push.
+  // When the background session goes live, drain the queue immediately.
+  // syncNow is single-flight-guarded so concurrent triggers collapse to one push.
   useEffect(() => {
-    if (sessionState === 'active' && currentNotebookId) syncNow(currentNotebookId);
-  }, [sessionState, currentNotebookId]);
+    if (sessionState === 'active') syncNow(syncKey);
+  }, [sessionState, syncKey]);
 
   // Notebook state is loading — brief IDB read (< 10ms on device).
   if (!_ready) {

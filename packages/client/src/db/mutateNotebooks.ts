@@ -56,6 +56,9 @@ export const mutateNotebooks = {
     const nb = await getStore().getNotebook(id);
     if (!nb || nb.deletedAt !== null || nb.isDefault) return;
     const now = new Date().toISOString();
+    // Mirror the server-side trash cascade locally so notes leave the main list immediately
+    // (next pull will confirm the server-side tombstones; no sync queue entries needed here).
+    await getStore().trashNotesInNotebook(id, now);
     await getStore().putNotebookAndEnqueue(
       { ...nb, deletedAt: now, updatedAt: now },
       {

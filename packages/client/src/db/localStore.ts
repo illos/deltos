@@ -126,4 +126,12 @@ export interface LocalStore {
   drainNotebookQueueEntry(id: string): Promise<void>;
   /** Update the notebook's confirmed server version after a push is accepted. */
   updateNotebookVersion(id: NotebookId, version: number): Promise<void>;
+
+  /**
+   * Local-only trash cascade: set sys:trashedAt on every live note in the notebook.
+   * Called when a notebook is deleted locally so its notes leave the main list immediately,
+   * mirroring the server-side cascade that the next pull will confirm. No sync-queue entry
+   * is added — the server handles the authoritative delete.
+   */
+  trashNotesInNotebook(notebookId: NotebookId, trashedAtTimestamp: string): Promise<void>;
 }

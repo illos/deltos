@@ -334,13 +334,14 @@ async function mergeNotebooks(notebooks: SyncNotebook[]): Promise<void> {
     await getStore().putNotebook(row);
     if (nb.deletedAt !== null) deletedIds.push(nb.id as NotebookId);
   }
-  // Reconcile current-notebook pointer: if the current notebook was deleted, switch to the default.
-  if (deletedIds.length > 0) {
-    const { currentNotebookId, setCurrentNotebook } = useNotebookStore.getState();
-    if (currentNotebookId && deletedIds.includes(currentNotebookId)) {
-      const defaultNb = notebooks.find((nb) => nb.isDefault && nb.deletedAt === null);
-      if (defaultNb) await setCurrentNotebook(defaultNb.id as NotebookId);
-    }
+  // Reconcile current-notebook pointer:
+  // (a) fresh device (currentNotebookId === null) → auto-select the default on first pull
+  // (b) current notebook was deleted → fall back to default
+  const { currentNotebookId, setCurrentNotebook } = useNotebookStore.getState();
+  const currentDeleted = currentNotebookId !== null && deletedIds.includes(currentNotebookId);
+  if (!currentNotebookId || currentDeleted) {
+    const defaultNb = notebooks.find((nb) => nb.isDefault && nb.deletedAt === null);
+    if (defaultNb) await setCurrentNotebook(defaultNb.id as NotebookId);
   }
 }
 

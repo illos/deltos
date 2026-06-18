@@ -36,6 +36,14 @@ export function NoteRoute() {
     notifyQueueWrite(note.notebookId);
   }, []);
 
+  // Must be above all early returns — hooks must be called in the same order every render.
+  const handleMove = useCallback(async (currentNote: Note, targetNotebook: NotebookRow) => {
+    if (targetNotebook.id === currentNote.notebookId) { setShowMove(false); return; }
+    await mutateNotes.put({ ...currentNote, notebookId: targetNotebook.id });
+    notifyQueueWrite(targetNotebook.id);
+    setShowMove(false);
+  }, []);
+
   const noteId = id ? NoteIdSchema.safeParse(id) : null;
 
   // Reactive read through the store seam; undefined for an invalid id (guarded below) or while loading.
@@ -70,13 +78,6 @@ export function NoteRoute() {
       </>
     );
   }
-
-  const handleMove = useCallback(async (currentNote: Note, targetNotebook: NotebookRow) => {
-    if (targetNotebook.id === currentNote.notebookId) { setShowMove(false); return; }
-    await mutateNotes.put({ ...currentNote, notebookId: targetNotebook.id });
-    notifyQueueWrite(targetNotebook.id);
-    setShowMove(false);
-  }, []);
 
   const ViewComponent = resolveNoteView(note, NoteEditor);
   return (

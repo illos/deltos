@@ -1,6 +1,6 @@
 import { liveQuery } from 'dexie';
 import type { Note, NoteId, NotebookId, SyncStatus } from '@deltos/shared';
-import { isTrashed, trashedAt } from '@deltos/shared';
+import { isTrashed, trashedAt, setTrashedAt } from '@deltos/shared';
 import { db } from './schema.js';
 import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry, NotebookQueueEntry } from './schema.js';
 import type { ConflictResolution, LocalStore, Unsubscribe } from './localStore.js';
@@ -295,5 +295,14 @@ export const dexieLocalStore: LocalStore = {
     await db.notebooks.where('id').equals(id).modify((nb: NotebookRow) => {
       nb.version = version;
     });
+  },
+
+  async trashNotesInNotebook(notebookId: NotebookId, trashedAtTimestamp: string): Promise<void> {
+    // Local-only cascade: no sync queue entries (server handles the authoritative delete).
+    const notes = await db.notes.where('notebookId').equals(notebookId).toArray();
+    const live = notes.filter((n) => !n.deletedAt && !isInTrash(n));
+    await Promise.all(live.map((n) =>
+      db.notes.put({ ...n, properties: setTrashedAt(n.properties, trashedAtTimestamp) }),
+    ));
   },
 };

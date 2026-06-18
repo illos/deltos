@@ -2,6 +2,7 @@
 import js from '@eslint/js';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
+import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   {
@@ -15,6 +16,9 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
   },
   {
+    plugins: {
+      'react-hooks': reactHooks,
+    },
     rules: {
       // The spine deliberately stores plugin/block content opaquely; `unknown` is the
       // contract, never `any`. Forbid the escape hatch so it can't creep in at a boundary.
@@ -26,6 +30,10 @@ export default tseslint.config(
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
       ],
+      // Catches rules-of-hooks violations (conditional hooks, hooks after early returns) at
+      // lint time — would have caught the P0-2 blank-screen bug before it reached prod.
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
     },
   },
 );
