@@ -316,6 +316,13 @@ export async function mergePull(notes: SyncNote[], _notebookId: NotebookId): Pro
  */
 export const SYNC_PUSH_CADENCE = { idleSettleMs: 2000, maxWaitMs: 5000 } as const;
 
+/**
+ * Visibility-gated pull cadence (planSys-blessed; tunable — do not bury the literal).
+ * visibleIntervalMs: periodic pull ONLY while the page is visible (battery/cost: don't poll a
+ * backgrounded tab). Suspended on visibilitychange→hidden, resumed on →visible.
+ */
+export const SYNC_PULL_CADENCE = { visibleIntervalMs: 5_000 } as const;
+
 let _idleTimer: ReturnType<typeof setTimeout> | null = null;
 let _maxWaitTimer: ReturnType<typeof setTimeout> | null = null;
 let _pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -350,11 +357,31 @@ function schedulePush(notebookId: NotebookId, apiBase: string): void {
  * tests that drive syncNow directly are unaffected.
  */
 export function startSyncTriggers(notebookId: NotebookId, apiBase = '/api'): () => void {
-  _pollTimer = setInterval(() => syncNow(notebookId, apiBase), 30_000);
+  // Visibility-gated pull cadence: poll ONLY while visible; suspend when hidden (battery + cost).
+  function startPoll() {
+    if (_pollTimer) return;
+    _pollTimer = setInterval(() => syncNow(notebookId, apiBase), SYNC_PULL_CADENCE.visibleIntervalMs);
+  }
+  function stopPoll() {
+    if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+  }
+
+  // Start polling immediately if visible (normal case on app open or in a foreground tab).
+  if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
+    startPoll();
+  }
 
   const onOnline = () => flushPush(notebookId, apiBase); // reconnect → flush buffered edits now
   const onOffline = () => setState('offline');
-  const onVisibility = () => { if (document.visibilityState === 'hidden') flushPush(notebookId, apiBase); };
+  const onVisibility = () => {
+    if (document.visibilityState === 'hidden') {
+      stopPoll();
+      flushPush(notebookId, apiBase); // mobile backgrounding — bound the unsynced window
+    } else {
+      syncNow(notebookId, apiBase); // immediate pull on return-to-app (don't wait for next tick)
+      startPoll();
+    }
+  };
   const onPageHide = () => flushPush(notebookId, apiBase); // mobile backgrounding — bound the unsynced window
   window.addEventListener('online', onOnline);
   window.addEventListener('offline', onOffline);
@@ -364,7 +391,7 @@ export function startSyncTriggers(notebookId: NotebookId, apiBase = '/api'): () 
   return () => {
     if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
     if (_maxWaitTimer) { clearTimeout(_maxWaitTimer); _maxWaitTimer = null; }
-    if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+    stopPoll();
     window.removeEventListener('online', onOnline);
     window.removeEventListener('offline', onOffline);
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
