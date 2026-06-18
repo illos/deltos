@@ -10,13 +10,12 @@
  * observeTrashedNotes — see storeHooks.ts comment.
  */
 import { Link } from 'react-router-dom';
-import { getDefaultNotebookId } from '../lib/notebooks.js';
 import { useTrashedNotes } from '../db/storeHooks.js';
 import { mutateNotes } from '../db/mutate.js';
 import { showToast } from '../lib/toastEvents.js';
 
 export function TrashRoute() {
-  const notes = useTrashedNotes(getDefaultNotebookId());
+  const notes = useTrashedNotes();
 
   const handleRestore = (note: Parameters<typeof mutateNotes.restore>[0]) => {
     mutateNotes.restore(note).then(() => showToast(`"${note.title || 'Untitled'}" restored`)).catch(console.error);

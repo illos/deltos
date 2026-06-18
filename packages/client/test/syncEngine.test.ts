@@ -122,7 +122,7 @@ describe('single-flight guard (PIN-SYNC-1 client gate)', () => {
 describe('Authorization header (Stream-D, F7 in-memory token)', () => {
   it('attaches Authorization: Bearer <token> to push AND pull, read from the in-memory auth store', async () => {
     const { useAuthStore } = await import('../src/auth/store.js');
-    useAuthStore.setState({ bearerToken: 'grant-tok-abc' });
+    useAuthStore.setState({ bearerToken: 'grant-tok-abc', accountId: 'auth-acct' });
 
     const seedId = 'note-auth-00000000-0000-4000-8000-000000000001';
     const seen: { push?: string; pull?: string } = {};
@@ -160,8 +160,8 @@ describe('Authorization header (Stream-D, F7 in-memory token)', () => {
     expect(seen.push).toBe('Bearer grant-tok-abc');
     expect(seen.pull).toBe('Bearer grant-tok-abc');
 
-    // F7 + test isolation: clear the in-memory token so it can't leak into other tests.
-    useAuthStore.setState({ bearerToken: null });
+    // F7 + test isolation: clear the in-memory session so it can't leak into other tests.
+    useAuthStore.setState({ bearerToken: null, accountId: null });
   });
 });
 
@@ -373,16 +373,15 @@ describe('queue drain on accept', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 3c: single-flight is per-notebook — another notebook is not dropped
+// Test 3c: account-scoped push — all queued entries pushed regardless of payload.notebookId
 // ---------------------------------------------------------------------------
 
-describe('per-notebook single-flight', () => {
-  it('a syncNow for a different notebook during an in-flight cycle is not dropped', async () => {
-    // The single-flight guard must key on notebookId. A global gate (plus a deferred re-run
-    // hardcoded to the in-flight notebook) silently swallows a concurrent syncNow for a different
-    // notebook — its edits never reach the server.
+describe('account-scoped push: all queued entries regardless of payload notebookId', () => {
+  it('syncNow pushes ALL queued entries — including those with a foreign payload notebookId', async () => {
+    // After the Option-B server contract, the sync boundary is accountId (from the bearer token),
+    // not notebookId. dedupeQueue must not filter by payload.notebookId — a note created on a
+    // different device (foreign notebookId) must be pushed in the same batch.
     const { db } = await import('../src/db/schema.js');
-    const NB_A = NB;
     const NB_B = 'nb-test-00000000-0000-4000-8000-0000000000b2' as NotebookId;
 
     const noteA = makeNote('note-a-00000000-0000-4000-8000-000000000001', 0, 'A');
@@ -393,18 +392,12 @@ describe('per-notebook single-flight', () => {
       { id: crypto.randomUUID(), recordId: noteB.id, payload: noteB, baseVersion: 0, createdAt: '2026-06-15T12:00:00.002Z' },
     ]);
 
-    const pushedNotebooks: string[] = [];
-    let releaseA!: () => void;
-    const heldA = new Promise<void>((r) => (releaseA = r));
-    let signalAEntered!: () => void;
-    const aEntered = new Promise<void>((r) => (signalAEntered = r));
-
+    const pushedIds: string[] = [];
     global.fetch = vi.fn(async (url: string, init?: RequestInit) => {
       const u = String(url);
       if (u.includes('/sync/push')) {
-        const body = JSON.parse(String(init!.body)) as { notebookId: string; entries: { id: string }[] };
-        pushedNotebooks.push(body.notebookId);
-        if (body.notebookId === NB_A) { signalAEntered(); await heldA; }
+        const body = JSON.parse(String(init!.body)) as { entries: { id: string }[] };
+        pushedIds.push(...body.entries.map((e) => e.id));
         return new Response(
           JSON.stringify({ results: body.entries.map((e) => ({ id: e.id, outcome: 'accepted', version: 1, syncSeq: 1 })) }),
           { status: 200 },
@@ -421,14 +414,12 @@ describe('per-notebook single-flight', () => {
     } as unknown as Storage;
 
     const { syncNow } = await import('../src/lib/syncEngine.js');
-    syncNow(NB_A, '');
-    await aEntered;                 // notebook A's push is in flight, held open
-    syncNow(NB_B, '');             // different notebook — must run, not be swallowed
-    await new Promise((r) => setTimeout(r, 30)); // let B push concurrently
-    releaseA();
+    syncNow(NB, '');
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(pushedNotebooks).toContain(NB_B);
+    // Both notes pushed in one sync cycle regardless of their payload.notebookId.
+    expect(pushedIds).toContain(noteA.id);
+    expect(pushedIds).toContain(noteB.id);
   });
 });
 

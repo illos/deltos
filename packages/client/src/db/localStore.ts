@@ -38,15 +38,15 @@ export interface LocalStore {
   /** Reactive single-note read for a surface; `cb` gets the current note (or undefined) on each change. */
   observeNote(id: NoteId, cb: (note: ClientNote | undefined) => void): Unsubscribe;
 
-  /** Reactive list of a notebook's LIVE notes (trashed + tombstone-state excluded), updatedAt desc. */
-  observeNotes(notebookId: NotebookId, cb: (notes: ClientNote[]) => void): Unsubscribe;
+  /** Reactive list of ALL account LIVE notes (trashed + tombstone-state excluded), updatedAt desc. */
+  observeNotes(cb: (notes: ClientNote[]) => void): Unsubscribe;
 
   /**
-   * Reactive list of a notebook's TRASHED notes (Fork P soft-delete) — the exact inverse of
+   * Reactive list of ALL account TRASHED notes (Fork P soft-delete) — the exact inverse of
    * observeNotes' trash exclusion (one shared, fail-safe predicate, so the two can't drift), sorted
    * most-recently-trashed first. Powers the trash view.
    */
-  observeTrashedNotes(notebookId: NotebookId, cb: (notes: ClientNote[]) => void): Unsubscribe;
+  observeTrashedNotes(cb: (notes: ClientNote[]) => void): Unsubscribe;
 
   // --- conflict-as-version (Part 2) ---
   /**

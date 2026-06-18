@@ -37,17 +37,19 @@ function authHeader(): Record<string, string> {
  */
 
 // ---------------------------------------------------------------------------
-// Cursor persistence (per-notebook, per-device, PIN-SYNC-2)
+// Cursor persistence (per-account, per-device, PIN-SYNC-2)
+// v2 key is account-scoped; the old v1 per-notebook key is abandoned (first run
+// gets a cursor=0 full re-pull, which backfills all account notes correctly).
 // ---------------------------------------------------------------------------
 
-const CURSOR_KEY = (notebookId: NotebookId) => `deltos.sync.cursor.v1.${notebookId}`;
+const CURSOR_KEY = (accountId: string) => `deltos.sync.cursor.v2.${accountId}`;
 
-export function getSyncCursor(notebookId: NotebookId): number {
-  return Number(localStorage.getItem(CURSOR_KEY(notebookId)) ?? '0');
+export function getSyncCursor(accountId: string): number {
+  return Number(localStorage.getItem(CURSOR_KEY(accountId)) ?? '0');
 }
 
-function setSyncCursor(notebookId: NotebookId, cursor: number): void {
-  localStorage.setItem(CURSOR_KEY(notebookId), String(cursor));
+function setSyncCursor(accountId: string, cursor: number): void {
+  localStorage.setItem(CURSOR_KEY(accountId), String(cursor));
 }
 
 // ---------------------------------------------------------------------------
@@ -129,23 +131,22 @@ async function runSync(notebookId: NotebookId, apiBase: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
- * Collapse the queue for each note to its latest entry (latest-wins dedup within the client's
- * own queue — NOT latest-wins globally; the server's CAS is what prevents global lost-writes).
+ * Collapse the queue to the latest entry per note (latest-wins dedup within the client's own
+ * queue). Account-scoped: all queued entries are pushed in one batch regardless of their
+ * payload.notebookId — the server derives the account from the bearer token, so notebookId is
+ * only an organizing hint for new notes, not an access-control boundary.
  */
-async function dedupeQueue(notebookId: NotebookId): Promise<SyncQueueEntry[]> {
+async function dedupeQueue(): Promise<SyncQueueEntry[]> {
   const all = await getStore().queueEntries();
-  // Keep only entries whose note belongs to this notebook
-  const forNotebook = all.filter((e) => e.payload.notebookId === notebookId);
-  // Latest-wins per note within the queue
   const byNote = new Map<string, SyncQueueEntry>();
-  for (const entry of forNotebook.sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+  for (const entry of all.sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
     byNote.set(entry.recordId, entry);
   }
   return [...byNote.values()];
 }
 
 async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void> {
-  const entries = await dedupeQueue(notebookId);
+  const entries = await dedupeQueue();
   if (entries.length === 0) return;
 
   // Re-stamp each entry's CAS baseVersion to the CURRENT local note version at push time. The
@@ -243,13 +244,15 @@ async function handleConflict(
 // ---------------------------------------------------------------------------
 
 async function pullUpdates(notebookId: NotebookId, apiBase: string): Promise<void> {
-  const cursor = getSyncCursor(notebookId);
+  const accountId = useAuthStore.getState().accountId;
+  if (!accountId) return; // no authed session — skip pull; next cycle retries
+  const cursor = getSyncCursor(accountId);
   let next = cursor;
   let hasMore = true;
 
   while (hasMore) {
     const res = await fetch(
-      `${apiBase}/sync/pull?notebookId=${encodeURIComponent(notebookId)}&cursor=${next}`,
+      `${apiBase}/sync/pull?cursor=${next}`,
       { headers: authHeader() },
     );
     if (!res.ok) throw new Error(`pull ${res.status}`);
@@ -262,7 +265,7 @@ async function pullUpdates(notebookId: NotebookId, apiBase: string): Promise<voi
     hasMore = json.hasMore;
   }
 
-  if (next !== cursor) setSyncCursor(notebookId, next);
+  if (next !== cursor) setSyncCursor(accountId, next);
 }
 
 /**

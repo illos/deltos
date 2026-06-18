@@ -5,6 +5,7 @@ import { NoteIdSchema } from '@deltos/shared';
 import { useNote } from '../db/storeHooks.js';
 import { mutateNotes } from '../db/mutate.js';
 import { notifyQueueWrite } from '../lib/syncEngine.js';
+import { getDefaultNotebookId } from '../lib/notebooks.js';
 import { NoteEditor } from '../editor/NoteEditor.js';
 import { resolveNoteView } from '../editor/views.js';
 import { ConflictView } from '../components/ConflictView.js';
@@ -31,7 +32,7 @@ export function NoteRoute() {
   // Stable save handler: write to Dexie then kick Stream B's debounced sync.
   const handleSave = useCallback(async (note: Note) => {
     await mutateNotes.put(note);
-    notifyQueueWrite(note.notebookId);
+    notifyQueueWrite(getDefaultNotebookId());
   }, []);
 
   const noteId = id ? NoteIdSchema.safeParse(id) : null;

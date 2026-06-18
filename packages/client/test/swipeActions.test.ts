@@ -46,10 +46,10 @@ function makeNote(id: string, version: number, title: string, properties: Proper
 }
 
 function liveOnce(): Promise<ClientNote[]> {
-  return new Promise((resolve) => { const u = getStore().observeNotes(NB, (n) => { u(); resolve(n); }); });
+  return new Promise((resolve) => { const u = getStore().observeNotes((n) => { u(); resolve(n); }); });
 }
 function trashOnce(): Promise<ClientNote[]> {
-  return new Promise((resolve) => { const u = getStore().observeTrashedNotes(NB, (n) => { u(); resolve(n); }); });
+  return new Promise((resolve) => { const u = getStore().observeTrashedNotes((n) => { u(); resolve(n); }); });
 }
 async function seedSynced(version = 1, title = 'My note') {
   const { db } = await import('../src/db/schema.js');

@@ -94,7 +94,7 @@ function AppRoutes() {
 }
 
 function HomeView() {
-  const notes = useNotes(getDefaultNotebookId());
+  const notes = useNotes();
   // Single-open invariant: only one swipe row open at a time
   const [openId, setOpenId] = useState<string | null>(null);
 

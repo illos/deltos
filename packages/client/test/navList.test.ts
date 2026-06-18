@@ -45,10 +45,10 @@ function makeNote(id: string, notebookId: NotebookId, title: string, updatedAt: 
 }
 
 /** Subscribe to observeNotes and collect the first emission. */
-async function firstEmission(notebookId: NotebookId): Promise<Note[]> {
+async function firstEmission(): Promise<Note[]> {
   const { getStore } = await import('../src/db/store.js');
   return new Promise((resolve) => {
-    const unsub = getStore().observeNotes(notebookId, (notes) => {
+    const unsub = getStore().observeNotes((notes) => {
       unsub();
       resolve(notes);
     });
@@ -56,11 +56,11 @@ async function firstEmission(notebookId: NotebookId): Promise<Note[]> {
 }
 
 /** Subscribe to observeNotes and collect the first TWO distinct emissions. */
-async function twoEmissions(notebookId: NotebookId): Promise<[Note[], Note[]]> {
+async function twoEmissions(): Promise<[Note[], Note[]]> {
   const { getStore } = await import('../src/db/store.js');
   return new Promise((resolve) => {
     const emissions: Note[][] = [];
-    const unsub = getStore().observeNotes(notebookId, (notes) => {
+    const unsub = getStore().observeNotes((notes) => {
       emissions.push(notes);
       if (emissions.length === 2) {
         unsub();
@@ -72,7 +72,7 @@ async function twoEmissions(notebookId: NotebookId): Promise<[Note[], Note[]]> {
 
 describe('observeNotes — initial state', () => {
   it('fires with empty array when no notes exist for the notebookId', async () => {
-    const notes = await firstEmission(NB);
+    const notes = await firstEmission();
     expect(notes).toEqual([]);
   });
 
@@ -81,7 +81,7 @@ describe('observeNotes — initial state', () => {
     const note = makeNote('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', NB, 'Hello', '2026-06-16T10:00:00.000Z');
     await db.notes.put(note);
 
-    const notes = await firstEmission(NB);
+    const notes = await firstEmission();
     expect(notes).toHaveLength(1);
     expect(notes[0].id).toBe(note.id);
     expect(notes[0].title).toBe('Hello');
@@ -95,7 +95,7 @@ describe('mutateNotes.put → observeNotes (autosave → list wiring)', () => {
 
     // Start observing BEFORE the write (the reactive update must fire).
     const [initial, afterWrite] = await Promise.all([
-      twoEmissions(NB),
+      twoEmissions(),
       // Write after a tiny delay so the subscription is established first.
       new Promise<void>(resolve => setTimeout(resolve, 10)).then(() => mutateNotes.put(note)),
     ]);
@@ -118,7 +118,7 @@ describe('mutateNotes.put → observeNotes (autosave → list wiring)', () => {
     const savedNote: Note = { ...emptyNote, title: 'My note', syncStatus: 'pending', updatedAt: '2026-06-16T12:00:01.000Z' };
     await mutateNotes.put(savedNote);
 
-    const notes = await firstEmission(NB);
+    const notes = await firstEmission();
     expect(notes).toHaveLength(1);
     expect(notes[0].title).toBe('My note');
   });
@@ -132,28 +132,26 @@ describe('observeNotes — sort order', () => {
     await db.notes.put(older);
     await db.notes.put(newer);
 
-    const notes = await firstEmission(NB);
+    const notes = await firstEmission();
     expect(notes).toHaveLength(2);
     expect(notes[0].title).toBe('Newer');
     expect(notes[1].title).toBe('Older');
   });
 });
 
-describe('observeNotes — notebookId scoping', () => {
-  it('does not include notes from a different notebook', async () => {
+describe('observeNotes — account-scoped (all notebooks visible)', () => {
+  it('includes notes from ALL notebooks — cross-device notes with foreign notebookIds are visible', async () => {
     const { db } = await import('../src/db/schema.js');
     const nb1Note = makeNote('ffffffff-ffff-4fff-8fff-ffffffffffff', NB, 'Notebook 1', '2026-06-16T10:00:00.000Z');
     const nb2Note = makeNote('00000000-0000-4000-8000-000000000002', NB2, 'Notebook 2', '2026-06-16T10:00:00.000Z');
     await db.notes.put(nb1Note);
     await db.notes.put(nb2Note);
 
-    const notesNb1 = await firstEmission(NB);
-    expect(notesNb1).toHaveLength(1);
-    expect(notesNb1[0].title).toBe('Notebook 1');
-
-    const notesNb2 = await firstEmission(NB2);
-    expect(notesNb2).toHaveLength(1);
-    expect(notesNb2[0].title).toBe('Notebook 2');
+    const notes = await firstEmission();
+    expect(notes).toHaveLength(2);
+    const titles = notes.map((n) => n.title);
+    expect(titles).toContain('Notebook 1');
+    expect(titles).toContain('Notebook 2');
   });
 });
 
@@ -239,7 +237,7 @@ describe('PM-pipeline — EditorState doc change → serializer → onSave → s
     expect(onSave.mock.calls[0][0].title).toBe('Autosaved note');
 
     // 5. Note lands in the store and appears in observeNotes (the list).
-    const notes = await firstEmission(NB);
+    const notes = await firstEmission();
     expect(notes).toHaveLength(1);
     expect(notes[0].title).toBe('Autosaved note');
   });
@@ -278,7 +276,7 @@ describe('E3 — pending save flushed on unmount/blur (no list lag)', () => {
     expect(onSave).toHaveBeenCalledOnce();     // save fired synchronously (not after 400ms)
     expect(onSave.mock.calls[0][0].title).toBe('Flushed title');
 
-    const notes = await firstEmission(NB);
+    const notes = await firstEmission();
     expect(notes[0].title).toBe('Flushed title'); // immediately in the list
   });
 

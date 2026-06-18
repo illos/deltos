@@ -45,10 +45,10 @@ function makeNote(id: string, version = 0, title = 'Test note'): Note {
   };
 }
 
-/** One reactive snapshot of the notebook's notes: subscribe, resolve on the first emit, unsubscribe. */
+/** One reactive snapshot of all account notes: subscribe, resolve on the first emit, unsubscribe. */
 function notesNow(): Promise<ClientNote[]> {
   return new Promise((resolve) => {
-    const unsub = getStore().observeNotes(NB, (notes) => {
+    const unsub = getStore().observeNotes((notes) => {
       unsub();
       resolve(notes);
     });

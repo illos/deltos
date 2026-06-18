@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Note, NoteId, NotebookId } from '@deltos/shared';
+import type { Note, NoteId } from '@deltos/shared';
 import { getStore } from './store.js';
 
 /**
@@ -21,23 +21,17 @@ export function useNote(id: NoteId | undefined): Note | undefined {
   return note;
 }
 
-/** Reactively read all notes in a notebook, sorted by updatedAt descending. */
-export function useNotes(notebookId: NotebookId): Note[] {
+/** Reactively read all account notes, sorted by updatedAt descending. */
+export function useNotes(): Note[] {
   const [notes, setNotes] = useState<Note[]>([]);
-  useEffect(() => {
-    return getStore().observeNotes(notebookId, setNotes);
-  }, [notebookId]);
+  useEffect(() => getStore().observeNotes(setNotes), []);
   return notes;
 }
 
-/**
- * Reactively read all trashed notes in a notebook.
- * TODO devSys2: replace the useEffect body with:
- *   return getStore().observeTrashedNotes(notebookId, setNotes);
- */
-export function useTrashedNotes(notebookId: NotebookId): Note[] {
+/** Reactively read all account trashed notes. */
+export function useTrashedNotes(): Note[] {
   const [notes, setNotes] = useState<Note[]>([]);
-  useEffect(() => getStore().observeTrashedNotes(notebookId, setNotes), [notebookId]);
+  useEffect(() => getStore().observeTrashedNotes(setNotes), []);
   return notes;
 }
 

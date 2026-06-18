@@ -51,9 +51,9 @@ export const dexieLocalStore: LocalStore = {
     return () => sub.unsubscribe();
   },
 
-  observeNotes(notebookId: NotebookId, cb: (notes: ClientNote[]) => void): Unsubscribe {
+  observeNotes(cb: (notes: ClientNote[]) => void): Unsubscribe {
     const sub = liveQuery(async () => {
-      const notes = await db.notes.where('notebookId').equals(notebookId).toArray();
+      const notes = await db.notes.toArray();
       // The MAIN list excludes (a) client tombstone-state rows (PIN-SYNC-3: a conflict against a
       // server-deleted note keeps the row marked deletedAt for badge + keep-mine resurrection) and
       // (b) trashed notes (Fork P soft-delete). isInTrash is the shared, fail-safe predicate.
@@ -64,11 +64,11 @@ export const dexieLocalStore: LocalStore = {
     return () => sub.unsubscribe();
   },
 
-  observeTrashedNotes(notebookId: NotebookId, cb: (notes: ClientNote[]) => void): Unsubscribe {
+  observeTrashedNotes(cb: (notes: ClientNote[]) => void): Unsubscribe {
     // The TRASH VIEW — the exact inverse of observeNotes' trash exclusion (same isInTrash source).
     // Sorted by when trashed (most-recently-trashed first) via the sys:trashedAt timestamp.
     const sub = liveQuery(async () => {
-      const notes = await db.notes.where('notebookId').equals(notebookId).toArray();
+      const notes = await db.notes.toArray();
       return notes
         .filter((n) => !n.deletedAt && isInTrash(n))
         .sort((a, b) => (trashedAt(b.properties) ?? '').localeCompare(trashedAt(a.properties) ?? ''));
