@@ -1,6 +1,6 @@
 import type { NoteRow, NotebookRow, DbAdapter } from './schema.js';
 import type { SyncPushEntry } from '@deltos/shared';
-import { FIRST_SERVER_VERSION, UNSYNCED_VERSION } from '@deltos/shared';
+import { FIRST_SERVER_VERSION, UNSYNCED_VERSION, isTrashed } from '@deltos/shared';
 
 /**
  * All note mutations go through this module. Every write is a single atomic compare-and-swap
@@ -136,11 +136,55 @@ export async function updateNote(
 ): Promise<UpdateOutcome> {
   // CAS identity is (id, accountId, version) — notebookId is NOT part of note identity (Option B): an
   // edit pushed from another device under a different notebookId tag still hits the same row (was a
-  // phantom-conflict source). notebookId is RESTAMPED here ONLY when the entry carries one — that is the
-  // explicit "move note between notebooks" signal (Notebooks task #16); an ordinary edit omits it and the
-  // note stays put (no accidental move). Restamp is isolation-safe (notebookId is an organizing tag, not
-  // a boundary; accountId keeps the write account-scoped).
-  const move = entry.notebookId !== undefined;
+  // phantom-conflict source). notebookId handling (Notebooks #16/#22 + secSys gate #19 crit-3 / #23):
+  //  - MOVE (notebookId DIFFERS from current): ownership-check the target FIRST; if not an account-owned
+  //    live notebook, REJECT (conflict, no write) — never orphan a note on a non-owned/deleted id.
+  //  - PLAIN EDIT / RESTORE (notebookId omitted or unchanged, note will be LIVE): keep the current
+  //    notebookId if it still resolves to a live owned notebook, else reassign to the account DEFAULT
+  //    (the #22 restore rule), falling back to the current id when no default exists yet (COALESCE →
+  //    never NULL; covers the backfill-held state).
+  //  - TRASHING (incoming trashed): leave notebookId untouched so a later restore can return it home.
+  // All subqueries are accountId-scoped — same isolation class as the write itself.
+  // A MOVE is an update whose notebookId DIFFERS from the note's current one. A client that merely echoes
+  // the current notebookId (or omits it) is NOT moving — so it is never ownership-rejected (that would
+  // break ordinary edits, and every edit during the backfill-held window when no notebook rows exist
+  // yet). Only a genuine move is ownership-checked: the target must be an account-owned, live notebook,
+  // else REJECT (conflict) so we never orphan the note on a non-owned/deleted id (secSys gate #19 / #23).
+  let move = false;
+  if (entry.notebookId !== undefined) {
+    const cur = await db.first<{ notebookId: string }>(
+      `SELECT notebookId FROM notes WHERE id = ? AND accountId = ?`,
+      [entry.id, accountId],
+    );
+    move = cur !== null && cur.notebookId !== entry.notebookId;
+    if (move) {
+      const target = await db.first<{ ok: number }>(
+        `SELECT 1 AS ok FROM notebooks WHERE id = ? AND accountId = ? AND deletedAt IS NULL`,
+        [entry.notebookId, accountId],
+      );
+      if (!target) {
+        const current = await db.first<NoteRow>(
+          `SELECT * FROM notes WHERE id = ? AND accountId = ?`,
+          [entry.id, accountId],
+        );
+        return { outcome: 'conflict', serverRow: current ?? null };
+      }
+    }
+  }
+  const incomingLive = !isTrashed(entry.draft.properties ?? {});
+  let notebookSetSql = '';
+  let notebookParams: unknown[] = [];
+  if (move) {
+    notebookSetSql = 'notebookId = ?,';
+    notebookParams = [entry.notebookId];
+  } else if (incomingLive) {
+    notebookSetSql = `notebookId = CASE
+            WHEN EXISTS (SELECT 1 FROM notebooks nb WHERE nb.id = notes.notebookId AND nb.accountId = ? AND nb.deletedAt IS NULL)
+              THEN notes.notebookId
+            ELSE COALESCE((SELECT id FROM notebooks WHERE accountId = ? AND isDefault = 1), notes.notebookId)
+          END,`;
+    notebookParams = [accountId, accountId];
+  }
   // Batch: bump the per-account seq → CAS update reading new seq as subquery.
   const updateBatch = await db.batch([
     { sql: BUMP_SEQ_SQL, params: [accountId] },
@@ -150,7 +194,7 @@ export async function updateNote(
         SET title      = ?,
             properties = ?,
             body       = ?,
-            ${move ? 'notebookId = ?,' : ''}
+            ${notebookSetSql}
             updatedAt  = ?,
             version    = version + 1,
             syncSeq    = (${READ_SEQ_SQL})
@@ -163,7 +207,7 @@ export async function updateNote(
         entry.draft.title ?? '',
         JSON.stringify(entry.draft.properties ?? {}),
         JSON.stringify(entry.draft.body ?? []),
-        ...(move ? [entry.notebookId] : []),
+        ...notebookParams,
         serverNow,
         accountId,
         entry.id,

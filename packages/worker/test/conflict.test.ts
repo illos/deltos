@@ -298,18 +298,8 @@ describe('Fix A — account-scoped sync (Option B): notebookId is not the sync b
     expect(notes[0]!.notebookId).toBe(NB_A); // unchanged — a plain edit never moves the note
   });
 
-  it('move-note: an update carrying a notebookId RESTAMPS the note (move), accepted on the CAS path', async () => {
-    const id = '5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a';
-    expect((await insertNote(db, entryNb(id, NB_A, 0, 'movable'), ACCT2, NOW)).outcome).toBe('accepted');
-
-    // Explicit notebookId on the update = the move signal → note's notebookId becomes NB_B.
-    const moved = await updateNote(db, entryNb(id, NB_B, 1, 'movable'), ACCT2, NOW);
-    expect(moved.outcome).toBe('accepted');
-
-    const { notes } = await pullNotes(db, ACCT2, 0);
-    expect(notes).toHaveLength(1);
-    expect(notes[0]!.notebookId).toBe(NB_B); // moved
-  });
+  // (move-note + restore-resolution are tested in notebooks.test.ts, where real notebook entities exist
+  // to validate the move-target ownership check (#23) and the restore-to-default rule (#22).)
 
   it('title-only notes (body=[]) push, persist, and pull like any note (title-only is first-class)', async () => {
     const id = '66666666-6666-4666-8666-666666666666';

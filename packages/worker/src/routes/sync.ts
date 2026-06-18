@@ -98,8 +98,30 @@ sync.post(
       const results: SyncPushResult[] = [];
       const notebookResults: NotebookPushResult[] = [];
 
-      // NOTES — each entry carries its own notebookId (Option B; stamped on insert, restamped on
-      // update for "move note"). accountId is server-derived and scopes every write + conflict SELECT.
+      // NOTEBOOKS FIRST (secSys gate #19 / #23 ordering): a same-batch "create notebook then move a note
+      // into it" must see the notebook already exist when the note move's target-ownership check runs.
+      // create (baseVersion 0) / rename (baseVersion N) / delete (delete:true → tombstone + cascade live
+      // notes to Trash). Same accountId scope + accountSyncSeq stream as notes.
+      for (const nb of req.notebookEntries) {
+        const outcome = nb.delete === true
+          ? await deleteNotebook(db, nb, accountId, now)
+          : nb.baseVersion === 0
+            ? await insertNotebook(db, nb, accountId, now)
+            : await renameNotebook(db, nb, accountId, now);
+        if (outcome.outcome === 'accepted') {
+          notebookResults.push({ id: nb.id, outcome: 'accepted', version: outcome.version, syncSeq: outcome.syncSeq });
+        } else {
+          notebookResults.push({
+            id: nb.id,
+            outcome: 'conflict',
+            serverNotebook: outcome.serverRow ? notebookConflictRow(outcome.serverRow) : null,
+            reason: outcome.reason,
+          });
+        }
+      }
+
+      // NOTES — each entry carries its own notebookId (Option B; stamped on insert, restamped on a
+      // move, ownership-checked). accountId is server-derived and scopes every write + conflict SELECT.
       for (const entry of req.entries) {
         if (entry.baseVersion === 0) {
           // INSERT notebookId = per-entry, else the batch-level default ("current notebook").
@@ -121,26 +143,6 @@ sync.post(
             const serverNote = outcome.serverRow ? rowToResponse(outcome.serverRow) : null;
             results.push({ id: entry.id, outcome: 'conflict', serverNote });
           }
-        }
-      }
-
-      // NOTEBOOKS — create (baseVersion 0) / rename (baseVersion N) / delete (delete:true → tombstone
-      // + cascade live notes to Trash). Same accountId scope + accountSyncSeq stream as notes.
-      for (const nb of req.notebookEntries) {
-        const outcome = nb.delete === true
-          ? await deleteNotebook(db, nb, accountId, now)
-          : nb.baseVersion === 0
-            ? await insertNotebook(db, nb, accountId, now)
-            : await renameNotebook(db, nb, accountId, now);
-        if (outcome.outcome === 'accepted') {
-          notebookResults.push({ id: nb.id, outcome: 'accepted', version: outcome.version, syncSeq: outcome.syncSeq });
-        } else {
-          notebookResults.push({
-            id: nb.id,
-            outcome: 'conflict',
-            serverNotebook: outcome.serverRow ? notebookConflictRow(outcome.serverRow) : null,
-            reason: outcome.reason,
-          });
         }
       }
 
