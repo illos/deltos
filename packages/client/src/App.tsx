@@ -11,6 +11,7 @@ import { ForcedPhraseRoute } from './routes/ForcedPhraseRoute.js';
 import { TrashRoute } from './routes/TrashRoute.js';
 import { AllNotebooksScreen } from './views/AllNotebooksScreen.js';
 import { DrawerNav } from './components/DrawerNav.js';
+import { BottomNav } from './components/BottomNav.js';
 import { startSyncTriggers, syncNow } from './lib/syncEngine.js';
 import { resolveCollectionView } from './lib/collectionViews.js';
 import type { CollectionViewProps } from './lib/collectionViews.js';
@@ -177,6 +178,7 @@ function AuthedShell() {
   const initNotebook = useNotebookStore((s) => s.init);
   const notebook = useCurrentNotebook();
   const notebookName = notebook?.name ?? '…';
+  // navOpen / DrawerNav is desktop-only (mobile uses BottomNav via CSS)
   const [navOpen, setNavOpen] = useState(false);
 
   // Load the device-local current notebook from IDB on first mount (with localStorage migration).
@@ -216,10 +218,17 @@ function AuthedShell() {
 
   return (
     <div className="shell">
+      {/* Desktop: left-drawer nav (hidden on mobile via CSS). Mobile: BottomNav below. */}
       <DrawerNav open={navOpen} onClose={() => setNavOpen(false)} />
+
       <header className="shell__bar">
+        {/*
+          Desktop: the notebook name is a trigger for the drawer.
+          Mobile (via CSS .shell__nb-trigger--mobile-readonly): just a context label —
+          the BottomNav handles all navigation so this button is inert on mobile.
+        */}
         <button
-          className="shell__nb-trigger"
+          className="shell__nb-trigger shell__nb-trigger--desktop-only"
           onClick={() => setNavOpen(true)}
           aria-label={`Open notebook switcher (${notebookName})`}
           aria-expanded={navOpen}
@@ -227,10 +236,14 @@ function AuthedShell() {
           <span className="shell__nb-name">{notebookName}</span>
           <span className="shell__nb-chevron"> ▾</span>
         </button>
+        {/* Mobile-only context label (no trigger): displayed instead of the button above */}
+        <span className="shell__nb-label shell__nb-label--mobile-only">
+          {notebookName}
+        </span>
         <Link to="/" className="shell__mark">δ deltos</Link>
         <div className="shell__bar-end">
-          {/* Search affordance — wired in #20 */}
-          <button className="shell__search-btn" aria-label="Search" onClick={() => { /* search — #20 */ }}>🔍</button>
+          {/* Search stub — wired in #20. Hidden on mobile (BottomNav has the Search slot). */}
+          <button className="shell__search-btn shell__search-btn--desktop-only" aria-label="Search" onClick={() => { /* search — #20 */ }}>🔍</button>
           <SessionStatus />
           <SyncIndicator />
         </div>
@@ -250,7 +263,11 @@ function AuthedShell() {
         </Routes>
       </main>
 
-      <Link to="/new" className="shell__fab" aria-label="New note">＋</Link>
+      {/* FAB — desktop only; mobile uses BottomNav "New note" slot. */}
+      <Link to="/new" className="shell__fab shell__fab--desktop-only" aria-label="New note">＋</Link>
+
+      {/* Bottom nav bar — mobile + tablet-portrait only (CSS-gated). */}
+      <BottomNav />
 
       {/* TOAST-HOST MOUNT SLOT — gruntSys2 fills this with the conflict ToastHost for Part 2.
           Leave the slot; do not build the toast here. */}

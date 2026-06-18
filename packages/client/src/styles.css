@@ -1199,3 +1199,163 @@ a.auth__link { display: inline; }
   padding: 1rem 0;
   box-sizing: border-box;
 }
+
+/* ── NavContent B1: per-notebook more / delete menu (#30) ──────────────────── */
+
+/* Override item to flex so ⋮ / menu sits right of the notebook name button. */
+.nav-content__item {
+  display: flex;
+  align-items: stretch;
+}
+/* nb-btn fills remaining space (override existing width: 100%). */
+.nav-content__nb-btn { flex: 1; width: auto; }
+
+.nav-content__nb-more {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 0.85rem;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  touch-action: manipulation;
+}
+.nav-content__nb-more:active { color: inherit; }
+
+.nav-content__nb-menu {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+}
+
+.nav-content__nb-delete {
+  background: none;
+  border: none;
+  color: #e07040;
+  cursor: pointer;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.9rem;
+  touch-action: manipulation;
+}
+.nav-content__nb-delete:active { background: var(--edge); }
+
+.nav-content__nb-menu-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.9rem;
+  touch-action: manipulation;
+}
+.nav-content__nb-menu-close:active { color: inherit; }
+
+/* ── Bottom nav bar (#31) — mobile + tablet-portrait only ──────────────────── */
+
+/* Desktop defaults: show drawer + FAB; hide mobile-only elements. */
+.shell__nb-label--mobile-only { display: none; }
+
+.bottom-nav {
+  display: none; /* shown only in mobile media query below */
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 300;
+  flex-direction: column;
+  align-items: stretch;
+  background: var(--bg);
+  border-top: 1px solid var(--edge);
+  padding-bottom: env(safe-area-inset-bottom);
+  max-height: calc(56px + env(safe-area-inset-bottom));
+  overflow: hidden;
+  transition: max-height 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.bottom-nav--expanded {
+  max-height: 75vh;
+  overflow-y: auto;
+}
+
+.bottom-nav__handle {
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.5rem 0 0.25rem;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+  touch-action: manipulation;
+}
+.bottom-nav__handle-bar {
+  display: block;
+  width: 2.5rem;
+  height: 3px;
+  background: var(--muted);
+  border-radius: 2px;
+  opacity: 0.5;
+}
+
+.bottom-nav__actions {
+  display: flex;
+  gap: 0;
+  padding: 0 0.5rem 0.35rem;
+}
+.bottom-nav__action {
+  flex: 1;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0.55rem 0.5rem;
+  font-size: 0.9rem;
+  text-align: center;
+  border-radius: 0.375rem;
+  touch-action: manipulation;
+}
+.bottom-nav__action:active { background: var(--edge); }
+
+.bottom-nav__sheet {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 0.5rem;
+}
+
+.bottom-nav__scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 299; /* sits below bottom-nav (300) so the sheet is tappable */
+}
+
+/* Mobile / tablet-portrait: activate bottom nav, deactivate desktop nav controls. */
+@media (max-width: 768px) {
+  /* Left drawer — keep in DOM but visually absent (BottomNav replaces it). */
+  .nav-drawer { display: none; }
+
+  /* Desktop-only shell elements hidden on mobile. */
+  .shell__nb-trigger--desktop-only { display: none; }
+  .shell__fab--desktop-only        { display: none; }
+  .shell__search-btn--desktop-only { display: none; }
+
+  /* Show the mobile notebook name label. */
+  .shell__nb-label--mobile-only {
+    display: block;
+    font-size: 1rem;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 40vw;
+    flex-shrink: 1;
+  }
+
+  /* Main content area clears the collapsed nav bar. */
+  .shell__main {
+    padding-bottom: calc(56px + env(safe-area-inset-bottom) + 0.5rem);
+  }
+
+  /* Activate the bottom nav. */
+  .bottom-nav { display: flex; }
+}
