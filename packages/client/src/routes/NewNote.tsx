@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { UNSYNCED_VERSION } from '@deltos/shared';
 import type { Note } from '@deltos/shared';
 import { mutateNotes } from '../db/mutate.js';
+import { notifyQueueWrite } from '../lib/syncEngine.js';
 import { newNoteId } from '../lib/ids.js';
 import { getDefaultNotebookId } from '../lib/notebooks.js';
 import { useAuthStore } from '../auth/store.js';
@@ -39,6 +40,7 @@ export function NewNote() {
     };
 
     mutateNotes.put(note).then(() => {
+      notifyQueueWrite(note.notebookId);
       navigate(`/note/${note.id}`, { replace: true });
     });
   }, [navigate, accountId]);
