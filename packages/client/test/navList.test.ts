@@ -13,7 +13,7 @@
  *   - mutateNotes.put (the autosave codepath) writes the note to IndexedDB
  *   - observeNotes reacts to a new note written via mutateNotes.put
  *   - observeNotes sorts notes by updatedAt descending (newest first in list)
- *   - observeNotes scopes by notebookId (cross-notebook isolation)
+ *   - observeNotes is intentionally ACCOUNT-WIDE (all notebooks); HomeView filters at call site
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -139,8 +139,8 @@ describe('observeNotes — sort order', () => {
   });
 });
 
-describe('observeNotes — account-scoped (all notebooks visible)', () => {
-  it('includes notes from ALL notebooks — cross-device notes with foreign notebookIds are visible', async () => {
+describe('observeNotes — store is intentionally account-wide (NavContent counts need cross-notebook)', () => {
+  it('returns notes from ALL notebooks — filtering to the active notebook is HomeView\'s job (not the store)', async () => {
     const { db } = await import('../src/db/schema.js');
     const nb1Note = makeNote('ffffffff-ffff-4fff-8fff-ffffffffffff', NB, 'Notebook 1', '2026-06-16T10:00:00.000Z');
     const nb2Note = makeNote('00000000-0000-4000-8000-000000000002', NB2, 'Notebook 2', '2026-06-16T10:00:00.000Z');
@@ -148,6 +148,8 @@ describe('observeNotes — account-scoped (all notebooks visible)', () => {
     await db.notes.put(nb2Note);
 
     const notes = await firstEmission();
+    // INTENTIONAL: store returns all accounts notes so NavContent can show per-notebook counts.
+    // HomeView applies: notes.filter(n => n.notebookId === notebookId) at the call site.
     expect(notes).toHaveLength(2);
     const titles = notes.map((n) => n.title);
     expect(titles).toContain('Notebook 1');

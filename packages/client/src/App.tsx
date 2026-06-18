@@ -104,7 +104,7 @@ function AppRoutes() {
  * priority. Filters the account-wide note store by notebookId so switching notebooks changes
  * the list. useNotes() stays account-wide (NavContent needs cross-notebook counts).
  */
-function HomeView({ notebookId }: CollectionViewProps) {
+export function HomeView({ notebookId }: CollectionViewProps) {
   const allNotes = useNotes();
   const notes = allNotes.filter((n) => n.notebookId === notebookId);
   // Single-open invariant: only one swipe row open at a time

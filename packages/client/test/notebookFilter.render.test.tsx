@@ -1,13 +1,15 @@
 /**
  * Notebook-filter render tests — closes the gaps that let P0-1 and P0-2 reach prod.
  *
- * NF-1  HomeView shows ONLY notes from the active notebook (display-filter at call site)
- * NF-2  NoteRoute renders note content — not a blank screen (rules-of-hooks fix for P0-2)
- * NF-3  List → editor seam: note in list navigates to route that renders its title
+ * NF-1  Real HomeView mounts with notebookId prop and filters the rendered list
+ *         (guards P0-1: HomeView discarding the prop → all notes visible)
+ * NF-2  NoteRoute mounts the routed tree and renders note content — not blank
+ *         (guards P0-2: rules-of-hooks crash → empty DOM)
+ * NF-3  Collection-view seam: resolveCollectionView(NB_A, HomeView) resolves to HomeView
+ *         and the rendered output filters to the active notebook
+ *         (guards the #17 seam: resolver hands off to the right component)
  *
- * All mount a real React tree with fake-indexeddb so the reactive store hooks fire.
- * The rules-of-hooks lint rule (enabled in CI) would have caught NF-2's root cause at
- * author-time; these tests catch the runtime symptom.
+ * All tests mount real React components against a real fake-indexeddb store.
  */
 
 import 'fake-indexeddb/auto';
@@ -49,55 +51,39 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// NF-1: HomeView notebook filter
+// NF-1: Real HomeView filters by notebookId
 // ---------------------------------------------------------------------------
-describe('NF-1 — HomeView filters by notebookId (display-only, store stays account-wide)', () => {
-  it('shows only notes from the active notebook, hides notes from other notebooks', async () => {
+describe('NF-1 — real HomeView renders only the active notebook\'s notes', () => {
+  it('HomeView with notebookId=NB_A shows NB_A note and hides NB_B note', async () => {
     const { db } = await import('../src/db/schema.js');
     await db.notes.bulkPut([
       makeNote(NOTE_ID_A, NB_A, 'Note in NB_A'),
       makeNote(NOTE_ID_B, NB_B, 'Note in NB_B'),
     ]);
 
-    // Import HomeView via dynamic import to avoid module-level store init order issues.
-    // HomeView is not exported directly — test through the CollectionViewProps interface.
-    // We mount it with notebookId=NB_A; only NB_A's note should appear.
-    const { default: React } = await import('react');
-    const AppModule = await import('../src/App.js');
-    // HomeView is not exported — test the filter logic through a thin wrapper that
-    // replicates what HomeView does: useNotes() + .filter(n => n.notebookId === notebookId).
-    const { useNotes } = await import('../src/db/storeHooks.js');
-
-    function FilteredList({ notebookId }: { notebookId: NotebookId }) {
-      const allNotes = useNotes();
-      const notes = allNotes.filter((n) => n.notebookId === notebookId);
-      return (
-        <ul>
-          {notes.map((n) => <li key={n.id}>{n.title}</li>)}
-        </ul>
-      );
-    }
-    void AppModule; // suppress unused import warning
+    // Import the real exported HomeView — tests the ACTUAL component, not a replica.
+    // If HomeView ever ignores the prop again, this test goes red.
+    const { HomeView } = await import('../src/App.js');
 
     render(
       <MemoryRouter>
-        <FilteredList notebookId={NB_A} />
+        <HomeView notebookId={NB_A} />
       </MemoryRouter>,
     );
 
     await waitFor(() => {
       expect(screen.queryByText('Note in NB_A')).not.toBeNull();
     });
-    // NB_B note must be absent — this would have caught P0-1
+    // NB_B note must be absent — catches P0-1 regression
     expect(screen.queryByText('Note in NB_B')).toBeNull();
   });
 });
 
 // ---------------------------------------------------------------------------
-// NF-2: NoteRoute renders content (rules-of-hooks fix)
+// NF-2: NoteRoute renders note content (rules-of-hooks fix)
 // ---------------------------------------------------------------------------
 describe('NF-2 — NoteRoute renders note content (not blank)', () => {
-  it('shows the back link and move button — not a blank screen', async () => {
+  it('mounts /note/:id routed tree and asserts the back link and move button render', async () => {
     const { db } = await import('../src/db/schema.js');
     const note = makeNote(NOTE_ID_A, NB_A, 'Test note title');
     await db.notes.put(note);
@@ -112,8 +98,8 @@ describe('NF-2 — NoteRoute renders note content (not blank)', () => {
       </MemoryRouter>,
     );
 
-    // These elements live OUTSIDE the early-return branches — if they render,
-    // the component did not crash (P0-2 blank screen would show nothing at all).
+    // "← Notes" and "Move to notebook…" are outside the editor chrome — if the component
+    // crashes (P0-2 blank screen), neither renders. Their presence proves the hook fix holds.
     await waitFor(() => {
       expect(screen.queryByText('← Notes')).not.toBeNull();
     });
@@ -122,36 +108,34 @@ describe('NF-2 — NoteRoute renders note content (not blank)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// NF-3: List → editor seam
+// NF-3: Collection-view seam (resolveCollectionView → HomeView renders filtered)
 // ---------------------------------------------------------------------------
-describe('NF-3 — list note and editor note are the same record', () => {
-  it('the note visible in useNotes() is also retrievable by useNote(id)', async () => {
+describe('NF-3 — collection-view seam: resolver hands off to HomeView and it filters', () => {
+  it('resolveCollectionView(NB_A, HomeView) returns HomeView; rendered output shows only NB_A notes', async () => {
     const { db } = await import('../src/db/schema.js');
-    const note = makeNote(NOTE_ID_A, NB_A, 'Seam verify');
-    await db.notes.put(note);
+    await db.notes.bulkPut([
+      makeNote(NOTE_ID_A, NB_A, 'Seam note NB_A'),
+      makeNote(NOTE_ID_B, NB_B, 'Seam note NB_B'),
+    ]);
 
-    const { getStore } = await import('../src/db/store.js');
-    const store = getStore();
+    const { resolveCollectionView, _clearRegistryForTest } = await import('../src/lib/collectionViews.js');
+    const { HomeView } = await import('../src/App.js');
 
-    // List layer
-    const listNote = await new Promise<Note | undefined>((resolve) => {
-      const unsub = store.observeNotes((notes) => {
-        unsub();
-        resolve(notes.find((n) => n.id === NOTE_ID_A));
-      });
+    // No other views registered in v1 — resolver must fall back to HomeView.
+    _clearRegistryForTest();
+    const ResolvedView = resolveCollectionView(NB_A, HomeView);
+
+    // The seam hands off to the real HomeView — assert it filters correctly.
+    render(
+      <MemoryRouter>
+        <ResolvedView notebookId={NB_A} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText('Seam note NB_A')).not.toBeNull();
     });
-
-    // Single-note layer (what NoteRoute uses)
-    const singleNote = await new Promise<Note | undefined>((resolve) => {
-      const unsub = store.observeNote(NOTE_ID_A, (n) => {
-        if (n !== undefined) { unsub(); resolve(n); }
-      });
-    });
-
-    expect(listNote).toBeDefined();
-    expect(singleNote).toBeDefined();
-    expect(listNote?.title).toBe('Seam verify');
-    expect(singleNote?.title).toBe('Seam verify');
-    expect(listNote?.id).toBe(singleNote?.id);
+    // Cross-notebook note must not leak through the seam
+    expect(screen.queryByText('Seam note NB_B')).toBeNull();
   });
 });

@@ -42,6 +42,7 @@
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "fake-indexeddb": "^6.0.0",
     "jsdom": "^29.1.1",
     "typescript": "^5.7.2",
