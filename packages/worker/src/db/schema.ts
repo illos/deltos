@@ -17,6 +17,20 @@ export interface NoteRow {
   forkedFromId: string | null; // set on conflict-copy / resurrection fork (PIN-SYNC-4)
 }
 
+/** D1 row for a notebook — a first-class, account-scoped, synced entity (rides accountSyncSeq). */
+export interface NotebookRow {
+  id: string;
+  accountId: string;
+  name: string;
+  defaultCollectionView: string;
+  isDefault: number; // SQLite boolean: 1 = the undeletable default (exactly one per account)
+  version: number; // CAS counter (rename / delete)
+  createdAt: string; // ISO-8601
+  updatedAt: string; // ISO-8601
+  deletedAt: string | null; // ISO-8601 tombstone; null = live
+  syncSeq: number; // shared per-account pull-stream position (same counter as notes)
+}
+
 /**
  * Thin abstraction over D1 and the better-sqlite3 test double. Production code calls
  * `d1Adapter(env.DB)`; tests call `sqliteAdapter(db)`. The SQL is identical — D1 is SQLite.

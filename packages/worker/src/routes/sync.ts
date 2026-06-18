@@ -3,13 +3,14 @@ import {
   SyncPushRequestSchema,
   SyncPullRequestSchema,
 } from '@deltos/shared';
-import type { SyncPushResult, SyncNote, NoteResponse } from '@deltos/shared';
+import type { SyncPushResult, NotebookPushResult, SyncNote, SyncNotebook, NoteResponse } from '@deltos/shared';
 import type { Resource } from '@deltos/shared';
 import type { AppEnv } from '../context.js';
 import { guard, apiError } from '../http.js';
 import { d1Adapter } from '../db/schema.js';
-import type { NoteRow } from '../db/schema.js';
-import { insertNote, updateNote, pullNotes } from '../db/mutate.js';
+import type { NoteRow, NotebookRow } from '../db/schema.js';
+import { insertNote, updateNote, pullSince } from '../db/mutate.js';
+import { insertNotebook, renameNotebook, deleteNotebook } from '../db/notebooks.js';
 import { requireAccountId } from '../db/accountScope.js';
 
 // Sync is scoped to the ACCOUNT, not a notebook (Option B, 2026-06-18): the boundary is the caller's
@@ -47,6 +48,32 @@ function rowToSyncNote(row: NoteRow): SyncNote {
   return { ...rowToResponse(row), deletedAt: row.deletedAt ?? null, syncSeq: row.syncSeq };
 }
 
+/** NotebookRow (DB) → SyncNotebook (wire). isDefault is the SQLite 0/1 ⇒ boolean. */
+function notebookRowToSync(row: NotebookRow): SyncNotebook {
+  return {
+    id: row.id as SyncNotebook['id'],
+    name: row.name,
+    defaultCollectionView: row.defaultCollectionView,
+    isDefault: row.isDefault === 1,
+    version: row.version,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    deletedAt: row.deletedAt ?? null,
+    syncSeq: row.syncSeq,
+  };
+}
+
+/** NotebookRow → the conflict-result serverNotebook shape (notebook + version, no sync fields). */
+function notebookConflictRow(row: NotebookRow): NonNullable<Extract<NotebookPushResult, { outcome: 'conflict' }>['serverNotebook']> {
+  return {
+    id: row.id as SyncNotebook['id'],
+    name: row.name,
+    defaultCollectionView: row.defaultCollectionView,
+    isDefault: row.isDefault === 1,
+    version: row.version,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/sync/push  (PIN-SYNC-1)
 // ---------------------------------------------------------------------------
@@ -69,24 +96,25 @@ sync.post(
       const accountId = requireAccountId(c);
       const now = new Date().toISOString();
       const results: SyncPushResult[] = [];
+      const notebookResults: NotebookPushResult[] = [];
 
+      // NOTES — each entry carries its own notebookId (Option B; stamped on insert, restamped on
+      // update for "move note"). accountId is server-derived and scopes every write + conflict SELECT.
       for (const entry of req.entries) {
-        const fullEntry = { ...entry, notebookId: req.notebookId };
-
         if (entry.baseVersion === 0) {
-          // New note — INSERT guarded on id uniqueness, accountId stamped from the principal
-          const outcome = await insertNote(db, fullEntry, accountId, now);
+          // INSERT notebookId = per-entry, else the batch-level default ("current notebook").
+          const notebookId = entry.notebookId ?? req.notebookId;
+          if (notebookId === undefined) {
+            return apiError(c, 400, 'invalid_request', 'note insert requires a notebookId (per-entry or batch-level)');
+          }
+          const outcome = await insertNote(db, { ...entry, notebookId }, accountId, now);
           if (outcome.outcome === 'accepted') {
             results.push({ id: entry.id, outcome: 'accepted', version: outcome.version, syncSeq: outcome.syncSeq });
           } else {
-            // id already exists — return null serverNote (client forks under new id)
             results.push({ id: entry.id, outcome: 'conflict', serverNote: null });
           }
         } else {
-          // Update — atomic CAS on (id, notebookId, version, accountId); the conflict-path serverNote
-          // SELECT is also accountId-scoped inside updateNote, so a cross-account push gets a 0-row CAS
-          // → conflict with a NULL serverNote (no leak), and the client forks under a new id.
-          const outcome = await updateNote(db, fullEntry, accountId, now);
+          const outcome = await updateNote(db, entry, accountId, now);
           if (outcome.outcome === 'accepted') {
             results.push({ id: entry.id, outcome: 'accepted', version: outcome.version, syncSeq: outcome.syncSeq });
           } else {
@@ -96,7 +124,27 @@ sync.post(
         }
       }
 
-      return c.json({ results });
+      // NOTEBOOKS — create (baseVersion 0) / rename (baseVersion N) / delete (delete:true → tombstone
+      // + cascade live notes to Trash). Same accountId scope + accountSyncSeq stream as notes.
+      for (const nb of req.notebookEntries) {
+        const outcome = nb.delete === true
+          ? await deleteNotebook(db, nb, accountId, now)
+          : nb.baseVersion === 0
+            ? await insertNotebook(db, nb, accountId, now)
+            : await renameNotebook(db, nb, accountId, now);
+        if (outcome.outcome === 'accepted') {
+          notebookResults.push({ id: nb.id, outcome: 'accepted', version: outcome.version, syncSeq: outcome.syncSeq });
+        } else {
+          notebookResults.push({
+            id: nb.id,
+            outcome: 'conflict',
+            serverNotebook: outcome.serverRow ? notebookConflictRow(outcome.serverRow) : null,
+            reason: outcome.reason,
+          });
+        }
+      }
+
+      return c.json({ results, notebookResults });
     },
   }),
 );
@@ -122,9 +170,13 @@ sync.get(
       // off the principal, never the body), across every notebookId the account owns. Fail-closed if
       // absent.
       const accountId = requireAccountId(c);
-      const { notes, nextCursor, hasMore } = await pullNotes(db, accountId, req.cursor);
-      const syncNotes: SyncNote[] = notes.map(rowToSyncNote);
-      return c.json({ notes: syncNotes, nextCursor, hasMore });
+      const { notes, notebooks, nextCursor, hasMore } = await pullSince(db, accountId, req.cursor);
+      return c.json({
+        notes: notes.map(rowToSyncNote),
+        notebooks: notebooks.map(notebookRowToSync),
+        nextCursor,
+        hasMore,
+      });
     },
   }),
 );

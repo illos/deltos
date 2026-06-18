@@ -60,6 +60,8 @@ const migrations = [
   '0003_account-identity.sql',
   '0006_account-sync-seq.sql',
   '0007_reconcile-account-sync-seq.sql',
+  '0008_notebooks.sql',
+  '0009_backfill-default-notebooks.sql',
 ].map((f) =>
   readFileSync(join(__dirname, '../migrations', f), 'utf8'),
 );
@@ -276,19 +278,37 @@ describe('Fix A — account-scoped sync (Option B): notebookId is not the sync b
     expect(new Set(notes.map((n) => n.syncSeq)).size).toBe(2);
   });
 
-  it('an edit pushed under a DIFFERENT notebookId tag hits the same note id (no phantom conflict)', async () => {
+  it('a plain edit (no notebookId in the entry) hits the same note id and does NOT move it (no phantom conflict, no accidental move)', async () => {
     const id = '55555555-5555-4555-8555-555555555555';
     expect((await insertNote(db, entryNb(id, NB_A, 0, 'orig'), ACCT2, NOW)).outcome).toBe('accepted');
 
-    // "Device B" edits the SAME note id but tags the push with its own notebookId (NB_B).
-    // Pre-Fix-A this missed the CAS (notebookId in the WHERE) → phantom conflict + fork. Now it hits.
-    const upd = await updateNote(db, entryNb(id, NB_B, 1, 'edited from B'), ACCT2, NOW);
+    // An ordinary edit OMITS notebookId. Pre-Fix-A a notebookId mismatch missed the CAS → phantom
+    // conflict; now the CAS hits on (id, accountId, version) and the note stays in NB_A (no restamp).
+    const editEntry: SyncPushEntry = {
+      id: id as SyncPushEntry['id'],
+      baseVersion: 1,
+      draft: { title: 'edited', properties: {}, body: [] },
+    };
+    const upd = await updateNote(db, editEntry, ACCT2, NOW);
     expect(upd.outcome).toBe('accepted');
 
     const { notes } = await pullNotes(db, ACCT2, 0);
     expect(notes).toHaveLength(1);
-    expect(notes[0]!.title).toBe('edited from B');
-    expect(notes[0]!.notebookId).toBe(NB_A); // notebookId stays stable from insert (no v1 notebook-move)
+    expect(notes[0]!.title).toBe('edited');
+    expect(notes[0]!.notebookId).toBe(NB_A); // unchanged — a plain edit never moves the note
+  });
+
+  it('move-note: an update carrying a notebookId RESTAMPS the note (move), accepted on the CAS path', async () => {
+    const id = '5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a';
+    expect((await insertNote(db, entryNb(id, NB_A, 0, 'movable'), ACCT2, NOW)).outcome).toBe('accepted');
+
+    // Explicit notebookId on the update = the move signal → note's notebookId becomes NB_B.
+    const moved = await updateNote(db, entryNb(id, NB_B, 1, 'movable'), ACCT2, NOW);
+    expect(moved.outcome).toBe('accepted');
+
+    const { notes } = await pullNotes(db, ACCT2, 0);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.notebookId).toBe(NB_B); // moved
   });
 
   it('title-only notes (body=[]) push, persist, and pull like any note (title-only is first-class)', async () => {

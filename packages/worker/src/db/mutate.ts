@@ -1,4 +1,4 @@
-import type { NoteRow, DbAdapter } from './schema.js';
+import type { NoteRow, NotebookRow, DbAdapter } from './schema.js';
 import type { SyncPushEntry } from '@deltos/shared';
 import { FIRST_SERVER_VERSION, UNSYNCED_VERSION } from '@deltos/shared';
 
@@ -34,12 +34,12 @@ const PULL_PAGE = 100;
  * keyed on accountId (server-derived from the principal, never the body) so the whole account
  * shares one monotonic pull stream — the device-local notebookId no longer gates sync (Option B).
  */
-const BUMP_SEQ_SQL = `
+export const BUMP_SEQ_SQL = `
   INSERT INTO accountSyncSeq (accountId, seq)
   VALUES (?, 1)
   ON CONFLICT(accountId) DO UPDATE SET seq = seq + 1
 `;
-const READ_SEQ_SQL = `SELECT seq FROM accountSyncSeq WHERE accountId = ?`;
+export const READ_SEQ_SQL = `SELECT seq FROM accountSyncSeq WHERE accountId = ?`;
 
 // ---------------------------------------------------------------------------
 // Row → domain (no mapper layer — columns are camelCase 1:1 with the spine)
@@ -130,24 +130,27 @@ export type UpdateOutcome =
  */
 export async function updateNote(
   db: DbAdapter,
-  entry: SyncPushEntry & { notebookId: string },
+  entry: SyncPushEntry,
   accountId: string,
   serverNow: string,
 ): Promise<UpdateOutcome> {
+  // CAS identity is (id, accountId, version) — notebookId is NOT part of note identity (Option B): an
+  // edit pushed from another device under a different notebookId tag still hits the same row (was a
+  // phantom-conflict source). notebookId is RESTAMPED here ONLY when the entry carries one — that is the
+  // explicit "move note between notebooks" signal (Notebooks task #16); an ordinary edit omits it and the
+  // note stays put (no accidental move). Restamp is isolation-safe (notebookId is an organizing tag, not
+  // a boundary; accountId keeps the write account-scoped).
+  const move = entry.notebookId !== undefined;
   // Batch: bump the per-account seq → CAS update reading new seq as subquery.
   const updateBatch = await db.batch([
     { sql: BUMP_SEQ_SQL, params: [accountId] },
     {
-      // CAS identity is (id, accountId, version) — notebookId is NO LONGER part of note identity
-      // (Option B). A note's notebookId is just an organizing tag set at insert; dropping it from the
-      // WHERE means an edit pushed from another device under a DIFFERENT notebookId tag still hits the
-      // same row (was a phantom-conflict source). notebookId is left unchanged on update (no v1
-      // notebook-move). accountId (server-derived) keeps the write account-scoped.
       sql: `
         UPDATE notes
         SET title      = ?,
             properties = ?,
             body       = ?,
+            ${move ? 'notebookId = ?,' : ''}
             updatedAt  = ?,
             version    = version + 1,
             syncSeq    = (${READ_SEQ_SQL})
@@ -160,6 +163,7 @@ export async function updateNote(
         entry.draft.title ?? '',
         JSON.stringify(entry.draft.properties ?? {}),
         JSON.stringify(entry.draft.body ?? []),
+        ...(move ? [entry.notebookId] : []),
         serverNow,
         accountId,
         entry.id,
@@ -347,6 +351,59 @@ export async function pullNotes(
   const nextCursor = page.length > 0 ? page[page.length - 1]!.syncSeq : cursor;
 
   return { notes: page, hasMore, nextCursor };
+}
+
+// ---------------------------------------------------------------------------
+// Unified pull — notes AND notebooks on the one per-account syncSeq stream (Notebooks task #16)
+// ---------------------------------------------------------------------------
+
+export interface PullSinceResult {
+  notes: NoteRow[];
+  notebooks: NotebookRow[];
+  nextCursor: number;
+  hasMore: boolean;
+}
+
+/**
+ * Fetch the account's NOTES and NOTEBOOKS with syncSeq > cursor as ONE ordered stream. Both entity
+ * kinds share `accountSyncSeq`, so a single cursor walks both. We page over the union by syncSeq, then
+ * hydrate full rows for the ids in the page — so a page boundary never skips an entity of either kind
+ * (the bug a per-kind cursor would have). Account-scoped on every query (read isolation).
+ */
+export async function pullSince(
+  db: DbAdapter,
+  accountId: string,
+  cursor: number,
+): Promise<PullSinceResult> {
+  const window = await db.all<{ id: string; syncSeq: number; kind: string }>(
+    `SELECT id, syncSeq, 'note' AS kind FROM notes WHERE accountId = ? AND syncSeq > ?
+     UNION ALL
+     SELECT id, syncSeq, 'notebook' AS kind FROM notebooks WHERE accountId = ? AND syncSeq > ?
+     ORDER BY syncSeq ASC, kind ASC, id ASC
+     LIMIT ?`,
+    [accountId, cursor, accountId, cursor, PULL_PAGE + 1],
+  );
+
+  const hasMore = window.length > PULL_PAGE;
+  const page = hasMore ? window.slice(0, PULL_PAGE) : window;
+  const noteIds = page.filter((w) => w.kind === 'note').map((w) => w.id);
+  const nbIds = page.filter((w) => w.kind === 'notebook').map((w) => w.id);
+
+  const notes = noteIds.length
+    ? await db.all<NoteRow>(
+        `SELECT * FROM notes WHERE accountId = ? AND id IN (${noteIds.map(() => '?').join(',')}) ORDER BY syncSeq ASC`,
+        [accountId, ...noteIds],
+      )
+    : [];
+  const notebooks = nbIds.length
+    ? await db.all<NotebookRow>(
+        `SELECT * FROM notebooks WHERE accountId = ? AND id IN (${nbIds.map(() => '?').join(',')}) ORDER BY syncSeq ASC`,
+        [accountId, ...nbIds],
+      )
+    : [];
+  const nextCursor = page.length > 0 ? page[page.length - 1]!.syncSeq : cursor;
+
+  return { notes, notebooks, nextCursor, hasMore };
 }
 
 // ---------------------------------------------------------------------------
