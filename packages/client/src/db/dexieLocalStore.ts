@@ -1,6 +1,7 @@
 import { liveQuery } from 'dexie';
 import type { Note, NoteId, NotebookId, SyncStatus } from '@deltos/shared';
 import { isTrashed, trashedAt, setTrashedAt } from '@deltos/shared';
+import { noteHasContent } from '../lib/noteContent.js';
 import { db } from './schema.js';
 import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry, NotebookQueueEntry } from './schema.js';
 import type { ConflictResolution, LocalStore, Unsubscribe } from './localStore.js';
@@ -153,13 +154,23 @@ export const dexieLocalStore: LocalStore = {
     // CAS-misses the server on every sync tick (a single device, no second device, conflict ~every
     // cadence). A brand-new note (no existing row) keeps `note.version` (0 → INSERT). An in-flight
     // edit's base is still reconciled forward by applyAccepted, so edit-while-syncing is unaffected.
+    //
+    // Push-deferral (#32): a newly-created blank note (version=0, !noteHasContent) never enters the
+    // queue. The note is saved to IDB so the editor can populate it; the first content edit arms the
+    // push normally (version still 0, but noteHasContent → true → queue entry added). This closes
+    // the B3 resurrection gap without a server-side delete: a blank note that was never pushed cannot
+    // be restored by a server pull. Existing synced notes cleared to blank (version>0) still enqueue
+    // so their blank content persists on the server per-interim design (see pilot note on #32 scope).
     await db.transaction('rw', db.notes, db.syncQueue, async () => {
       const existing = await db.notes.get(note.id);
       const version = existing ? existing.version : note.version;
       const isMove = existing ? existing.notebookId !== note.notebookId : false;
       const synced: Note = { ...note, version };
       await db.notes.put(synced);
-      await db.syncQueue.add({ ...entry, payload: synced, baseVersion: version, ...(isMove ? { isMove: true } : {}) });
+      const isNewBlank = version === 0 && !noteHasContent(note);
+      if (!isNewBlank) {
+        await db.syncQueue.add({ ...entry, payload: synced, baseVersion: version, ...(isMove ? { isMove: true } : {}) });
+      }
     });
   },
 

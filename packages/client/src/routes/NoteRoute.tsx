@@ -1,8 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useParams, Link, useSearchParams, Navigate } from 'react-router-dom';
-import type { Note, BlockBody } from '@deltos/shared';
+import type { Note } from '@deltos/shared';
 import { NoteIdSchema } from '@deltos/shared';
 import { getStore } from '../db/store.js';
+import { noteHasContent } from '../lib/noteContent.js';
 import { useNote, useNotebooks } from '../db/storeHooks.js';
 import { mutateNotes } from '../db/mutate.js';
 import { notifyQueueWrite } from '../lib/syncEngine.js';
@@ -31,15 +32,13 @@ export function NoteRoute() {
   const [showMove, setShowMove] = useState(false);
   const notebooks = useNotebooks();
 
-  // B3 blank-note discard: track the content at each save call so the unmount cleanup
-  // can decide whether to keep or discard the note without a stale React-state read.
-  const lastSavedRef = useRef<{ title: string; body: BlockBody } | null>(null);
-  // Set once on first render where note is defined; used to detect pre-existing blank notes.
-  const noteWasInitiallyBlankRef = useRef<boolean | null>(null);
+  // B3 blank-note discard: track whether note was version=0+blank on first load.
+  // Only newly-created notes (version=0, UNSYNCED) are candidates for discard;
+  // existing synced notes emptied by the user are left as-is (pilot #32 scope).
+  const noteWasNewAndBlankRef = useRef<boolean | null>(null);
 
   // Stable save handler: write to Dexie then kick Stream B's debounced sync.
   const handleSave = useCallback(async (note: Note) => {
-    lastSavedRef.current = { title: note.title, body: note.body };
     await mutateNotes.put(note);
     notifyQueueWrite(note.notebookId);
   }, []);
@@ -58,26 +57,20 @@ export function NoteRoute() {
   // Reactive read through the store seam; undefined for an invalid id (guarded below) or while loading.
   const note = useNote(parsedNoteId ?? undefined);
 
-  // Capture blank state on first load (before any save on this visit).
+  // Capture new+blank state on first load — only version=0 notes are candidates.
   // Must be above early returns — rules-of-hooks.
-  if (note !== undefined && noteWasInitiallyBlankRef.current === null) {
-    noteWasInitiallyBlankRef.current = note.title === '' && note.body.length === 0;
+  if (note !== undefined && noteWasNewAndBlankRef.current === null) {
+    noteWasNewAndBlankRef.current = note.version === 0 && !noteHasContent(note);
   }
 
-  // B3: discard truly blank notes on unmount. discardBlankNote is atomic (re-checks
-  // in IDB), so a concurrent editor flush that writes content is handled correctly.
-  // Known gap: if syncStatus='synced' the blank note may resurrect from server pull —
-  // server-side delete is a follow-up; flagged to pilot (#30 report).
+  // B3: discard newly-created blank notes on unmount (#32 scoped: version=0 only).
+  // discardBlankNote is atomic (re-checks blank in IDB), so if the user typed content
+  // the note won't be blank in IDB and the call is a safe no-op. Existing synced notes
+  // cleared to blank are NOT discarded here — navSys deferred that path.
   useEffect(() => {
     return () => {
-      if (!parsedNoteId) return;
-      const lastSaved = lastSavedRef.current;
-      const wasInitiallyBlank = noteWasInitiallyBlankRef.current;
-      const isBlank =
-        lastSaved !== null
-          ? lastSaved.title === '' && lastSaved.body.length === 0
-          : wasInitiallyBlank === true;
-      if (isBlank) void getStore().discardBlankNote(parsedNoteId);
+      if (!parsedNoteId || noteWasNewAndBlankRef.current !== true) return;
+      void getStore().discardBlankNote(parsedNoteId);
     };
   // parsedNoteId is stable for the lifetime of this route instance.
   // eslint-disable-next-line react-hooks/exhaustive-deps
