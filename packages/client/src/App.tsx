@@ -10,6 +10,7 @@ import { ResetRoute } from './routes/ResetRoute.js';
 import { ForcedPhraseRoute } from './routes/ForcedPhraseRoute.js';
 import { TrashRoute } from './routes/TrashRoute.js';
 import { AllNotebooksScreen } from './views/AllNotebooksScreen.js';
+import { DrawerNav } from './components/DrawerNav.js';
 import { startSyncTriggers, syncNow } from './lib/syncEngine.js';
 import { resolveCollectionView } from './lib/collectionViews.js';
 import type { CollectionViewProps } from './lib/collectionViews.js';
@@ -170,6 +171,7 @@ function AuthedShell() {
   const initNotebook = useNotebookStore((s) => s.init);
   const notebook = useCurrentNotebook();
   const notebookName = notebook?.name ?? '…';
+  const [navOpen, setNavOpen] = useState(false);
 
   // Load the device-local current notebook from IDB on first mount (with localStorage migration).
   useEffect(() => { void initNotebook(); }, [initNotebook]);
@@ -205,16 +207,21 @@ function AuthedShell() {
 
   return (
     <div className="shell">
+      <DrawerNav open={navOpen} onClose={() => setNavOpen(false)} />
       <header className="shell__bar">
-        {/* TODO #21: wire onClick to open the left nav drawer */}
-        <button className="shell__nb-trigger" onClick={() => {/* drawer — #21 */}} aria-label={`Switch notebook (${notebookName})`}>
+        <button
+          className="shell__nb-trigger"
+          onClick={() => setNavOpen(true)}
+          aria-label={`Open notebook switcher (${notebookName})`}
+          aria-expanded={navOpen}
+        >
           <span className="shell__nb-name">{notebookName}</span>
           <span className="shell__nb-chevron"> ▾</span>
         </button>
         <Link to="/" className="shell__mark">δ deltos</Link>
         <div className="shell__bar-end">
-          {/* TODO #21: wire search affordance */}
-          <button className="shell__search-btn" aria-label="Search" onClick={() => {/* search — later */}}>🔍</button>
+          {/* Search affordance — wired in #20 */}
+          <button className="shell__search-btn" aria-label="Search" onClick={() => { /* search — #20 */ }}>🔍</button>
           <SessionStatus />
           <SyncIndicator />
         </div>
