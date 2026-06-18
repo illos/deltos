@@ -134,4 +134,15 @@ export interface LocalStore {
    * is added — the server handles the authoritative delete.
    */
   trashNotesInNotebook(notebookId: NotebookId, trashedAtTimestamp: string): Promise<void>;
+
+  /**
+   * Discard a truly blank note (B3): atomic check-and-delete over notes + syncQueue.
+   * Only acts when the note exists AND is blank (title='' AND body=[]). A concurrent
+   * putNoteAndEnqueue that saved content will leave a non-blank row — this is a no-op in
+   * that case, making it safe to call from a route's cleanup regardless of editor flush order.
+   *
+   * Limitation: if syncStatus='synced' (note was already pushed), the server retains the
+   * blank note and may resurrect it on next pull. Server-side delete is a follow-up (#30 note).
+   */
+  discardBlankNote(id: NoteId): Promise<void>;
 }

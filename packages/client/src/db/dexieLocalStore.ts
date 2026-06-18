@@ -305,4 +305,14 @@ export const dexieLocalStore: LocalStore = {
       db.notes.put({ ...n, properties: setTrashedAt(n.properties, trashedAtTimestamp) }),
     ));
   },
+
+  async discardBlankNote(id: NoteId): Promise<void> {
+    await db.transaction('rw', db.notes, db.syncQueue, async () => {
+      const note = await db.notes.get(id);
+      if (!note) return;
+      if (note.title !== '' || note.body.length > 0) return;
+      await db.notes.delete(id);
+      await db.syncQueue.where('recordId').equals(id).delete();
+    });
+  },
 };

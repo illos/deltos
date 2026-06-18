@@ -1,7 +1,8 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useParams, Link, useSearchParams, Navigate } from 'react-router-dom';
-import type { Note } from '@deltos/shared';
+import type { Note, BlockBody } from '@deltos/shared';
 import { NoteIdSchema } from '@deltos/shared';
+import { getStore } from '../db/store.js';
 import { useNote, useNotebooks } from '../db/storeHooks.js';
 import { mutateNotes } from '../db/mutate.js';
 import { notifyQueueWrite } from '../lib/syncEngine.js';
@@ -30,8 +31,15 @@ export function NoteRoute() {
   const [showMove, setShowMove] = useState(false);
   const notebooks = useNotebooks();
 
+  // B3 blank-note discard: track the content at each save call so the unmount cleanup
+  // can decide whether to keep or discard the note without a stale React-state read.
+  const lastSavedRef = useRef<{ title: string; body: BlockBody } | null>(null);
+  // Set once on first render where note is defined; used to detect pre-existing blank notes.
+  const noteWasInitiallyBlankRef = useRef<boolean | null>(null);
+
   // Stable save handler: write to Dexie then kick Stream B's debounced sync.
   const handleSave = useCallback(async (note: Note) => {
+    lastSavedRef.current = { title: note.title, body: note.body };
     await mutateNotes.put(note);
     notifyQueueWrite(note.notebookId);
   }, []);
@@ -45,9 +53,35 @@ export function NoteRoute() {
   }, []);
 
   const noteId = id ? NoteIdSchema.safeParse(id) : null;
+  const parsedNoteId = noteId?.success ? noteId.data : null;
 
   // Reactive read through the store seam; undefined for an invalid id (guarded below) or while loading.
-  const note = useNote(noteId?.success ? noteId.data : undefined);
+  const note = useNote(parsedNoteId ?? undefined);
+
+  // Capture blank state on first load (before any save on this visit).
+  // Must be above early returns — rules-of-hooks.
+  if (note !== undefined && noteWasInitiallyBlankRef.current === null) {
+    noteWasInitiallyBlankRef.current = note.title === '' && note.body.length === 0;
+  }
+
+  // B3: discard truly blank notes on unmount. discardBlankNote is atomic (re-checks
+  // in IDB), so a concurrent editor flush that writes content is handled correctly.
+  // Known gap: if syncStatus='synced' the blank note may resurrect from server pull —
+  // server-side delete is a follow-up; flagged to pilot (#30 report).
+  useEffect(() => {
+    return () => {
+      if (!parsedNoteId) return;
+      const lastSaved = lastSavedRef.current;
+      const wasInitiallyBlank = noteWasInitiallyBlankRef.current;
+      const isBlank =
+        lastSaved !== null
+          ? lastSaved.title === '' && lastSaved.body.length === 0
+          : wasInitiallyBlank === true;
+      if (isBlank) void getStore().discardBlankNote(parsedNoteId);
+    };
+  // parsedNoteId is stable for the lifetime of this route instance.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parsedNoteId]);
 
   if (!noteId?.success) {
     return (
@@ -69,7 +103,7 @@ export function NoteRoute() {
   if (isResolving) {
     // Conflict was just resolved (hasConflict cleared): drop ?resolve and show the editor.
     if (!clientNote.hasConflict) {
-      return <Navigate to={`/note/${noteId.data}`} replace />;
+      return <Navigate to={`/note/${parsedNoteId}`} replace />;
     }
     return (
       <>
@@ -85,7 +119,7 @@ export function NoteRoute() {
       {/* Exit-with-conflict: if the note has an unresolved conflict, the back link
           first routes through ?resolve so the user can resolve before leaving. */}
       <Link
-        to={clientNote.hasConflict ? `/note/${noteId.data}?resolve` : '/'}
+        to={clientNote.hasConflict ? `/note/${parsedNoteId}?resolve` : '/'}
         className="editor__back"
       >
         ← Notes

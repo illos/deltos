@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { NotebookId } from '@deltos/shared';
 import { useNotebooks, useNotes } from '../db/storeHooks.js';
 import { useNotebookStore } from '../lib/notebookStore.js';
@@ -26,6 +26,8 @@ export function NavContent({ onNavigate }: NavContentProps) {
   const setCurrentNotebook = useNotebookStore((s) => s.setCurrentNotebook);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
+  const [menuOpenId, setMenuOpenId] = useState<NotebookId | null>(null);
+  const navigate = useNavigate();
 
   const countByNotebook = useMemo(() => {
     const m: Record<string, number> = {};
@@ -33,12 +35,14 @@ export function NavContent({ onNavigate }: NavContentProps) {
     return m;
   }, [notes]);
 
+  // B2: selecting a notebook always navigates to the list, even when a note is open.
   const handleSelect = useCallback(
     async (id: NotebookId) => {
       await setCurrentNotebook(id);
+      navigate('/');
       onNavigate?.();
     },
-    [setCurrentNotebook, onNavigate],
+    [setCurrentNotebook, navigate, onNavigate],
   );
 
   const handleCreate = useCallback(
@@ -61,6 +65,22 @@ export function NavContent({ onNavigate }: NavContentProps) {
     setNewName('');
   }, []);
 
+  // B1: delete a non-default notebook; notes cascade to trash locally.
+  const handleDelete = useCallback(
+    async (id: NotebookId) => {
+      await mutateNotebooks.delete(id);
+      notifyQueueWrite(id);
+      setMenuOpenId(null);
+      if (id === currentNotebookId) {
+        const def = notebooks.find((nb) => nb.isDefault);
+        if (def) await setCurrentNotebook(def.id);
+        navigate('/');
+      }
+      onNavigate?.();
+    },
+    [currentNotebookId, notebooks, setCurrentNotebook, navigate, onNavigate],
+  );
+
   return (
     <nav className="nav-content" aria-label="Notebooks">
       <ul className="nav-content__list">
@@ -76,6 +96,34 @@ export function NavContent({ onNavigate }: NavContentProps) {
                 <span className="nav-content__nb-count">{countByNotebook[nb.id] ?? 0}</span>
               </span>
             </button>
+            {!nb.isDefault && (
+              menuOpenId === nb.id ? (
+                <div className="nav-content__nb-menu" role="menu">
+                  <button
+                    className="nav-content__nb-delete"
+                    role="menuitem"
+                    onClick={() => { void handleDelete(nb.id); }}
+                  >
+                    Delete
+                  </button>
+                  <button
+                    className="nav-content__nb-menu-close"
+                    aria-label="Close menu"
+                    onClick={() => setMenuOpenId(null)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className="nav-content__nb-more"
+                  aria-label={`More options for ${nb.name}`}
+                  onClick={(e) => { e.stopPropagation(); setMenuOpenId(nb.id); }}
+                >
+                  ⋮
+                </button>
+              )
+            )}
           </li>
         ))}
       </ul>
