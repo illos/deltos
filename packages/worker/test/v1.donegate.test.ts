@@ -57,6 +57,8 @@ const ALL_MIGRATIONS = [
   '0003_account-identity.sql',
   '0004_password-auth.sql',
   '0005_recovery-established.sql',
+  '0006_account-sync-seq.sql',
+  '0007_reconcile-account-sync-seq.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 const DG_AUD = 'deltos.v1.donegate';

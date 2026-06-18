@@ -58,6 +58,8 @@ const migrations = [
   '0001_stream-b-sync.sql',
   '0002_stream-a-auth.sql',
   '0003_account-identity.sql',
+  '0006_account-sync-seq.sql',
+  '0007_reconcile-account-sync-seq.sql',
 ].map((f) =>
   readFileSync(join(__dirname, '../migrations', f), 'utf8'),
 );
@@ -204,8 +206,8 @@ describe('conflict engine — server-side CAS (PIN-SYNC-1)', () => {
     await insertNote(db, entry(id1, 0, 'Note 1'), ACCT, NOW);
     await insertNote(db, entry(id2, 0, 'Note 2'), ACCT, NOW);
 
-    // Full sync (cursor = 0)
-    const page1 = await pullNotes(db, NB, ACCT, 0);
+    // Full sync (cursor = 0) — pull is account-scoped (Option B); notebookId is not a sync boundary.
+    const page1 = await pullNotes(db, ACCT, 0);
     expect(page1.notes).toHaveLength(2);
     expect(page1.hasMore).toBe(false);
     // Monotone order
@@ -215,16 +217,93 @@ describe('conflict engine — server-side CAS (PIN-SYNC-1)', () => {
     expect(cursor).toBe(page1.notes[1].syncSeq);
 
     // Incremental pull — nothing new
-    const page2 = await pullNotes(db, NB, ACCT, cursor);
+    const page2 = await pullNotes(db, ACCT, cursor);
     expect(page2.notes).toHaveLength(0);
     expect(page2.nextCursor).toBe(cursor); // cursor unchanged when no results
 
     // Update note 1 — it must now appear in a pull since cursor
     await updateNote(db, entry(id1, 1, 'Note 1 updated'), ACCT, NOW);
-    const page3 = await pullNotes(db, NB, ACCT, cursor);
+    const page3 = await pullNotes(db, ACCT, cursor);
     expect(page3.notes).toHaveLength(1);
     expect(page3.notes[0].id).toBe(id1);
     expect(page3.notes[0].title).toBe('Note 1 updated');
     expect(page3.notes[0].syncSeq).toBeGreaterThan(cursor);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix A regression (P0 sync, 2026-06-18) — Option B: the sync boundary is the ACCOUNT, not a
+// device-local notebookId. These lock in the behavior that fixes cross-device sync.
+// ---------------------------------------------------------------------------
+
+describe('Fix A — account-scoped sync (Option B): notebookId is not the sync boundary', () => {
+  let db: DbAdapter;
+  beforeEach(() => {
+    ({ db } = freshDb());
+  });
+
+  const ACCT2 = 'acct-fixA-0001';
+  const NB_A = '11111111-1111-4111-8111-111111111111'; // "laptop" notebookId tag
+  const NB_B = '22222222-2222-4222-8222-222222222222'; // "phone" notebookId tag
+
+  function entryNb(
+    id: string,
+    notebookId: string,
+    baseVersion: number,
+    title = 'T',
+    body: SyncPushEntry['draft']['body'] = [],
+  ): SyncPushEntry & { notebookId: string } {
+    return {
+      id: id as SyncPushEntry['id'],
+      notebookId: notebookId as SyncPushEntry['notebookId'] & string,
+      baseVersion,
+      draft: { title, properties: {}, body },
+    };
+  }
+
+  it('one account-scoped pull returns notes created under DIFFERENT notebookIds (cross-device convergence — the P0 fix)', async () => {
+    const idA = '33333333-3333-4333-8333-333333333333';
+    const idB = '44444444-4444-4444-8444-444444444444';
+    await insertNote(db, entryNb(idA, NB_A, 0, 'from device A'), ACCT2, NOW);
+    await insertNote(db, entryNb(idB, NB_B, 0, 'from device B'), ACCT2, NOW);
+
+    const { notes } = await pullNotes(db, ACCT2, 0);
+    expect(notes.map((n) => n.id).sort()).toEqual([idA, idB].sort());
+    // Each note keeps its own organizing notebookId tag in the payload.
+    expect(notes.find((n) => n.id === idA)!.notebookId).toBe(NB_A);
+    expect(notes.find((n) => n.id === idB)!.notebookId).toBe(NB_B);
+    // syncSeq is unique + monotonic across the whole account (not per notebook).
+    expect(new Set(notes.map((n) => n.syncSeq)).size).toBe(2);
+  });
+
+  it('an edit pushed under a DIFFERENT notebookId tag hits the same note id (no phantom conflict)', async () => {
+    const id = '55555555-5555-4555-8555-555555555555';
+    expect((await insertNote(db, entryNb(id, NB_A, 0, 'orig'), ACCT2, NOW)).outcome).toBe('accepted');
+
+    // "Device B" edits the SAME note id but tags the push with its own notebookId (NB_B).
+    // Pre-Fix-A this missed the CAS (notebookId in the WHERE) → phantom conflict + fork. Now it hits.
+    const upd = await updateNote(db, entryNb(id, NB_B, 1, 'edited from B'), ACCT2, NOW);
+    expect(upd.outcome).toBe('accepted');
+
+    const { notes } = await pullNotes(db, ACCT2, 0);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.title).toBe('edited from B');
+    expect(notes[0]!.notebookId).toBe(NB_A); // notebookId stays stable from insert (no v1 notebook-move)
+  });
+
+  it('title-only notes (body=[]) push, persist, and pull like any note (title-only is first-class)', async () => {
+    const id = '66666666-6666-4666-8666-666666666666';
+    expect((await insertNote(db, entryNb(id, NB_A, 0, 'just a title', []), ACCT2, NOW)).outcome).toBe('accepted');
+
+    const { notes } = await pullNotes(db, ACCT2, 0);
+    expect(notes).toHaveLength(1); // NOT skipped/dropped for having an empty body
+    expect(notes[0]!.title).toBe('just a title');
+    expect(notes[0]!.body).toBe('[]'); // empty body persisted verbatim and returned
+  });
+
+  it('account isolation holds — a different account never sees these notes', async () => {
+    await insertNote(db, entryNb('77777777-7777-4777-8777-777777777777', NB_A, 0, 'acct2 note'), ACCT2, NOW);
+    const { notes } = await pullNotes(db, 'acct-other-9999', 0);
+    expect(notes).toHaveLength(0);
   });
 });

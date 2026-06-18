@@ -4,12 +4,20 @@ import {
   SyncPullRequestSchema,
 } from '@deltos/shared';
 import type { SyncPushResult, SyncNote, NoteResponse } from '@deltos/shared';
+import type { Resource } from '@deltos/shared';
 import type { AppEnv } from '../context.js';
 import { guard, apiError } from '../http.js';
 import { d1Adapter } from '../db/schema.js';
 import type { NoteRow } from '../db/schema.js';
 import { insertNote, updateNote, pullNotes } from '../db/mutate.js';
 import { requireAccountId } from '../db/accountScope.js';
+
+// Sync is scoped to the ACCOUNT, not a notebook (Option B, 2026-06-18): the boundary is the caller's
+// accountId, derived server-side from the bearer token (requireAccountId), never a client-supplied
+// notebookId. The guard resource is therefore the workspace — the same resource the session grant is
+// minted against (grantAllows: a workspace grant authorizes any resource), and a TYPED resource, not a
+// bare id. notebookId survives only as a per-note organizing tag carried on each note.
+const workspaceResource = (): Resource => ({ kind: 'workspace' });
 
 const sync = new Hono<AppEnv>();
 
@@ -51,7 +59,7 @@ sync.post(
     input: async (c) => {
       try { return await c.req.json(); } catch { return undefined; }
     },
-    resource: (req) => ({ kind: 'notebook', id: req.notebookId }),
+    resource: workspaceResource,
     handle: async (req, c) => {
       const db = d1Adapter(c.env.DB);
       // accountId is the caller's verified account (principal.id post-D6 re-point), resolved
@@ -103,18 +111,18 @@ sync.get(
     op: 'read',
     schema: SyncPullRequestSchema,
     input: (c) => {
-      const notebookId = c.req.query('notebookId');
       const cursorRaw = c.req.query('cursor');
       const cursor = cursorRaw !== undefined ? Number(cursorRaw) : undefined;
-      return { notebookId, cursor };
+      return { cursor };
     },
-    resource: (req) => ({ kind: 'notebook', id: req.notebookId }),
+    resource: workspaceResource,
     handle: async (req, c) => {
       const db = d1Adapter(c.env.DB);
-      // Read isolation: pull returns ONLY the caller's account's notes for this notebook (accountId
-      // resolved server-side off the principal, never the body). Fail-closed if absent.
+      // Read isolation: pull returns ONLY the caller's account's notes (accountId resolved server-side
+      // off the principal, never the body), across every notebookId the account owns. Fail-closed if
+      // absent.
       const accountId = requireAccountId(c);
-      const { notes, nextCursor, hasMore } = await pullNotes(db, req.notebookId, accountId, req.cursor);
+      const { notes, nextCursor, hasMore } = await pullNotes(db, accountId, req.cursor);
       const syncNotes: SyncNote[] = notes.map(rowToSyncNote);
       return c.json({ notes: syncNotes, nextCursor, hasMore });
     },

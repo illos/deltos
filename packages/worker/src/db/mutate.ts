@@ -8,10 +8,13 @@ import { FIRST_SERVER_VERSION, UNSYNCED_VERSION } from '@deltos/shared';
  * rows-affected. There is no SELECT-then-UPDATE path — that opens the TOCTOU race that silently
  * loses writes and never fires a conflict.
  *
- * Sync position (PIN-SYNC-2): every write atomically bumps the per-notebook `notebookSyncSeq`
- * counter and stores the new value in `notes.syncSeq`. Pull uses `WHERE syncSeq > :cursor`, so
- * every committed write is visible regardless of timestamp collisions. Gaps from failed CAS
- * attempts are intentional and harmless.
+ * Sync position (PIN-SYNC-2): every write atomically bumps the per-ACCOUNT `accountSyncSeq`
+ * counter (Option B, 2026-06-18 — the sync boundary is the account, not a device-local notebookId)
+ * and stores the new value in `notes.syncSeq`. Pull uses `WHERE accountId = :id AND syncSeq > :cursor`,
+ * so every committed write is visible to all of the account's devices regardless of which notebookId
+ * tag the note carries or timestamp collisions. Gaps from failed CAS attempts are intentional and
+ * harmless. syncSeq is unique + monotonic PER ACCOUNT (migration 0007 renumbers legacy rows that were
+ * sequenced on the old per-notebook counter).
  */
 
 const PULL_PAGE = 100;
@@ -26,13 +29,17 @@ const PULL_PAGE = 100;
 // protocol ever carries a client createdAt/updatedAt, reinstate a `min(client, serverNow)` clamp
 // at the write boundary (the PIN-SYNC timestamp-clamp landmine) before persisting it.
 
-/** Bump the per-notebook syncSeq counter and return it. Batched with note writes. */
+/**
+ * Bump the per-ACCOUNT syncSeq counter and return it. Batched with note writes. The counter is
+ * keyed on accountId (server-derived from the principal, never the body) so the whole account
+ * shares one monotonic pull stream — the device-local notebookId no longer gates sync (Option B).
+ */
 const BUMP_SEQ_SQL = `
-  INSERT INTO notebookSyncSeq (notebookId, seq)
+  INSERT INTO accountSyncSeq (accountId, seq)
   VALUES (?, 1)
-  ON CONFLICT(notebookId) DO UPDATE SET seq = seq + 1
+  ON CONFLICT(accountId) DO UPDATE SET seq = seq + 1
 `;
-const READ_SEQ_SQL = `SELECT seq FROM notebookSyncSeq WHERE notebookId = ?`;
+const READ_SEQ_SQL = `SELECT seq FROM accountSyncSeq WHERE accountId = ?`;
 
 // ---------------------------------------------------------------------------
 // Row → domain (no mapper layer — columns are camelCase 1:1 with the spine)
@@ -68,7 +75,7 @@ export async function insertNote(
   // Three-statement batch: bump seq counter → insert note with seq from counter → read back row.
   // All three run in one atomic D1 transaction.
   const insertBatch = await db.batch([
-    { sql: BUMP_SEQ_SQL, params: [entry.notebookId] },
+    { sql: BUMP_SEQ_SQL, params: [accountId] },
     {
       sql: `
         INSERT INTO notes
@@ -79,7 +86,7 @@ export async function insertNote(
       `,
       params: [
         entry.id,
-        entry.notebookId,
+        entry.notebookId, // organizing tag stamped at creation; NOT the sync boundary
         accountId,
         entry.draft.title ?? '',
         JSON.stringify(entry.draft.properties ?? {}),
@@ -87,7 +94,7 @@ export async function insertNote(
         FIRST_SERVER_VERSION,
         createdAt,
         serverNow,
-        entry.notebookId,
+        accountId, // READ_SEQ_SQL: read back the per-account counter
         entry.id, // for the NOT EXISTS check
       ],
     },
@@ -127,10 +134,15 @@ export async function updateNote(
   accountId: string,
   serverNow: string,
 ): Promise<UpdateOutcome> {
-  // Batch: bump seq → CAS update reading new seq as subquery.
+  // Batch: bump the per-account seq → CAS update reading new seq as subquery.
   const updateBatch = await db.batch([
-    { sql: BUMP_SEQ_SQL, params: [entry.notebookId] },
+    { sql: BUMP_SEQ_SQL, params: [accountId] },
     {
+      // CAS identity is (id, accountId, version) — notebookId is NO LONGER part of note identity
+      // (Option B). A note's notebookId is just an organizing tag set at insert; dropping it from the
+      // WHERE means an edit pushed from another device under a DIFFERENT notebookId tag still hits the
+      // same row (was a phantom-conflict source). notebookId is left unchanged on update (no v1
+      // notebook-move). accountId (server-derived) keeps the write account-scoped.
       sql: `
         UPDATE notes
         SET title      = ?,
@@ -140,7 +152,6 @@ export async function updateNote(
             version    = version + 1,
             syncSeq    = (${READ_SEQ_SQL})
         WHERE id         = ?
-          AND notebookId = ?
           AND accountId  = ?
           AND version    = ?
           AND deletedAt  IS NULL
@@ -150,9 +161,8 @@ export async function updateNote(
         JSON.stringify(entry.draft.properties ?? {}),
         JSON.stringify(entry.draft.body ?? []),
         serverNow,
-        entry.notebookId,
+        accountId,
         entry.id,
-        entry.notebookId,
         accountId,
         entry.baseVersion,
       ],
@@ -161,9 +171,10 @@ export async function updateNote(
   const updateResult = updateBatch[1]!;
 
   // CAS hit ⇔ rowsWritten > 0. The WHERE clause uniquely identifies at most ONE note (id +
-  // notebookId + accountId + version + deletedAt IS NULL), so a miss writes 0 rows. We must NOT test
-  // `=== 1`: on real D1 `meta.rows_written` counts INDEX writes too, so a successful single-row UPDATE
-  // on this multi-index table (notes_pull/notes_list/notes_byNotebook/notes_byAccount) reports >1 →
+  // accountId + version + deletedAt IS NULL — id is the PK, so id+accountId is exact), so a miss writes
+  // 0 rows. We must NOT test `=== 1`: on real D1 `meta.rows_written` counts INDEX writes too, so a
+  // successful single-row UPDATE on this multi-index table (notes_pull/notes_list/notes_byAccount/
+  // notes_accountPull) reports >1 →
   // `=== 1` would mislabel an accepted write as a CONFLICT (the row IS updated server-side, but the
   // client gets a phantom conflict on every edit). better-sqlite3's `changes` reports rows-changed
   // (=1), so the test suite masks this — same class as the D1 CREATE-TEMP-TABLE landmine.
@@ -173,11 +184,13 @@ export async function updateNote(
   }
 
   // CAS missed — return current server state so the client can fork (PIN-SYNC-3/4).
-  // Scoped by accountId: a cross-account push (caller A, note owned by B) gets a 0-row CAS, then this
-  // returns null — serverNote=null → client forks under a new id. No leak of B's note, no clobber.
+  // Scoped by accountId (NOT notebookId — secSys: the conflict-path SELECT stays accountId-scoped so a
+  // cross-account push can never read another account's row): a cross-account push (caller A, note
+  // owned by B) gets a 0-row CAS, then this SELECT finds nothing under A → serverNote=null → client
+  // forks under a new id. No leak of B's note, no clobber.
   const serverRow = await db.first<NoteRow>(
-    `SELECT * FROM notes WHERE id = ? AND notebookId = ? AND accountId = ?`,
-    [entry.id, entry.notebookId, accountId],
+    `SELECT * FROM notes WHERE id = ? AND accountId = ?`,
+    [entry.id, accountId],
   );
   return { outcome: 'conflict', serverRow: serverRow ?? null };
 }
@@ -205,8 +218,10 @@ export async function deleteNote(
   const versionParam = expectedVersion !== undefined ? [expectedVersion] : [];
 
   const deleteBatch = await db.batch([
-    { sql: BUMP_SEQ_SQL, params: [notebookId] },
+    { sql: BUMP_SEQ_SQL, params: [accountId] },
     {
+      // Identity is (id, accountId) — notebookId is not part of it (Option B); the per-account counter
+      // feeds the same account-scoped pull stream as insert/update.
       sql: `
         UPDATE notes
         SET deletedAt = ?,
@@ -214,12 +229,11 @@ export async function deleteNote(
             version   = version + 1,
             syncSeq   = (${READ_SEQ_SQL})
         WHERE id         = ?
-          AND notebookId = ?
           AND accountId  = ?
           AND deletedAt  IS NULL
           ${versionClause}
       `,
-      params: [serverNow, serverNow, notebookId, id, notebookId, accountId, ...versionParam],
+      params: [serverNow, serverNow, accountId, id, accountId, ...versionParam],
     },
   ]);
   const deleteResult = deleteBatch[1]!;
@@ -232,8 +246,8 @@ export async function deleteNote(
   }
 
   const serverRow = await db.first<NoteRow>(
-    `SELECT * FROM notes WHERE id = ? AND notebookId = ? AND accountId = ?`,
-    [id, notebookId, accountId],
+    `SELECT * FROM notes WHERE id = ? AND accountId = ?`,
+    [id, accountId],
   );
   if (!serverRow) return { outcome: 'not_found' };
   if (serverRow.deletedAt !== null) return { outcome: 'accepted', syncSeq: serverRow.syncSeq }; // idempotent
@@ -263,7 +277,7 @@ export async function patchNote(
   serverNow: string,
 ): Promise<{ outcome: 'accepted'; row: NoteRow } | { outcome: 'conflict' } | { outcome: 'not_found' }> {
   const setParts: string[] = ['updatedAt = ?', 'version = version + 1', `syncSeq = (${READ_SEQ_SQL})`];
-  const setParams: unknown[] = [serverNow, notebookId];
+  const setParams: unknown[] = [serverNow, accountId]; // accountId feeds the per-account syncSeq counter
   if (patch.title !== undefined) { setParts.unshift('title = ?'); setParams.unshift(patch.title); }
   if (patch.properties !== undefined) { setParts.unshift('properties = ?'); setParams.unshift(patch.properties); }
   if (patch.body !== undefined) { setParts.unshift('body = ?'); setParams.unshift(patch.body); }
@@ -271,11 +285,13 @@ export async function patchNote(
   const versionClause = expectedVersion !== undefined ? `AND version = ?` : '';
   const versionParam = expectedVersion !== undefined ? [expectedVersion] : [];
 
+  // Identity is (id, accountId) — notebookId is no longer part of it (Option B). The `notebookId`
+  // parameter is retained for signature stability with the REST callers but is intentionally unused.
   const patchBatch = await db.batch([
-    { sql: BUMP_SEQ_SQL, params: [notebookId] },
+    { sql: BUMP_SEQ_SQL, params: [accountId] },
     {
-      sql: `UPDATE notes SET ${setParts.join(', ')} WHERE id = ? AND notebookId = ? AND accountId = ? AND deletedAt IS NULL ${versionClause}`,
-      params: [...setParams, id, notebookId, accountId, ...versionParam],
+      sql: `UPDATE notes SET ${setParts.join(', ')} WHERE id = ? AND accountId = ? AND deletedAt IS NULL ${versionClause}`,
+      params: [...setParams, id, accountId, ...versionParam],
     },
   ]);
   const result = patchBatch[1]!;
@@ -284,8 +300,8 @@ export async function patchNote(
     // Scoped by accountId: a row owned by another account is invisible here → not_found (404),
     // not a 409 conflict — no cross-account existence oracle.
     const exists = await db.first<{ id: string }>(
-      `SELECT id FROM notes WHERE id = ? AND notebookId = ? AND accountId = ?`,
-      [id, notebookId, accountId],
+      `SELECT id FROM notes WHERE id = ? AND accountId = ?`,
+      [id, accountId],
     );
     return { outcome: exists ? 'conflict' : 'not_found' };
   }
@@ -305,22 +321,25 @@ export interface PullResult {
 }
 
 /**
- * Fetch notes whose syncSeq > cursor for this notebook, ordered ascending (monotone).
- * Includes tombstones (deletedAt IS NOT NULL) so the client can apply PIN-SYNC-3.
+ * Fetch the ACCOUNT's notes whose syncSeq > cursor, ordered ascending (monotone). The sync boundary
+ * is the accountId (Option B) — the whole account is one pull stream, spanning every notebookId tag,
+ * so all of an account's devices converge. Includes tombstones (deletedAt IS NOT NULL) so the client
+ * can apply PIN-SYNC-3.
  *
- * `cursor = 0` is a full sync; `cursor = N` is incremental.
+ * `cursor = 0` is a full account sync; `cursor = N` is incremental. syncSeq is unique + monotonic per
+ * account (migration 0007 renumbers legacy per-notebook rows); the `id` tiebreak is a deterministic
+ * belt for any pre-migration duplicate so pagination never straddles a tie.
  */
 export async function pullNotes(
   db: DbAdapter,
-  notebookId: string,
   accountId: string,
   cursor: number,
 ): Promise<PullResult> {
-  // Fetch one extra to detect hasMore without a separate COUNT query.
-  // Account-scoped (read isolation): a notebookId never resolves across accounts.
+  // Fetch one extra to detect hasMore without a separate COUNT query. Account-scoped read isolation:
+  // the accountId comes from the verified principal, so only this account's notes are ever returned.
   const rows = await db.all<NoteRow>(
-    `SELECT * FROM notes WHERE notebookId = ? AND accountId = ? AND syncSeq > ? ORDER BY syncSeq ASC LIMIT ?`,
-    [notebookId, accountId, cursor, PULL_PAGE + 1],
+    `SELECT * FROM notes WHERE accountId = ? AND syncSeq > ? ORDER BY syncSeq ASC, id ASC LIMIT ?`,
+    [accountId, cursor, PULL_PAGE + 1],
   );
 
   const hasMore = rows.length > PULL_PAGE;

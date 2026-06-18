@@ -79,11 +79,14 @@ export const SyncNoteSchema = NoteResponseSchema.extend({
 export type SyncNote = z.infer<typeof SyncNoteSchema>;
 
 /**
- * Pull request. `cursor = 0` triggers a full notebook sync.
- * The server returns notes with `syncSeq > cursor`, ordered ascending.
+ * Pull request. The sync boundary is the ACCOUNT (Option B, 2026-06-18): the server scopes the
+ * pull stream to the caller's accountId (derived from the bearer token), NOT to a notebookId — so
+ * a notebookId is neither sent nor trusted here. `cursor` is the caller's per-ACCOUNT stream
+ * position (was per-notebook pre-Fix-A); `cursor = 0` triggers a full account sync. The server
+ * returns every note the account owns (across all notebookIds) with `syncSeq > cursor`, ordered
+ * ascending — each carrying its own organizing notebookId.
  */
 export const SyncPullRequestSchema = z.object({
-  notebookId: NotebookIdSchema,
   cursor: z.number().int().nonnegative(),
 });
 export type SyncPullRequest = z.infer<typeof SyncPullRequestSchema>;
