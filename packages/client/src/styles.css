@@ -1335,6 +1335,24 @@ a.auth__link { display: inline; }
   background: rgba(0, 0, 0, 0.45);
   z-index: 299; /* sits below bottom-nav (300) so the sheet is tappable */
 }
+.bottom-nav__kb-anchor {
+  /* Hidden keyboard anchor — positions off-screen but stays in layout so iOS will raise
+     the keyboard when it receives focus. font-size:16px prevents Safari auto-zoom. */
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-size: 16px;
+  background: transparent;
+  color: transparent;
+  outline: none;
+}
 
 /* Mobile / tablet-portrait: activate bottom nav, deactivate desktop nav controls. */
 @media (max-width: 768px) {

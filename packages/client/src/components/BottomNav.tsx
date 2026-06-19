@@ -28,6 +28,10 @@ export function BottomNav() {
   const navigate = useNavigate();
   const touchStartY = useRef<number | null>(null);
   const navRef = useRef<HTMLDivElement>(null);
+  // iOS keyboard anchor: focused synchronously within the tap gesture so iOS raises the
+  // keyboard before any async hop (IDB write + route change). Stays mounted in BottomNav
+  // (outside Routes) so focus is preserved across route transitions until PM inherits it.
+  const kbAnchorRef = useRef<HTMLInputElement>(null);
 
   const collapse = useCallback(() => setExpanded(false), []);
 
@@ -80,7 +84,14 @@ export function BottomNav() {
   }, []);
 
   const handleAction = useCallback((id: string) => {
-    if (id === 'new-note') { navigate('/new'); return; }
+    if (id === 'new-note') {
+      // Focus the keyboard anchor synchronously (within the tap gesture) so iOS raises the
+      // keyboard before the async note-create flow runs. PM inherits the open keyboard when
+      // the editor mounts and calls view.focus().
+      kbAnchorRef.current?.focus();
+      navigate('/new');
+      return;
+    }
     if (id === 'search')   { navigate('/search'); return; }
     // Future: other registered action ids dispatched here.
   }, [navigate]);
@@ -89,6 +100,15 @@ export function BottomNav() {
 
   return (
     <>
+      {/* iOS keyboard anchor — kept out of the tab order and screen readers.
+          font-size:16px prevents iOS from zooming on focus. */}
+      <input
+        ref={kbAnchorRef}
+        className="bottom-nav__kb-anchor"
+        tabIndex={-1}
+        aria-hidden="true"
+      />
+
       {expanded && (
         <div
           className="bottom-nav__scrim"

@@ -5,6 +5,8 @@ import { ProseMirrorEditor } from './ProseMirrorEditor.js';
 export interface NoteEditorProps {
   note: Note;
   onSave: (note: Note) => Promise<void>;
+  /** Focus the editor on mount — set only for newly-created notes. */
+  autoFocus?: boolean;
 }
 
 /**
@@ -19,7 +21,7 @@ export interface NoteEditorProps {
  * (via onSave) and flows into Stream B's syncQueue in the same transaction. No network
  * round-trip on the critical path.
  */
-export function NoteEditor({ note, onSave }: NoteEditorProps) {
+export function NoteEditor({ note, onSave, autoFocus = false }: NoteEditorProps) {
   const persistUpdate = useCallback(
     (updates: Partial<Pick<Note, 'title' | 'body'>>) => {
       const now = new Date().toISOString();
@@ -48,7 +50,7 @@ export function NoteEditor({ note, onSave }: NoteEditorProps) {
         initialTitle={note.title}
         initialBody={note.body}
         onChange={handleDocChange}
-        autoFocus={note.title === '' && note.body.length === 0}
+        autoFocus={autoFocus}
       />
     </div>
   );

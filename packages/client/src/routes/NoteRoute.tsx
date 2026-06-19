@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useParams, Link, useSearchParams, Navigate } from 'react-router-dom';
+import { useParams, Link, useSearchParams, Navigate, useLocation } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
 import { NoteIdSchema } from '@deltos/shared';
 import { getStore } from '../db/store.js';
@@ -26,6 +26,9 @@ import type { ClientNote, NotebookRow } from '../db/schema.js';
 export function NoteRoute() {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
+  const { state } = useLocation();
+  // True only when navigated from the new-note create flow — drives autoFocus on the editor.
+  const isNew = (state as { isNew?: boolean } | null)?.isNew === true;
   // ConflictView is gated behind an explicit ?resolve param — never auto-triggered by sync.
   // Paths that set it: badge-tap (ConflictBadgeSlot) and back-with-conflict (← Notes below).
   const isResolving = searchParams.has('resolve');
@@ -137,7 +140,7 @@ export function NoteRoute() {
         </div>
       )}
       <button className="editor__move-btn" onClick={() => setShowMove(true)}>Move to notebook…</button>
-      <ViewComponent note={note} onSave={handleSave} />
+      <ViewComponent note={note} onSave={handleSave} autoFocus={isNew} />
     </>
   );
 }

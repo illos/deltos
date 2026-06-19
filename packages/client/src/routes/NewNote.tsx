@@ -41,7 +41,7 @@ export function NewNote() {
 
     mutateNotes.put(note).then(() => {
       notifyQueueWrite(note.notebookId);
-      navigate(`/note/${note.id}`, { replace: true });
+      navigate(`/note/${note.id}`, { replace: true, state: { isNew: true } });
     });
   }, [navigate, accountId]);
 
