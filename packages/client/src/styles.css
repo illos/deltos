@@ -32,7 +32,8 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* Reset text-align:center from the inline critical CSS loading-state rule. */
+  /* Reset properties set by the inline critical CSS loading-state rule. */
+  padding: 0;
   text-align: left;
 }
 
@@ -1266,8 +1267,9 @@ a.auth__link { display: inline; }
   align-items: stretch;
   background: var(--bg);
   border-top: 1px solid var(--edge);
-  padding-bottom: env(safe-area-inset-bottom);
-  max-height: calc(56px + env(safe-area-inset-bottom));
+  /* max(base, env): not additive — base when in Safari tab (inset≈0), env when in PWA. */
+  padding-bottom: max(0.35rem, env(safe-area-inset-bottom));
+  max-height: calc(56px + max(0.35rem, env(safe-area-inset-bottom)));
   overflow: hidden;
   transition: max-height 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -1320,6 +1322,9 @@ a.auth__link { display: inline; }
   flex: 1;
   overflow-y: auto;
   padding-bottom: 0.5rem;
+  /* Belt: stop sheet scroll from propagating to the body behind the scrim. */
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .bottom-nav__scrim {
@@ -1351,11 +1356,27 @@ a.auth__link { display: inline; }
     flex-shrink: 1;
   }
 
-  /* Main content area clears the collapsed nav bar. */
+  /* Main content area clears the collapsed nav bar (max — not additive). */
   .shell__main {
-    padding-bottom: calc(56px + env(safe-area-inset-bottom) + 0.5rem);
+    padding-bottom: calc(56px + max(0.5rem, env(safe-area-inset-bottom)));
   }
+  /* Remove inner action-row bottom padding — .bottom-nav handles it via max(). */
+  .bottom-nav__actions { padding-bottom: 0; }
 
   /* Activate the bottom nav. */
   .bottom-nav { display: flex; }
+
+  /* ── #34 Edge-to-edge note list (#34) ──────────────────────────────── */
+  /* Remove the .home container's side gutters so list rows span full width. */
+  .home {
+    padding-left: 0;
+    padding-right: 0;
+    max-width: 100%;
+  }
+  /* Re-apply horizontal spacing to header, empty-state, and footer only. */
+  .home__header { padding-left: 1.25rem; padding-right: 1.25rem; }
+  .home__lede   { padding-left: 1.25rem; padding-right: 1.25rem; }
+  .home__footer  { padding-left: 1.25rem; padding-right: 1.25rem; }
+  /* Row text: nudge padding to feel right at full bleed (was 1rem, now 1.1rem). */
+  .home__note-link { padding-left: 1.1rem; padding-right: 1.1rem; }
 }

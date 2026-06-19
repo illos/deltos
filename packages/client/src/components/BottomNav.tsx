@@ -1,7 +1,8 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { NavContent } from '../views/NavContent.js';
 import { getNavActions } from '../lib/bottomNavActions.js';
+import { lockBodyScroll, unlockBodyScroll } from '../lib/bodyScrollLock.js';
 
 /**
  * Mobile bottom nav — replaces the left-drawer container on mobile / tablet-portrait.
@@ -16,13 +17,49 @@ import { getNavActions } from '../lib/bottomNavActions.js';
  *
  * Safe-area aware: respects env(safe-area-inset-bottom) so the bar clears the
  * iOS home indicator on notched devices.
+ *
+ * Scroll-lock: body scroll is locked while the sheet is open using the position:fixed
+ * technique — the only approach that works in mobile Safari (overflow:hidden is a no-op
+ * there). A non-passive touchmove listener on the bar also prevents body scroll during
+ * the drag gesture on the collapsed bar, before the sheet opens.
  */
 export function BottomNav() {
   const [expanded, setExpanded] = useState(false);
   const navigate = useNavigate();
   const touchStartY = useRef<number | null>(null);
+  const navRef = useRef<HTMLDivElement>(null);
 
   const collapse = useCallback(() => setExpanded(false), []);
+
+  // Lock body scroll while the sheet is open (position:fixed — iOS-safe).
+  useEffect(() => {
+    if (expanded) {
+      lockBodyScroll();
+    } else {
+      unlockBodyScroll();
+    }
+  }, [expanded]);
+
+  // Safety net: always unlock on unmount (e.g. route change while sheet is open).
+  useEffect(() => {
+    return () => { unlockBodyScroll(); };
+  }, []);
+
+  // Prevent body scroll during the drag gesture on the collapsed bar.
+  // Must be a non-passive listener — React's synthetic onTouchMove is passive and
+  // e.preventDefault() is silently ignored in mobile Safari / Chrome.
+  // Only active when collapsed: when expanded the body is already position:fixed,
+  // and the inner sheet must be free to scroll (no preventDefault on its touches).
+  useEffect(() => {
+    if (expanded) return;
+    const el = navRef.current;
+    if (!el) return;
+    const prevent = (e: TouchEvent) => {
+      if (touchStartY.current !== null) e.preventDefault();
+    };
+    el.addEventListener('touchmove', prevent, { passive: false });
+    return () => el.removeEventListener('touchmove', prevent);
+  }, [expanded]);
 
   // Drag-up / drag-down gesture
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -61,6 +98,7 @@ export function BottomNav() {
       )}
 
       <div
+        ref={navRef}
         className={`bottom-nav${expanded ? ' bottom-nav--expanded' : ''}`}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}

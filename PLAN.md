@@ -15,7 +15,22 @@ guess it was lifted?). See `KICKOFF.md` §Reuse discipline.
 
 ---
 
-## ⏯ CURRENT STATE (2026-06-16 — resume here)
+## ⏯ CURRENT STATE (2026-06-18 — resume here)
+> **LIVE on https://deltos.blackgate.studio; in active on-device dogfood.** Since the 2026-06-16 snapshot below:
+> - ✅ **Cloudflare deploy DONE** — app live on the custom domain (Worker + prod D1 + PWA, prod-mode).
+> - ✅ **AUTH PIVOT DONE + user-verified on-device** — passkeys → **username+password + optional TOTP + recovery-phrase-as-reset** ([[auth-pivot-password]]). The free-plan Argon2 CPU blocker is resolved (Workers **Paid** → `limits.cpu_ms:30000`, full params kept); 15/15 prod smoke, sign-in confirmed on real devices. North-star auth-friction philosophy survives the mechanism change ([[auth-friction-philosophy]]).
+> - ✅ **P0 cross-device SYNC regression FIXED + user-verified** — root cause was per-device random notebookId gating delta sync; fix = **Option B (sync boundary = bearer accountId; notebookId demoted to an organizing tag)** + within-account migration 0006/0007 + secSys PASS ([[sync-notebookid-regression]]). User confirmed edits/deletes/new-notes sync both directions; title-only notes are first-class.
+> - 🔧 **IN FLIGHT — client reactivity / felt-slowness fix (#15):** remote changes only appeared on manual refresh (pull didn't run while the page was open). Fix = pull-on-return-to-app + 2s pull cadence **while visible** (suspend when hidden), all **in-place reactive, no page reload**. Snap-reload on deploy KEPT. Tightened to 2s per the **sync-ASAP / minimize-conflict-window** directive ([[sync-asap-conflict-window]]). Awaiting two-device verify → on-device feel check.
+> - 🟢 **NEXT: view-driven UI shell. Order = Backbone+Notebooks → Search → visual UI-refresh.** Design LOCKED with the user 2026-06-18 ([[ui-view-driven-architecture]]): the UI is plugin-first / view-driven — content filtered through swappable views, two scopes (notebook=collection view, note=item view); 3 sections = backbone shell / notebook view / note editor. v1 = build the view-resolution SEAM as the backbone but ship ONE collection view (note list) + ONE item view (doc editor); future views are additive registrations.
+>   - **SPEC-READY → `docs/specs/ui-backbone-notebooks.md`** (handed to pilot): notebooks CRUD + undeletable default + notebook entities SYNC; current-notebook = device-local IDB pointer (per-device, never synced, fallback→all-notebooks/settings screen); home = current-notebook list + notebook-name sheet + global search entry + new-note FAB; switcher renders as sheet AND full-screen landing; tap-sheet not swipe-drawer; no bottom tab bar. Starts after #15 lands (client-lane contention).
+>   - **Search** — **SPEC-READY → `docs/specs/search.md`** (handed to pilot, queued behind backbone+notebooks): full-screen, search-as-you-type, fully LOCAL/offline; title+body, **fuzzy** + **relevance-ranked** (title>body); current-notebook headline flat list + other notebooks collapsible "Name (N)" expand-in-place; row = title + highlighted snippet; tapping a cross-notebook result peeks (doesn't change current notebook). Results = a collection-view (reuse the seam).
+>   - **Visual UI-refresh** (restyle of list/editor) = separate later item; must hold the load-feel bar.
+> - 📱 **Framed feature (user wants, post-notebooks):** iOS **per-notebook home-screen icons** + a **straight-to-new-note shortcut** ([[per-notebook-homescreen-icons]]). Foundation-backed (S3 spike: iOS isolates per-webclip storage). Gated on a real-device PROBE of whether session/cookie carries across webclips (decides friction). New-note shortcut = simplest slice, ≈notebook-independent.
+> - 📌 **Framed future:** realtime push-sync channel (WS/SSE) replacing polling (the real "ASAP"); location notes + map; Phase-2/3 (2nd surface, plugins, embeds, sharing, history/trash UI); v2 E2EE + live collab.
+> - Backlog (non-blocking): test hardening (#12), dead-code cleanup (#13).
+
+<details><summary>Historical snapshot — 2026-06-16 (superseded by the above)</summary>
+
 > ✅ **COURSE-CORRECTION COMPLETE (2026-06-16, HEAD 75b58db, fully green + security-cleared).** The
 > user-led re-anchor shipped: (1) SHELL — render-before-data, auth/sync in background, recovery-phrase ≠
 > boot gate (E4 closed properly); (2) SYNC — option A conflict-as-version (divergent offline edit kept as a
@@ -25,6 +40,8 @@ guess it was lifted?). See `KICKOFF.md` §Reuse discipline.
 > `[[auth-friction-philosophy]]`. **NEXT: Cloudflare LIVE deploy** (devSys2, single-owner, gated on
 > migrate-vs-real-D1 + env-base + clean SHA) → live URL → the LOAD-SENSITIVE real-device re-dogfood. The
 > dogfood/finish-line detail below is PRE-correction context, now reframed under the shipped shell/sync model.
+
+</details>
 
 Design complete; **Phase 1 building.** Delivery vehicle = the **local-first PWA** (desktop + mobile,
 surfaces pinnable as home-screen webclips). Long-term native target is framed in *Later* (native
