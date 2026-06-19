@@ -232,6 +232,180 @@
   touch-action: manipulation;
 }
 
+/* ── Search ───────────────────────────────────────────────────────────────────── */
+
+.search {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  max-width: 600px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.search__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--edge);
+  flex-shrink: 0;
+}
+
+.search__back {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0.25rem 0.4rem;
+  flex-shrink: 0;
+  touch-action: manipulation;
+}
+
+.search__input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  font-size: 1rem;
+  color: inherit;
+  font-family: inherit;
+  /* Remove browser-native 'search' chrome */
+  -webkit-appearance: none;
+  appearance: none;
+}
+.search__input::-webkit-search-cancel-button { display: none; }
+.search__input::placeholder { color: var(--muted); }
+
+.search__clear {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0.25rem 0.4rem;
+  flex-shrink: 0;
+  touch-action: manipulation;
+}
+
+.search__body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.5rem 0;
+}
+
+.search__lede {
+  margin: 2rem 1rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.search__section {
+  margin-bottom: 0.25rem;
+}
+
+.search__section-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0.6rem 1.25rem 0.3rem;
+  margin: 0;
+}
+
+.search__nb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding: 0.6rem 1.25rem;
+  touch-action: manipulation;
+}
+.search__nb-header:active { background: var(--edge); }
+
+.search__nb-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.search__nb-chevron {
+  font-size: 0.75rem;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.search__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.search__row {
+  border-bottom: 1px solid var(--edge);
+}
+.search__row:last-child { border-bottom: none; }
+
+.search__row-link {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.75rem 1.25rem;
+  text-decoration: none;
+  color: inherit;
+}
+.search__row-link:active { background: var(--edge); }
+
+.search__row-title {
+  font-size: 0.95rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.search__row-meta {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.search__row-snippet {
+  font-size: 0.8rem;
+  color: var(--muted);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.search__row-date {
+  font-size: 0.75rem;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.search__mark {
+  background: rgba(255, 210, 0, 0.25);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 /* ── Route transitions ────────────────────────────────────────────────────────── */
 
 .route-loading {

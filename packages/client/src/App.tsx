@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
 import type { NotebookId } from '@deltos/shared';
 import { NewNote } from './routes/NewNote.js';
@@ -9,6 +9,7 @@ import { LoginRoute } from './routes/LoginRoute.js';
 import { ResetRoute } from './routes/ResetRoute.js';
 import { ForcedPhraseRoute } from './routes/ForcedPhraseRoute.js';
 import { TrashRoute } from './routes/TrashRoute.js';
+import { SearchRoute } from './routes/SearchRoute.js';
 import { AllNotebooksScreen } from './views/AllNotebooksScreen.js';
 import { DrawerNav } from './components/DrawerNav.js';
 import { BottomNav } from './components/BottomNav.js';
@@ -180,6 +181,7 @@ function AuthedShell() {
   const notebookName = notebook?.name ?? '…';
   // navOpen / DrawerNav is desktop-only (mobile uses BottomNav via CSS)
   const [navOpen, setNavOpen] = useState(false);
+  const navigate = useNavigate();
 
   // Load the device-local current notebook from IDB on first mount (with localStorage migration).
   useEffect(() => { void initNotebook(); }, [initNotebook]);
@@ -242,8 +244,8 @@ function AuthedShell() {
         </span>
         <Link to="/" className="shell__mark">δ deltos</Link>
         <div className="shell__bar-end">
-          {/* Search stub — wired in #20. Hidden on mobile (BottomNav has the Search slot). */}
-          <button className="shell__search-btn shell__search-btn--desktop-only" aria-label="Search" onClick={() => { /* search — #20 */ }}>🔍</button>
+          {/* Desktop search button — hidden on mobile (BottomNav has the Search slot). */}
+          <button className="shell__search-btn shell__search-btn--desktop-only" aria-label="Search" onClick={() => navigate('/search')}>🔍</button>
           <SessionStatus />
           <SyncIndicator />
         </div>
@@ -254,6 +256,7 @@ function AuthedShell() {
           <Route path="/new" element={<NewNote />} />
           <Route path="/note/:id" element={<NoteRoute />} />
           <Route path="/trash" element={<TrashRoute />} />
+          <Route path="/search" element={<SearchRoute />} />
           <Route path="/" element={<CollectionView notebookId={notebookId} />} />
           {/* Auth routes are the gate — redirect home in the shell (session re-established by init on reload). */}
           <Route path="/login" element={<Navigate to="/" replace />} />

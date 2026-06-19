@@ -92,7 +92,11 @@ export function BottomNav() {
       navigate('/new');
       return;
     }
-    if (id === 'search')   { navigate('/search'); return; }
+    if (id === 'search') {
+      kbAnchorRef.current?.focus();
+      navigate('/search');
+      return;
+    }
     // Future: other registered action ids dispatched here.
   }, [navigate]);
 
