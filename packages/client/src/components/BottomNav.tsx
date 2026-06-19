@@ -1,8 +1,9 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { NavContent } from '../views/NavContent.js';
 import { getNavActions } from '../lib/bottomNavActions.js';
 import { lockBodyScroll, unlockBodyScroll } from '../lib/bodyScrollLock.js';
+import { useDragAxis } from '../lib/useDragAxis.js';
 
 /**
  * Mobile bottom nav — replaces the left-drawer container on mobile / tablet-portrait.
@@ -11,83 +12,117 @@ import { lockBodyScroll, unlockBodyScroll } from '../lib/bodyScrollLock.js';
  * Expanded: a bottom sheet containing the full NavContent (notebook switcher +
  *           new notebook + Trash + Settings/account).
  *
- * Expand: tap the handle OR drag up.
- * Collapse: select a notebook (NavContent onNavigate), swipe down, or tap the scrim.
+ * Expand: tap handle, drag up.
+ * Collapse: tap handle, tap scrim, drag down (when sheet is scrolled to top).
  * No edge-swipe dependency (spec AC-5).
  *
- * Safe-area aware: respects env(safe-area-inset-bottom) so the bar clears the
- * iOS home indicator on notched devices.
+ * Gesture engine: useDragAxis (Y axis), GPU translateY only — no max-height animation.
+ * The sheet is always 75vh tall; translateY parks it off-screen when collapsed so only
+ * the bar (handle + actions) is visible. 1:1 finger-follow + velocity-based snap.
  *
- * Scroll-lock: body scroll is locked while the sheet is open using the position:fixed
- * technique — the only approach that works in mobile Safari (overflow:hidden is a no-op
- * there). A non-passive touchmove listener on the bar also prevents body scroll during
- * the drag gesture on the collapsed bar, before the sheet opens.
+ * Inner-scroll-vs-dismiss: a downward drag only collapses when the sheet is at scrollTop=0;
+ * otherwise the drag scrolls the sheet content.
+ *
+ * Safe-area aware: .bottom-nav__bar carries env(safe-area-inset-bottom) padding so the
+ * action row clears the iOS home indicator on notched devices.
  */
 export function BottomNav() {
   const [expanded, setExpanded] = useState(false);
   const navigate = useNavigate();
-  const touchStartY = useRef<number | null>(null);
+
   const navRef = useRef<HTMLDivElement>(null);
-  // iOS keyboard anchor: focused synchronously within the tap gesture so iOS raises the
-  // keyboard before any async hop (IDB write + route change). Stays mounted in BottomNav
-  // (outside Routes) so focus is preserved across route transitions until PM inherits it.
+  const barRef = useRef<HTMLDivElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
   const kbAnchorRef = useRef<HTMLInputElement>(null);
 
-  const collapse = useCallback(() => setExpanded(false), []);
+  // closedY = translateY that parks the nav so only the bar is visible.
+  // Measured on mount (collapsed); stable thereafter.
+  const closedYRef = useRef(0);
 
-  // Lock body scroll while the sheet is open (position:fixed — iOS-safe).
-  useEffect(() => {
-    if (expanded) {
-      lockBodyScroll();
-    } else {
-      unlockBodyScroll();
-    }
-  }, [expanded]);
-
-  // Safety net: always unlock on unmount (e.g. route change while sheet is open).
-  useEffect(() => {
-    return () => { unlockBodyScroll(); };
-  }, []);
-
-  // Prevent body scroll during the drag gesture on the collapsed bar.
-  // Must be a non-passive listener — React's synthetic onTouchMove is passive and
-  // e.preventDefault() is silently ignored in mobile Safari / Chrome.
-  // Only active when collapsed: when expanded the body is already position:fixed,
-  // and the inner sheet must be free to scroll (no preventDefault on its touches).
-  useEffect(() => {
-    if (expanded) return;
+  // Snap helpers — imperative, no re-render
+  const snapToY = useCallback((target: number, onDone?: () => void) => {
     const el = navRef.current;
-    if (!el) return;
-    const prevent = (e: TouchEvent) => {
-      if (touchStartY.current !== null) e.preventDefault();
+    if (!el) { onDone?.(); return; }
+    el.classList.add('bottom-nav--snapping');
+    el.style.transform = `translateY(${target}px)`;
+    const cleanup = () => {
+      el.classList.remove('bottom-nav--snapping');
+      onDone?.();
     };
-    el.addEventListener('touchmove', prevent, { passive: false });
-    return () => el.removeEventListener('touchmove', prevent);
-  }, [expanded]);
-
-  // Drag-up / drag-down gesture
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    touchStartY.current = e.touches[0]!.clientY;
+    el.addEventListener('transitionend', cleanup, { once: true });
+    setTimeout(cleanup, 320);
   }, []);
 
-  const handleTouchMove = useCallback((e: React.TouchEvent) => {
-    if (touchStartY.current === null) return;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const dy = e.touches[0]!.clientY - touchStartY.current;
-    if (!expanded && dy < -30) { setExpanded(true); touchStartY.current = null; }
-    if (expanded  && dy >  30) { setExpanded(false); touchStartY.current = null; }
+  const openSheet = useCallback(() => {
+    setExpanded((was) => {
+      if (!was) {
+        // Sheet just mounted — animate into view on next frame
+        requestAnimationFrame(() => snapToY(0));
+      } else {
+        snapToY(0);
+      }
+      return true;
+    });
+  }, [snapToY]);
+
+  const closeSheet = useCallback((immediate?: boolean) => {
+    if (immediate) {
+      // Click-based collapse: swap content immediately so tests see the change at once
+      setExpanded(false);
+      snapToY(closedYRef.current);
+    } else {
+      // Drag-based collapse: keep sheet visible during animation, swap after
+      snapToY(closedYRef.current, () => setExpanded(false));
+    }
+  }, [snapToY]);
+
+  // Measure closed offset once on mount (starts collapsed, so offsetHeight ≈ bar only)
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    const bar = barRef.current;
+    if (!nav || !bar) return;
+    const navH = nav.offsetHeight;
+    const barH = bar.offsetHeight;
+    closedYRef.current = Math.max(0, navH - barH);
+    nav.style.transform = `translateY(${closedYRef.current}px)`;
+  }, []);
+
+  // Body scroll lock
+  useEffect(() => {
+    if (expanded) lockBodyScroll(); else unlockBodyScroll();
   }, [expanded]);
 
-  const handleTouchEnd = useCallback(() => {
-    touchStartY.current = null;
-  }, []);
+  useEffect(() => () => { unlockBodyScroll(); }, []);
+
+  // Drag gesture (Y axis)
+  const dragHandlers = useDragAxis({
+    axis: 'y',
+    getBase: () => expanded ? 0 : closedYRef.current,
+    min: 0,
+    ...(closedYRef.current > 0 ? { max: closedYRef.current } : {}),
+    onMove: (pos) => {
+      if (navRef.current) navRef.current.style.transform = `translateY(${pos}px)`;
+    },
+    onSettle: (pos, velocity) => {
+      const closedY = closedYRef.current;
+      const VELOCITY_THRESHOLD = 0.3; // px/ms
+      let target: number;
+      if (Math.abs(velocity) > VELOCITY_THRESHOLD) {
+        target = velocity > 0 ? closedY : 0;
+      } else {
+        target = pos < closedY / 2 ? 0 : closedY;
+      }
+      if (target === 0) openSheet(); else closeSheet();
+    },
+    onLockConfirm: (dir) => {
+      // Don't take control of downward drags when the sheet is scrolled down
+      if (dir === 1 && sheetRef.current && sheetRef.current.scrollTop > 0) return false;
+      return true;
+    },
+  });
 
   const handleAction = useCallback((id: string) => {
     if (id === 'new-note') {
-      // Focus the keyboard anchor synchronously (within the tap gesture) so iOS raises the
-      // keyboard before the async note-create flow runs. PM inherits the open keyboard when
-      // the editor mounts and calls view.focus().
       kbAnchorRef.current?.focus();
       navigate('/new');
       return;
@@ -97,15 +132,13 @@ export function BottomNav() {
       navigate('/search');
       return;
     }
-    // Future: other registered action ids dispatched here.
   }, [navigate]);
 
   const actions = getNavActions();
 
   return (
     <>
-      {/* iOS keyboard anchor — kept out of the tab order and screen readers.
-          font-size:16px prevents iOS from zooming on focus. */}
+      {/* iOS keyboard anchor — off tab-order, prevents zoom on focus */}
       <input
         ref={kbAnchorRef}
         className="bottom-nav__kb-anchor"
@@ -117,42 +150,45 @@ export function BottomNav() {
         <div
           className="bottom-nav__scrim"
           aria-hidden
-          onClick={collapse}
+          onClick={() => closeSheet(true)}
         />
       )}
 
       <div
         ref={navRef}
         className={`bottom-nav${expanded ? ' bottom-nav--expanded' : ''}`}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
+        {...dragHandlers}
       >
-        <button
-          className="bottom-nav__handle"
-          aria-label={expanded ? 'Collapse navigation' : 'Expand navigation'}
-          aria-expanded={expanded}
-          onClick={() => setExpanded((v) => !v)}
-        >
-          <span className="bottom-nav__handle-bar" />
-        </button>
+        {/* Bar: always rendered at top of the nav element; visible when collapsed. */}
+        <div ref={barRef} className="bottom-nav__bar">
+          <button
+            className="bottom-nav__handle"
+            aria-label={expanded ? 'Collapse navigation' : 'Expand navigation'}
+            aria-expanded={expanded}
+            onClick={() => (expanded ? closeSheet(true) : openSheet())}
+          >
+            <span className="bottom-nav__handle-bar" />
+          </button>
 
-        {expanded ? (
-          <div className="bottom-nav__sheet">
-            <NavContent onNavigate={collapse} />
-          </div>
-        ) : (
-          <div className="bottom-nav__actions" role="toolbar" aria-label="Navigation actions">
-            {actions.map((action) => (
-              <button
-                key={action.id}
-                className="bottom-nav__action"
-                aria-label={action.ariaLabel}
-                onClick={() => handleAction(action.id)}
-              >
-                {action.label}
-              </button>
-            ))}
+          {!expanded && (
+            <div className="bottom-nav__actions" role="toolbar" aria-label="Navigation actions">
+              {actions.map((action) => (
+                <button
+                  key={action.id}
+                  className="bottom-nav__action"
+                  aria-label={action.ariaLabel}
+                  onClick={() => handleAction(action.id)}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {expanded && (
+          <div ref={sheetRef} className="bottom-nav__sheet">
+            <NavContent onNavigate={() => closeSheet(true)} />
           </div>
         )}
       </div>

@@ -1441,17 +1441,23 @@ a.auth__link { display: inline; }
   align-items: stretch;
   background: var(--bg);
   border-top: 1px solid var(--edge);
-  /* max(base, min(cap, env)): snug in Safari tab (inset≈0), capped at ~16px in PWA.
-     Background still fills the home-indicator zone (bar reaches screen edge via position:fixed).
-     Keep padding-bottom, max-height, and .shell__main padding-bottom in lockstep. */
-  padding-bottom: max(0.35rem, min(16px, env(safe-area-inset-bottom)));
-  max-height: calc(56px + max(0.35rem, min(16px, env(safe-area-inset-bottom))));
+  /* Fixed full height; translateY (set imperatively by JS) parks it off-screen when
+     collapsed so only the bar (handle + actions) is visible at the bottom.
+     GPU transform only — no max-height animation (that was the jank source). */
+  height: 75vh;
   overflow: hidden;
-  transition: max-height 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
 }
-.bottom-nav--expanded {
-  max-height: 75vh;
-  overflow-y: auto;
+/* Snap transition: added/removed by JS during snap animations. */
+.bottom-nav--snapping {
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* Bar: handle + action row. Carries safe-area padding so actions clear the home indicator.
+   JS measures this height to compute the collapsed translateY offset. */
+.bottom-nav__bar {
+  flex-shrink: 0;
+  /* max(base, min(cap, env)): snug in Safari tab (inset≈0), capped at ~16px in PWA. */
+  padding-bottom: max(0.35rem, min(16px, env(safe-area-inset-bottom)));
 }
 
 .bottom-nav__handle {
@@ -1550,12 +1556,10 @@ a.auth__link { display: inline; }
     flex-shrink: 1;
   }
 
-  /* Main content area clears the collapsed nav bar — in lockstep with .bottom-nav clearance. */
+  /* Main content area clears the collapsed nav bar — in lockstep with .bottom-nav__bar clearance. */
   .shell__main {
     padding-bottom: calc(56px + max(0.5rem, min(16px, env(safe-area-inset-bottom))));
   }
-  /* Remove inner action-row bottom padding — .bottom-nav handles it via max(). */
-  .bottom-nav__actions { padding-bottom: 0; }
 
   /* Activate the bottom nav. */
   .bottom-nav { display: flex; }
