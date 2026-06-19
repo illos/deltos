@@ -46,7 +46,7 @@ import {
   backoffDelayMs,
   type BackoffPolicy,
 } from '../authPolicy.js';
-import { apiError, guard, type AppContext } from '../http.js';
+import { apiError, guard, NON_PROD_ENVIRONMENTS, type AppContext } from '../http.js';
 import type { AppEnv } from '../context.js';
 import { d1Adapter } from '../db/schema.js';
 import { createDefaultNotebook } from '../db/notebooks.js';
@@ -115,7 +115,7 @@ function originAllowed(c: AppContext): boolean {
   const expected = c.env.AUTH_AUDIENCE;
   if (!expected) return false; // fail-closed: a cookie mutation with a cross-origin claim on a misconfigured deploy
   try {
-    return new URL(origin).host === expected;
+    return new URL(origin).hostname === expected;
   } catch {
     return false;
   }
@@ -222,7 +222,11 @@ async function issueRefresh(
 function setRefreshCookie(c: AppContext, refreshToken: string): void {
   setCookie(c, REFRESH_COOKIE_NAME, refreshToken, {
     httpOnly: true,
-    secure: true,
+    // `secure` only in production: local dev servers run over HTTP so the browser would silently
+    // discard a `secure` cookie, making the durable-session flow unworkable in local smoke tests.
+    // SameSite=Strict + the CSRF Origin belt are the real CSRF defenses; `secure` adds nothing
+    // on a localhost-only dev server where there's no network eavesdropper.
+    secure: NON_PROD_ENVIRONMENTS.has(c.env.ENVIRONMENT ?? '') ? false : true,
     sameSite: 'Strict',
     path: REFRESH_COOKIE_PATH,
     maxAge: Math.floor(REFRESH_TTL_MS / 1000),

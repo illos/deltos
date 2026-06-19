@@ -172,7 +172,9 @@ describe('AP-T1 — POST /signup', () => {
     'FINALIZE is REFUSED until recovery is established (belt guard), then sets recoveryEstablished + the durable cookie',
     async () => {
       const raw = freshDb();
-      const env = makeEnv(raw);
+      // Use production mode so the cookie-format assertions reflect the real production shape
+      // (Secure is only set in non-dev environments — see setRefreshCookie).
+      const env = makeEnv(raw, { ENVIRONMENT: 'production' });
       const signupRes = await post(env, '/api/auth/signup', { username: 'finalizer', password: 'finalize-pass-1' });
       const body = (await signupRes.json()) as SignupResult;
       const flag = () =>
