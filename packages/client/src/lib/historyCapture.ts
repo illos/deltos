@@ -79,6 +79,10 @@ interface SessionState {
   lastSignalText: string;
   current: CaptureSnapshot;
   idle: IdleTimer | null;
+  /** Serializes capture writes for this note so overlapping triggers (idle firing as the user leaves,
+   *  or a big-change immediately before leave) can't double-write — each runs after the prior advances
+   *  the baseline, so the second sees no new delta and skips. */
+  tail: Promise<void>;
 }
 
 const defaultScheduleIdle = (cb: () => void, ms: number): IdleTimer => {
@@ -125,6 +129,7 @@ export class HistoryCapture {
       lastSignalText: text,
       current: snap,
       idle: null,
+      tail: Promise.resolve(),
     });
   }
 
@@ -143,7 +148,7 @@ export class HistoryCapture {
     s.idle?.cancel();
     s.idle = null;
     if (stepMagnitude >= this.thresholds.bigChangeChars) {
-      await this.captureIfMaterial(s); // (c) big-change forces an immediate checkpoint
+      await this.enqueueCapture(s); // (c) big-change forces an immediate checkpoint
       return;
     }
     s.idle = this.scheduleIdle(() => void this.idleSettle(noteId), this.thresholds.idleMs);
@@ -154,16 +159,26 @@ export class HistoryCapture {
     const s = this.sessions.get(noteId);
     if (!s) return;
     s.idle = null;
-    await this.captureIfMaterial(s);
+    await this.enqueueCapture(s);
   }
 
-  /** (b) Note left/closed: capture the session's final state if material, then drop the session. */
+  /** (b) Note left/closed: capture the session's final state if material, then drop the session. The
+   *  session is removed from the map immediately (a re-open starts fresh), but the capture is chained
+   *  after any in-flight capture so the final state is never missed and never double-written. */
   async leave(noteId: NoteId): Promise<void> {
     const s = this.sessions.get(noteId);
     if (!s) return;
     s.idle?.cancel();
     this.sessions.delete(noteId);
-    await this.captureIfMaterial(s);
+    await this.enqueueCapture(s);
+  }
+
+  /** Chain a capture onto this session's serial tail — runs after any prior capture has advanced the
+   *  baseline, so overlapping triggers never produce duplicate rows for the same content. */
+  private enqueueCapture(s: SessionState): Promise<void> {
+    const run = () => this.captureIfMaterial(s);
+    s.tail = s.tail.then(run, run); // run regardless of a prior rejection
+    return s.tail;
   }
 
   /**

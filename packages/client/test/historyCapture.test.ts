@@ -97,6 +97,29 @@ describe('HistoryCapture — session boundaries, not bursts', () => {
     // a big change captures and does NOT leave an armed idle timer
     expect(arms).toBe(0);
   });
+
+  it('overlapping triggers do NOT double-write: a big-change immediately followed by leave = ONE row', async () => {
+    const e = makeEngine({ bigChangeChars: 100 });
+    e.open(NOTE, ACCT, snap('Title', 'short'));
+    const big = snap('Title', `short ${'x'.repeat(200)}`);
+    // Kick the big-change capture and the leave WITHOUT awaiting the first — they race onto the serial
+    // tail. The leave must see the baseline already advanced and skip, not re-capture the same content.
+    const p = e.recordEdit(NOTE, big);
+    await e.leave(NOTE);
+    await p;
+    expect(sink.rows).toHaveLength(1); // exactly one, not two
+  });
+
+  it('a pending idle capture racing with leave also collapses to ONE row', async () => {
+    const e = makeEngine();
+    e.open(NOTE, ACCT, snap('Title', 'base text here'));
+    await e.recordEdit(NOTE, snap('Title', 'base text here plus a material change'));
+    // idle-settle and leave fire nearly together (timer fires as the route tears down)
+    const idle = e.idleSettle(NOTE);
+    await e.leave(NOTE);
+    await idle;
+    expect(sink.rows).toHaveLength(1);
+  });
 });
 
 describe('HistoryCapture — material-change floor', () => {

@@ -44,12 +44,14 @@ export function NoteRoute() {
 
   // Stable save handler: write to Dexie then kick Stream B's debounced sync.
   const handleSave = useCallback(async (note: Note) => {
-    await mutateNotes.put(note);
-    notifyQueueWrite(note.notebookId);
-    // History capture (#45): feed the SEPARATE coarse session-version layer this already-debounced
-    // save as an edit signal. Fire-and-forget — it never blocks or alters the save/sync cadence.
+    // History capture (#45): observe this already-debounced edit FIRST, synchronously — recordEdit's
+    // snapshot update is sync, so the editor's final-flush-on-unmount is recorded BEFORE NoteRoute's
+    // leave() runs in the same teardown (otherwise an await here would defer it past leave, losing the
+    // last burst). Fire-and-forget + a separate noteVersions txn — never blocks or alters save/sync.
     const accountId = useAuthStore.getState().accountId;
     if (accountId) void getHistoryCapture().recordEdit(note.id, note);
+    await mutateNotes.put(note);
+    notifyQueueWrite(note.notebookId);
   }, []);
 
   // Must be above all early returns — hooks must be called in the same order every render.
