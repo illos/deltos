@@ -12,6 +12,8 @@ import type { NotebookId, NoteId } from '@deltos/shared';
 beforeEach(async () => {
   const { db } = await import('../src/db/schema.js');
   await Promise.all(db.tables.map((t) => t.clear()));
+  const { useNotebookStore } = await import('../src/lib/notebookStore.js');
+  useNotebookStore.setState({ _ready: false, currentNotebookId: null }); // no cross-test in-mem bleed
   const storage: Record<string, string> = {};
   global.localStorage = {
     getItem: (k: string) => storage[k] ?? null,
@@ -138,6 +140,34 @@ describe('ensureAccountScope — option B clear-on-account-change (#52)', () => 
     const wipedAgain = await ensureAccountScope(B);
     expect(wipedAgain).toBe(false);
     expect(await db.notes.count()).toBe(1); // B's note survives the no-op
+  });
+
+  it('#57: an account switch RESETS the in-memory notebookStore (kills the stale-notebook flash)', async () => {
+    const { ensureAccountScope } = await import('../src/db/accountScope.js');
+    const { useNotebookStore } = await import('../src/lib/notebookStore.js');
+    await seedAccountA();
+    // A's shell had loaded its current notebook into the in-memory store.
+    useNotebookStore.setState({ _ready: true, currentNotebookId: NB_A });
+
+    await ensureAccountScope(B); // switch → wipe
+
+    // In-memory mirror reset → AuthedShell re-runs initNotebook from the clean store; no A flash.
+    expect(useNotebookStore.getState().currentNotebookId).toBeNull();
+    expect(useNotebookStore.getState()._ready).toBe(false);
+  });
+
+  it('#57: DENY-BY-DEFAULT — an UNKNOWN future deviceState key is wiped on switch; only the allowlist survives', async () => {
+    const { db } = await import('../src/db/schema.js');
+    const { ensureAccountScope } = await import('../src/db/accountScope.js');
+    await seedAccountA();
+    // A per-account pointer added LATER that nobody remembered to thread into the wipe — deny-by-default
+    // must clear it anyway, so it can't leak A's value into B's session (the anti-drift guarantee).
+    await db.deviceState.put({ key: 'some-future-pointer', value: 'A-private' });
+
+    await ensureAccountScope(B);
+
+    expect(await db.deviceState.get('some-future-pointer')).toBeUndefined(); // wiped by default
+    expect(await db.deviceState.get('appearance-theme')).toBeTruthy(); // allowlisted device pref survives
   });
 });
 

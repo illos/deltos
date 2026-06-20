@@ -1,5 +1,18 @@
 import { db } from './schema.js';
-import { CURRENT_NOTEBOOK_KEY, LEGACY_DEFAULT_NB_LS_KEY } from './notebookPointer.js';
+import { LEGACY_DEFAULT_NB_LS_KEY } from './notebookPointer.js';
+import { useNotebookStore } from '../lib/notebookStore.js';
+
+/**
+ * Device-global `deviceState` keys that belong to the DEVICE, not the authenticated account, and so
+ * MUST survive an account-change/logout wipe. The wipe is DENY-BY-DEFAULT (#57): every other
+ * deviceState key — the device-global notebook pointer, the resident-account marker, and ANY pointer
+ * added later — is cleared on account change, so a forgotten future tenant key can't silently leak
+ * across accounts (the missed-reader/key class, cf. the server [[cross-account-data-layer-finding]]).
+ * Keep this list in sync as device-level (non-account) pointers are added.
+ *   - 'appearance-theme' = the UI-refresh theme preference (lands when the ui-refresh branch
+ *     integrates; harmless to preserve before then — it's just a no-op on a build without it).
+ */
+const DEVICE_GLOBAL_DEVICE_KEYS: readonly string[] = ['appearance-theme'];
 
 /**
  * #52 client tenancy — OPTION B (clear-on-account-change). PROTOTYPE (secSys-review-pending, not shipped).
@@ -55,8 +68,17 @@ async function wipeLocalState(): Promise<void> {
         db.noteVersions.clear(),
         db.syncQueue.clear(), // W8: drop un-pushed entries — never drain under another bearer
         db.notebookQueue.clear(),
-        db.deviceState.delete(CURRENT_NOTEBOOK_KEY), // device-global notebook pointer (K1) — not theme/marker
       ]);
+      // DENY-BY-DEFAULT deviceState wipe (#57): delete EVERY key except the device-global allowlist
+      // (the notebook pointer + the resident-account marker + any future per-account pointer all go).
+      // The marker is re-stamped (ensureAccountScope) or dropped (purgeAllLocalState) by the caller
+      // right after, so deleting it here is harmless and keeps the wipe a single source of truth.
+      const keys = await db.deviceState.toCollection().primaryKeys();
+      await Promise.all(
+        keys
+          .filter((k) => !DEVICE_GLOBAL_DEVICE_KEYS.includes(k as string))
+          .map((k) => db.deviceState.delete(k)),
+      );
     },
   );
   if (typeof localStorage !== 'undefined') {
@@ -69,6 +91,9 @@ async function wipeLocalState(): Promise<void> {
     }
     for (const k of cursorKeys) localStorage.removeItem(k);
   }
+  // In-memory mirror is part of local account state (#57): reset it so a logout→login (or switch)
+  // shows NO stale prior-account notebook for the ~1 tick before AuthedShell's initNotebook rehydrates.
+  useNotebookStore.getState().reset();
 }
 
 /**

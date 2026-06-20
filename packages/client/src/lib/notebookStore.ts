@@ -11,6 +11,12 @@ interface NotebookState {
   init(): Promise<void>;
   /** Persist a new current notebook to IDB and update in-memory state. */
   setCurrentNotebook(id: NotebookId): Promise<void>;
+  /**
+   * Reset the in-memory store to its pre-init state (#57). Called on an account-change wipe so a
+   * logout→login shows NO stale prior-account notebook for the ~1 tick before AuthedShell re-runs
+   * init() — the durable Dexie/pointer wipe is already correct; this clears the in-memory mirror.
+   */
+  reset(): void;
 }
 
 export const useNotebookStore = create<NotebookState>((set) => ({
@@ -25,5 +31,9 @@ export const useNotebookStore = create<NotebookState>((set) => ({
   async setCurrentNotebook(id: NotebookId) {
     await writeCurrentNotebookId(id);
     set({ currentNotebookId: id });
+  },
+
+  reset() {
+    set({ _ready: false, currentNotebookId: null });
   },
 }));
