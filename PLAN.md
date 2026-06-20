@@ -15,7 +15,16 @@ guess it was lifted?). See `KICKOFF.md` §Reuse discipline.
 
 ---
 
-## ⏯ CURRENT STATE (2026-06-19 — resume here)
+## ⏯ CURRENT STATE (2026-06-20 — resume here)
+> **PIVOT (user, 2026-06-20): step back from UI-feel/polish work → build out functional SCREENS toward the "basic notes day-to-day usable" milestone.** First screen = **Settings & Account**.
+> - ✅ **README** — comprehensive front-door README written + pushed (`05831e6`, branch `phase-0-foundation`): ethos, real tech stack (pinned versions), architecture, feature specs, status/roadmap.
+> - ⏳ **SETTINGS & ACCOUNT v1 — SPEC-READY + HANDED OFF to pilot** (`docs/specs/settings-screen.md`). New `/settings` route; mostly assembly of existing auth-store primitives. Sections: Account (username/accountId/sync-status) · Security (sign-out, regenerate recovery phrase, 2FA enable+disable) · About (real version string). Two small backend gaps for 2FA: surface `totpEnabled` to the client + add a `/totp/disable` route (DB layer already supports it). **DEFERRED out of v1 (user-confirmed):** logged-in change-password (needs new endpoint) + appearance/theme (parked visual-refresh thread).
+> - ⏳ **PARKED, NOT YET DEPLOYED/GLASS-TESTED:** the search (#20) + bottom-nav (#31–36) + drag-sheet (#38) + auto-focus (#37) bundle is committed on the branch but not verified on-device or pushed live. Needs an on-device glass-test + deploy to close out.
+> - **Remaining for the "basic notes usable" milestone after settings:** note HISTORY (version timeline/restore — data model already built) · editor tools + markdown-light · password-recovery polish. Visual UI-refresh held pending a look/feel design pass with the user.
+
+<details><summary>Prior CURRENT STATE — 2026-06-19</summary>
+
+## ⏯ CURRENT STATE (2026-06-19)
 > **LIVE on https://deltos.blackgate.studio; in active on-device dogfood.** Since the 2026-06-16 snapshot below:
 > - ✅ **Cloudflare deploy DONE** — app live on the custom domain (Worker + prod D1 + PWA, prod-mode).
 > - ✅ **AUTH PIVOT DONE + user-verified on-device** — passkeys → **username+password + optional TOTP + recovery-phrase-as-reset** ([[auth-pivot-password]]). The free-plan Argon2 CPU blocker is resolved (Workers **Paid** → `limits.cpu_ms:30000`, full params kept); 15/15 prod smoke, sign-in confirmed on real devices. North-star auth-friction philosophy survives the mechanism change ([[auth-friction-philosophy]]).
@@ -31,6 +40,8 @@ guess it was lifted?). See `KICKOFF.md` §Reuse discipline.
 > - 📱 **Framed feature (user wants, post-notebooks):** iOS **per-notebook home-screen icons** + a **straight-to-new-note shortcut** ([[per-notebook-homescreen-icons]]). Foundation-backed (S3 spike: iOS isolates per-webclip storage). Gated on a real-device PROBE of whether session/cookie carries across webclips (decides friction). New-note shortcut = simplest slice, ≈notebook-independent.
 > - 📌 **Framed future:** realtime push-sync channel (WS/SSE) replacing polling (the real "ASAP"); location notes + map; Phase-2/3 (2nd surface, plugins, embeds, sharing, history/trash UI); v2 E2EE + live collab.
 > - Backlog (non-blocking): test hardening (#12), dead-code cleanup (#13).
+
+</details>
 
 <details><summary>Historical snapshot — 2026-06-16 (superseded by the above)</summary>
 
@@ -682,3 +693,24 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   + the ungated-reload-vs-token-at-rest resolution + at-rest posture) SCOPE PASS → estimate back to user →
   spec → build. Migration = clean re-enroll (dogfood-only, no data migration). Supersedes [[stream-a-identity-plan]],
   Option-A custody, PRF, QR-join.
+- 2026-06-20 — **Settings & Account v1 SPEC-READY + handed to pilot** (`docs/specs/settings-screen.md`). Pivot
+  from UI-feel work to functional screens (user). Mostly assembly of existing auth-store primitives; new
+  `/settings` route; Account / Security (sign-out, regenerate recovery phrase, 2FA enable+disable) / About.
+  Deferred v1: logged-in change-password (new endpoint) + appearance/theme (parked visual-refresh thread).
+  **2FA-toggle lockout risk RESOLVED at exec level (secSys-cleared, code-verified):** enable/disable use
+  revoke-OTHERS + reissue (acting device stays signed in), disable requires a current TOTP code, and
+  password-reset clears 2FA (the anti-lockout escape hatch — verified: `/reset` runs `disableTotp()` before
+  `revokeAll`). Backend+store landed (`fec7356`); UI lane building; on-device 2FA smoke gates deploy.
+- 2026-06-20 — **Note-history design FORMING (user dialog, on the bulletin).** Crux finding: versions today
+  are created ONLY on sync-conflict + are client-local (unsynced) → most notes have no history; a real
+  timeline needs version capture on EDIT. User coupled it with a new **undo/redo** ask (mobile buttons).
+  **Forming model (planSys rec, awaiting user confirm):** two layers, different grains — **undo/redo** =
+  fine-grained, in-session, ephemeral, via the editor's natural transaction grouping (continuous typing →
+  one step; break on ~0.5s pause or operation change); **history/versions** = coarse, persistent,
+  client-only with a retention cap, captured per **coalesced edit session** (idle-settle after edits OR
+  on-leave, + a forced checkpoint on a big single change). Handoff seam = leaving the note (undo stack
+  dropped → a version checkpoint saved). Row = timestamp + char-delta (**+added/−removed** split) → tap →
+  diff (vs current / vs previous) → non-destructive Restore. All feel values tunable on-device. **User
+  confirmed the model (bulletin #2); SPEC-READY + HANDED TO PILOT → `docs/specs/note-history-and-undo.md`**
+  (queued behind Settings — shared editor surface). NOTE: undo/redo overlaps the milestone's
+  **editor-tools** item — may build alongside it.
