@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useParams, Link, useSearchParams, Navigate, useLocation } from 'react-router-dom';
-import type { Note } from '@deltos/shared';
+import type { Note, NoteId } from '@deltos/shared';
 import { NoteIdSchema } from '@deltos/shared';
 import { getStore } from '../db/store.js';
 import { noteHasContent } from '../lib/noteContent.js';
@@ -12,7 +12,9 @@ import { useAuthStore } from '../auth/store.js';
 import { NoteEditor } from '../editor/NoteEditor.js';
 import { resolveNoteView } from '../editor/views.js';
 import { ConflictView } from '../components/ConflictView.js';
-import type { ClientNote, NotebookRow } from '../db/schema.js';
+import { HistoryPanel } from '../components/HistoryPanel.js';
+import { useNoteVersions } from '../db/conflict.js';
+import type { ClientNote, NotebookRow, NoteVersion } from '../db/schema.js';
 
 /**
  * Loads a note by ID through the LocalStore seam and renders the appropriate view.
@@ -35,6 +37,7 @@ export function NoteRoute() {
   // Paths that set it: badge-tap (ConflictBadgeSlot) and back-with-conflict (← Notes below).
   const isResolving = searchParams.has('resolve');
   const [showMove, setShowMove] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const notebooks = useNotebooks();
 
   // B3 blank-note discard: track whether note was version=0+blank on first load.
@@ -67,6 +70,30 @@ export function NoteRoute() {
 
   // Reactive read through the store seam; undefined for an invalid id (guarded below) or while loading.
   const note = useNote(parsedNoteId ?? undefined);
+  // Reactive version list — consumed by HistoryPanel; always scoped to the current account (conflict.ts).
+  const versions = useNoteVersions(parsedNoteId ?? ('' as NoteId));
+
+  const handleRestore = useCallback(async (version: NoteVersion) => {
+    if (!note) return;
+    const accountId = useAuthStore.getState().accountId;
+    if (!accountId) return;
+    // Capture the current note state as a history entry before overwriting, then restore.
+    await getHistoryCapture().leave(note.id);
+    const restored: Note = {
+      ...note,
+      title: version.title,
+      body: version.body,
+      properties: version.properties,
+      updatedAt: new Date().toISOString(),
+      syncStatus: 'pending',
+      // Keep current `version` number for a CAS-safe push (same path as conflict keep-mine).
+    };
+    await mutateNotes.put(restored);
+    notifyQueueWrite(note.notebookId);
+    // Seed fresh capture baseline so the next session measures delta from the restored content.
+    getHistoryCapture().open(note.id, accountId, restored);
+    setShowHistory(false);
+  }, [note]);
 
   // Capture new+blank state on first load — only version=0 notes are candidates.
   // Must be above early returns — rules-of-hooks.
@@ -125,6 +152,18 @@ export function NoteRoute() {
 
   const clientNote = note as ClientNote;
 
+  // History panel — full-screen overlay when requested.
+  if (showHistory) {
+    return (
+      <HistoryPanel
+        note={note}
+        versions={versions}
+        onBack={() => setShowHistory(false)}
+        onRestore={handleRestore}
+      />
+    );
+  }
+
   // Conflict resolution view — only when explicitly requested via ?resolve.
   if (isResolving) {
     // Conflict was just resolved (hasConflict cleared): drop ?resolve and show the editor.
@@ -170,6 +209,7 @@ export function NoteRoute() {
         </div>
       )}
       <button className="editor__move-btn" onClick={() => setShowMove(true)}>Move to notebook…</button>
+      <button className="editor__history-btn" onClick={() => setShowHistory(true)}>History</button>
       <ViewComponent note={note} onSave={handleSave} autoFocus={isNew} />
     </>
   );
