@@ -7,8 +7,8 @@
   letter-spacing: 0.06em;
   padding: 0.15rem 0.5rem;
   border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--secondary);
+  border: 1px solid var(--edge);
+  color: var(--muted);
   white-space: nowrap;
   user-select: none;
   -webkit-user-select: none;
@@ -16,7 +16,7 @@
 
 /* State colours — each gets a distinct hue to distinguish at a glance */
 .sync-indicator--idle       { color: #6ee7a8; border-color: #1f3b2c; } /* green  — confirmed synced */
-.sync-indicator--local-only { color: var(--secondary); border-color: var(--border); } /* grey   — no session, never synced */
+.sync-indicator--local-only { color: var(--muted); border-color: var(--edge); } /* grey   — no session, never synced */
 .sync-indicator--syncing    { color: #7eb8f5; border-color: #1a2c3d; } /* blue   — actively pushing/pulling */
 .sync-indicator--pending    { color: #c8b46e; border-color: #3b321f; } /* amber  — writes queued, debounce ticking */
 .sync-indicator--offline    { color: #f0b86e; border-color: #3b321f; } /* orange — no connectivity */

@@ -1,14 +1,9 @@
 <!doctype html>
-<!-- Default theme axes (Ember × Sans × system) set statically so the first paint matches the default
-     with no flash; themeStore overwrites these from device-local IDB on init (UI refresh, Lane 0). -->
-<html lang="en" data-palette="ember" data-voice="sans" data-mode="system">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <!-- Mode-aware status-bar color = Ember --nav surface (boot default), so a light device's chrome
-         doesn't flash dark on cold load. The Appearance picker (Lane 5) can refine per chosen palette. -->
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F2F2F4" />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111113" />
+    <meta name="theme-color" content="#11131a" />
     <meta name="description" content="A private, multi-surface notes framework." />
     <!-- iOS installed-PWA hints -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -16,10 +11,6 @@
     <meta name="apple-mobile-web-app-title" content="deltos" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml" />
-    <!-- Preload the two everyday 400-weight faces on the critical path (default Sans body + Mono
-         metadata). crossorigin is required for font preloads even same-origin. -->
-    <link rel="preload" href="/fonts/ibm-plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="preload" href="/fonts/ibm-plex-mono-400.woff2" as="font" type="font/woff2" crossorigin />
     <title>deltos</title>
     <!--
       Render-before-data: paint the shell from inline critical CSS + static markup so first
@@ -27,26 +18,12 @@
       this skeleton once hydrated.
     -->
     <style>
-      /* Critical-CSS token defaults = the Ember boot palette, MODE-AWARE so a light-mode device never
-         flashes dark on cold load (load-feel gate). These paint the skeleton before the JS bundle (and
-         tokens.css) load; tokens.css then supplies the full palette set + the user's chosen theme and
-         takes over via its higher-specificity [data-palette][data-mode] selectors. */
       :root {
-        color-scheme: light dark;
-        --paper: #ffffff;
-        --ink: #17171a;
-        --secondary: #6e6e76;
-        --border: #e7e7eb;
-        --nav: #f2f2f4;
-      }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --paper: #1a1a1d;
-          --ink: #f0f0f2;
-          --secondary: #9a9aa3;
-          --border: #2a2a2e;
-          --nav: #111113;
-        }
+        color-scheme: dark;
+        --bg: #11131a;
+        --fg: #e7e9ee;
+        --muted: #8b90a0;
+        --edge: #232634;
       }
       * {
         box-sizing: border-box;
@@ -58,8 +35,8 @@
       }
       body {
         margin: 0;
-        background: var(--paper);
-        color: var(--ink);
+        background: var(--bg);
+        color: var(--fg);
         font:
           16px/1.5 system-ui,
           -apple-system,
@@ -79,7 +56,7 @@
         gap: 0.6rem;
         padding: 0.9rem 1.1rem;
         padding-top: calc(0.9rem + env(safe-area-inset-top));
-        border-bottom: 1px solid var(--border);
+        border-bottom: 1px solid var(--edge);
       }
       .shell__mark {
         font-weight: 600;
@@ -91,7 +68,7 @@
         place-items: center;
         padding: 2rem;
         text-align: center;
-        color: var(--secondary);
+        color: var(--muted);
       }
     </style>
   </head>
