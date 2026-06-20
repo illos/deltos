@@ -245,33 +245,10 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
   }
 }
 
-// ---------------------------------------------------------------------------
-// Awaitable push drain (#54) — the "ensure everything is pushed" primitive
-// ---------------------------------------------------------------------------
-
-// pushQueued's notebookId param is vestigial (the push is account-scoped by the bearer; dedupeQueue
-// batches EVERY queued entry regardless of notebook). A sentinel satisfies the signature.
+// Dedup-key sentinel for the single-flight guard when notebookId is null (All Notes / #59).
+// pushQueued's notebookId param is vestigial (the push is account-scoped by the bearer token;
+// dedupeQueue batches ALL queued entries regardless of notebookId) — any stable id satisfies it.
 const FLUSH_SENTINEL = '00000000-0000-4000-8000-000000000000' as NotebookId;
-
-/**
- * Push every queued edit and resolve once the queue is EMPTY. Unlike {@link syncNow} (fire-and-forget,
- * single-flight, also pulls), this is a pure, AWAITABLE push — the "ensure synced before X" primitive.
- *
- * Logout uses it to flush ALL queued edits before the local wipe: today suspendSync only lets an
- * already-in-flight push finish, so an edit queued in the ~2s debounce window at the sign-out instant
- * is otherwise dropped by the wipe (data-loss on logout is a bad surprise for real users — navSys #54).
- *
- * Loops until the queue drains or MAX_PASSES is hit — a persistent conflict or being offline can't
- * drain, and logout must never hang. The caller suspends new cycles first (logout → suspendSync), so
- * there's no competing pusher; a double-push that somehow raced is CAS-safe (the loser conflicts, no
- * data lost). Propagates a network error so the caller decides (logout proceeds best-effort).
- */
-export async function flushPushQueue(apiBase = '/api'): Promise<void> {
-  const MAX_PASSES = 5;
-  for (let pass = 0; pass < MAX_PASSES && (await getStore().queueCount()) > 0; pass++) {
-    await pushQueued(FLUSH_SENTINEL, apiBase);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Conflict reconcile — retain-as-version (PIN-SYNC-3/4: no fork; same note id)
