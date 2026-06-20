@@ -786,6 +786,37 @@ describe('AP-T10 — recovery reset', () => {
   );
 
   it(
+    'BUG-2 (data-state vs code): a FRESH registration → establish recovery → /reset with the ORIGINAL phrase VERIFIES',
+    async () => {
+      // Settles the incident question: is reset-401 a CODE bug (hits every account incl a brand-new one)
+      // or a DATA-STATE bug (only an older account whose recoveryPhc was bound under a different accountId
+      // by an earlier identity migration)? This drives the EXACT sequence — register → /recovery/rotate
+      // (establish, capturing the phrase verbatim as the client received it) → /finalize → /reset with that
+      // ORIGINAL phrase. It is GREEN → the establish↔reset path is correct end-to-end (same accountId in
+      // the peppered pre-image on both sides), so a fresh account's original phrase always verifies. A live
+      // reset-401 is therefore DATA-STATE (a stale accountId↔verifier binding), not a code bug.
+      const env = makeEnv(freshDb());
+      const reg = await post(env, '/api/auth/signup', { username: 'fresh-reset', password: 'fresh-reset-pass-1' });
+      expect(reg.status, await bodyText(reg)).toBe(201);
+      const { token } = (await reg.json()) as { token: string };
+      const rot = await post(env, '/api/auth/recovery/rotate', {}, { Authorization: `Bearer ${token}` });
+      expect(rot.status, await bodyText(rot)).toBe(200);
+      const { recoveryPhrase } = (await rot.json()) as { recoveryPhrase: string };
+      expect((await post(env, '/api/auth/finalize', {}, { Authorization: `Bearer ${token}` })).status).toBe(200);
+
+      const reset = await post(env, '/api/auth/reset', {
+        username: 'fresh-reset',
+        recoveryPhrase, // the ORIGINAL phrase, verbatim
+        newPassword: 'fresh-reset-pass-2',
+      });
+      expect(reset.status, await bodyText(reset)).toBe(200); // verifies → code path is correct
+      // the new password logs in (reset fully succeeded).
+      expect((await post(env, '/api/auth/login', { username: 'fresh-reset', password: 'fresh-reset-pass-2' })).status).toBe(200);
+    },
+    T,
+  );
+
+  it(
     'reset is gated AT LEAST as hard as login (stricter backoff engages sooner)',
     async () => {
       const raw = freshDb();
