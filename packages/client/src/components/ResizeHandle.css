@@ -1,0 +1,42 @@
+/* Drag-to-resize divider between the list + note panes (Lane 2 Pass B). Desktop-only — the 3-region
+   shell renders it only at the ≥desktop breakpoint; mobile uses the push-subscreen, no handle. */
+
+.resize-handle {
+  flex: 0 0 auto;
+  width: 11px; /* generous hit target around a thin visual seam */
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  background: none;
+  border: none;
+  /* The seam itself is the list's right border; the handle straddles it. */
+  margin: 0 -5px; /* overlap the pane edges so the hit area covers the seam without shifting layout */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The visible pill — the --handle token (grab affordance), quiet until hover/focus. */
+.resize-handle__pill {
+  width: 3px;
+  height: 2.25rem;
+  border-radius: 2px;
+  background: var(--handle);
+  opacity: 0.6;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.resize-handle:hover .resize-handle__pill,
+.resize-handle:focus-visible .resize-handle__pill {
+  opacity: 1;
+  background: var(--accent);
+}
+
+/* Keyboard focus ring on the separator (it's a real focusable control). */
+.resize-handle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 3px;
+}
