@@ -5,7 +5,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#11131a" />
+    <!-- Mode-aware status-bar color = Ember --nav surface (boot default), so a light device's chrome
+         doesn't flash dark on cold load. The Appearance picker (Lane 5) can refine per chosen palette. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F2F2F4" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111113" />
     <meta name="description" content="A private, multi-surface notes framework." />
     <!-- iOS installed-PWA hints -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -24,12 +27,31 @@
       this skeleton once hydrated.
     -->
     <style>
+      /* Critical-CSS token defaults = the Ember boot palette, MODE-AWARE so a light-mode device never
+         flashes dark on cold load (load-feel gate). These paint the skeleton before the JS bundle (and
+         tokens.css) load; tokens.css then supplies the full palette set + the user's chosen theme and
+         takes over via its higher-specificity [data-palette][data-mode] selectors. The legacy aliases
+         (--bg/--fg/--muted/--edge) keep the not-yet-retokenized styles.css rules working during Lane 2. */
       :root {
-        color-scheme: dark;
-        --bg: #11131a;
-        --fg: #e7e9ee;
-        --muted: #8b90a0;
-        --edge: #232634;
+        color-scheme: light dark;
+        --paper: #ffffff;
+        --ink: #17171a;
+        --secondary: #6e6e76;
+        --border: #e7e7eb;
+        --nav: #f2f2f4;
+        --bg: var(--paper);
+        --fg: var(--ink);
+        --muted: var(--secondary);
+        --edge: var(--border);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --paper: #1a1a1d;
+          --ink: #f0f0f2;
+          --secondary: #9a9aa3;
+          --border: #2a2a2e;
+          --nav: #111113;
+        }
       }
       * {
         box-sizing: border-box;
@@ -41,8 +63,8 @@
       }
       body {
         margin: 0;
-        background: var(--bg);
-        color: var(--fg);
+        background: var(--paper);
+        color: var(--ink);
         font:
           16px/1.5 system-ui,
           -apple-system,
@@ -62,7 +84,7 @@
         gap: 0.6rem;
         padding: 0.9rem 1.1rem;
         padding-top: calc(0.9rem + env(safe-area-inset-top));
-        border-bottom: 1px solid var(--edge);
+        border-bottom: 1px solid var(--border);
       }
       .shell__mark {
         font-weight: 600;
@@ -74,7 +96,7 @@
         place-items: center;
         padding: 2rem;
         text-align: center;
-        color: var(--muted);
+        color: var(--secondary);
       }
     </style>
   </head>
