@@ -1,13 +1,12 @@
 /**
- * Render tests for the P1 reset success-state bug.
- *
- * Bug: /reset 200 → /finalize 503 → client shows 'Connection error' masking success.
- * Fix: finalize failure after reset-ok degrades to 'done' state, never shows error.
+ * Render tests for the reset route: success-state bug (#51) + 2FA disclosure (#56).
  *
  * RR-1  reset 200 + finalize ok  → navigates away (no error, no done)
  * RR-2  reset 200 + finalize 503 → shows 'Password reset' done state (NOT 'Connection error')
  * RR-3  reset 200 + finalize throws → same done state (NOT 'Connection error')
  * RR-4  reset failure             → shows form error, stays on reset form
+ * RR-5  2FA disclosure is present on the form BEFORE submit (#56 gate)
+ * RR-6  2FA echo appears on the success screen (#56 optional — keeps the promise visible post-reset)
  */
 
 import 'fake-indexeddb/auto';
@@ -172,5 +171,39 @@ describe('RR-4 — reset failure → shows form error, stays on form', () => {
 
     // No done state
     expect(screen.queryByRole('heading', { name: /Password reset/i })).toBeNull();
+  });
+});
+
+// ── RR-5: 2FA disclosure on the reset form (#56 gate) ────────────────────────
+
+describe('RR-5 — 2FA disclosure is present on the reset form before submit', () => {
+  it('shows a two-factor disclosure in the reset form', async () => {
+    setupStore({ resetResult: { ok: false, code: 'invalid' } });
+    mountReset();
+
+    await screen.findByRole('heading', { name: /Reset your password/i });
+
+    // The 2FA disclosure must be visible before the user submits anything (#56).
+    // /reset runs disableTotp() by design — the user must not lose 2FA silently.
+    expect(document.body.textContent).toMatch(/two-factor/i);
+    expect(document.body.textContent).toMatch(/Settings/i);
+  });
+});
+
+// ── RR-6: 2FA echo on the success screen (#56 optional) ──────────────────────
+
+describe('RR-6 — 2FA echo appears on the reset success screen', () => {
+  it('shows the 2FA-off reminder on the done state', async () => {
+    setupStore({ resetResult: { ok: true }, finalizeResult: { ok: false } });
+    mountReset();
+
+    await screen.findByRole('heading', { name: /Reset your password/i });
+    await fillAndSubmit();
+
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: /Password reset/i })).not.toBeNull();
+    });
+
+    expect(document.body.textContent).toMatch(/Two-factor authentication has been turned off/i);
   });
 });

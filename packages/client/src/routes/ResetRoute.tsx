@@ -71,6 +71,7 @@ export function ResetRoute() {
       <div className="auth">
         <h1 className="auth__title">Password reset</h1>
         <p className="auth__subtitle">Your password has been updated. Sign in to continue.</p>
+        <p className="auth__hint">Two-factor authentication has been turned off. You can re-enable it in Settings.</p>
         <button
           className="auth__btn auth__btn--primary"
           onClick={() => navigate('/login', { replace: true })}
@@ -135,10 +136,10 @@ export function ResetRoute() {
 
       {formError && <p className="auth__error">{formError}</p>}
 
-      {/* Copy C — planSys @2cd2958: honest revoke-all + 2FA-clear consequence */}
+      {/* Copy C — planSys @2cd2958 / #56: 2FA-clear is the primary callout (disableTotp runs before revokeAll by design) */}
       <p className="auth__hint">
-        Resetting with your recovery phrase sets a new password, turns off two-factor (you
-        can set it up again afterward), and signs you out on every device.
+        Resetting your password will also turn off two-factor authentication — you can turn it
+        back on in Settings afterward. This will also sign you out on every device.
       </p>
 
       <button
