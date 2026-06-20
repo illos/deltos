@@ -396,14 +396,27 @@ passwordAuth.post('/login', async (c) => {
   const verdict = verifyPassword(parsed.data.password, credential.passwordPhc, pepper, ARGON2_PARAMS);
   if (!verdict.ok) return fail();
 
-  // Second factor (only if enabled). The uniform error covers a missing/wrong code too.
+  // Second factor (only if enabled). The PASSWORD IS ALREADY VERIFIED at this point, so signalling
+  // "2FA required / invalid" leaks nothing about username existence — an unauthenticated attacker still
+  // hits the uniform fail() above on any wrong username/password (anti-enumeration intact). Emitting a
+  // DISTINCT signal here is the standard, REQUIRED 2FA handshake: without it the client cannot know to
+  // prompt for the code, so a correct-password login on a 2FA-enabled account reads as "wrong password"
+  // and the account is locked out (the P0). The client (auth/store.ts login) already maps these codes.
   if (credential.totpEnabled) {
     const encKey = requireSecret(c, 'TOTP_ENC_KEY');
     if (typeof encKey !== 'string') return encKey;
-    if (!parsed.data.totp || !credential.totpSecretEnc) return fail();
+    if (!parsed.data.totp || !credential.totpSecretEnc) {
+      // No code supplied yet → ask for it. NOT a failed attempt (the first factor passed): do not record
+      // a backoff failure and do not clear the throttle — the user re-submits with password + code.
+      return apiError(c, 401, 'totp_required', 'a two-factor code is required');
+    }
     const secret = await decryptSecret(credential.totpSecretEnc, encKey);
     const totp = verifyTotp(secret, parsed.data.totp, nowMs, credential.totpLastStep);
-    if (!totp.ok) return fail();
+    if (!totp.ok) {
+      // Wrong code → a real second-factor failure; record it (brute-force protection on the 6-digit code).
+      await recordFailure(s, bucket, LOGIN_BACKOFF, nowMs);
+      return apiError(c, 401, 'totp_invalid', 'that two-factor code is not valid');
+    }
     await s.advanceTotpStep(accountId, totp.step, iso(nowMs)); // replay guard moves forward
   }
 

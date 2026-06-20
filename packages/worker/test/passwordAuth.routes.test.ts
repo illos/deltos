@@ -683,6 +683,41 @@ describe('AP-T9 — TOTP', () => {
   );
 
   it(
+    'P0 REGRESSION: a CORRECT password on a 2FA account WITHOUT a code returns totp_required (not the uniform invalid) so the client prompts; a WRONG code returns totp_invalid; a wrong PASSWORD stays uniform',
+    async () => {
+      const raw = freshDb();
+      const env = makeEnv(raw);
+      const acct = await signup(env, 'priya', 'priya-password-1');
+      const { secret } = await setupTotp(env, acct.token);
+      const secretBytes = base32ToBytes(secret);
+      const step = stepAt(Date.now());
+      // enable on step-1 so the current step is free for the login below
+      expect((await post(env, '/api/auth/totp/verify', { code: codeAtStep(secretBytes, step - 1) }, { Authorization: `Bearer ${acct.token}` })).status).toBe(200);
+
+      // correct password, NO code → 401 totp_required (the bug: this used to be uniform invalid_credentials,
+      // so the client showed "wrong password" and never prompted for the code → 2FA accounts bricked).
+      const noCode = await post(env, '/api/auth/login', { username: 'priya', password: 'priya-password-1' });
+      expect(noCode.status).toBe(401);
+      expect(((await noCode.json()) as { error: { code: string } }).error.code).toBe('totp_required');
+
+      // correct password, WRONG code → 401 totp_invalid (client re-prompts with an error).
+      const badCode = await post(env, '/api/auth/login', { username: 'priya', password: 'priya-password-1', totp: '000000' });
+      expect(badCode.status).toBe(401);
+      expect(((await badCode.json()) as { error: { code: string } }).error.code).toBe('totp_invalid');
+
+      // WRONG password → stays UNIFORM invalid_credentials (no leak that 2FA is enabled / that the user exists).
+      const badPass = await post(env, '/api/auth/login', { username: 'priya', password: 'wrong-password-xx', totp: codeAtStep(secretBytes, step) });
+      expect(badPass.status).toBe(401);
+      expect(((await badPass.json()) as { error: { code: string } }).error.code).toBe('invalid_credentials');
+
+      // correct password + correct code → 200 (full login succeeds).
+      const ok = await post(env, '/api/auth/login', { username: 'priya', password: 'priya-password-1', totp: codeAtStep(secretBytes, step) });
+      expect(ok.status, await bodyText(ok)).toBe(200);
+    },
+    T,
+  );
+
+  it(
     'an invalid confirm code does NOT activate 2FA',
     async () => {
       const raw = freshDb();
