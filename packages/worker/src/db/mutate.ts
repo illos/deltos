@@ -150,6 +150,10 @@ export async function updateNote(
   // break ordinary edits, and every edit during the backfill-held window when no notebook rows exist
   // yet). Only a genuine move is ownership-checked: the target must be an account-owned, live notebook,
   // else REJECT (conflict) so we never orphan the note on a non-owned/deleted id (secSys gate #19 / #23).
+  // Determine whether this is a genuine MOVE (incoming notebookId differs from the note's current one).
+  // This read only SELECTS which SET/guard branch to run; it is NOT the racy step — a concurrent change
+  // to the note (move/edit on another device) bumps version, so the CAS below misses → conflict, never a
+  // stale-read write. (#25: it is the target-OWNERSHIP check, formerly a second read here, that was racy.)
   let move = false;
   if (entry.notebookId !== undefined) {
     const cur = await db.first<{ notebookId: string }>(
@@ -157,26 +161,23 @@ export async function updateNote(
       [entry.id, accountId],
     );
     move = cur !== null && cur.notebookId !== entry.notebookId;
-    if (move) {
-      const target = await db.first<{ ok: number }>(
-        `SELECT 1 AS ok FROM notebooks WHERE id = ? AND accountId = ? AND deletedAt IS NULL`,
-        [entry.notebookId, accountId],
-      );
-      if (!target) {
-        const current = await db.first<NoteRow>(
-          `SELECT * FROM notes WHERE id = ? AND accountId = ?`,
-          [entry.id, accountId],
-        );
-        return { outcome: 'conflict', serverRow: current ?? null };
-      }
-    }
   }
   const incomingLive = !isTrashed(entry.draft.properties ?? {});
   let notebookSetSql = '';
   let notebookParams: unknown[] = [];
+  // #25: the move target-ownership existence-check is FOLDED INTO the CAS WHERE (was a separate pre-read,
+  // a TOCTOU window: a concurrent self-delete of the target between the check and the write transiently
+  // dangled the note on a just-deleted notebook). As an EXISTS guard on the UPDATE it is evaluated
+  // atomically with the write — a target that is no longer an account-owned live notebook at write time
+  // yields a 0-row CAS → conflict (note unchanged), never an orphaning write. Same reject behavior as
+  // before, now race-free. accountId-scoped like every other subquery here.
+  let moveGuardSql = '';
+  let moveGuardParams: unknown[] = [];
   if (move) {
     notebookSetSql = 'notebookId = ?,';
     notebookParams = [entry.notebookId];
+    moveGuardSql = `AND EXISTS (SELECT 1 FROM notebooks WHERE id = ? AND accountId = ? AND deletedAt IS NULL)`;
+    moveGuardParams = [entry.notebookId, accountId];
   } else if (incomingLive) {
     notebookSetSql = `notebookId = CASE
             WHEN EXISTS (SELECT 1 FROM notebooks nb WHERE nb.id = notes.notebookId AND nb.accountId = ? AND nb.deletedAt IS NULL)
@@ -202,6 +203,7 @@ export async function updateNote(
           AND accountId  = ?
           AND version    = ?
           AND deletedAt  IS NULL
+          ${moveGuardSql}
       `,
       params: [
         entry.draft.title ?? '',
@@ -213,6 +215,7 @@ export async function updateNote(
         entry.id,
         accountId,
         entry.baseVersion,
+        ...moveGuardParams,
       ],
     },
   ]);

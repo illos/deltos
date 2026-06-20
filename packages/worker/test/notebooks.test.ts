@@ -211,6 +211,25 @@ describe('notebooks — sync entity (mutate layer)', () => {
     expect(rows).toHaveLength(0); // never landed on the foreign notebook
   });
 
+  it('move-note to a TOMBSTONED notebook is REJECTED — the ownership-existence check rides the atomic CAS (#25)', async () => {
+    // The #25 hardening: the target-ownership check is folded into the UPDATE WHERE (EXISTS ... deletedAt
+    // IS NULL), so a target that is no longer a live owned notebook AT WRITE TIME can never receive the
+    // note — closing the TOCTOU window where a concurrent self-delete of the target between a separate
+    // pre-read and the write transiently dangled the note on a just-deleted notebook.
+    const def = await createDefaultNotebook(db, ACCT, 'Notes', NOW);
+    await insertNotebook(db, nbEntry(NB1, 0, 'Work'), ACCT, NOW);
+    await insertNote(db, noteEntry(NOTE, def.id), ACCT, NOW);
+    // Tombstone NB1 (the would-be move target).
+    const nbVersion = (await pullSince(db, ACCT, 0)).notebooks.find((n) => n.id === NB1)!.version;
+    expect((await deleteNotebook(db, nbEntry(NB1, nbVersion, '', true), ACCT, NOW)).outcome).toBe('accepted');
+
+    const res = await updateNote(db, moveEntry(NOTE, 1, NB1), ACCT, NOW);
+    expect(res.outcome).toBe('conflict'); // rejected by the atomic guard — no orphaning onto a dead notebook
+    const stillInDefault = await notesInNotebook(db, ACCT, def.id);
+    expect(stillInDefault.find((r) => r.id === NOTE)!.notebookId).toBe(def.id); // never landed on NB1
+    expect(stillInDefault.find((r) => r.id === NOTE)!.version).toBe(1); // 0-row CAS — note unchanged
+  });
+
   // --- restore-from-Trash notebookId resolution (#22) ---
 
   it('restore (clear trash) when the notebook is LIVE keeps the note where it was', async () => {
