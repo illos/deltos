@@ -635,6 +635,38 @@
 
 .editor--loading { opacity: 0; }
 
+.editor__toolbar {
+  display: flex;
+  gap: 0.35rem;
+  padding: 0 0 0.65rem;
+  flex-shrink: 0;
+}
+
+.editor__tool-btn {
+  background: none;
+  border: 1px solid var(--edge);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.6rem;
+  border-radius: 0.3rem;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.editor__tool-btn:not(:disabled) {
+  color: inherit;
+  border-color: rgba(255,255,255,0.18);
+}
+
+.editor__tool-btn:not(:disabled):active { background: var(--edge); }
+
+.editor__tool-btn:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+
 /* ProseMirror host div */
 .editor__pm {
   flex: 1;

@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import { EditorState, Plugin } from 'prosemirror-state';
 import { EditorView, Decoration, DecorationSet } from 'prosemirror-view';
-import { history } from 'prosemirror-history';
+import { history, undo, redo, undoDepth, redoDepth } from 'prosemirror-history';
 import { dropCursor } from 'prosemirror-dropcursor';
 import { gapCursor } from 'prosemirror-gapcursor';
 import type { BlockBody } from '@deltos/shared';
@@ -19,9 +19,15 @@ interface ProseMirrorEditorProps {
   initialBody: BlockBody;
   onChange: (title: string, body: BlockBody) => void;
   autoFocus?: boolean;
+  /** Called in effect cleanup after the final onChange flush — signals "left the note". */
+  onLeave?: () => void;
+  /** Test seam: called with the EditorView on creation and null on destruction. */
+  onViewInit?: (view: EditorView | null) => void;
 }
 
 const SAVE_DEBOUNCE_MS = 400;
+/** PM history group delay: continuous typing within this window collapses to one undo step. */
+export const HISTORY_GROUP_DELAY_MS = 500;
 
 /**
  * Decoration plugin: adds `data-empty` on the title node when it has no text content,
@@ -61,18 +67,43 @@ export function ProseMirrorEditor({
   initialBody,
   onChange,
   autoFocus = false,
+  onLeave,
+  onViewInit,
 }: ProseMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
 
-  // Keep onChange in a ref so it's always current without re-running the effect.
+  // Keep onChange and onLeave in refs so they're always current without re-running the effect.
   const onChangeRef = useRef(onChange);
   useLayoutEffect(() => { onChangeRef.current = onChange; });
 
+  const onLeaveRef = useRef(onLeave);
+  useLayoutEffect(() => { onLeaveRef.current = onLeave; });
+
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleUndo = useCallback(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    undo(view.state, (tr) => view.dispatch(tr));
+    view.focus();
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    redo(view.state, (tr) => view.dispatch(tr));
+    view.focus();
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
+
+    // Reset undo/redo availability for the incoming note (fresh history).
+    setCanUndo(false);
+    setCanRedo(false);
 
     const doc = spineToPmDoc(deltoSchema, initialBody, initialTitle);
 
@@ -80,7 +111,7 @@ export function ProseMirrorEditor({
       doc,
       plugins: [
         buildKeymapPlugin(deltoSchema),
-        history(),
+        history({ newGroupDelay: HISTORY_GROUP_DELAY_MS }),
         dropCursor(),
         gapCursor(),
         uniqueBlockIdPlugin,
@@ -116,6 +147,10 @@ export function ProseMirrorEditor({
         const newState = view.state.apply(tr);
         view.updateState(newState);
 
+        // Always sync undo/redo availability (undo/redo themselves are doc changes).
+        setCanUndo(undoDepth(newState) > 0);
+        setCanRedo(redoDepth(newState) > 0);
+
         if (!tr.docChanged) return;
 
         if (saveTimerRef.current !== null) clearTimeout(saveTimerRef.current);
@@ -144,6 +179,7 @@ export function ProseMirrorEditor({
     });
 
     viewRef.current = view;
+    onViewInit?.(view);
     if (autoFocus) view.focus();
 
     return () => {
@@ -155,11 +191,36 @@ export function ProseMirrorEditor({
         const body = pmDocToSpine(view.state.doc);
         onChangeRef.current(title, body);
       }
+      // Signal the note is being left (after the final save so Dexie has latest content).
+      onLeaveRef.current?.();
       view.destroy();
       viewRef.current = null;
+      onViewInit?.(null);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId]);
 
-  return <div ref={containerRef} className="editor__pm" />;
+  return (
+    <>
+      <div className="editor__toolbar" role="toolbar" aria-label="Editing tools">
+        <button
+          className="editor__tool-btn"
+          onClick={handleUndo}
+          disabled={!canUndo}
+          aria-label="Undo"
+        >
+          Undo
+        </button>
+        <button
+          className="editor__tool-btn"
+          onClick={handleRedo}
+          disabled={!canRedo}
+          aria-label="Redo"
+        >
+          Redo
+        </button>
+      </div>
+      <div ref={containerRef} className="editor__pm" />
+    </>
+  );
 }
