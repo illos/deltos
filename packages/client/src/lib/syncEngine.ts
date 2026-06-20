@@ -2,7 +2,7 @@ import { getStore } from '../db/store.js';
 import { useAuthStore } from '../auth/store.js';
 import { showConflictToast } from './toastEvents.js';
 import type { SyncQueueEntry, NotebookQueueEntry, NotebookRow } from '../db/schema.js';
-import type { Note, NoteId, NotebookId, SyncStatus } from '@deltos/shared';
+import type { Note, NoteId, NotebookId } from '@deltos/shared';
 import { NoteResponseSchema } from '@deltos/shared';
 import type {
   SyncPushRequest,

@@ -135,7 +135,6 @@ export function NavContent({ onNavigate }: NavContentProps) {
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             placeholder="Notebook name"
-            // eslint-disable-next-line jsx-a11y/no-autofocus
             autoFocus
           />
           <div className="nav-content__new-actions">
