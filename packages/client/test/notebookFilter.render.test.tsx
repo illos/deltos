@@ -8,6 +8,9 @@
  * NF-3  Collection-view seam: resolveCollectionView(NB_A, HomeView) resolves to HomeView
  *         and the rendered output filters to the active notebook
  *         (guards the #17 seam: resolver hands off to the right component)
+ * NF-4  P0 #52 regression gate: note server-re-stamped to canonical notebookId stays visible
+ *         after the notebook pointer reconciles to canonical (post-fix state visible; stale
+ *         state hides — documents WHY reconcile is needed)
  *
  * All tests mount real React components against a real fake-indexeddb store.
  */
@@ -23,6 +26,11 @@ const NB_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' as NotebookId;
 const NB_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' as NotebookId;
 const NOTE_ID_A = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' as Note['id'];
 const NOTE_ID_B = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' as Note['id'];
+
+// NF-4 fixtures: the server's canonical default vs a legacy per-device stale ID
+const CANONICAL_NB_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' as NotebookId;
+const STALE_NB_ID     = 'ffffffff-ffff-4fff-8fff-ffffffffffff' as NotebookId;
+const NOTE_ID_C       = '11111111-1111-4111-8111-111111111111' as Note['id'];
 
 function makeNote(id: string, notebookId: NotebookId, title: string): Note {
   return {
@@ -137,5 +145,61 @@ describe('NF-3 — collection-view seam: resolver hands off to HomeView and it f
     });
     // Cross-notebook note must not leak through the seam
     expect(screen.queryByText('Seam note NB_B')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NF-4: P0 #52 regression gate — server-re-stamped note visibility
+//
+// Scenario: device had a legacy random notebookId (STALE_NB_ID) from the
+// localStorage migration. Notes created there carry that ID. On first edit+sync,
+// the server reassigns the note to the account's canonical default (CANONICAL_NB_ID).
+// After the reconcile fix, currentNotebookId becomes CANONICAL_NB_ID and the note
+// stays visible. Without reconcile (pre-fix), the pointer is still STALE_NB_ID and
+// the note vanishes from the list.
+// ---------------------------------------------------------------------------
+describe('NF-4 — P0 #52 regression gate: server-re-stamped note visibility', () => {
+  async function seedCanonicalState() {
+    const { db } = await import('../src/db/schema.js');
+    await db.notebooks.put({
+      id: CANONICAL_NB_ID, name: 'Notes', isDefault: true, defaultCollectionView: 'list',
+      version: 1, createdAt: '2026-06-18T00:00:00.000Z', updatedAt: '2026-06-18T00:00:00.000Z',
+      deletedAt: null, syncSeq: 1,
+    });
+    // Note after server re-stamp: its notebookId = canonical (not the stale device ID)
+    await db.notes.put(makeNote(NOTE_ID_C, CANONICAL_NB_ID, 'Re-stamped note'));
+  }
+
+  it('NF-4a (post-reconcile): note with canonical notebookId is visible when pointer = canonical', async () => {
+    await seedCanonicalState();
+    const { HomeView } = await import('../src/App.js');
+
+    render(
+      <MemoryRouter>
+        <HomeView notebookId={CANONICAL_NB_ID} />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText('Re-stamped note')).not.toBeNull();
+    });
+  });
+
+  it('NF-4b (pre-reconcile regression doc): same note is HIDDEN when pointer is still stale', async () => {
+    await seedCanonicalState();
+    const { HomeView } = await import('../src/App.js');
+
+    // Pointer points to the old stale ID — no notebook with that ID exists
+    render(
+      <MemoryRouter>
+        <HomeView notebookId={STALE_NB_ID} />
+      </MemoryRouter>,
+    );
+
+    // Note filtered out — this is the bug state that the reconcile fix eliminates
+    await waitFor(() => {
+      expect(screen.queryByText('No notes yet.')).not.toBeNull();
+    });
+    expect(screen.queryByText('Re-stamped note')).toBeNull();
   });
 });
