@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { AccessTokenResponse, RegisterResponse, TotpSetupResponse } from '@deltos/shared';
 import { ensureAccountScope, purgeAllLocalState } from '../db/accountScope.js';
-import { suspendSync } from '../lib/syncEngine.js';
+import { suspendSync, flushPushQueue } from '../lib/syncEngine.js';
 
 /**
  * Client auth store — USERNAME + PASSWORD (auth pivot; supersedes the passkey/WebAuthn stack).
@@ -250,15 +250,18 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
 
   async logout() {
     // #52 tenancy — LOGOUT does a FULL client-local wipe (security primary), ordered so a re-login is clean:
-    // 1. suspendSync(): stop the poll + let any in-flight cycle finish its PUSH (flushes this account's own
-    //    un-pushed edits to its OWN account — the best-effort flush-first) but SKIP its pull, so nothing
-    //    re-populates after the wipe.
+    // 1. suspendSync(): stop the poll so no NEW cycle starts (and a mid-cycle one skips its re-populating pull).
     suspendSync();
-    // 2. Server logout (revoke all sessions + clear the refresh cookie) — needs the bearer, still in memory.
+    // 2. #54: GUARANTEE all queued edits flush to the server BEFORE the wipe — not just an in-flight push.
+    //    Today an edit queued in the ~2s debounce window at the sign-out instant would be dropped by the wipe;
+    //    this drains the whole push queue deterministically (bearer still in memory; runs BEFORE /logout
+    //    revokes it). Best-effort: offline / push error → proceed (pre-real-users data is disposable).
+    try { await flushPushQueue(); } catch { /* can't reach server — proceed; the local wipe still runs */ }
+    // 3. Server logout (revoke all sessions + clear the refresh cookie) — needs the bearer, still in memory.
     try { await authFetch('/logout', undefined, get().bearerToken); } catch { /* clear locally regardless */ }
-    // 3. Wipe ALL local account state (Dexie tables + notebook pointer + sync cursors) + drop the marker.
+    // 4. Wipe ALL local account state (Dexie tables + notebook pointer + sync cursors) + drop the marker.
     try { await purgeAllLocalState(); } catch { /* best-effort; never block sign-out on a storage error */ }
-    // 4. Clear the in-memory session + close the gate. Net: no bearer, no refresh cookie, no local data,
+    // 5. Clear the in-memory session + close the gate. Net: no bearer, no refresh cookie, no local data,
     //    no resident-account marker → the next login re-detects from a clean slate and re-pulls from seq 0.
     set({ bearerToken: null, accountId: null, username: null, recoveryEstablished: null, totpEnabled: false, isAuthed: false, isAuthing: false, sessionState: 'unauthed' });
   },
