@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,16..72,400;0,16..72,500;0,16..72,600;1,16..72,400&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  button { font-family: inherit; cursor: pointer; }
+</style>
+</helmet>
+
+<div style="min-width:100%;min-height:100vh;width:max-content;box-sizing:border-box;padding:48px 56px 64px;background:#e3e0d8;font-family:'IBM Plex Sans',sans-serif">
+
+  <div style="max-width:740px;margin-bottom:26px">
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:2px;color:#8a8578;text-transform:uppercase">deltos · mix &amp; match</div>
+    <div style="font-family:Newsreader,serif;font-size:34px;font-weight:500;color:#2a2620;margin-top:8px;letter-spacing:-0.01em">Two axes, nine pairings</div>
+    <div style="font-size:14.5px;line-height:1.6;color:#6c685e;margin-top:8px">Palette and type are independent — pick any color/vibe with any type voice, then flip light/dark. The desktop and phone repaint live so you can judge the actual feel of each combination.</div>
+  </div>
+
+  <!-- controls -->
+  <div style="display:flex;flex-wrap:wrap;gap:28px;align-items:flex-end;padding:18px 20px;background:#f3f1ea;border:1px solid #d8d3c8;border-radius:12px;margin-bottom:14px">
+    <div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1.5px;color:#9a9488;margin-bottom:8px">PALETTE · VIBE</div>
+      <div style="display:flex;gap:6px">
+        <button data-ctl data-grp="palette" data-key="bone" onClick="{{ palBone }}" style="padding:7px 13px;border-radius:7px;font-size:12.5px;letter-spacing:0.2px;border-width:1px;border-style:solid;transition:all .12s ease;white-space:nowrap">Bone</button>
+        <button data-ctl data-grp="palette" data-key="graphite" onClick="{{ palGraphite }}" style="padding:7px 13px;border-radius:7px;font-size:12.5px;letter-spacing:0.2px;border-width:1px;border-style:solid;transition:all .12s ease;white-space:nowrap">Graphite</button>
+        <button data-ctl data-grp="palette" data-key="manila" onClick="{{ palManila }}" style="padding:7px 13px;border-radius:7px;font-size:12.5px;letter-spacing:0.2px;border-width:1px;border-style:solid;transition:all .12s ease;white-space:nowrap">Manila</button>
+        <button data-ctl data-grp="palette" data-key="ember" onClick="{{ palEmber }}" style="padding:7px 13px;border-radius:7px;font-size:12.5px;letter-spacing:0.2px;border-width:1px;border-style:solid;transition:all .12s ease;white-space:nowrap">Ember</button>
+      </div>
+    </div>
+    <div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1.5px;color:#9a9488;margin-bottom:8px">TYPE · VOICE</div>
+      <div style="display:flex;gap:6px">
+        <button data-ctl data-grp="font" data-key="serif" onClick="{{ fontSerif }}" style="padding:7px 13px;border-radius:7px;font-size:12.5px;letter-spacing:0.2px;border-width:1px;border-style:solid;transition:all .12s ease;white-space:nowrap">Serif</button>
+        <button data-ctl data-grp="font" data-key="sans" onClick="{{ fontSans }}" style="padding:7px 13px;border-radius:7px;font-size:12.5px;letter-spacing:0.2px;border-width:1px;border-style:solid;transition:all .12s ease;white-space:nowrap">Sans</button>
+        <button data-ctl data-grp="font" data-key="mono" onClick="{{ fontMono }}" style="padding:7px 13px;border-radius:7px;font-size:12.5px;letter-spacing:0.2px;border-width:1px;border-style:solid;transition:all .12s ease;white-space:nowrap">Mono</button>
+        <button data-ctl data-grp="font" data-key="spaceg" onClick="{{ fontGrotesk }}" style="padding:7px 13px;border-radius:7px;font-size:12.5px;letter-spacing:0.2px;border-width:1px;border-style:solid;transition:all .12s ease;white-space:nowrap">Grotesk</button>
+      </div>
+    </div>
+    <div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1.5px;color:#9a9488;margin-bottom:8px">MODE</div>
+      <div style="display:flex;gap:6px">
+        <button data-ctl data-grp="mode" data-key="light" onClick="{{ modeLight }}" style="padding:7px 13px;border-radius:7px;font-size:12.5px;letter-spacing:0.2px;border-width:1px;border-style:solid;transition:all .12s ease;white-space:nowrap">Light</button>
+        <button data-ctl data-grp="mode" data-key="dark" onClick="{{ modeDark }}" style="padding:7px 13px;border-radius:7px;font-size:12.5px;letter-spacing:0.2px;border-width:1px;border-style:solid;transition:all .12s ease;white-space:nowrap">Dark</button>
+      </div>
+    </div>
+    <div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1.5px;color:#9a9488;margin-bottom:8px">MOBILE</div>
+      <div style="display:flex;gap:6px">
+        <button data-ctl data-grp="phone" data-key="home" onClick="{{ phoneHome }}" style="padding:7px 13px;border-radius:7px;font-size:12.5px;letter-spacing:0.2px;border-width:1px;border-style:solid;transition:all .12s ease;white-space:nowrap">Home</button>
+        <button data-ctl data-grp="phone" data-key="note" onClick="{{ phoneNote }}" style="padding:7px 13px;border-radius:7px;font-size:12.5px;letter-spacing:0.2px;border-width:1px;border-style:solid;transition:all .12s ease;white-space:nowrap">Note</button>
+        <button data-ctl data-grp="phone" data-key="menu" onClick="{{ phoneMenu }}" style="padding:7px 13px;border-radius:7px;font-size:12.5px;letter-spacing:0.2px;border-width:1px;border-style:solid;transition:all .12s ease;white-space:nowrap">Menu</button>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:18px">
+    <div style="font-family:Newsreader,serif;font-size:20px;color:#2a2620">{{ comboTitle }}</div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8a8578">{{ comboDesc }}</div>
+  </div>
+
+  <!-- live stage (theme vars set here, cascade to both frames) -->
+  <div style="{{ stageStyle }}">
+
+    <!-- DESKTOP -->
+    <div style="display:flex;flex-direction:column;gap:10px;flex:none">
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:1.5px;color:#9a9488">DESKTOP</div>
+      <div style="width:1040px;height:700px;border-radius:12px;overflow:hidden;box-shadow:0 14px 48px rgba(40,35,25,0.20);display:flex;font-family:var(--ff);background:var(--paper)">
+
+        <!-- nav -->
+        <div style="width:222px;flex:none;background:var(--nav);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:20px 13px">
+          <div style="display:flex;align-items:center;gap:9px;padding:2px 8px 20px">
+            <span style="font-family:'Newsreader',serif;font-size:24px;font-weight:600;color:var(--accent);line-height:1">δ</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;letter-spacing:1px;color:var(--ink)">deltos</span>
+          </div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1.5px;color:var(--faint);padding:4px 8px 10px">NOTEBOOKS</div>
+          <div style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:7px;background:var(--sel);color:var(--ink)">
+            <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--accent)"><rect x="5" y="3.5" width="14" height="17" rx="2"/><line x1="9" y1="3.5" x2="9" y2="20.5"/></svg>
+            <span style="flex:1;font-size:var(--nav-item);font-weight:var(--nav-itemw)">Field Notes</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--secondary)">24</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:7px;color:var(--body)">
+            <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--secondary)"><rect x="5" y="3.5" width="14" height="17" rx="2"/><line x1="9" y1="3.5" x2="9" y2="20.5"/></svg>
+            <span style="flex:1;font-size:var(--nav-item);font-weight:var(--nav-itemw)">Reading</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--faint)">8</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:7px;color:var(--body)">
+            <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--secondary)"><rect x="5" y="3.5" width="14" height="17" rx="2"/><line x1="9" y1="3.5" x2="9" y2="20.5"/></svg>
+            <span style="flex:1;font-size:var(--nav-item);font-weight:var(--nav-itemw)">deltos</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--faint)">17</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:7px;color:var(--body)">
+            <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--secondary)"><rect x="5" y="3.5" width="14" height="17" rx="2"/><line x1="9" y1="3.5" x2="9" y2="20.5"/></svg>
+            <span style="flex:1;font-size:var(--nav-item);font-weight:var(--nav-itemw)">Garden</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--faint)">6</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:7px;color:var(--body)">
+            <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--secondary)"><rect x="5" y="3.5" width="14" height="17" rx="2"/><line x1="9" y1="3.5" x2="9" y2="20.5"/></svg>
+            <span style="flex:1;font-size:var(--nav-item);font-weight:var(--nav-itemw)">Letters</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--faint)">3</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 8px;color:var(--secondary)">
+            <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--secondary)"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;letter-spacing:0.3px">New notebook</span>
+          </div>
+          <div style="flex:1"></div>
+          <div style="border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column">
+            <div style="display:flex;align-items:center;gap:10px;padding:8px;color:var(--secondary)">
+              <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--secondary)"><path d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 13h8l1-13"/></svg>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:12px">Trash</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;padding:8px;color:var(--secondary)">
+              <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--secondary)"><line x1="4" y1="8" x2="20" y2="8"/><circle cx="15" cy="8" r="2.2" style="fill:var(--nav);stroke:var(--secondary)"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="9" cy="16" r="2.2" style="fill:var(--nav);stroke:var(--secondary)"/></svg>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:12px">Settings</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- list -->
+        <div style="width:300px;flex:none;background:var(--list);border-right:1px solid var(--border);display:flex;flex-direction:column;position:relative">
+          <div style="padding:18px 18px 0;display:flex;align-items:flex-start;justify-content:space-between">
+            <div>
+              <div style="font-family:var(--ff);font-size:20px;font-weight:600;color:var(--ink);letter-spacing:-0.01em;white-space:nowrap">Field Notes</div>
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--faint);margin-top:3px">24 notes</div>
+            </div>
+            <button title="New note" style="border:none;background:transparent;padding:4px;margin:-2px -4px 0 0;display:flex;align-items:center;justify-content:center">
+              <svg width="21" height="21" viewBox="0 0 24 24" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="fill:none;stroke:var(--accent)"><path d="M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="M18.5 3.5a2.1 2.1 0 0 1 3 3L12 16l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+          </div>
+          <div style="padding:12px 16px">
+            <div style="display:flex;align-items:center;gap:8px;background:var(--paper);border:1px solid var(--border);border-radius:9px;padding:7px 11px">
+              <svg width="15" height="15" viewBox="0 0 24 24" stroke-width="1.6" style="fill:none;stroke:var(--faint)"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
+              <span style="font-family:var(--ff);font-size:13px;color:var(--faint)">Search</span>
+            </div>
+          </div>
+          <div style="flex:1;overflow:hidden">
+            <div style="padding:12px 18px 12px 16px;background:var(--sel);border-bottom:1px solid var(--border);border-left:2px solid var(--accent)">
+              <div style="font-family:var(--ff);font-size:var(--lt);font-weight:var(--ltw);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">On the wax tablet</div>
+              <div style="display:flex;gap:8px;margin-top:3px;align-items:baseline"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--secondary);flex:none;white-space:nowrap">Yesterday</span><span style="font-family:var(--ff);font-size:13px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">δέλτος — one surface you write on, smooth</span></div>
+            </div>
+            <div style="padding:12px 18px;border-bottom:1px solid var(--border)">
+              <div style="font-family:var(--ff);font-size:var(--lt);font-weight:var(--ltw);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Morning pages</div>
+              <div style="display:flex;gap:8px;margin-top:3px;align-items:baseline"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--secondary);flex:none;white-space:nowrap">9:14 AM</span><span style="font-family:var(--ff);font-size:13px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Three pages before anything else, no stopping</span></div>
+            </div>
+            <div style="padding:12px 18px;border-bottom:1px solid var(--border)">
+              <div style="font-family:var(--ff);font-size:var(--lt);font-weight:var(--ltw);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Sync — open threads</div>
+              <div style="display:flex;gap:8px;margin-top:3px;align-items:baseline"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--secondary);flex:none;white-space:nowrap">Jun 17</span><span style="font-family:var(--ff);font-size:13px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Fork only on actual conflict; one version</span></div>
+            </div>
+            <div style="padding:12px 18px;border-bottom:1px solid var(--border)">
+              <div style="font-family:var(--ff);font-size:var(--lt);font-weight:var(--ltw);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Books to find</div>
+              <div style="display:flex;gap:8px;margin-top:3px;align-items:baseline"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--secondary);flex:none;white-space:nowrap">Jun 15</span><span style="font-family:var(--ff);font-size:13px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Pale Fire · The Rings of Saturn · A Field</span></div>
+            </div>
+            <div style="padding:12px 18px;border-bottom:1px solid var(--border)">
+              <div style="font-family:var(--ff);font-size:var(--lt);font-weight:var(--ltw);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Garden — week 3</div>
+              <div style="display:flex;gap:8px;margin-top:3px;align-items:baseline"><span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--secondary);flex:none;white-space:nowrap">Jun 12</span><span style="font-family:var(--ff);font-size:13px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Tomatoes leggy, stake them; basil finally</span></div>
+            </div>
+          </div>
+          <div style="position:absolute;top:50%;right:0;transform:translateY(-50%);width:3px;height:38px;border-radius:2px;background:var(--handle)"></div>
+        </div>
+
+        <!-- editor -->
+        <div style="flex:1;background:var(--paper);display:flex;flex-direction:column">
+          <div style="padding:15px 26px;display:flex;align-items:center;justify-content:space-between">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--faint)">Edited Yesterday at 4:32 PM</span>
+            <div style="display:flex;align-items:center;gap:16px">
+              <span style="display:flex;align-items:center;gap:6px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--secondary)"><span style="width:7px;height:7px;border-radius:50%;background:var(--sync)"></span>Synced</span>
+              <button title="Version history" style="border:none;background:transparent;padding:0;display:flex;align-items:center;cursor:pointer">
+                <svg width="18" height="18" viewBox="0 0 24 24" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="fill:none;stroke:var(--secondary)"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+              </button>
+              <svg width="20" height="20" viewBox="0 0 24 24" style="fill:var(--secondary)"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+            </div>
+          </div>
+          <div style="flex:1;overflow:hidden">
+            <div style="max-width:600px;margin:0 auto;padding:14px 40px 40px">
+              <h1 style="font-family:var(--ff);font-size:var(--h1);font-weight:var(--h1w);color:var(--ink);margin:0 0 18px;letter-spacing:-0.015em;line-height:1.15">On the wax tablet</h1>
+              <p style="font-family:var(--ff);font-size:var(--note);line-height:var(--line);color:var(--body);margin:0 0 16px">δέλτος — the Greek wax tablet. One smooth surface you write anything onto, then warm, smooth, and reuse. Nothing precious about any single page; the value is in the surface that is always ready.</p>
+              <blockquote style="font-family:var(--ff);font-style:italic;font-size:var(--quote);line-height:1.5;color:var(--secondary);margin:22px 0;padding-left:18px;border-left:2px solid var(--accent)">One substrate, many surfaces.</blockquote>
+              <p style="font-family:var(--ff);font-size:var(--note);line-height:var(--line);color:var(--body);margin:0 0 16px">That is the whole idea. The notes are not the app — they are what passes through it. Underneath, a single store everything reads and writes, so a list today and a map tomorrow are the same notes, seen differently.</p>
+              <h2 style="font-family:var(--ff);font-size:var(--h2);font-weight:600;color:var(--ink);margin:26px 0 12px">Open threads</h2>
+              <div style="display:flex;align-items:center;gap:11px;margin-bottom:9px">
+                <svg width="19" height="19" viewBox="0 0 24 24" stroke-width="1.6" style="fill:none;stroke:var(--accent)"><rect x="3.5" y="3.5" width="17" height="17" rx="5"/><path d="M8 12.5l2.5 2.5L16 9"/></svg>
+                <span style="font-family:var(--ff);font-size:var(--list-note);color:var(--faint);text-decoration:line-through">Fork only on actual conflict</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:11px;margin-bottom:9px">
+                <svg width="19" height="19" viewBox="0 0 24 24" stroke-width="1.6" style="fill:none;stroke:var(--faint)"><rect x="3.5" y="3.5" width="17" height="17" rx="5"/></svg>
+                <span style="font-family:var(--ff);font-size:var(--list-note);color:var(--body)">Freshness signal on cached notebooks</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:11px">
+                <svg width="19" height="19" viewBox="0 0 24 24" stroke-width="1.6" style="fill:none;stroke:var(--faint)"><rect x="3.5" y="3.5" width="17" height="17" rx="5"/></svg>
+                <span style="font-family:var(--ff);font-size:var(--list-note);color:var(--body)">Per-note sync status</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- PHONE -->
+    <div style="display:flex;flex-direction:column;gap:10px;flex:none">
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:1.5px;color:#9a9488">MOBILE</div>
+      <x-import component="IOSDevice" from="./ios-frame.jsx" dark="{{ dark }}" hint-size="402px,874px">
+        <div style="height:100%;position:relative;background:var(--paper);font-family:var(--ff)">
+          <sc-if value="{{ homeVisible }}" hint-placeholder-val="{{ true }}">
+          <div style="height:100%;display:flex;flex-direction:column">
+          <div style="height:58px;flex:none"></div>
+          <div style="padding:6px 20px 12px;flex:none">
+            <div style="font-family:var(--ff);font-size:27px;font-weight:var(--h1w);color:var(--ink);letter-spacing:-0.01em">Field Notes</div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--faint);margin-top:3px">24 notes</div>
+          </div>
+          <div style="flex:1;overflow:hidden">
+            <div style="padding:13px 20px 13px 18px;background:var(--sel);border-bottom:1px solid var(--border);border-left:2px solid var(--accent)">
+              <div style="font-size:16px;font-weight:600;color:var(--ink)">On the wax tablet</div>
+              <div style="display:flex;gap:8px;margin-top:4px;align-items:baseline"><span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--secondary);flex:none;white-space:nowrap">Yesterday</span><span style="font-size:13.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">δέλτος — one surface you write on</span></div>
+            </div>
+            <div style="padding:13px 20px;border-bottom:1px solid var(--border)">
+              <div style="font-size:16px;font-weight:600;color:var(--ink)">Morning pages</div>
+              <div style="display:flex;gap:8px;margin-top:4px;align-items:baseline"><span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--secondary);flex:none;white-space:nowrap">9:14 AM</span><span style="font-size:13.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Three pages before anything else</span></div>
+            </div>
+            <div style="padding:13px 20px;border-bottom:1px solid var(--border)">
+              <div style="font-size:16px;font-weight:600;color:var(--ink)">Sync — open threads</div>
+              <div style="display:flex;gap:8px;margin-top:4px;align-items:baseline"><span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--secondary);flex:none;white-space:nowrap">Jun 17</span><span style="font-size:13.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Fork only on actual conflict</span></div>
+            </div>
+            <div style="padding:13px 20px;border-bottom:1px solid var(--border)">
+              <div style="font-size:16px;font-weight:600;color:var(--ink)">Books to find</div>
+              <div style="display:flex;gap:8px;margin-top:4px;align-items:baseline"><span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--secondary);flex:none;white-space:nowrap">Jun 15</span><span style="font-size:13.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Pale Fire · The Rings of Saturn</span></div>
+            </div>
+            <div style="padding:13px 20px;border-bottom:1px solid var(--border)">
+              <div style="font-size:16px;font-weight:600;color:var(--ink)">Garden — week 3</div>
+              <div style="display:flex;gap:8px;margin-top:4px;align-items:baseline"><span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--secondary);flex:none;white-space:nowrap">Jun 12</span><span style="font-size:13.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Tomatoes leggy, stake them</span></div>
+            </div>
+          </div>
+          <div style="flex:none;background:var(--nav);border-top:1px solid var(--border);padding:9px 0 26px">
+            <div style="width:38px;height:5px;border-radius:3px;background:var(--handle);margin:0 auto 12px"></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:0 26px">
+              <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+                <svg width="22" height="22" viewBox="0 0 24 24" stroke-width="1.6" style="fill:none;stroke:var(--accent)"><path d="M4 20l4-1L19.5 7.5a2 2 0 0 0-3-3L5 16l-1 4z"/></svg>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--secondary)">New</span>
+              </div>
+              <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+                <svg width="22" height="22" viewBox="0 0 24 24" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="fill:none;stroke:var(--secondary)"><path d="M4 10h10a5 5 0 0 1 0 10h-4"/><path d="M8 6l-4 4 4 4"/></svg>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--secondary)">Undo</span>
+              </div>
+              <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+                <svg width="22" height="22" viewBox="0 0 24 24" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="fill:none;stroke:var(--faint)"><path d="M20 10H10a5 5 0 0 0 0 10h4"/><path d="M16 6l4 4-4 4"/></svg>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--faint)">Redo</span>
+              </div>
+              <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+                <svg width="22" height="22" viewBox="0 0 24 24" stroke-width="1.6" style="fill:none;stroke:var(--secondary)"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--secondary)">Search</span>
+              </div>
+            </div>
+          </div>
+          </div>
+          </sc-if>
+
+          <sc-if value="{{ noteVisible }}" hint-placeholder-val="{{ false }}">
+          <div style="height:100%;display:flex;flex-direction:column">
+            <div style="height:58px;flex:none"></div>
+            <div style="flex:none;display:flex;align-items:center;justify-content:space-between;padding:2px 14px 10px;border-bottom:1px solid var(--border)">
+              <div style="display:flex;align-items:center;gap:2px">
+                <svg width="22" height="22" viewBox="0 0 24 24" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="fill:none;stroke:var(--accent)"><path d="M15 5l-7 7 7 7"/></svg>
+                <span style="font-family:var(--ff);font-size:15px;color:var(--accent);white-space:nowrap">Field Notes</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:18px">
+                <svg width="19" height="19" viewBox="0 0 24 24" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="fill:none;stroke:var(--secondary)"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" style="fill:var(--secondary)"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+              </div>
+            </div>
+            <div style="flex:1;overflow:hidden;padding:18px 22px 8px">
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--faint);margin-bottom:12px">Yesterday at 4:32 PM</div>
+              <h1 style="font-family:var(--ff);font-size:25px;font-weight:var(--h1w);color:var(--ink);margin:0 0 14px;line-height:1.2;letter-spacing:-0.01em">On the wax tablet</h1>
+              <p style="font-family:var(--ff);font-size:16px;line-height:1.62;color:var(--body);margin:0 0 14px">δέλτος — the Greek wax tablet. One smooth surface you write anything onto, then warm, smooth, and reuse. Nothing precious about any single page.</p>
+              <blockquote style="font-family:var(--ff);font-style:italic;font-size:17px;line-height:1.5;color:var(--secondary);margin:18px 0;padding-left:14px;border-left:2px solid var(--accent)">One substrate, many surfaces.</blockquote>
+              <p style="font-family:var(--ff);font-size:16px;line-height:1.62;color:var(--body);margin:0 0 18px">The notes are not the app — they are what passes through it. A list today, a map tomorrow: the same notes, seen differently.</p>
+              <h2 style="font-family:var(--ff);font-size:16px;font-weight:600;color:var(--ink);margin:0 0 11px">Open threads</h2>
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px">
+                <svg width="18" height="18" viewBox="0 0 24 24" stroke-width="1.6" style="fill:none;stroke:var(--accent)"><rect x="3.5" y="3.5" width="17" height="17" rx="5"/><path d="M8 12.5l2.5 2.5L16 9"/></svg>
+                <span style="font-family:var(--ff);font-size:15px;color:var(--faint);text-decoration:line-through">Fork only on actual conflict</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px">
+                <svg width="18" height="18" viewBox="0 0 24 24" stroke-width="1.6" style="fill:none;stroke:var(--faint)"><rect x="3.5" y="3.5" width="17" height="17" rx="5"/></svg>
+                <span style="font-family:var(--ff);font-size:15px;color:var(--body)">Freshness signal on cached notebooks</span>
+              </div>
+            </div>
+            <div style="flex:none;background:var(--nav);border-top:1px solid var(--border);padding:11px 0 26px">
+              <div style="display:flex;justify-content:space-around;align-items:center;padding:0 32px">
+                <svg width="22" height="22" viewBox="0 0 24 24" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="fill:none;stroke:var(--secondary)"><path d="M4 10h10a5 5 0 0 1 0 10h-4"/><path d="M8 6l-4 4 4 4"/></svg>
+                <svg width="22" height="22" viewBox="0 0 24 24" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="fill:none;stroke:var(--faint)"><path d="M20 10H10a5 5 0 0 0 0 10h4"/><path d="M16 6l4 4-4 4"/></svg>
+                <span style="font-family:var(--ff);font-size:19px;font-weight:600;color:var(--secondary);line-height:1">Aa</span>
+                <svg width="22" height="22" viewBox="0 0 24 24" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="fill:none;stroke:var(--secondary)"><path d="M4 6.5l1.6 1.6L8.5 5"/><line x1="11.5" y1="6.5" x2="20" y2="6.5"/><path d="M4 15.5l1.6 1.6L8.5 14"/><line x1="11.5" y1="15.5" x2="20" y2="15.5"/></svg>
+              </div>
+            </div>
+          </div>
+          </sc-if>
+
+          <sc-if value="{{ menuVisible }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;inset:0;background:rgba(0,0,0,0.45)"></div>
+            <div style="position:absolute;left:0;right:0;bottom:0;height:76%;background:var(--nav);border-radius:22px 22px 0 0;box-shadow:0 -16px 50px rgba(0,0,0,0.4);padding:12px 18px 30px;display:flex;flex-direction:column">
+              <div style="width:38px;height:5px;border-radius:3px;background:var(--handle);margin:0 auto 18px"></div>
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:1.5px;color:var(--faint);padding:0 6px 12px">NOTEBOOKS</div>
+              <div style="display:flex;align-items:center;gap:12px;padding:11px 10px;border-radius:9px;background:var(--sel);color:var(--ink)">
+                <svg width="17" height="17" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--accent)"><rect x="5" y="3.5" width="14" height="17" rx="2"/><line x1="9" y1="3.5" x2="9" y2="20.5"/></svg>
+                <span style="flex:1;font-size:17px;font-weight:var(--nav-itemw)">Field Notes</span><span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--secondary)">24</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;padding:11px 10px;color:var(--body)">
+                <svg width="17" height="17" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--secondary)"><rect x="5" y="3.5" width="14" height="17" rx="2"/><line x1="9" y1="3.5" x2="9" y2="20.5"/></svg>
+                <span style="flex:1;font-size:17px">Reading</span><span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--faint)">8</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;padding:11px 10px;color:var(--body)">
+                <svg width="17" height="17" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--secondary)"><rect x="5" y="3.5" width="14" height="17" rx="2"/><line x1="9" y1="3.5" x2="9" y2="20.5"/></svg>
+                <span style="flex:1;font-size:17px">deltos</span><span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--faint)">17</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;padding:11px 10px;color:var(--body)">
+                <svg width="17" height="17" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--secondary)"><rect x="5" y="3.5" width="14" height="17" rx="2"/><line x1="9" y1="3.5" x2="9" y2="20.5"/></svg>
+                <span style="flex:1;font-size:17px">Garden</span><span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--faint)">6</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;padding:11px 10px;color:var(--secondary)">
+                <svg width="17" height="17" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--secondary)"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span style="font-size:15px;font-family:'IBM Plex Mono',monospace">New notebook</span>
+              </div>
+              <div style="flex:1"></div>
+              <div style="border-top:1px solid var(--border);padding-top:8px">
+                <div style="display:flex;align-items:center;gap:12px;padding:11px 10px;color:var(--secondary)">
+                  <svg width="17" height="17" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--secondary)"><path d="M5 7h14M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M7 7l1 13h8l1-13"/></svg>
+                  <span style="font-size:15px;font-family:'IBM Plex Mono',monospace">Trash</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;padding:11px 10px;color:var(--secondary)">
+                  <svg width="17" height="17" viewBox="0 0 24 24" stroke-width="1.5" style="fill:none;stroke:var(--secondary)"><line x1="4" y1="8" x2="20" y2="8"/><circle cx="15" cy="8" r="2.2" style="fill:var(--nav);stroke:var(--secondary)"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="9" cy="16" r="2.2" style="fill:var(--nav);stroke:var(--secondary)"/></svg>
+                  <span style="font-size:15px;font-family:'IBM Plex Mono',monospace">Settings</span>
+                </div>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+      </x-import>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { palette: 'graphite', font: 'sans', dark: false, phoneView: 'home' };
+
+  PAL = {
+    bone: {
+      name: 'Bone', vibe: 'warm paper, ochre',
+      light: { paper:'#FAF7F0', list:'#F3EEE4', nav:'#EAE4D8', border:'#E0D8C8', ink:'#25201A', body:'#3A332A', secondary:'#8A8170', faint:'#A0967F', sel:'#EBE1CF', accent:'#A8662F', handle:'#D8CFBD', sync:'#7FA86B' },
+      dark:  { paper:'#26211A', list:'#221E18', nav:'#1C1813', border:'#332E25', ink:'#EDE6D8', body:'#D8D0C0', secondary:'#9C9484', faint:'#857C6A', sel:'#2E281F', accent:'#C98A4A', handle:'#3A3429', sync:'#8FBE78' },
+    },
+    graphite: {
+      name: 'Graphite', vibe: 'cool slate, indigo',
+      light: { paper:'#FFFFFF', list:'#F7F8FA', nav:'#F0F1F3', border:'#E5E7EB', ink:'#1A1C1F', body:'#33373D', secondary:'#6B7177', faint:'#8A9099', sel:'#E7EBF3', accent:'#3B5BDB', handle:'#D2D6DC', sync:'#3BA776' },
+      dark:  { paper:'#202225', list:'#1B1D1F', nav:'#161719', border:'#2C2F33', ink:'#E6E8EB', body:'#C4C8CD', secondary:'#8B9197', faint:'#777E85', sel:'#23304D', accent:'#5B7BFF', handle:'#34383D', sync:'#42C28C' },
+    },
+    manila: {
+      name: 'Manila', vibe: 'typewriter, ribbon red',
+      light: { paper:'#F8F7F0', list:'#F2F0E7', nav:'#E8E6DD', border:'#DFDACE', ink:'#2B2722', body:'#423C33', secondary:'#877F70', faint:'#A89F8C', sel:'#EAE0CF', accent:'#9E3B2E', handle:'#D5CFC0', sync:'#7B9A66' },
+      dark:  { paper:'#25221B', list:'#201E18', nav:'#1A1813', border:'#322D24', ink:'#E8E2D4', body:'#CBC3B3', secondary:'#968D7C', faint:'#857C6A', sel:'#2D281F', accent:'#C75A48', handle:'#3A3429', sync:'#8FAE74' },
+    },
+    ember: {
+      name: 'Ember', vibe: 'charcoal, vermilion',
+      light: { paper:'#FFFFFF', list:'#F7F7F8', nav:'#F2F2F4', border:'#E7E7EB', ink:'#17171A', body:'#36363B', secondary:'#6E6E76', faint:'#A0A0A8', sel:'#FBEAE4', accent:'#EE431C', handle:'#D6D6DA', sync:'#1FA971' },
+      dark:  { paper:'#1A1A1D', list:'#161618', nav:'#111113', border:'#2A2A2E', ink:'#F0F0F2', body:'#C8C8CE', secondary:'#9A9AA3', faint:'#6E6E77', sel:'#2E211D', accent:'#FF6242', handle:'#34343A', sync:'#34C98A' },
+    },
+  };
+
+  FONT = {
+    serif: { name:'Serif', ff:"'Newsreader',Georgia,serif", h1:'36px', h1w:600, note:'17.5px', line:1.65, lt:'15px', ltw:600, navItem:'15px', navItemW:400, h2:'21px', quote:'19px', listNote:'16.5px' },
+    sans:  { name:'Sans',  ff:"'IBM Plex Sans',system-ui,sans-serif", h1:'33px', h1w:700, note:'16.5px', line:1.62, lt:'14.5px', ltw:600, navItem:'14.5px', navItemW:500, h2:'19px', quote:'18px', listNote:'15.5px' },
+    mono:  { name:'Mono',  ff:"'IBM Plex Mono',ui-monospace,monospace", h1:'27px', h1w:600, note:'15px', line:1.75, lt:'13.5px', ltw:600, navItem:'13.5px', navItemW:400, h2:'17px', quote:'15px', listNote:'14px' },
+    spaceg:{ name:'Grotesk', ff:"'Space Grotesk',system-ui,sans-serif", h1:'32px', h1w:600, note:'16px', line:1.58, lt:'14.5px', ltw:500, navItem:'14.5px', navItemW:500, h2:'19px', quote:'18px', listNote:'15px' },
+  };
+
+  themeVars() {
+    const c = this.PAL[this.state.palette][this.state.dark ? 'dark' : 'light'];
+    const f = this.FONT[this.state.font];
+    return {
+      '--paper': c.paper, '--list': c.list, '--nav': c.nav, '--border': c.border,
+      '--ink': c.ink, '--body': c.body, '--secondary': c.secondary, '--faint': c.faint,
+      '--sel': c.sel, '--accent': c.accent, '--handle': c.handle, '--sync': c.sync,
+      '--ff': f.ff, '--h1': f.h1, '--h1w': f.h1w, '--note': f.note, '--line': f.line,
+      '--lt': f.lt, '--ltw': f.ltw, '--nav-item': f.navItem, '--nav-itemw': f.navItemW,
+      '--h2': f.h2, '--quote': f.quote, '--list-note': f.listNote,
+    };
+  }
+
+  btn(active) {
+    return {
+      padding: '7px 13px', borderRadius: '7px', fontSize: '12.5px', letterSpacing: '0.2px',
+      border: active ? '1px solid #2a2620' : '1px solid #d8d3c8',
+      background: active ? '#2a2620' : '#fdfcf9',
+      color: active ? '#f3f1ea' : '#6c685e',
+      fontWeight: active ? 600 : 400, transition: 'all .12s ease', whiteSpace: 'nowrap',
+    };
+  }
+
+  componentDidMount() { this.syncControls(); [60, 200, 500].forEach(t => setTimeout(() => this.syncControls(), t)); }
+  componentDidUpdate() { this.syncControls(); }
+  syncControls() {
+    document.querySelectorAll('[data-ctl]').forEach(b => {
+      const g = b.getAttribute('data-grp'), k = b.getAttribute('data-key');
+      const active = g === 'palette' ? this.state.palette === k : g === 'font' ? this.state.font === k : g === 'mode' ? ((k === 'dark') === this.state.dark) : this.state.phoneView === k;
+      b.style.background = active ? '#2a2620' : '#fdfcf9';
+      b.style.color = active ? '#f3f1ea' : '#6c685e';
+      b.style.borderColor = active ? '#2a2620' : '#d8d3c8';
+      b.style.fontWeight = active ? '600' : '400';
+    });
+  }
+
+  renderVals() {
+    const set = (k, v) => () => { this.setState({ [k]: v }); [0, 50, 160].forEach(d => setTimeout(() => this.syncControls(), d)); };
+    const pal = this.PAL[this.state.palette];
+    const font = this.FONT[this.state.font];
+    return {
+      stageStyle: { display: 'flex', gap: '36px', alignItems: 'flex-start', ...this.themeVars() },
+      dark: this.state.dark,
+      homeVisible: this.state.phoneView === 'home' || this.state.phoneView === 'menu',
+      noteVisible: this.state.phoneView === 'note',
+      menuVisible: this.state.phoneView === 'menu',
+      comboTitle: pal.name + ' × ' + font.name,
+      comboDesc: pal.vibe + (this.state.dark ? ' · dark' : ' · light'),
+      paletteOpts: Object.keys(this.PAL).map(k => ({
+        label: this.PAL[k].name, style: this.btn(this.state.palette === k), onClick: set('palette', k),
+      })),
+      fontOpts: Object.keys(this.FONT).map(k => ({
+        label: this.FONT[k].name, style: this.btn(this.state.font === k), onClick: set('font', k),
+      })),
+      modeOpts: [
+        { label: 'Light', style: this.btn(!this.state.dark), onClick: set('dark', false) },
+        { label: 'Dark', style: this.btn(this.state.dark), onClick: set('dark', true) },
+      ],
+      palBoneStyle: this.btn(this.state.palette === 'bone'), palBone: set('palette', 'bone'),
+      palGraphiteStyle: this.btn(this.state.palette === 'graphite'), palGraphite: set('palette', 'graphite'),
+      palManilaStyle: this.btn(this.state.palette === 'manila'), palManila: set('palette', 'manila'),
+      palEmber: set('palette', 'ember'),
+      fontSerifStyle: this.btn(this.state.font === 'serif'), fontSerif: set('font', 'serif'),
+      fontSansStyle: this.btn(this.state.font === 'sans'), fontSans: set('font', 'sans'),
+      fontMonoStyle: this.btn(this.state.font === 'mono'), fontMono: set('font', 'mono'),
+      fontGrotesk: set('font', 'spaceg'),
+      modeLightStyle: this.btn(!this.state.dark), modeLight: set('dark', false),
+      modeDarkStyle: this.btn(this.state.dark), modeDark: set('dark', true),
+      phoneHomeStyle: this.btn(this.state.phoneView === 'home'), phoneHome: set('phoneView', 'home'),
+      phoneNoteStyle: this.btn(this.state.phoneView === 'note'), phoneNote: set('phoneView', 'note'),
+      phoneMenuStyle: this.btn(this.state.phoneView === 'menu'), phoneMenu: set('phoneView', 'menu'),
+    };
+  }
+}
+</script>
+</body>
+</html>
