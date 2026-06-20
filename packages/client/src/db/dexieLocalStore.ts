@@ -336,6 +336,14 @@ export const dexieLocalStore: LocalStore = {
     ));
   },
 
+  async uncategorizeNotesInNotebook(notebookId: NotebookId): Promise<void> {
+    // Set notebookId → null so notes fall into All Notes (uncategorized).
+    // Uses the notebookId index; null-notebookId rows are excluded from that index by Dexie (correct).
+    await db.notes.where('notebookId').equals(notebookId).modify((n: ClientNote) => {
+      n.notebookId = null;
+    });
+  },
+
   async discardBlankNote(id: NoteId): Promise<void> {
     await db.transaction('rw', db.notes, db.syncQueue, async () => {
       const note = await db.notes.get(id);

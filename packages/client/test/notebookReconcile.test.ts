@@ -49,27 +49,27 @@ async function currentId(): Promise<string | null> {
   return useNotebookStore.getState().currentNotebookId;
 }
 
-describe('mergeNotebooks — adopt-canonical pointer reconcile (#52)', () => {
-  it('STALE pointer (does not resolve to a live notebook) → adopts the canonical default', async () => {
+describe('mergeNotebooks — pointer reconcile (#52 + #59 All Notes)', () => {
+  it('STALE pointer (does not resolve to a live notebook) → falls back to null (All Notes)', async () => {
     const { mergeNotebooks } = await import('../src/lib/syncEngine.js');
     await setCurrent('nb-stale-legacy-per-device-id'); // a Phase-1 / never-synced id — no local row
     await mergeNotebooks([syncNotebook(CANON, true)]);
-    expect(await currentId()).toBe(CANON); // reconciled to the canonical default
+    expect(await currentId()).toBeNull(); // fell back to All Notes — no stored default any more
   });
 
-  it('null pointer (fresh device) → adopts the default (existing behavior preserved)', async () => {
+  it('null pointer (All Notes) → stays null (All Notes is always valid, no auto-adopt)', async () => {
     const { mergeNotebooks } = await import('../src/lib/syncEngine.js');
     await mergeNotebooks([syncNotebook(CANON, true)]);
-    expect(await currentId()).toBe(CANON);
+    expect(await currentId()).toBeNull(); // null = All Notes = valid; never auto-selected away from it
   });
 
-  it('deleted current notebook → adopts the default', async () => {
+  it('deleted current notebook → falls back to null (All Notes)', async () => {
     const { mergeNotebooks } = await import('../src/lib/syncEngine.js');
     const dead = 'nb-dead-00000000-0000-4000-8000-000000000009';
     await setCurrent(dead);
     // The pull delivers the (now-deleted) current AND the live default.
     await mergeNotebooks([syncNotebook(dead, false, NOW), syncNotebook(CANON, true)]);
-    expect(await currentId()).toBe(CANON);
+    expect(await currentId()).toBeNull(); // fell back to All Notes
   });
 
   it('EXACTLY ONE default: merging a server set with one isDefault yields exactly one local default row (client renders default strictly from server isDefault, never fabricates a 2nd)', async () => {
@@ -93,8 +93,8 @@ describe('mergeNotebooks — adopt-canonical pointer reconcile (#52)', () => {
   });
 });
 
-describe('GATE — create → EDIT → sync → note STAYS PUT (does not vanish) (#52)', () => {
-  it('a note stamped with a stale notebookId, re-stamped to canonical by sync, stays VISIBLE (notebookId === currentNotebookId)', async () => {
+describe('GATE — create → EDIT → sync → note STAYS PUT (does not vanish) (#52 + #59)', () => {
+  it('a note stamped with a stale notebookId, re-stamped to null by sync, stays VISIBLE in All Notes', async () => {
     const { db } = await import('../src/db/schema.js');
     const { mergeNotebooks, mergePull } = await import('../src/lib/syncEngine.js');
 
@@ -115,19 +115,18 @@ describe('GATE — create → EDIT → sync → note STAYS PUT (does not vanish)
     };
     await db.notes.put(local); // seeded directly (no pending queue entry → pull applies the server re-stamp)
 
-    // The sync round-trip: the server reassigned the orphaned notebookId to the canonical default and the
-    // pull returns the note re-stamped + the canonical notebook.
-    const reStamped: SyncNote = { ...local, notebookId: CANON, syncStatus: 'synced', deletedAt: null, syncSeq: 2 };
+    // The sync round-trip: the server (#58) now re-homes orphaned notes to null (uncategorized / All Notes).
+    // The pull returns the note re-stamped to null + the canonical notebook.
+    const reStamped: SyncNote = { ...local, notebookId: null, syncStatus: 'synced', deletedAt: null, syncSeq: 2 };
     await mergePull([reStamped]);
     await mergeNotebooks([syncNotebook(CANON, true)]);
 
-    // The note moved to the canonical notebook AND the pointer followed → HomeView (notebookId ===
-    // currentNotebookId) still shows it. WITHOUT the reconcile fix, currentNotebookId would stay STALE
-    // while the note sits under CANON → it vanishes from the view. This is the hard deploy gate.
+    // After reconcile: note is null (All Notes) + pointer fell back to null (All Notes).
+    // All Notes (currentId=null) is unfiltered — note IS visible. This is the hard deploy gate.
     const storedNote = await db.notes.get(noteId);
-    expect(storedNote?.notebookId).toBe(CANON);
-    expect(await currentId()).toBe(CANON);
-    expect(storedNote!.notebookId).toBe(await currentId()); // visible in the current-notebook list
+    expect(storedNote?.notebookId).toBeNull(); // server re-homed to uncategorized
+    expect(await currentId()).toBeNull(); // fell back to All Notes (no stored default)
+    // Both null → note is visible in All Notes (HomeView with notebookId=null shows all notes).
   });
 
   it('REGRESSION GUARD: a note in a CUSTOM notebook stays put through sync (the fix must not disturb the proven-fine custom path)', async () => {

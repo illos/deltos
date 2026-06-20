@@ -160,7 +160,20 @@ export function SearchRoute() {
   const groups = useMemo((): NotebookGroup[] => {
     if (!results.length) return [];
 
-    const byNotebook = new Map<NotebookId, NoteSearchResult[]>();
+    // Synthetic row for uncategorized notes (notebookId = null = All Notes).
+    const allNotesRow: NotebookRow = {
+      id: null as unknown as NotebookId,
+      name: 'All Notes',
+      isDefault: false,
+      defaultCollectionView: 'list',
+      version: 0,
+      createdAt: '',
+      updatedAt: '',
+      deletedAt: null,
+      syncSeq: 0,
+    };
+
+    const byNotebook = new Map<NotebookId | null, NoteSearchResult[]>();
     for (const r of results) {
       const id = r.note.notebookId;
       const arr = byNotebook.get(id) ?? [];
@@ -172,7 +185,7 @@ export function SearchRoute() {
     const all: NotebookGroup[] = [];
 
     for (const [nbId, nbResults] of byNotebook) {
-      const notebook = nbMap.get(nbId);
+      const notebook = nbId === null ? allNotesRow : nbMap.get(nbId);
       if (!notebook) continue;
       all.push({
         notebook,

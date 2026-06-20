@@ -7,8 +7,7 @@ import { useNotebookStore } from './notebookStore.js';
  *
  * Phase-1 stub used localStorage; this version reads from the Zustand/IDB-backed store.
  */
-export function getDefaultNotebookId(): NotebookId {
-  const id = useNotebookStore.getState().currentNotebookId;
-  if (!id) throw new Error('[deltos] getDefaultNotebookId() called before notebook is ready');
-  return id;
+/** Returns the current notebook (null = All Notes / uncategorized). Only call after notebookStore.init(). */
+export function getDefaultNotebookId(): NotebookId | null {
+  return useNotebookStore.getState().currentNotebookId;
 }

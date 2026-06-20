@@ -13,7 +13,6 @@ import { SearchRoute } from './routes/SearchRoute.js';
 const SettingsRoute = lazy(() =>
   import('./routes/SettingsRoute.js').then((m) => ({ default: m.SettingsRoute })),
 );
-import { AllNotebooksScreen } from './views/AllNotebooksScreen.js';
 import { DrawerNav } from './components/DrawerNav.js';
 import { BottomNav } from './components/BottomNav.js';
 import { startSyncTriggers, syncNow } from './lib/syncEngine.js';
@@ -111,7 +110,8 @@ function AppRoutes() {
  */
 export function HomeView({ notebookId }: CollectionViewProps) {
   const allNotes = useNotes();
-  const notes = allNotes.filter((n) => n.notebookId === notebookId);
+  // null = All Notes = show every non-trashed note; a real id = filter to that notebook's notes.
+  const notes = notebookId === null ? allNotes : allNotes.filter((n) => n.notebookId === notebookId);
   // Single-open invariant: only one swipe row open at a time
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -181,7 +181,7 @@ function AuthedShell() {
   const currentNotebookId = useNotebookStore((s) => s.currentNotebookId);
   const initNotebook = useNotebookStore((s) => s.init);
   const notebook = useCurrentNotebook();
-  const notebookName = notebook?.name ?? '…';
+  const notebookName = currentNotebookId === null ? 'All Notes' : (notebook?.name ?? '…');
   // navOpen / DrawerNav is desktop-only (mobile uses BottomNav via CSS)
   const [navOpen, setNavOpen] = useState(false);
   const navigate = useNavigate();
@@ -214,11 +214,8 @@ function AuthedShell() {
     );
   }
 
-  // No notebook set (new device, or dangling pointer) → notebook picker.
-  if (!currentNotebookId) return <AllNotebooksScreen />;
-
-  // Notebook ready: resolve the collection view for this notebook (v1 always returns HomeView).
-  const notebookId: NotebookId = currentNotebookId;
+  // null = All Notes (default); a real id = a specific notebook. Both are valid; render the shell.
+  const notebookId: NotebookId | null = currentNotebookId;
   const CollectionView = resolveCollectionView(notebookId, HomeView);
 
   return (

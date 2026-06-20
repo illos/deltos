@@ -54,11 +54,11 @@ export const mutateNotebooks = {
 
   async delete(id: NotebookId): Promise<void> {
     const nb = await getStore().getNotebook(id);
-    if (!nb || nb.deletedAt !== null || nb.isDefault) return;
+    if (!nb || nb.deletedAt !== null) return;
     const now = new Date().toISOString();
-    // Mirror the server-side trash cascade locally so notes leave the main list immediately
-    // (next pull will confirm the server-side tombstones; no sync queue entries needed here).
-    await getStore().trashNotesInNotebook(id, now);
+    // Uncategorize notes locally so they fall back to All Notes immediately (#58: server also
+    // uncategorizes on delete — no longer trashes). Next pull confirms the server-side move.
+    await getStore().uncategorizeNotesInNotebook(id);
     await getStore().putNotebookAndEnqueue(
       { ...nb, deletedAt: now, updatedAt: now },
       {

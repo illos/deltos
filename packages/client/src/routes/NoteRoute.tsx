@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useParams, Link, useSearchParams, Navigate, useLocation } from 'react-router-dom';
-import type { Note, NoteId } from '@deltos/shared';
+import type { Note, NoteId, NotebookId } from '@deltos/shared';
 import { NoteIdSchema } from '@deltos/shared';
 import { getStore } from '../db/store.js';
 import { noteHasContent } from '../lib/noteContent.js';
@@ -58,10 +58,11 @@ export function NoteRoute() {
   }, []);
 
   // Must be above all early returns — hooks must be called in the same order every render.
-  const handleMove = useCallback(async (currentNote: Note, targetNotebook: NotebookRow) => {
-    if (targetNotebook.id === currentNote.notebookId) { setShowMove(false); return; }
-    await mutateNotes.put({ ...currentNote, notebookId: targetNotebook.id });
-    notifyQueueWrite(targetNotebook.id);
+  // targetId: null = move to All Notes (uncategorize); a real id = move to that notebook.
+  const handleMove = useCallback(async (currentNote: Note, targetId: NotebookId | null) => {
+    if (targetId === currentNote.notebookId) { setShowMove(false); return; }
+    await mutateNotes.put({ ...currentNote, notebookId: targetId });
+    notifyQueueWrite(targetId);
     setShowMove(false);
   }, []);
 
@@ -193,11 +194,20 @@ export function NoteRoute() {
         <div className="editor__move-picker" role="dialog" aria-label="Move note to notebook">
           <p className="editor__move-title">Move to notebook</p>
           <ul className="editor__move-list">
+            <li key="all-notes">
+              <button
+                className={`editor__move-nb${note.notebookId === null ? ' editor__move-nb--current' : ''}`}
+                onClick={() => { void handleMove(note, null); }}
+                disabled={note.notebookId === null}
+              >
+                All Notes
+              </button>
+            </li>
             {notebooks.map((nb) => (
               <li key={nb.id}>
                 <button
                   className={`editor__move-nb${nb.id === note.notebookId ? ' editor__move-nb--current' : ''}`}
-                  onClick={() => { void handleMove(note, nb); }}
+                  onClick={() => { void handleMove(note, nb.id); }}
                   disabled={nb.id === note.notebookId}
                 >
                   {nb.name}

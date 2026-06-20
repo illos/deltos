@@ -16,12 +16,12 @@ import type { NotebookId } from '@deltos/shared';
  */
 
 export interface CollectionViewProps {
-  notebookId: NotebookId;
+  notebookId: NotebookId | null;
 }
 
 export interface CollectionViewDescriptor {
   readonly key: string;
-  matches(notebookId: NotebookId): boolean;
+  matches(notebookId: NotebookId | null): boolean;
   component: ComponentType<CollectionViewProps>;
 }
 
@@ -37,7 +37,7 @@ export function registerCollectionView(descriptor: CollectionViewDescriptor): vo
  * registered view whose predicate matches, or `fallback` (the standard list) if none do.
  */
 export function resolveCollectionView(
-  notebookId: NotebookId,
+  notebookId: NotebookId | null,
   fallback: ComponentType<CollectionViewProps>,
 ): ComponentType<CollectionViewProps> {
   for (const descriptor of _registry) {

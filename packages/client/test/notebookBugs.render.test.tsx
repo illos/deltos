@@ -1,8 +1,8 @@
 /**
  * Render tests for glass-test #2 bugs (task #30):
  *
- *   B1-a  NavContent shows a "⋮" affordance on non-default notebooks
- *   B1-b  NavContent shows NO delete affordance on the default notebook
+ *   B1-a  NavContent shows a "⋮" affordance on real notebooks
+ *   B1-b  NavContent shows a "⋮" affordance on ALL real notebooks (isDefault guard removed — All Notes is synthetic)
  *   B1-c  Clicking ⋮ → Delete removes the notebook from the list
  *   B2    Selecting a notebook while on /note/:id navigates to the list route
  *   B3-a  Leaving a truly blank note discards it from the store
@@ -76,13 +76,12 @@ describe('B1 — NavContent delete affordance', () => {
     });
   });
 
-  it('B1-b: default notebook has NO more-options button', async () => {
+  it('B1-b: every real notebook has a more-options button (isDefault guard removed)', async () => {
     await renderNav();
     await waitFor(() => {
       // Wait until both notebooks are rendered
-      expect(screen.queryByText('Notes')).not.toBeNull();
+      expect(screen.queryByLabelText('More options for Notes')).not.toBeNull();
     });
-    expect(screen.queryByLabelText('More options for Notes')).toBeNull();
   });
 
   it('B1-c: clicking ⋮ → Delete removes the notebook from the rendered list', async () => {
@@ -149,8 +148,9 @@ describe('B2 — selecting a notebook navigates to the list', () => {
       expect(screen.queryByText('Notes')).not.toBeNull();
     });
 
-    // Clicking the notebook button must navigate away from the note to the list
-    const nbBtn = screen.getByRole('button', { name: /Notes/ });
+    // Clicking the specific 'Notes' notebook button must navigate away from the note to the list.
+    // Use /^Notes/ to avoid matching the synthetic 'All Notes' entry (which also contains 'Notes').
+    const nbBtn = screen.getByRole('button', { name: /^Notes/ });
     await act(async () => { nbBtn.click(); });
 
     await waitFor(() => {

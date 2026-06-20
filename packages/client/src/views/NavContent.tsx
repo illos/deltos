@@ -31,13 +31,15 @@ export function NavContent({ onNavigate }: NavContentProps) {
 
   const countByNotebook = useMemo(() => {
     const m: Record<string, number> = {};
-    for (const n of notes) m[n.notebookId] = (m[n.notebookId] ?? 0) + 1;
+    for (const n of notes) {
+      if (n.notebookId) m[n.notebookId] = (m[n.notebookId] ?? 0) + 1;
+    }
     return m;
   }, [notes]);
 
-  // B2: selecting a notebook always navigates to the list, even when a note is open.
+  // B2: selecting a notebook (or null = All Notes) always navigates to the list.
   const handleSelect = useCallback(
-    async (id: NotebookId) => {
+    async (id: NotebookId | null) => {
       await setCurrentNotebook(id);
       navigate('/');
       onNavigate?.();
@@ -65,25 +67,33 @@ export function NavContent({ onNavigate }: NavContentProps) {
     setNewName('');
   }, []);
 
-  // B1: delete a non-default notebook; notes cascade to trash locally.
+  // B1: delete a notebook; its notes fall back to All Notes (uncategorized).
   const handleDelete = useCallback(
     async (id: NotebookId) => {
       await mutateNotebooks.delete(id);
       notifyQueueWrite(id);
       setMenuOpenId(null);
       if (id === currentNotebookId) {
-        const def = notebooks.find((nb) => nb.isDefault);
-        if (def) await setCurrentNotebook(def.id);
+        await setCurrentNotebook(null); // fall back to All Notes
         navigate('/');
       }
       onNavigate?.();
     },
-    [currentNotebookId, notebooks, setCurrentNotebook, navigate, onNavigate],
+    [currentNotebookId, setCurrentNotebook, navigate, onNavigate],
   );
 
   return (
     <nav className="nav-content" aria-label="Notebooks">
       <ul className="nav-content__list">
+        {/* All Notes — synthetic aggregate, always first, undeletable by construction */}
+        <li className={`nav-content__item${currentNotebookId === null ? ' nav-content__item--current' : ''}`}>
+          <button className="nav-content__nb-btn" onClick={() => { void handleSelect(null); }}>
+            <span className="nav-content__nb-name">All Notes</span>
+            <span className="nav-content__nb-meta">
+              <span className="nav-content__nb-count">{notes.length}</span>
+            </span>
+          </button>
+        </li>
         {notebooks.map((nb) => (
           <li
             key={nb.id}
@@ -92,37 +102,34 @@ export function NavContent({ onNavigate }: NavContentProps) {
             <button className="nav-content__nb-btn" onClick={() => { void handleSelect(nb.id); }}>
               <span className="nav-content__nb-name">{nb.name}</span>
               <span className="nav-content__nb-meta">
-                {nb.isDefault && <span className="nav-content__nb-star" aria-label="Default">★</span>}
                 <span className="nav-content__nb-count">{countByNotebook[nb.id] ?? 0}</span>
               </span>
             </button>
-            {!nb.isDefault && (
-              menuOpenId === nb.id ? (
-                <div className="nav-content__nb-menu" role="menu">
-                  <button
-                    className="nav-content__nb-delete"
-                    role="menuitem"
-                    onClick={() => { void handleDelete(nb.id); }}
-                  >
-                    Delete
-                  </button>
-                  <button
-                    className="nav-content__nb-menu-close"
-                    aria-label="Close menu"
-                    onClick={() => setMenuOpenId(null)}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ) : (
+            {menuOpenId === nb.id ? (
+              <div className="nav-content__nb-menu" role="menu">
                 <button
-                  className="nav-content__nb-more"
-                  aria-label={`More options for ${nb.name}`}
-                  onClick={(e) => { e.stopPropagation(); setMenuOpenId(nb.id); }}
+                  className="nav-content__nb-delete"
+                  role="menuitem"
+                  onClick={() => { void handleDelete(nb.id); }}
                 >
-                  ⋮
+                  Delete
                 </button>
-              )
+                <button
+                  className="nav-content__nb-menu-close"
+                  aria-label="Close menu"
+                  onClick={() => setMenuOpenId(null)}
+                >
+                  ✕
+                </button>
+              </div>
+            ) : (
+              <button
+                className="nav-content__nb-more"
+                aria-label={`More options for ${nb.name}`}
+                onClick={(e) => { e.stopPropagation(); setMenuOpenId(nb.id); }}
+              >
+                ⋮
+              </button>
             )}
           </li>
         ))}

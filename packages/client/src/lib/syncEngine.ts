@@ -246,6 +246,34 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
 }
 
 // ---------------------------------------------------------------------------
+// Awaitable push drain (#54) — the "ensure everything is pushed" primitive
+// ---------------------------------------------------------------------------
+
+// pushQueued's notebookId param is vestigial (the push is account-scoped by the bearer; dedupeQueue
+// batches EVERY queued entry regardless of notebook). A sentinel satisfies the signature.
+const FLUSH_SENTINEL = '00000000-0000-4000-8000-000000000000' as NotebookId;
+
+/**
+ * Push every queued edit and resolve once the queue is EMPTY. Unlike {@link syncNow} (fire-and-forget,
+ * single-flight, also pulls), this is a pure, AWAITABLE push — the "ensure synced before X" primitive.
+ *
+ * Logout uses it to flush ALL queued edits before the local wipe: today suspendSync only lets an
+ * already-in-flight push finish, so an edit queued in the ~2s debounce window at the sign-out instant
+ * is otherwise dropped by the wipe (data-loss on logout is a bad surprise for real users — navSys #54).
+ *
+ * Loops until the queue drains or MAX_PASSES is hit — a persistent conflict or being offline can't
+ * drain, and logout must never hang. The caller suspends new cycles first (logout → suspendSync), so
+ * there's no competing pusher; a double-push that somehow raced is CAS-safe (the loser conflicts, no
+ * data lost). Propagates a network error so the caller decides (logout proceeds best-effort).
+ */
+export async function flushPushQueue(apiBase = '/api'): Promise<void> {
+  const MAX_PASSES = 5;
+  for (let pass = 0; pass < MAX_PASSES && (await getStore().queueCount()) > 0; pass++) {
+    await pushQueued(FLUSH_SENTINEL, apiBase);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Conflict reconcile — retain-as-version (PIN-SYNC-3/4: no fork; same note id)
 // ---------------------------------------------------------------------------
 
@@ -351,23 +379,18 @@ export async function mergeNotebooks(notebooks: SyncNotebook[]): Promise<void> {
     };
     await getStore().putNotebook(row);
   }
-  // Reconcile the device-local current-notebook pointer to a REAL synced notebook. Adopt the account's
-  // canonical default when the pointer:
-  //   (a) is null (fresh device) — auto-select the default on first pull;
-  //   (b) was deleted; OR
-  //   (c) does NOT resolve to a live local notebook — a STALE/LEGACY pointer (the #52 root cause): a
-  //       Phase-1 per-device random default id (notebookPointer localStorage migration) or any id that
-  //       never synced as a notebook row. Left stale, new notes get stamped with that non-canonical id
-  //       and the server reassigns them to the canonical default on edit → they leave THIS view
-  //       ("vanish"). Reconciling to the canonical default makes the client adopt-canonical + idempotent
-  //       (a pointer that already resolves to ANY live notebook — default or a user's chosen one — is
-  //       kept, so this never yanks a user off a notebook they're legitimately viewing).
+  // Reconcile the device-local current-notebook pointer. null = All Notes (always valid — skip).
+  // Only reconcile when a real notebook id is selected and that notebook no longer resolves:
+  //   (a) was deleted; OR
+  //   (b) is a STALE/LEGACY pointer (Phase-1 per-device random id, or an id that never synced).
+  //       Left stale, new notes stamped with that id are re-homed to null by the server on edit →
+  //       they "vanish" from the filtered view. Fall back to null (All Notes) — no stored default.
   const { currentNotebookId, setCurrentNotebook } = useNotebookStore.getState();
-  const currentRow = currentNotebookId ? await getStore().getNotebook(currentNotebookId) : undefined;
+  if (currentNotebookId === null) return; // All Notes is always valid — no reconcile needed
+  const currentRow = await getStore().getNotebook(currentNotebookId);
   const currentResolves = currentRow !== undefined && currentRow.deletedAt === null;
   if (!currentResolves) {
-    const defaultNb = notebooks.find((nb) => nb.isDefault && nb.deletedAt === null);
-    if (defaultNb) await setCurrentNotebook(defaultNb.id as NotebookId);
+    await setCurrentNotebook(null); // fall back to All Notes — no stored default any more
   }
 }
 
@@ -533,8 +556,8 @@ export function startSyncTriggers(notebookId: NotebookId, apiBase = '/api'): () 
  * This is THE push trigger (the production path): every queue write goes through mutateNotes.put and
  * its caller nudges this. Decoupled so mutate.ts doesn't import syncEngine (avoids a circular dep).
  */
-export function notifyQueueWrite(notebookId: NotebookId, apiBase = '/api'): void {
-  schedulePush(notebookId, apiBase);
+export function notifyQueueWrite(notebookId: NotebookId | null, apiBase = '/api'): void {
+  schedulePush(notebookId ?? FLUSH_SENTINEL, apiBase);
 }
 
 // Re-export for callers that need the NoteResponseSchema (used in pull)

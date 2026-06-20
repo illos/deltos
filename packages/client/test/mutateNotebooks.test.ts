@@ -4,8 +4,8 @@
  * NB-1  create: adds a row to db.notebooks + a queue entry
  * NB-2  create: queue entry has baseVersion 0 (INSERT)
  * NB-3  rename: updates the name locally + queues a RENAME entry
- * NB-4  delete: marks deletedAt + queues a delete:true entry; default notebook is protected
- * NB-5  delete default: no-op (isDefault guard)
+ * NB-4  delete: marks deletedAt + queues a delete:true entry
+ * NB-5  delete any notebook (isDefault guard removed — All Notes is synthetic, not a row)
  */
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -88,14 +88,14 @@ describe('NB-4 — delete marks deletedAt + queues delete entry', () => {
   });
 });
 
-describe('NB-5 — delete default is a no-op', () => {
-  it('does not tombstone the default notebook', async () => {
+describe('NB-5 — all notebooks are deletable (no stored default in the new model)', () => {
+  it('tombstones an isDefault notebook — All Notes is synthetic so every real notebook is deletable', async () => {
     const { mutateNotebooks } = await import('../src/db/mutateNotebooks.js');
     const { db } = await import('../src/db/schema.js');
     await mutateNotebooks.delete(DEFAULT_NB_ID);
     const row = await db.notebooks.get(DEFAULT_NB_ID);
-    expect(row?.deletedAt).toBeNull();
+    expect(row?.deletedAt).not.toBeNull();
     const queue = await db.notebookQueue.toArray();
-    expect(queue).toHaveLength(0);
+    expect(queue[0]?.payload.delete).toBe(true);
   });
 });

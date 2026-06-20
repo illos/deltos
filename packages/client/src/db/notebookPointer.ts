@@ -18,6 +18,10 @@ export async function writeCurrentNotebookId(id: NotebookId): Promise<void> {
   await db.deviceState.put({ key: CURRENT_NOTEBOOK_KEY, value: id });
 }
 
+export async function deleteCurrentNotebookId(): Promise<void> {
+  await db.deviceState.delete(CURRENT_NOTEBOOK_KEY);
+}
+
 /**
  * Bootstrap load: IDB first, then one-time localStorage migration for users upgrading from the
  * Phase-1 stub (getDefaultNotebookId stored in localStorage). Returns null if neither source

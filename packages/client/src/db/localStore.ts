@@ -146,6 +146,13 @@ export interface LocalStore {
   trashNotesInNotebook(notebookId: NotebookId, trashedAtTimestamp: string): Promise<void>;
 
   /**
+   * Local-only uncategorize: set notebookId to null on every live note in the notebook.
+   * Called when a notebook is deleted — notes fall back to All Notes (uncategorized),
+   * matching the server-side behavior (#58: server uncategorizes on notebook delete, not trashes).
+   */
+  uncategorizeNotesInNotebook(notebookId: NotebookId): Promise<void>;
+
+  /**
    * Discard a truly blank note (B3): atomic check-and-delete over notes + syncQueue.
    * Only acts when the note exists AND is blank (title='' AND body=[]). A concurrent
    * putNoteAndEnqueue that saved content will leave a non-blank row — this is a no-op in
