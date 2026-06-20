@@ -115,7 +115,16 @@ function originAllowed(c: AppContext): boolean {
   const expected = c.env.AUTH_AUDIENCE;
   if (!expected) return false; // fail-closed: a cookie mutation with a cross-origin claim on a misconfigured deploy
   try {
-    return new URL(origin).hostname === expected;
+    const url = new URL(origin);
+    if (url.hostname !== expected) return false;
+    // Defense-in-depth (#40): in prod a cookie mutation must arrive over https, so a same-host
+    // http:// Origin (downgraded / misconfigured proxy hop) can't satisfy the belt. Relaxed in the
+    // named non-prod environments where local dev servers run over http — same fail-closed
+    // allowlist as the `secure` cookie flag below.
+    if (url.protocol !== 'https:' && !NON_PROD_ENVIRONMENTS.has(c.env.ENVIRONMENT ?? '')) {
+      return false;
+    }
+    return true;
   } catch {
     return false;
   }

@@ -404,6 +404,41 @@ describe('AP-T7 — refresh rotation + reuse-detection + CSRF', () => {
     },
     T,
   );
+
+  it(
+    'CSRF belt (#40): in prod a same-host http:// Origin is rejected, https accepted; relaxed in dev',
+    async () => {
+      const env = makeEnv(freshDb(), { ENVIRONMENT: 'production' });
+      await signup(env, 'liam', 'liam-password-1');
+      const login = await post(env, '/api/auth/login', { username: 'liam', password: 'liam-password-1' });
+      const rt1 = refreshCookieValue(login)!;
+      // Same host (matches AUTH_AUDIENCE) but DOWNGRADED scheme → rejected in prod. The Origin belt
+      // runs before the cookie is consumed, so rt1 survives for the positive assertion below.
+      const downgraded = await post(env, '/api/auth/refresh', undefined, {
+        ...cookieHeader(rt1),
+        Origin: 'http://deltos.test',
+      });
+      expect(downgraded.status, await bodyText(downgraded)).toBe(403);
+      // https same-host Origin still passes.
+      const ok = await post(env, '/api/auth/refresh', undefined, {
+        ...cookieHeader(rt1),
+        Origin: 'https://deltos.test',
+      });
+      expect(ok.status, await bodyText(ok)).toBe(200);
+
+      // In a named non-prod environment the scheme pin is relaxed so local http dev servers work.
+      const devEnv = makeEnv(freshDb()); // ENVIRONMENT: 'development'
+      await signup(devEnv, 'liam', 'liam-password-1');
+      const devLogin = await post(devEnv, '/api/auth/login', { username: 'liam', password: 'liam-password-1' });
+      const devRt = refreshCookieValue(devLogin)!;
+      const devHttp = await post(devEnv, '/api/auth/refresh', undefined, {
+        ...cookieHeader(devRt),
+        Origin: 'http://deltos.test',
+      });
+      expect(devHttp.status, await bodyText(devHttp)).toBe(200);
+    },
+    T,
+  );
 });
 
 // ===========================================================================
