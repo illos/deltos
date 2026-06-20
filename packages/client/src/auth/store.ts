@@ -47,6 +47,13 @@ export interface AuthState {
    * is ever left silently unrecoverable. true (or null=unknown) → ungated as normal, never prompted.
    */
   recoveryEstablished: boolean | null;
+  /**
+   * Server-authoritative 2FA (TOTP) state — drives the Settings screen's on/off toggle. Populated from
+   * every session-establishing response (login / refresh / reset) and flipped locally on a confirmed
+   * enable ({@link AuthActions.verifyTotp}) or disable ({@link AuthActions.disableTotp}). The client never
+   * infers it; default false (a fresh signup, or before the first response, has no enrolled secret).
+   */
+  totpEnabled: boolean;
   sessionState: SessionState;
   error: string | null;
 }
@@ -76,6 +83,9 @@ export type TotpSetupResult =
   | { ok: true; secret: string; uri: string }
   | { ok: false; code: 'invalid' | 'network' };
 export type TotpVerifyResult = { ok: true } | { ok: false; code: 'totp_invalid' | 'network' };
+export type TotpDisableResult =
+  | { ok: true }
+  | { ok: false; code: 'totp_invalid' | 'not_enabled' | 'network' };
 
 export interface AuthActions {
   /**
@@ -99,8 +109,17 @@ export interface AuthActions {
   /** Begin TOTP enrolment (authed) — returns the shared secret + otpauth URI for the QR. Does NOT enable
    *  2FA; enable only happens on a confirmed code via {@link verifyTotp} (anti-lockout). */
   setupTotp(): Promise<TotpSetupResult>;
-  /** Confirm a code from the authenticator app → ENABLE TOTP (only here, after a valid code). */
+  /** Confirm a code from the authenticator app → ENABLE TOTP (only here, after a valid code). On success
+   *  flips local {@link AuthState.totpEnabled} to true (server is already authoritative). */
   verifyTotp(code: string): Promise<TotpVerifyResult>;
+  /**
+   * Disable TOTP 2FA — re-prove with a current code (`POST /totp/disable`). On success flips local
+   * {@link AuthState.totpEnabled} to false. Requiring a current code mirrors {@link verifyTotp} (anti-
+   * lockout symmetry); a user who lost the authenticator disables via the recovery-phrase reset, which
+   * also clears 2FA. NOTE (pending secSys #43): the server treats a 2FA change as a credential-change and
+   * REVOKES ALL sessions incl. this device — see the implementation comment.
+   */
+  disableTotp(code: string): Promise<TotpDisableResult>;
   /** Forced-phrase belt: mint a FRESH recovery phrase (server) + update the verifier, returned to show
    *  ONCE on the forced screen. Does NOT finalize — the route shows the phrase, then calls finalizeAuth
    *  on save+ack. Used when login/init reports recoveryRequired (no finalized phrase). */
@@ -134,6 +153,12 @@ function readRecoveryFlag(s: { recoveryEstablished?: boolean }): boolean | null 
   return typeof s.recoveryEstablished === 'boolean' ? s.recoveryEstablished : null;
 }
 
+/** Read server-authoritative `totpEnabled` off an auth response. Default false: never render 2FA "on"
+ *  from a missing field (an old/partial response → treat as off, the safe-to-display state). */
+function readTotpFlag(s: { totpEnabled?: boolean }): boolean {
+  return s.totpEnabled === true;
+}
+
 export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   isAuthed: null,
   isAuthing: false,
@@ -141,6 +166,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   accountId: null,
   username: null,
   recoveryEstablished: null,
+  totpEnabled: false,
   sessionState: 'booting',
   error: null,
 
@@ -153,7 +179,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       // recoveryEstablished rides the refresh (always true in devSys's impl — a durable cookie only
       // exists post-finalize); the gate routes a false to the forced-phrase screen as a fail-safe belt.
       const opening = get().isAuthing ? {} : { isAuthed: true, sessionState: 'active' as const };
-      set({ bearerToken: s.token, accountId: s.accountId, username: s.username, recoveryEstablished: readRecoveryFlag(s), ...opening });
+      set({ bearerToken: s.token, accountId: s.accountId, username: s.username, recoveryEstablished: readRecoveryFlag(s), totpEnabled: readTotpFlag(s), ...opening });
     } catch {
       // Network failure on cold boot — no session to render, but it isn't a credential failure.
       if (!get().isAuthing) set({ isAuthed: false, sessionState: 'offline' });
@@ -181,7 +207,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     // the phrase is minted by establishRecovery/rotate next, like the forced-phrase flow). The shell
     // stays closed until finalizeAuth; recoveryEstablished is false until then. The route runs
     // beginAuth → register → establishRecovery → [show phrase] → finalizeAuth.
-    set({ bearerToken: s.token, accountId: s.accountId, username: s.username, recoveryEstablished: false });
+    set({ bearerToken: s.token, accountId: s.accountId, username: s.username, recoveryEstablished: false, totpEnabled: false });
     return { ok: true };
   },
 
@@ -200,7 +226,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     }
     const s = (await res.json()) as AccessTokenResponse;
     const recoveryEstablished = readRecoveryFlag(s);
-    set({ bearerToken: s.token, accountId: s.accountId, username: s.username, recoveryEstablished });
+    set({ bearerToken: s.token, accountId: s.accountId, username: s.username, recoveryEstablished, totpEnabled: readTotpFlag(s) });
     // recoveryRequired = the account was created but never finalized a recovery phrase (abandoned
     // signup that set a password). The route forces the phrase screen before entry (the P0-belt);
     // a flag=true login is ungated as normal. flag=false login also defers the cookie to finalize.
@@ -209,7 +235,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
 
   async logout() {
     try { await authFetch('/logout', undefined, get().bearerToken); } catch { /* clear locally regardless */ }
-    set({ bearerToken: null, accountId: null, username: null, recoveryEstablished: null, isAuthed: false, isAuthing: false, sessionState: 'unauthed' });
+    set({ bearerToken: null, accountId: null, username: null, recoveryEstablished: null, totpEnabled: false, isAuthed: false, isAuthing: false, sessionState: 'unauthed' });
   },
 
   async resetWithPhrase(username, phrase, newPassword, turnstileToken) {
@@ -242,6 +268,28 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     try { res = await authFetch('/totp/verify', { code }, get().bearerToken); }
     catch { return { ok: false, code: 'network' }; }
     if (!res.ok) return { ok: false, code: 'totp_invalid' };
+    // Server is authoritative + already flipped totpEnabled=1; mirror it locally so the Settings toggle
+    // reflects "on" immediately without a round-trip.
+    set({ totpEnabled: true });
+    return { ok: true };
+  },
+
+  async disableTotp(code) {
+    // Re-prove with a current code (anti-lockout symmetry with verify). The server treats this as a
+    // 2FA credential-change → revoke-all + clear refresh cookie: it kills EVERY session, INCLUDING this
+    // device's (the in-memory bearer is now revoked and the durable cookie is gone). Flipping totpEnabled
+    // here keeps the toggle honest, but the caller must expect the session to be dead afterward (a reload
+    // lands on /login). Whether the acting session should instead survive (revoke-others + re-issue) is a
+    // secSys ruling (#43) — flagged; the seam is this one call, so a server change needs no contract churn.
+    let res: Response;
+    try { res = await authFetch('/totp/disable', { code }, get().bearerToken); }
+    catch { return { ok: false, code: 'network' }; }
+    if (!res.ok) {
+      const raw = await res.json().catch(() => ({})) as { error?: { code?: string } };
+      if (raw.error?.code === 'totp_not_enabled') return { ok: false, code: 'not_enabled' };
+      return { ok: false, code: 'totp_invalid' };
+    }
+    set({ totpEnabled: false });
     return { ok: true };
   },
 

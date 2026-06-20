@@ -528,6 +528,63 @@ describe('AP-T8 — revoke-all', () => {
 });
 
 // ===========================================================================
+// #41 — totpEnabled surfaced on the session-establishing responses (login + refresh) so the Settings
+//        screen renders 2FA state server-authoritatively (the client never infers it).
+// ===========================================================================
+describe('#41 — totpEnabled on auth responses', () => {
+  it(
+    'login carries totpEnabled=false for an account without 2FA',
+    async () => {
+      const env = makeEnv(freshDb());
+      await signup(env, 'no-tfa', 'no-tfa-password-1');
+      const login = await post(env, '/api/auth/login', { username: 'no-tfa', password: 'no-tfa-password-1' });
+      expect(login.status, await bodyText(login)).toBe(200);
+      expect(((await login.json()) as { totpEnabled: boolean }).totpEnabled).toBe(false);
+    },
+    T,
+  );
+
+  it(
+    'login carries totpEnabled=true once 2FA is enabled',
+    async () => {
+      const env = makeEnv(freshDb());
+      const acct = await signup(env, 'with-tfa', 'with-tfa-password-1');
+      const { secret } = (await (
+        await post(env, '/api/auth/totp/setup', {}, { Authorization: `Bearer ${acct.token}` })
+      ).json()) as { secret: string };
+      const secretBytes = base32ToBytes(secret);
+      const step = stepAt(Date.now());
+      // Enable on step-1 so the replay guard leaves the current step free for the login below.
+      expect(
+        (await post(env, '/api/auth/totp/verify', { code: codeAtStep(secretBytes, step - 1) }, { Authorization: `Bearer ${acct.token}` })).status,
+      ).toBe(200);
+      const login = await post(env, '/api/auth/login', {
+        username: 'with-tfa',
+        password: 'with-tfa-password-1',
+        totp: codeAtStep(secretBytes, step),
+      });
+      expect(login.status, await bodyText(login)).toBe(200);
+      expect(((await login.json()) as { totpEnabled: boolean }).totpEnabled).toBe(true);
+    },
+    T,
+  );
+
+  it(
+    'refresh carries the server-authoritative totpEnabled (false for a plain account)',
+    async () => {
+      const env = makeEnv(freshDb());
+      await signup(env, 'refresh-tfa', 'refresh-tfa-pass-1');
+      const login = await post(env, '/api/auth/login', { username: 'refresh-tfa', password: 'refresh-tfa-pass-1' });
+      const cookie = refreshCookieValue(login)!;
+      const refreshed = await post(env, '/api/auth/refresh', {}, cookieHeader(cookie));
+      expect(refreshed.status, await bodyText(refreshed)).toBe(200);
+      expect(((await refreshed.json()) as { totpEnabled: boolean }).totpEnabled).toBe(false);
+    },
+    T,
+  );
+});
+
+// ===========================================================================
 // AP-T9 — TOTP confirm-before-activate + replay guard + encrypted-at-rest
 // ===========================================================================
 describe('AP-T9 — TOTP', () => {

@@ -394,6 +394,7 @@ passwordAuth.post('/login', async (c) => {
     accountId,
     username,
     recoveryEstablished: credential.recoveryEstablished,
+    totpEnabled: credential.totpEnabled,
   });
 });
 
@@ -429,6 +430,9 @@ passwordAuth.post('/refresh', async (c) => {
   await s.markRefreshRotated(authCrypto.hashToken(cookie), iso(nowMs));
   await issueRefresh(c, s, session.accountId, session.familyId, nowMs);
   const username = (await s.getUsernameByAccount(session.accountId))?.usernameDisplay ?? null;
+  // Surface server-authoritative 2FA state on the cold-boot refresh so Settings renders correctly without
+  // a separate fetch. One extra PK-indexed read on the (boot-only) refresh path — negligible.
+  const totpEnabled = (await s.getCredentialByAccount(session.accountId))?.totpEnabled ?? false;
   const access = await mintAccessToken(s, session.accountId, nowMs);
   // A durable refresh session only ever exists post-finalize, so recoveryEstablished is necessarily true here.
   return c.json({
@@ -437,6 +441,7 @@ passwordAuth.post('/refresh', async (c) => {
     accountId: session.accountId,
     username,
     recoveryEstablished: true,
+    totpEnabled,
   });
 });
 

@@ -53,13 +53,15 @@ describe('password-auth contract', () => {
     expect(TotpVerifyRequestSchema.safeParse({ code: '123456', extra: 1 }).success).toBe(false);
   });
 
-  it('access-token response shape = token + expiresAt + accountId + nullable username + recoveryEstablished', () => {
-    const ok = { token: 't', expiresAt: '2026-01-01T00:00:00.000Z', accountId: 'a', username: null, recoveryEstablished: true };
+  it('access-token response shape = token + expiresAt + accountId + nullable username + recoveryEstablished + totpEnabled', () => {
+    const ok = { token: 't', expiresAt: '2026-01-01T00:00:00.000Z', accountId: 'a', username: null, recoveryEstablished: true, totpEnabled: false };
     expect(AccessTokenResponseSchema.safeParse(ok).success).toBe(true);
-    expect(AccessTokenResponseSchema.safeParse({ ...ok, username: 'ada', recoveryEstablished: false }).success).toBe(true);
+    expect(AccessTokenResponseSchema.safeParse({ ...ok, username: 'ada', recoveryEstablished: false, totpEnabled: true }).success).toBe(true);
     // username required (nullable, not optional)
-    expect(AccessTokenResponseSchema.safeParse({ token: 't', expiresAt: 'x', accountId: 'a', recoveryEstablished: true }).success).toBe(false);
+    expect(AccessTokenResponseSchema.safeParse({ token: 't', expiresAt: 'x', accountId: 'a', recoveryEstablished: true, totpEnabled: false }).success).toBe(false);
     // recoveryEstablished (P0 belt) is required
-    expect(AccessTokenResponseSchema.safeParse({ token: 't', expiresAt: 'x', accountId: 'a', username: null }).success).toBe(false);
+    expect(AccessTokenResponseSchema.safeParse({ token: 't', expiresAt: 'x', accountId: 'a', username: null, totpEnabled: false }).success).toBe(false);
+    // totpEnabled (#41 — server-authoritative 2FA state) is required
+    expect(AccessTokenResponseSchema.safeParse({ ...ok, totpEnabled: undefined }).success).toBe(false);
   });
 });

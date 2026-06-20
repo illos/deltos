@@ -21,6 +21,7 @@ const DEFAULTS = {
   accountId: null as string | null,
   username: null as string | null,
   recoveryEstablished: null as boolean | null,
+  totpEnabled: false,
   sessionState: 'booting' as const,
   error: null as string | null,
 };
@@ -32,7 +33,7 @@ function res(status: number, body: unknown = {}): Response {
 function mockFetch(handler: (url: string, init: RequestInit) => Response | Promise<Response>) {
   vi.stubGlobal('fetch', vi.fn((url: string, init: RequestInit) => Promise.resolve(handler(url, init))));
 }
-const SESSION = { token: 'access-tok', expiresAt: '2026-07-01T00:00:00Z', accountId: 'acct-1', username: 'ada', recoveryEstablished: true };
+const SESSION = { token: 'access-tok', expiresAt: '2026-07-01T00:00:00Z', accountId: 'acct-1', username: 'ada', recoveryEstablished: true, totpEnabled: false };
 /** A session for an account that never finalized a recovery phrase (the abandoned-signup belt edge). */
 const SESSION_NO_RECOVERY = { ...SESSION, recoveryEstablished: false };
 /** Route-aware fetch mock: /finalize + /recovery/rotate get their own response; everything else `rest`. */
@@ -176,18 +177,71 @@ describe('logout() — clears the in-memory session + closes the gate', () => {
   });
 });
 
-describe('TOTP setup/verify — anti-lockout shape', () => {
+describe('TOTP setup/verify/disable — anti-lockout shape + totpEnabled mirror', () => {
   it('setupTotp returns the secret + otpauth uri (mapped to uri)', async () => {
     mockFetch(() => res(200, { secret: 'BASE32SECRET', otpauthUri: 'otpauth://totp/deltos:ada?secret=BASE32SECRET' }));
     useAuthStore.setState({ bearerToken: 'live' }, false);
     const r = await s().setupTotp();
     expect(r).toEqual({ ok: true, secret: 'BASE32SECRET', uri: 'otpauth://totp/deltos:ada?secret=BASE32SECRET' });
   });
-  it('verifyTotp ok only on a confirmed code (enable-on-valid is the anti-lockout gate)', async () => {
+  it('verifyTotp ok only on a confirmed code → flips local totpEnabled true (server is authoritative)', async () => {
     mockFetch(() => res(200));
     expect(await s().verifyTotp('123456')).toEqual({ ok: true });
+    expect(s().totpEnabled).toBe(true);          // mirrors the server enable without a round-trip
+    useAuthStore.setState({ totpEnabled: true }, false);
     mockFetch(() => res(400));
     expect(await s().verifyTotp('000000')).toEqual({ ok: false, code: 'totp_invalid' });
+    expect(s().totpEnabled).toBe(true);          // a rejected code does NOT change state
+  });
+  it('disableTotp success → flips local totpEnabled false; sends the re-prove code', async () => {
+    let sent: Record<string, unknown> = {};
+    mockFetch((_u, init) => { sent = JSON.parse(init.body as string); return res(200, { enabled: false }); });
+    useAuthStore.setState({ bearerToken: 'live', totpEnabled: true }, false);
+    expect(await s().disableTotp('123456')).toEqual({ ok: true });
+    expect(sent.code).toBe('123456');            // re-prove with a current code (anti-lockout symmetry)
+    expect(s().totpEnabled).toBe(false);
+  });
+  it('disableTotp wrong code → {ok:false, totp_invalid}; state unchanged', async () => {
+    mockFetch(() => res(400, { error: { code: 'invalid_code' } }));
+    useAuthStore.setState({ bearerToken: 'live', totpEnabled: true }, false);
+    expect(await s().disableTotp('000000')).toEqual({ ok: false, code: 'totp_invalid' });
+    expect(s().totpEnabled).toBe(true);
+  });
+  it('disableTotp when 2FA is not enabled → {ok:false, not_enabled}', async () => {
+    mockFetch(() => res(400, { error: { code: 'totp_not_enabled' } }));
+    useAuthStore.setState({ bearerToken: 'live', totpEnabled: false }, false);
+    expect(await s().disableTotp('123456')).toEqual({ ok: false, code: 'not_enabled' });
+  });
+  it('disableTotp network throw → {ok:false, network}', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))));
+    useAuthStore.setState({ bearerToken: 'live', totpEnabled: true }, false);
+    expect(await s().disableTotp('123456')).toEqual({ ok: false, code: 'network' });
+    expect(s().totpEnabled).toBe(true);          // no optimistic flip on a failed call
+  });
+});
+
+describe('totpEnabled — server-authoritative surfacing on session responses', () => {
+  it('init() populates totpEnabled from the refresh response', async () => {
+    mockFetch(() => res(200, { ...SESSION, totpEnabled: true }));
+    await s().init();
+    expect(s().totpEnabled).toBe(true);
+  });
+  it('login() populates totpEnabled from the login response', async () => {
+    mockFetch(() => res(200, { ...SESSION, totpEnabled: true }));
+    await s().login('ada', 'pw');
+    expect(s().totpEnabled).toBe(true);
+  });
+  it('a response missing totpEnabled is treated as OFF (never render 2FA "on" from an absent field)', async () => {
+    const { totpEnabled: _omit, ...noFlag } = SESSION;
+    mockFetch(() => res(200, noFlag));
+    await s().login('ada', 'pw');
+    expect(s().totpEnabled).toBe(false);
+  });
+  it('logout() clears totpEnabled', async () => {
+    useAuthStore.setState({ bearerToken: 'live', totpEnabled: true, isAuthed: true }, false);
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(res(200, { ok: true }))));
+    await s().logout();
+    expect(s().totpEnabled).toBe(false);
   });
 });
 

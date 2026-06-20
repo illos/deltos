@@ -63,6 +63,12 @@ export const AccessTokenResponseSchema = z.object({
    * Refresh responses are always `true` (a durable session only exists post-finalize).
    */
   recoveryEstablished: z.boolean(),
+  /**
+   * Server-authoritative 2FA state — the Settings screen renders the TOTP on/off toggle off this; the
+   * client NEVER infers it. Carried on every session-establishing response (login + refresh) so the
+   * state is fresh on cold boot. A brand-new signup is definitionally `false` (no secret enrolled yet).
+   */
+  totpEnabled: z.boolean(),
 });
 export type AccessTokenResponse = z.infer<typeof AccessTokenResponseSchema>;
 
