@@ -27,18 +27,23 @@ import { NoteResponseSchema } from './operations.js';
  *   0  = new note (server INSERTs; conflicts if the id already exists)
  *   N  = update at this version (server CAS on version = N; conflicts if moved)
  *
- * `notebookId` resolution (Notebooks task #16):
+ * `notebookId` resolution — TRI-STATE (#58 All Notes / nullable notebookId):
  *   - INSERT (baseVersion 0): the note's notebook = `entry.notebookId` if present, else the batch-level
- *     `SyncPushRequest.notebookId` (the "current notebook" default). One of the two is REQUIRED.
- *   - UPDATE (baseVersion N): the notebook is RESTAMPED to `entry.notebookId` ONLY when it is present —
- *     that is the explicit "move note between notebooks" signal. An ordinary edit OMITS `notebookId`
- *     and the note stays in its current notebook (never an accidental move). Restamp is server-stamped
- *     on the CAS path and isolation-safe (notebookId is an organizing tag, not a boundary).
+ *     `SyncPushRequest.notebookId`, else NULL (uncategorized → All Notes). Nothing is required anymore —
+ *     a note with no notebook is valid (there is no default to fall back to).
+ *   - UPDATE (baseVersion N): the move signal is the PRESENCE of `entry.notebookId`:
+ *       · OMITTED (undefined)  → no move; the note keeps its current notebook (an ordinary edit).
+ *       · explicit `null`      → MOVE to uncategorized (All Notes); no ownership guard (null is valid).
+ *       · a notebook id        → MOVE there; server ownership-guards the target (gate #19/#23, #25 CAS).
+ *     A note whose current notebook no longer resolves to a live owned notebook is re-homed to NULL
+ *     (uncategorized), never a default. Server-stamped on the CAS path, isolation-safe (accountId is the
+ *     boundary; notebookId is an organizing tag).
  * Trash (Fork P) needs no wire signal — `sys:trashedAt` rides the property bag.
  */
 export const SyncPushEntrySchema = z.object({
   id: NoteIdSchema,
-  notebookId: NotebookIdSchema.optional(),
+  // Tri-state: undefined = no move, null = move-to-uncategorized, id = move-to-that-notebook.
+  notebookId: NotebookIdSchema.nullable().optional(),
   draft: NoteDraftSchema.omit({ id: true, notebookId: true }),
   baseVersion: VersionSchema,
 });

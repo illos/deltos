@@ -21,39 +21,10 @@ async function fetchNotebook(db: DbAdapter, id: string, accountId: string): Prom
   return db.first<NotebookRow>(`SELECT * FROM notebooks WHERE id = ? AND accountId = ?`, [id, accountId]);
 }
 
-/**
- * Create the account's single UNDELETABLE DEFAULT notebook (isDefault = 1). Server-only — a client can
- * never assert isDefault. The partial unique index `notebooks_oneDefault` makes a second default for the
- * same account fail atomically. Used at signup (new account) and by the backfill migration's analogue.
- */
-export async function createDefaultNotebook(
-  db: DbAdapter,
-  accountId: string,
-  name: string,
-  nowIso: string,
-): Promise<NotebookRow> {
-  // Idempotent: exactly one default per account (enforced hard by the `notebooks_oneDefault` partial
-  // unique index). If one already exists (a retried signup / double-call), return it rather than tripping
-  // the constraint. Called serially per account at signup, so the check-then-insert window is benign.
-  const existing = await db.first<NotebookRow>(
-    `SELECT * FROM notebooks WHERE accountId = ? AND isDefault = 1`,
-    [accountId],
-  );
-  if (existing) return existing;
-
-  const id = crypto.randomUUID();
-  await db.batch([
-    { sql: BUMP_SEQ_SQL, params: [accountId] },
-    {
-      sql: `
-        INSERT INTO notebooks (id, accountId, name, defaultCollectionView, isDefault, version, createdAt, updatedAt, syncSeq)
-        SELECT ?, ?, ?, ?, 1, ?, ?, ?, (${READ_SEQ_SQL})
-      `,
-      params: [id, accountId, name, DEFAULT_COLLECTION_VIEW, FIRST_NOTEBOOK_VERSION, nowIso, nowIso, accountId],
-    },
-  ]);
-  return (await fetchNotebook(db, id, accountId))!;
-}
+// #58: createDefaultNotebook is RETIRED — there is no stored default notebook. A new account starts with
+// zero notebooks; uncategorized notes (notebookId = null) surface in the synthetic "All Notes" view. With
+// no creation path AND the `notebooks_oneDefault` unique index dropped (migration 0010), a duplicate
+// default is structurally impossible (the 2026-06-20 incident's root bug class is eliminated by absence).
 
 /** Create a NON-default notebook (push baseVersion 0). Conflicts if the id already exists. */
 export async function insertNotebook(
@@ -120,14 +91,18 @@ export async function renameNotebook(
 }
 
 /**
- * DELETE a notebook (push entry with delete:true). Behavior (ui-backbone-notebooks §B proposal):
- *   - The DEFAULT notebook cannot be deleted → conflict {reason:'default_undeletable'} (no tombstone).
- *   - Otherwise CAS-tombstone the notebook (set deletedAt), THEN move its live notes to TRASH
- *     (`sys:trashedAt` Fork-P property), each getting a distinct syncSeq so every device pulls the
- *     trashing. Notes are NOT hard-deleted (recoverable from Trash).
+ * DELETE a notebook (push entry with delete:true). #58 model — no stored default exists, so EVERY
+ * notebook is freely deletable, and deleting one UNCATEGORIZES its notes (notebookId → NULL) rather than
+ * cascading them to Trash. The notes fall back to the synthetic "All Notes" view; nothing is hidden.
+ * (Supersedes the #28 trash-cascade — Jim-confirmed, locked.)
+ *   - CAS-tombstone the notebook (set deletedAt), THEN null out its live notes' notebookId, each getting
+ *     a distinct syncSeq so every device pulls the uncategorize.
  *
- * Two steps (tombstone, then trash) because a CAS result can't gate a conditional inside one batch; the
- * window is tiny and benign (worst case a tombstoned notebook with not-yet-trashed notes, recoverable).
+ * Two steps (tombstone, then uncategorize) because a CAS result can't gate a conditional inside one
+ * batch; the window is tiny and benign (worst case a tombstoned notebook with not-yet-uncategorized
+ * notes — they self-heal to All Notes on the next pull). The uncategorize UPDATE is account-scoped
+ * (`AND accountId = ?`) — a cross-account notebookId can never touch another account's notes (secSys BOLA,
+ * same class as the #25 move check).
  */
 export async function deleteNotebook(
   db: DbAdapter,
@@ -135,56 +110,53 @@ export async function deleteNotebook(
   accountId: string,
   nowIso: string,
 ): Promise<NotebookOutcome> {
-  // Step 1 — CAS-tombstone, refusing the default via `AND isDefault = 0`.
+  // Step 1 — CAS-tombstone. No default exists anymore, so there is no isDefault guard: any owned, live
+  // notebook at the expected version is deletable.
   const tombstone = await db.batch([
     { sql: BUMP_SEQ_SQL, params: [accountId] },
     {
       sql: `
         UPDATE notebooks
         SET deletedAt = ?, updatedAt = ?, version = version + 1, syncSeq = (${READ_SEQ_SQL})
-        WHERE id = ? AND accountId = ? AND version = ? AND deletedAt IS NULL AND isDefault = 0
+        WHERE id = ? AND accountId = ? AND version = ? AND deletedAt IS NULL
       `,
       params: [nowIso, nowIso, accountId, entry.id, accountId, entry.baseVersion],
     },
   ]);
 
   if (tombstone[1]!.rowsWritten === 0) {
-    const serverRow = await fetchNotebook(db, entry.id, accountId);
-    const reason = serverRow?.isDefault === 1 ? 'default_undeletable' : 'stale';
-    return { outcome: 'conflict', serverRow, reason };
+    return { outcome: 'conflict', serverRow: await fetchNotebook(db, entry.id, accountId), reason: 'stale' };
   }
 
-  // Step 2 — move the notebook's live, not-already-trashed notes to Trash, each with a distinct syncSeq.
+  // Step 2 — UNCATEGORIZE the notebook's live notes (notebookId → NULL), account-scoped, each with a
+  // distinct syncSeq so every device pulls the move to All Notes. Covers ALL live notes (trashed or not —
+  // a trashed note also loses its notebook so a later restore lands it in All Notes).
   const countRow = await db.first<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM notes
-     WHERE accountId = ? AND notebookId = ? AND deletedAt IS NULL
-       AND json_extract(properties, '$."sys:trashedAt"') IS NULL`,
+    `SELECT COUNT(*) AS n FROM notes WHERE accountId = ? AND notebookId = ? AND deletedAt IS NULL`,
     [accountId, entry.id],
   );
   const n = countRow?.n ?? 0;
   if (n > 0) {
     await db.batch([
-      // Advance the per-account counter by N up front; the note UPDATE derives each note's syncSeq from it.
+      // Reserve N seq values up front; the note UPDATE derives each note's syncSeq from the counter.
       { sql: `UPDATE accountSyncSeq SET seq = seq + ? WHERE accountId = ?`, params: [n, accountId] },
       {
-        // Each note: set sys:trashedAt = {type:'date',value:now} (matches setTrashedAt), bump version,
-        // and assign syncSeq = (newCounter - N + rank) → the N notes get the N seq values just reserved.
-        // ROW_NUMBER orders by IMMUTABLE columns (createdAt,id), never the syncSeq being rewritten.
+        // Each note: notebookId → NULL, bump version, assign syncSeq = (newCounter - N + rank). ROW_NUMBER
+        // orders by IMMUTABLE columns (createdAt,id), never the syncSeq being rewritten. Account-scoped.
         sql: `
           WITH t AS (
             SELECT id, ROW_NUMBER() OVER (ORDER BY createdAt, id) AS rn
             FROM notes
             WHERE accountId = ? AND notebookId = ? AND deletedAt IS NULL
-              AND json_extract(properties, '$."sys:trashedAt"') IS NULL
           )
           UPDATE notes
-          SET properties = json_set(properties, '$."sys:trashedAt"', json_object('type', 'date', 'value', ?)),
+          SET notebookId = NULL,
               updatedAt  = ?,
               version    = version + 1,
               syncSeq    = ((SELECT seq FROM accountSyncSeq WHERE accountId = ?) - ? + (SELECT rn FROM t WHERE t.id = notes.id))
           WHERE id IN (SELECT id FROM t)
         `,
-        params: [accountId, entry.id, nowIso, nowIso, accountId, n],
+        params: [accountId, entry.id, nowIso, accountId, n],
       },
     ]);
   }

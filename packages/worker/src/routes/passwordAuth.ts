@@ -49,7 +49,6 @@ import {
 import { apiError, guard, NON_PROD_ENVIRONMENTS, type AppContext } from '../http.js';
 import type { AppEnv } from '../context.js';
 import { d1Adapter } from '../db/schema.js';
-import { createDefaultNotebook } from '../db/notebooks.js';
 import { createAuthStore, type AuthStore } from '../db/authStore.js';
 
 /**
@@ -334,9 +333,9 @@ passwordAuth.post('/signup', async (c) => {
     createdAt: iso(nowMs),
   });
 
-  // Seed the account's single undeletable DEFAULT notebook (Notebooks task #16) so the first note has a
-  // home + the new-user landing exists. Server-owned isDefault; rides the per-account syncSeq stream.
-  await createDefaultNotebook(d1Adapter(c.env.DB), accountId, 'Notes', iso(nowMs));
+  // #58: NO default notebook is created. A new account starts with zero notebooks; its notes are
+  // uncategorized (notebookId = null) and surface in the synthetic "All Notes" view the client composes.
+  // Retiring the stored default makes a duplicate-default structurally impossible.
 
   // P0 SUSPENDERS (spec §P0): NO durable refresh cookie here. Signup returns only the IN-MEMORY access
   // token (carries the in-session register→rotate→show-phrase→ack flow). The cross-boot durable cookie is

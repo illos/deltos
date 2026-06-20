@@ -63,7 +63,8 @@ export type InsertOutcome =
  */
 export async function insertNote(
   db: DbAdapter,
-  entry: SyncPushEntry & { notebookId: string },
+  // #58: notebookId may be null — a note created in "All Notes" is uncategorized (no default to fall back on).
+  entry: SyncPushEntry & { notebookId: string | null },
   accountId: string,
   serverNow: string,
 ): Promise<InsertOutcome> {
@@ -134,43 +135,33 @@ export async function updateNote(
   accountId: string,
   serverNow: string,
 ): Promise<UpdateOutcome> {
-  // CAS identity is (id, accountId, version) — notebookId is NOT part of note identity (Option B): an
-  // edit pushed from another device under a different notebookId tag still hits the same row (was a
-  // phantom-conflict source). notebookId handling (Notebooks #16/#22 + secSys gate #19 crit-3 / #23):
-  //  - MOVE (notebookId DIFFERS from current): ownership-check the target FIRST; if not an account-owned
-  //    live notebook, REJECT (conflict, no write) — never orphan a note on a non-owned/deleted id.
-  //  - PLAIN EDIT / RESTORE (notebookId omitted or unchanged, note will be LIVE): keep the current
-  //    notebookId if it still resolves to a live owned notebook, else reassign to the account DEFAULT
-  //    (the #22 restore rule), falling back to the current id when no default exists yet (COALESCE →
-  //    never NULL; covers the backfill-held state).
-  //  - TRASHING (incoming trashed): leave notebookId untouched so a later restore can return it home.
-  // All subqueries are accountId-scoped — same isolation class as the write itself.
-  // A MOVE is an update whose notebookId DIFFERS from the note's current one. A client that merely echoes
-  // the current notebookId (or omits it) is NOT moving — so it is never ownership-rejected (that would
-  // break ordinary edits, and every edit during the backfill-held window when no notebook rows exist
-  // yet). Only a genuine move is ownership-checked: the target must be an account-owned, live notebook,
-  // else REJECT (conflict) so we never orphan the note on a non-owned/deleted id (secSys gate #19 / #23).
-  // Determine whether this is a genuine MOVE (incoming notebookId differs from the note's current one).
-  // This read only SELECTS which SET/guard branch to run; it is NOT the racy step — a concurrent change
-  // to the note (move/edit on another device) bumps version, so the CAS below misses → conflict, never a
-  // stale-read write. (#25: it is the target-OWNERSHIP check, formerly a second read here, that was racy.)
-  let move = false;
+  // CAS identity is (id, accountId, version) — notebookId is NOT part of note identity (Option B). #58
+  // notebookId handling is TRI-STATE on the move signal (entry.notebookId), and there is NO default —
+  // an un-homed note is NULL (uncategorized → All Notes), never re-homed to a default:
+  //  - MOVE to a notebook (entry.notebookId is a non-null id DIFFERING from current): ownership-guard the
+  //    target inside the CAS; if not an account-owned live notebook at write time → 0-row CAS → conflict.
+  //  - MOVE to uncategorized (entry.notebookId === null, current is non-null): set notebookId = NULL. No
+  //    guard — null is always a valid home.
+  //  - PLAIN EDIT (entry.notebookId omitted, note LIVE): keep the current notebookId IF it still resolves
+  //    to a live owned notebook, ELSE NULL (orphan → uncategorized — the #58 replacement for the old
+  //    reassign-to-default; a NULL current already stays NULL).
+  //  - TRASHING (incoming trashed): leave notebookId untouched so a later restore returns it home.
+  // The move read only SELECTS the branch; it is NOT the racy step (a concurrent note change bumps version
+  // → CAS miss → conflict). #25: the target-OWNERSHIP check is FOLDED INTO the CAS WHERE (race-free).
+  let move = false; // move to a non-null notebook id
+  let moveToNull = false; // move to uncategorized
   if (entry.notebookId !== undefined) {
-    const cur = await db.first<{ notebookId: string }>(
+    const cur = await db.first<{ notebookId: string | null }>(
       `SELECT notebookId FROM notes WHERE id = ? AND accountId = ?`,
       [entry.id, accountId],
     );
-    move = cur !== null && cur.notebookId !== entry.notebookId;
+    const differs = cur !== null && cur.notebookId !== entry.notebookId;
+    move = differs && entry.notebookId !== null;
+    moveToNull = differs && entry.notebookId === null;
   }
   const incomingLive = !isTrashed(entry.draft.properties ?? {});
   let notebookSetSql = '';
   let notebookParams: unknown[] = [];
-  // #25: the move target-ownership existence-check is FOLDED INTO the CAS WHERE (was a separate pre-read,
-  // a TOCTOU window: a concurrent self-delete of the target between the check and the write transiently
-  // dangled the note on a just-deleted notebook). As an EXISTS guard on the UPDATE it is evaluated
-  // atomically with the write — a target that is no longer an account-owned live notebook at write time
-  // yields a 0-row CAS → conflict (note unchanged), never an orphaning write. Same reject behavior as
-  // before, now race-free. accountId-scoped like every other subquery here.
   let moveGuardSql = '';
   let moveGuardParams: unknown[] = [];
   if (move) {
@@ -178,13 +169,16 @@ export async function updateNote(
     notebookParams = [entry.notebookId];
     moveGuardSql = `AND EXISTS (SELECT 1 FROM notebooks WHERE id = ? AND accountId = ? AND deletedAt IS NULL)`;
     moveGuardParams = [entry.notebookId, accountId];
+  } else if (moveToNull) {
+    notebookSetSql = 'notebookId = NULL,'; // uncategorize — no guard, no param
   } else if (incomingLive) {
+    // Keep the current notebook if it still resolves to a live owned notebook, else uncategorize (NULL).
     notebookSetSql = `notebookId = CASE
             WHEN EXISTS (SELECT 1 FROM notebooks nb WHERE nb.id = notes.notebookId AND nb.accountId = ? AND nb.deletedAt IS NULL)
               THEN notes.notebookId
-            ELSE COALESCE((SELECT id FROM notebooks WHERE accountId = ? AND isDefault = 1), notes.notebookId)
+            ELSE NULL
           END,`;
-    notebookParams = [accountId, accountId];
+    notebookParams = [accountId];
   }
   // Batch: bump the per-account seq → CAS update reading new seq as subquery.
   const updateBatch = await db.batch([

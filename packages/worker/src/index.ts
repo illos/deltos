@@ -127,7 +127,8 @@ app.post(
     op: API_ROUTES['note.create'].op,
     schema: CreateNoteRequestSchema,
     input: (c) => readBody(c),
-    resource: (req): Resource => ({ kind: 'notebook', id: req.notebookId }),
+    // #58: an uncategorized note (notebookId null) scopes to the workspace (account), not a notebook.
+    resource: (req): Resource => (req.notebookId ? { kind: 'notebook', id: req.notebookId } : { kind: 'workspace' }),
     handle: async (req, c, principal) => {
       const db = d1Adapter(c.env.DB);
       const now = new Date().toISOString();

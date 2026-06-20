@@ -62,6 +62,7 @@ const migrations = [
   '0007_reconcile-account-sync-seq.sql',
   '0008_notebooks.sql',
   '0009_backfill-default-notebooks.sql',
+  '0010_nullable-notebookid-all-notes.sql',
 ].map((f) =>
   readFileSync(join(__dirname, '../migrations', f), 'utf8'),
 );
@@ -295,7 +296,11 @@ describe('Fix A — account-scoped sync (Option B): notebookId is not the sync b
     const { notes } = await pullNotes(db, ACCT2, 0);
     expect(notes).toHaveLength(1);
     expect(notes[0]!.title).toBe('edited');
-    expect(notes[0]!.notebookId).toBe(NB_A); // unchanged — a plain edit never moves the note
+    // #58: this test's POINT is the CAS hits on (id, accountId, version) — no phantom conflict on a plain
+    // edit. NB_A is only a tag (never a real notebook row), so the plain edit also UNCATEGORIZES the note
+    // (orphan notebookId → NULL, the #58 replacement for COALESCE-to-default) — no accidental move to
+    // another notebook; it simply falls into All Notes.
+    expect(notes[0]!.notebookId).toBeNull();
   });
 
   // (move-note + restore-resolution are tested in notebooks.test.ts, where real notebook entities exist

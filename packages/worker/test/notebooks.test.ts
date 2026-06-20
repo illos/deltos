@@ -12,7 +12,6 @@ import { isTrashed } from '@deltos/shared';
 import type { NotebookPushEntry, PropertyBag, SyncPushEntry } from '@deltos/shared';
 import { insertNote, updateNote, pullSince } from '../src/db/mutate.js';
 import {
-  createDefaultNotebook,
   insertNotebook,
   renameNotebook,
   deleteNotebook,
@@ -25,6 +24,7 @@ const MIGRATIONS = [
   '0000_baseline.sql', '0001_stream-b-sync.sql', '0002_stream-a-auth.sql', '0003_account-identity.sql',
   '0004_password-auth.sql', '0005_recovery-established.sql', '0006_account-sync-seq.sql',
   '0007_reconcile-account-sync-seq.sql', '0008_notebooks.sql', '0009_backfill-default-notebooks.sql',
+  '0010_nullable-notebookid-all-notes.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function sqliteAdapter(db: Database.Database): DbAdapter {
@@ -59,14 +59,15 @@ function nbEntry(id: string, baseVersion: number, name = 'Work', del = false): N
     : { id: id as NotebookPushEntry['id'], baseVersion, draft: { name, defaultCollectionView: 'list' } };
 }
 
-function noteEntry(id: string, notebookId: string, baseVersion = 0): SyncPushEntry & { notebookId: string } {
+function noteEntry(id: string, notebookId: string | null, baseVersion = 0): SyncPushEntry & { notebookId: string | null } {
   return {
     id: id as SyncPushEntry['id'],
-    notebookId: notebookId as SyncPushEntry['notebookId'] & string,
+    notebookId: notebookId as (SyncPushEntry['notebookId'] & string) | null,
     baseVersion,
     draft: { title: 'n', properties: {} as PropertyBag, body: [] },
   };
 }
+const NB_SRC = '33333333-3333-4333-8333-333333333333'; // a real source notebook a note is born in
 
 describe('notebooks — sync entity (mutate layer)', () => {
   let db: DbAdapter;
@@ -76,15 +77,18 @@ describe('notebooks — sync entity (mutate layer)', () => {
     db = sqliteAdapter(raw);
   });
 
-  it('createDefaultNotebook makes exactly one undeletable default; second default is rejected', async () => {
-    const def = await createDefaultNotebook(db, ACCT, 'Notes', NOW);
-    expect(def.isDefault).toBe(1);
-    // A second default for the same account violates the partial unique index → createDefaultNotebook
-    // surfaces the existing one rather than a duplicate.
-    const again = await createDefaultNotebook(db, ACCT, 'Notes', NOW);
-    expect(again.id).toBe(def.id);
+  it('#58: NO default notebook exists — a fresh account has zero notebooks, no isDefault row, no oneDefault index', async () => {
+    // Structural assertion: the duplicate-default bug class is eliminated by ABSENCE. There is no
+    // createDefaultNotebook (export removed), the unique-default index is dropped (migration 0010), and a
+    // new account starts empty — its notes are uncategorized (notebookId null → All Notes).
     const { notebooks } = await pullSince(db, ACCT, 0);
-    expect(notebooks.filter((n) => n.isDefault).length).toBe(1);
+    expect(notebooks).toHaveLength(0);
+    // The oneDefault index is gone, and no client can assert isDefault (insertNotebook forces 0).
+    const raw = (db as unknown as { _raw?: unknown });
+    void raw; // (schema-level absence is verified on real D1 in the migration; here we assert behavior)
+    const created = await insertNotebook(db, nbEntry(NB1, 0, 'Work'), ACCT, NOW);
+    expect(created.outcome).toBe('accepted');
+    if (created.outcome === 'accepted') expect(created.row.isDefault).toBe(0); // never default
   });
 
   it('create + rename a notebook (CAS); a stale rename conflicts', async () => {
@@ -104,17 +108,7 @@ describe('notebooks — sync entity (mutate layer)', () => {
     }
   });
 
-  it('the default notebook cannot be deleted', async () => {
-    const def = await createDefaultNotebook(db, ACCT, 'Notes', NOW);
-    const res = await deleteNotebook(db, nbEntry(def.id, def.version, '', true), ACCT, NOW);
-    expect(res.outcome).toBe('conflict');
-    if (res.outcome === 'conflict') expect(res.reason).toBe('default_undeletable');
-    // Still live.
-    const { notebooks } = await pullSince(db, ACCT, 0);
-    expect(notebooks.find((n) => n.id === def.id)!.deletedAt).toBeNull();
-  });
-
-  it('deleting a non-default notebook tombstones it and moves its live notes to Trash (distinct syncSeq)', async () => {
+  it('#58: ANY notebook is deletable — deleting one UNCATEGORIZES its live notes (notebookId→null, distinct syncSeq), not trash', async () => {
     await insertNotebook(db, nbEntry(NB2, 0, 'Scratch'), ACCT, NOW);
     await insertNote(db, noteEntry('aaaaaaa1-0000-4000-8000-000000000001', NB2), ACCT, NOW);
     await insertNote(db, noteEntry('aaaaaaa1-0000-4000-8000-000000000002', NB2), ACCT, NOW);
@@ -129,19 +123,22 @@ describe('notebooks — sync entity (mutate layer)', () => {
     const after = await pullSince(db, ACCT, 0);
     expect(after.notebooks.find((n) => n.id === NB2)!.deletedAt).not.toBeNull();
 
-    // Both notes are now trashed (sys:trashedAt set), with DISTINCT syncSeq (no pagination-skip hazard),
-    // and NOT hard-deleted.
-    const rows = await notesInNotebook(db, ACCT, NB2);
+    // Its notes are now UNCATEGORIZED (notebookId NULL → All Notes), NOT trashed, NOT hard-deleted, each
+    // with a distinct syncSeq so every device pulls the move.
+    const rows = (await pullSince(db, ACCT, 0)).notes.filter((n) =>
+      ['aaaaaaa1-0000-4000-8000-000000000001', 'aaaaaaa1-0000-4000-8000-000000000002'].includes(n.id),
+    );
     expect(rows).toHaveLength(2);
     for (const r of rows) {
-      expect(isTrashed(JSON.parse(r.properties) as PropertyBag)).toBe(true);
-      expect(r.deletedAt).toBeNull(); // trashed, not hard-deleted
+      expect(r.notebookId).toBeNull(); // uncategorized
+      expect(isTrashed(r.properties)).toBe(false); // NOT trashed (supersedes #28 cascade)
+      expect(r.deletedAt).toBeNull();
     }
     expect(new Set(rows.map((r) => r.syncSeq)).size).toBe(2);
   });
 
   it('pullSince returns notes AND notebooks on one cursor, ordered by the shared syncSeq', async () => {
-    await createDefaultNotebook(db, ACCT, 'Notes', NOW);
+    await insertNotebook(db, nbEntry(NB2, 0, 'Notes'), ACCT, NOW);
     await insertNotebook(db, nbEntry(NB1, 0, 'Work'), ACCT, NOW);
     await insertNote(db, noteEntry('bbbbbbb1-0000-4000-8000-000000000001', NB1), ACCT, NOW);
 
@@ -152,6 +149,15 @@ describe('notebooks — sync entity (mutate layer)', () => {
     // Every entity carries a syncSeq from the SAME per-account counter (all distinct).
     const seqs = [...notes.map((n) => n.syncSeq), ...notebooks.map((n) => n.syncSeq)];
     expect(new Set(seqs).size).toBe(seqs.length);
+  });
+
+  it('#58: a note INSERTED uncategorized (notebookId null) round-trips through pull as null', async () => {
+    const id = 'cccccccc-0000-4000-8000-00000000000a';
+    const ins = await insertNote(db, noteEntry(id, null), ACCT, NOW); // born uncategorized
+    expect(ins.outcome).toBe('accepted');
+    if (ins.outcome === 'accepted') expect(ins.row.notebookId).toBeNull();
+    const { notes } = await pullSince(db, ACCT, 0);
+    expect(notes.find((n) => n.id === id)!.notebookId).toBeNull(); // pulled back as uncategorized
   });
 
   it('account isolation: a notebook is never visible to another account', async () => {
@@ -177,9 +183,9 @@ describe('notebooks — sync entity (mutate layer)', () => {
   const NOTE = 'cccccccc-0000-4000-8000-000000000001';
 
   it('move-note to an OWNED, LIVE notebook is accepted and restamps notebookId', async () => {
-    const def = await createDefaultNotebook(db, ACCT, 'Notes', NOW);
+    await insertNotebook(db, nbEntry(NB_SRC, 0, 'Home'), ACCT, NOW);
     await insertNotebook(db, nbEntry(NB1, 0, 'Work'), ACCT, NOW);
-    await insertNote(db, noteEntry(NOTE, def.id), ACCT, NOW); // born in default
+    await insertNote(db, noteEntry(NOTE, NB_SRC), ACCT, NOW); // born in a real notebook
 
     const moved = await updateNote(db, moveEntry(NOTE, 1, NB1), ACCT, NOW);
     expect(moved.outcome).toBe('accepted');
@@ -188,20 +194,20 @@ describe('notebooks — sync entity (mutate layer)', () => {
   });
 
   it('move-note to a NON-OWNED / non-existent notebook is REJECTED (conflict), note stays put', async () => {
-    const def = await createDefaultNotebook(db, ACCT, 'Notes', NOW);
-    await insertNote(db, noteEntry(NOTE, def.id), ACCT, NOW);
+    await insertNotebook(db, nbEntry(NB_SRC, 0, 'Home'), ACCT, NOW);
+    await insertNote(db, noteEntry(NOTE, NB_SRC), ACCT, NOW);
 
     // NB2 was never created for this account (a forged / foreign / deleted notebookId).
     const res = await updateNote(db, moveEntry(NOTE, 1, NB2), ACCT, NOW);
     expect(res.outcome).toBe('conflict'); // rejected — no orphaning
-    const stillInDefault = await notesInNotebook(db, ACCT, def.id);
-    expect(stillInDefault.map((r) => r.id)).toContain(NOTE);
-    expect(stillInDefault.find((r) => r.id === NOTE)!.version).toBe(1); // unchanged (no write)
+    const stillHome = await notesInNotebook(db, ACCT, NB_SRC);
+    expect(stillHome.map((r) => r.id)).toContain(NOTE);
+    expect(stillHome.find((r) => r.id === NOTE)!.version).toBe(1); // unchanged (no write)
   });
 
   it("move-note targeting ANOTHER account's notebook is REJECTED (ownership check)", async () => {
-    const def = await createDefaultNotebook(db, ACCT, 'Notes', NOW);
-    await insertNote(db, noteEntry(NOTE, def.id), ACCT, NOW);
+    await insertNotebook(db, nbEntry(NB_SRC, 0, 'Home'), ACCT, NOW);
+    await insertNote(db, noteEntry(NOTE, NB_SRC), ACCT, NOW);
     // A notebook that exists but belongs to a DIFFERENT account.
     await insertNotebook(db, nbEntry(NB2, 0, 'Theirs'), 'acct-other-9999', NOW);
 
@@ -216,58 +222,61 @@ describe('notebooks — sync entity (mutate layer)', () => {
     // IS NULL), so a target that is no longer a live owned notebook AT WRITE TIME can never receive the
     // note — closing the TOCTOU window where a concurrent self-delete of the target between a separate
     // pre-read and the write transiently dangled the note on a just-deleted notebook.
-    const def = await createDefaultNotebook(db, ACCT, 'Notes', NOW);
+    await insertNotebook(db, nbEntry(NB_SRC, 0, 'Home'), ACCT, NOW);
     await insertNotebook(db, nbEntry(NB1, 0, 'Work'), ACCT, NOW);
-    await insertNote(db, noteEntry(NOTE, def.id), ACCT, NOW);
+    await insertNote(db, noteEntry(NOTE, NB_SRC), ACCT, NOW);
     // Tombstone NB1 (the would-be move target).
     const nbVersion = (await pullSince(db, ACCT, 0)).notebooks.find((n) => n.id === NB1)!.version;
     expect((await deleteNotebook(db, nbEntry(NB1, nbVersion, '', true), ACCT, NOW)).outcome).toBe('accepted');
 
     const res = await updateNote(db, moveEntry(NOTE, 1, NB1), ACCT, NOW);
     expect(res.outcome).toBe('conflict'); // rejected by the atomic guard — no orphaning onto a dead notebook
-    const stillInDefault = await notesInNotebook(db, ACCT, def.id);
-    expect(stillInDefault.find((r) => r.id === NOTE)!.notebookId).toBe(def.id); // never landed on NB1
-    expect(stillInDefault.find((r) => r.id === NOTE)!.version).toBe(1); // 0-row CAS — note unchanged
+    const stillHome = await notesInNotebook(db, ACCT, NB_SRC);
+    expect(stillHome.find((r) => r.id === NOTE)!.notebookId).toBe(NB_SRC); // never landed on NB1
+    expect(stillHome.find((r) => r.id === NOTE)!.version).toBe(1); // 0-row CAS — note unchanged
   });
 
-  // --- restore-from-Trash notebookId resolution (#22) ---
+  // --- restore-from-Trash notebookId resolution (#22 → #58: orphan uncategorizes, not reassign-to-default) ---
 
   it('restore (clear trash) when the notebook is LIVE keeps the note where it was', async () => {
-    const def = await createDefaultNotebook(db, ACCT, 'Notes', NOW);
     await insertNotebook(db, nbEntry(NB1, 0, 'Work'), ACCT, NOW);
     await insertNote(db, noteEntry(NOTE, NB1), ACCT, NOW);
 
     await updateNote(db, editEntry(NOTE, 1, TRASHED), ACCT, NOW); // trash (v2)
     const restored = await updateNote(db, editEntry(NOTE, 2, {}), ACCT, NOW); // restore (v3)
     expect(restored.outcome).toBe('accepted');
-    if (restored.outcome === 'accepted') expect(restored.row.notebookId).toBe(NB1); // unchanged
-    expect(def.id).not.toBe(NB1);
+    if (restored.outcome === 'accepted') expect(restored.row.notebookId).toBe(NB1); // unchanged — notebook still live
   });
 
-  it('restore of a note orphaned by notebook-deletion reassigns it to the DEFAULT notebook', async () => {
-    const def = await createDefaultNotebook(db, ACCT, 'Notes', NOW);
+  it('#58: an edit on a note whose notebook is now DELETED uncategorizes it (notebookId → NULL), never a default', async () => {
     await insertNotebook(db, nbEntry(NB1, 0, 'Work'), ACCT, NOW);
     await insertNote(db, noteEntry(NOTE, NB1), ACCT, NOW);
 
-    // Delete NB1 → cascade-trashes the note (server-side) + bumps its version.
+    // Delete NB1 → its note is uncategorized server-side (notebookId NULL) + version bumped.
     const nbVersion = (await pullSince(db, ACCT, 0)).notebooks.find((n) => n.id === NB1)!.version;
     await deleteNotebook(db, nbEntry(NB1, nbVersion, '', true), ACCT, NOW);
+    const afterDelete = (await pullSince(db, ACCT, 0)).notes.find((n) => n.id === NOTE)!;
+    expect(afterDelete.notebookId).toBeNull(); // already uncategorized by the delete
 
-    const note = (await notesInNotebook(db, ACCT, NB1))[0]!;
-    expect(isTrashed(JSON.parse(note.properties) as PropertyBag)).toBe(true);
-
-    // Restore (clear trash). notebookId NB1 is now tombstoned → must reassign to the default.
-    const restored = await updateNote(db, editEntry(NOTE, note.version, {}), ACCT, NOW);
-    expect(restored.outcome).toBe('accepted');
-    if (restored.outcome === 'accepted') expect(restored.row.notebookId).toBe(def.id); // → default
+    // A subsequent plain edit keeps it NULL (no default to re-home to).
+    const edited = await updateNote(db, editEntry(NOTE, afterDelete.version, {}), ACCT, NOW);
+    expect(edited.outcome).toBe('accepted');
+    if (edited.outcome === 'accepted') expect(edited.row.notebookId).toBeNull();
   });
 
-  it('restore when NO default exists yet (backfill-held state) keeps current notebookId — never NULL', async () => {
-    // No default notebook for this account; note points at a notebookId with no live notebook row.
+  it('#58: a plain edit on a note pointing at a NON-EXISTENT notebook uncategorizes it (→ NULL), not COALESCE-to-default', async () => {
+    // Note points at a notebookId with no live notebook row (no default exists to fall back to).
+    await insertNote(db, noteEntry(NOTE, NB1), ACCT, NOW); // NB1 never created as a notebook
+    const edited = await updateNote(db, editEntry(NOTE, 1, {}), ACCT, NOW);
+    expect(edited.outcome).toBe('accepted');
+    if (edited.outcome === 'accepted') expect(edited.row.notebookId).toBeNull(); // orphan → uncategorized
+  });
+
+  it('#58: move-note to NULL (entry.notebookId === null) UNCATEGORIZES the note (no ownership guard)', async () => {
+    await insertNotebook(db, nbEntry(NB1, 0, 'Work'), ACCT, NOW);
     await insertNote(db, noteEntry(NOTE, NB1), ACCT, NOW);
-    await updateNote(db, editEntry(NOTE, 1, TRASHED), ACCT, NOW);
-    const restored = await updateNote(db, editEntry(NOTE, 2, {}), ACCT, NOW);
-    expect(restored.outcome).toBe('accepted');
-    if (restored.outcome === 'accepted') expect(restored.row.notebookId).toBe(NB1); // COALESCE fallback, not NULL
+    const moved = await updateNote(db, { id: NOTE as SyncPushEntry['id'], notebookId: null, baseVersion: 1, draft: { title: 'n', properties: {} as PropertyBag, body: [] } }, ACCT, NOW);
+    expect(moved.outcome).toBe('accepted');
+    if (moved.outcome === 'accepted') expect(moved.row.notebookId).toBeNull(); // moved to All Notes
   });
 });

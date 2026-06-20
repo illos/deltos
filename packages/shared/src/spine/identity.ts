@@ -34,7 +34,13 @@ export const FIRST_SERVER_VERSION = 1;
  */
 export const NoteIdentitySchema = z.object({
   id: NoteIdSchema,
-  notebookId: NotebookIdSchema,
+  /**
+   * The note's organizing notebook, or `null` = UNCATEGORIZED (shows only in the synthetic "All Notes"
+   * aggregate). NOT a CAS/identity key (the CAS is `(id, accountId, version)` post-Option-B) and NOT a
+   * sync boundary — accountId is. There is no stored default notebook (#58): an uncategorized note is
+   * simply null, never re-homed. See docs/specs/all-notes-synthetic-default.md.
+   */
+  notebookId: NotebookIdSchema.nullable(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
   version: VersionSchema,

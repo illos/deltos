@@ -21,6 +21,7 @@ const ALL_MIGRATIONS = [
   '0000_baseline.sql', '0001_stream-b-sync.sql', '0002_stream-a-auth.sql', '0003_account-identity.sql',
   '0004_password-auth.sql', '0005_recovery-established.sql', '0006_account-sync-seq.sql',
   '0007_reconcile-account-sync-seq.sql', '0008_notebooks.sql', '0009_backfill-default-notebooks.sql',
+  '0010_nullable-notebookid-all-notes.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function d1Over(raw: Database.Database): D1Database {
@@ -78,14 +79,12 @@ describe('POST /api/sync/push — notebook + note batch (route-level, secSys #19
   });
 
   it('same-batch create-notebook-THEN-move-note is ACCEPTED (locks push-loop ordering: notebooks before notes)', async () => {
-    // The account's default notebook was seeded at signup; find it.
+    // #58: a fresh account has NO notebooks. Insert the note UNCATEGORIZED (no notebookId → All Notes).
     const seeded = await pull(env, token);
-    const defaultNb = seeded.notebooks.find((n) => n.isDefault)!;
-    expect(defaultNb).toBeDefined();
+    expect(seeded.notebooks).toHaveLength(0);
 
-    // Insert a note into the default (note → version 1).
+    // Insert an uncategorized note (note → version 1).
     const ins = await post(env, '/api/sync/push', {
-      notebookId: defaultNb.id,
       entries: [{ id: NOTE, baseVersion: 0, draft: { title: 'movable', properties: {}, body: [] } }],
     }, token);
     expect(ins.status).toBe(200);
@@ -110,11 +109,8 @@ describe('POST /api/sync/push — notebook + note batch (route-level, secSys #19
   });
 
   it('move to a FOREIGN / non-owned notebookId is REJECTED at the route (conflict, no orphaning)', async () => {
-    const seeded = await pull(env, token);
-    const defaultNb = seeded.notebooks.find((n) => n.isDefault)!;
-
+    // Insert an uncategorized note (#58: no default to seed into).
     await post(env, '/api/sync/push', {
-      notebookId: defaultNb.id,
       entries: [{ id: NOTE, baseVersion: 0, draft: { title: 'n', properties: {}, body: [] } }],
     }, token);
 
@@ -126,6 +122,6 @@ describe('POST /api/sync/push — notebook + note batch (route-level, secSys #19
     expect(((await res.json()) as { results: Array<{ outcome: string }> }).results[0]!.outcome).toBe('conflict');
 
     const after = await pull(env, token);
-    expect(after.notes.find((n) => n.id === NOTE)!.notebookId).toBe(defaultNb.id); // stayed put — not orphaned
+    expect(after.notes.find((n) => n.id === NOTE)!.notebookId).toBeNull(); // stayed uncategorized — not orphaned
   });
 });

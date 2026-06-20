@@ -48,6 +48,7 @@ const ALL_MIGRATIONS = [
   '0007_reconcile-account-sync-seq.sql',
   '0008_notebooks.sql',
   '0009_backfill-default-notebooks.sql',
+  '0010_nullable-notebookid-all-notes.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 const ISO_AUD = 'deltos.isolation';

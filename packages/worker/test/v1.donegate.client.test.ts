@@ -23,7 +23,7 @@ import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { type Note } from '@deltos/shared';
-import { syncNow, getSyncState, subscribeSyncState } from '@deltos/client/src/lib/syncEngine.js';
+import { syncNow, getSyncState, subscribeSyncState, resumeSync } from '@deltos/client/src/lib/syncEngine.js';
 import { mutateNotes } from '@deltos/client/src/db/mutate.js';
 import { db as clientDb } from '@deltos/client/src/db/schema.js';
 import { useAuthStore } from '@deltos/client/src/auth/store.js';
@@ -60,6 +60,7 @@ const ALL_MIGRATIONS = [
   '0004_password-auth.sql', '0005_recovery-established.sql',
   '0006_account-sync-seq.sql', '0007_reconcile-account-sync-seq.sql',
   '0008_notebooks.sql', '0009_backfill-default-notebooks.sql',
+  '0010_nullable-notebookid-all-notes.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 const DG_AUD = 'deltos.v1.donegate';
 
@@ -133,6 +134,7 @@ beforeEach(async () => {
   env = makeEnv(raw);
   await Promise.all([clientDb.notes.clear(), clientDb.syncQueue.clear(), clientDb.notebooks.clear()]);
   useAuthStore.setState({ bearerToken: null });
+  resumeSync(); // a prior test's logout() suspends the client sync engine (#52); reset so syncNow runs
   bridge(env);
 });
 

@@ -124,11 +124,10 @@ sync.post(
       // move, ownership-checked). accountId is server-derived and scopes every write + conflict SELECT.
       for (const entry of req.entries) {
         if (entry.baseVersion === 0) {
-          // INSERT notebookId = per-entry, else the batch-level default ("current notebook").
-          const notebookId = entry.notebookId ?? req.notebookId;
-          if (notebookId === undefined) {
-            return apiError(c, 400, 'invalid_request', 'note insert requires a notebookId (per-entry or batch-level)');
-          }
+          // INSERT notebookId (#58 tri-state): an explicit per-entry value (id OR null) wins; if omitted,
+          // fall to the batch-level "current notebook"; if neither, NULL = uncategorized (All Notes). A
+          // note no longer requires a notebook — there is no default to fall back on.
+          const notebookId = entry.notebookId !== undefined ? entry.notebookId : (req.notebookId ?? null);
           const outcome = await insertNote(db, { ...entry, notebookId }, accountId, now);
           if (outcome.outcome === 'accepted') {
             results.push({ id: entry.id, outcome: 'accepted', version: outcome.version, syncSeq: outcome.syncSeq });
