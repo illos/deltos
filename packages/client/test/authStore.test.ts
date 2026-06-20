@@ -184,22 +184,25 @@ describe('TOTP setup/verify/disable — anti-lockout shape + totpEnabled mirror'
     const r = await s().setupTotp();
     expect(r).toEqual({ ok: true, secret: 'BASE32SECRET', uri: 'otpauth://totp/deltos:ada?secret=BASE32SECRET' });
   });
-  it('verifyTotp ok only on a confirmed code → flips local totpEnabled true (server is authoritative)', async () => {
-    mockFetch(() => res(200));
+  it('verifyTotp ok → flips totpEnabled true AND swaps to the re-issued access token (stays signed in)', async () => {
+    useAuthStore.setState({ bearerToken: 'old-tok' }, false);
+    mockFetch(() => res(200, { enabled: true, token: 'reissued-tok', expiresAt: 'x' }));
     expect(await s().verifyTotp('123456')).toEqual({ ok: true });
     expect(s().totpEnabled).toBe(true);          // mirrors the server enable without a round-trip
+    expect(s().bearerToken).toBe('reissued-tok'); // revoke-others-+-reissue: acting device keeps a live token
     useAuthStore.setState({ totpEnabled: true }, false);
     mockFetch(() => res(400));
     expect(await s().verifyTotp('000000')).toEqual({ ok: false, code: 'totp_invalid' });
     expect(s().totpEnabled).toBe(true);          // a rejected code does NOT change state
   });
-  it('disableTotp success → flips local totpEnabled false; sends the re-prove code', async () => {
+  it('disableTotp success → flips totpEnabled false, swaps the re-issued token, sends the re-prove code', async () => {
     let sent: Record<string, unknown> = {};
-    mockFetch((_u, init) => { sent = JSON.parse(init.body as string); return res(200, { enabled: false }); });
-    useAuthStore.setState({ bearerToken: 'live', totpEnabled: true }, false);
+    mockFetch((_u, init) => { sent = JSON.parse(init.body as string); return res(200, { enabled: false, token: 'reissued-tok', expiresAt: 'x' }); });
+    useAuthStore.setState({ bearerToken: 'old-tok', totpEnabled: true }, false);
     expect(await s().disableTotp('123456')).toEqual({ ok: true });
     expect(sent.code).toBe('123456');            // re-prove with a current code (anti-lockout symmetry)
     expect(s().totpEnabled).toBe(false);
+    expect(s().bearerToken).toBe('reissued-tok'); // acting device stays signed in after the toggle
   });
   it('disableTotp wrong code → {ok:false, totp_invalid}; state unchanged', async () => {
     mockFetch(() => res(400, { error: { code: 'invalid_code' } }));

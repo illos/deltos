@@ -248,6 +248,31 @@ async function revokeAll(s: AuthStore, accountId: string, nowMs: number): Promis
   await s.revokeGrantsByAccount(accountId, at);
 }
 
+/**
+ * After a 2FA credential-change: `revokeAll` above has just killed EVERY session + grant (so other
+ * devices must re-authenticate — the security intent). Immediately re-mint a FRESH session for the
+ * ACTING device so a Settings-screen toggle doesn't sign the user out of the device they're using
+ * (the new grant + refresh family are created AFTER the revoke, so they survive it). The fresh access
+ * token rides the response body; the durable refresh cookie is re-issued ONLY for a finalized account
+ * (cookie-at-finalize / P0 suspenders — a pre-finalize session keeps an in-memory token only). secSys
+ * #53: this is "revoke-others-+-reissue" — confirmed by pilot, reviewed as built code.
+ */
+async function reissueActingSession(
+  c: AppContext,
+  s: AuthStore,
+  accountId: string,
+  recoveryEstablished: boolean,
+  nowMs: number,
+): Promise<{ token: string; expiresAt: string }> {
+  const access = await mintAccessToken(s, accountId, nowMs);
+  if (recoveryEstablished) {
+    await issueRefresh(c, s, accountId, authCrypto.randomToken(16), nowMs);
+  } else {
+    clearRefreshCookie(c); // defensive: a pre-finalize account has no durable cookie to keep
+  }
+  return access;
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/auth/signup  — { username, password, turnstileToken? }
 //   → create account + claim username (atomic-unique) + password/recovery verifiers + session + cookie,
@@ -648,9 +673,10 @@ passwordAuth.post(
       if (!totp.ok) return apiError(c, 400, 'invalid_code', 'that code is not valid');
 
       await s.enableTotp(principal.id, totp.step, iso(nowMs));
-      await revokeAll(s, principal.id, nowMs); // 2FA-change → revoke-all (the user re-authenticates)
-      clearRefreshCookie(c);
-      return c.json({ enabled: true });
+      await revokeAll(s, principal.id, nowMs); // 2FA-change → revoke EVERY session (other devices re-auth)
+      // ...then keep the ACTING device signed in (Settings toggle must not log the user out).
+      const access = await reissueActingSession(c, s, principal.id, credential.recoveryEstablished, nowMs);
+      return c.json({ enabled: true, token: access.token, expiresAt: access.expiresAt });
     },
   }),
 );
@@ -679,9 +705,10 @@ passwordAuth.post(
       if (!totp.ok) return apiError(c, 400, 'invalid_code', 'that code is not valid');
 
       await s.disableTotp(principal.id, iso(nowMs));
-      await revokeAll(s, principal.id, nowMs); // 2FA-change → revoke-all
-      clearRefreshCookie(c);
-      return c.json({ enabled: false });
+      await revokeAll(s, principal.id, nowMs); // 2FA-change → revoke EVERY session (other devices re-auth)
+      // ...then keep the ACTING device signed in (Settings toggle must not log the user out).
+      const access = await reissueActingSession(c, s, principal.id, credential.recoveryEstablished, nowMs);
+      return c.json({ enabled: false, token: access.token, expiresAt: access.expiresAt });
     },
   }),
 );

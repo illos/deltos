@@ -116,8 +116,9 @@ export interface AuthActions {
    * Disable TOTP 2FA — re-prove with a current code (`POST /totp/disable`). On success flips local
    * {@link AuthState.totpEnabled} to false. Requiring a current code mirrors {@link verifyTotp} (anti-
    * lockout symmetry); a user who lost the authenticator disables via the recovery-phrase reset, which
-   * also clears 2FA. NOTE (pending secSys #43): the server treats a 2FA change as a credential-change and
-   * REVOKES ALL sessions incl. this device — see the implementation comment.
+   * also clears 2FA. A 2FA change revoke-alls every session (other devices must re-auth) but RE-ISSUES
+   * the acting device's session — the server returns a fresh access token which this action swaps into
+   * {@link AuthState.bearerToken}, so a Settings toggle keeps the user signed in.
    */
   disableTotp(code: string): Promise<TotpDisableResult>;
   /** Forced-phrase belt: mint a FRESH recovery phrase (server) + update the verifier, returned to show
@@ -268,19 +269,18 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     try { res = await authFetch('/totp/verify', { code }, get().bearerToken); }
     catch { return { ok: false, code: 'network' }; }
     if (!res.ok) return { ok: false, code: 'totp_invalid' };
-    // Server is authoritative + already flipped totpEnabled=1; mirror it locally so the Settings toggle
-    // reflects "on" immediately without a round-trip.
-    set({ totpEnabled: true });
+    // A 2FA change revoke-all'd every session (incl. this device's OLD bearer) and re-issued a fresh one
+    // so the acting device stays signed in — swap to the new in-memory access token. Also mirror
+    // totpEnabled=1 (server-authoritative) so the Settings toggle reflects "on" without a round-trip.
+    const b = (await res.json().catch(() => ({}))) as { token?: string };
+    set({ totpEnabled: true, ...(b.token ? { bearerToken: b.token } : {}) });
     return { ok: true };
   },
 
   async disableTotp(code) {
-    // Re-prove with a current code (anti-lockout symmetry with verify). The server treats this as a
-    // 2FA credential-change → revoke-all + clear refresh cookie: it kills EVERY session, INCLUDING this
-    // device's (the in-memory bearer is now revoked and the durable cookie is gone). Flipping totpEnabled
-    // here keeps the toggle honest, but the caller must expect the session to be dead afterward (a reload
-    // lands on /login). Whether the acting session should instead survive (revoke-others + re-issue) is a
-    // secSys ruling (#43) — flagged; the seam is this one call, so a server change needs no contract churn.
+    // Re-prove with a current code (anti-lockout symmetry with verify). The server treats this as a 2FA
+    // credential-change → revoke-all (other devices re-auth) THEN re-issues this device's session
+    // (fresh access token in the body + fresh refresh cookie), so the toggling device stays signed in.
     let res: Response;
     try { res = await authFetch('/totp/disable', { code }, get().bearerToken); }
     catch { return { ok: false, code: 'network' }; }
@@ -289,7 +289,10 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       if (raw.error?.code === 'totp_not_enabled') return { ok: false, code: 'not_enabled' };
       return { ok: false, code: 'totp_invalid' };
     }
-    set({ totpEnabled: false });
+    // Like enable: the server revoke-all'd + re-issued a fresh session so the acting device stays
+    // signed in — swap to the new in-memory access token and mirror totpEnabled=0.
+    const b = (await res.json().catch(() => ({}))) as { token?: string };
+    set({ totpEnabled: false, ...(b.token ? { bearerToken: b.token } : {}) });
     return { ok: true };
   },
 

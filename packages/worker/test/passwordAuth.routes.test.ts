@@ -465,18 +465,16 @@ describe('AP-T8 — revoke-all', () => {
   );
 
   it(
-    '2FA-CHANGE (enable via /totp/verify) revokes all refresh families (AP-10 2FA-change leg)',
+    '2FA-CHANGE (enable via /totp/verify) revokes OTHER sessions but RE-ISSUES the acting device (#41)',
     async () => {
-      const raw = freshDb();
-      const env = makeEnv(raw);
-      const acct = await signup(env, 'tfa-on', 'tfa-on-pass-1'); // signup() finalizes → 1 live refresh family
-      const live = () =>
-        (raw.prepare('SELECT COUNT(*) n FROM refreshSessions WHERE accountId=? AND revokedAt IS NULL').get(
-          acct.accountId,
-        ) as { n: number }).n;
-      expect(live()).toBeGreaterThan(0);
+      const env = makeEnv(freshDb());
+      const acct = await signup(env, 'tfa-on', 'tfa-on-pass-1'); // signup() finalizes the acting device
 
-      // Enable 2FA (confirm-before-activate) — a credential change → revoke-all.
+      // A second device logs in → its own live refresh family. Capture its cookie to prove it dies.
+      const other = await post(env, '/api/auth/login', { username: 'tfa-on', password: 'tfa-on-pass-1' });
+      const otherCookie = refreshCookieValue(other)!;
+
+      // Enable 2FA (confirm-before-activate) — a credential change → revoke-all THEN re-issue this device.
       const setup = await post(env, '/api/auth/totp/setup', {}, { Authorization: `Bearer ${acct.token}` });
       const { secret } = (await setup.json()) as { secret: string };
       const verify = await post(
@@ -486,42 +484,55 @@ describe('AP-T8 — revoke-all', () => {
         { Authorization: `Bearer ${acct.token}` },
       );
       expect(verify.status, await bodyText(verify)).toBe(200);
-      expect(live()).toBe(0); // every refresh family revoked
+
+      // Acting device STAYS signed in: a fresh access token + a fresh, working refresh cookie come back.
+      const vbody = (await verify.json()) as { enabled: boolean; token: string; expiresAt: string };
+      expect(vbody.enabled).toBe(true);
+      expect(vbody.token).toMatch(/.+/);
+      const freshCookie = refreshCookieValue(verify)!;
+      expect(freshCookie).toBeTruthy();
+      expect((await post(env, '/api/auth/refresh', {}, cookieHeader(freshCookie))).status).toBe(200);
+
+      // The OTHER device's session is revoked — its cookie no longer refreshes.
+      expect((await post(env, '/api/auth/refresh', {}, cookieHeader(otherCookie))).status).toBe(401);
     },
     T,
   );
 
   it(
-    '2FA-CHANGE (disable via /totp/disable) revokes all refresh families (AP-10 2FA-change leg)',
+    '2FA-CHANGE (disable via /totp/disable) revokes OTHER sessions but RE-ISSUES the acting device (#41)',
     async () => {
-      const raw = freshDb();
-      const env = makeEnv(raw);
+      const env = makeEnv(freshDb());
       const acct = await signup(env, 'tfa-off', 'tfa-off-pass-1');
-      const live = () =>
-        (raw.prepare('SELECT COUNT(*) n FROM refreshSessions WHERE accountId=? AND revokedAt IS NULL').get(
-          acct.accountId,
-        ) as { n: number }).n;
 
       const { secret } = (await (
         await post(env, '/api/auth/totp/setup', {}, { Authorization: `Bearer ${acct.token}` })
       ).json()) as { secret: string };
       const secretBytes = base32ToBytes(secret);
       const step = stepAt(Date.now());
-      // Enable using step-1 so the replay guard leaves room for the login (step) + disable (step+1).
-      expect(
-        (await post(env, '/api/auth/totp/verify', { code: codeAtStep(secretBytes, step - 1) }, { Authorization: `Bearer ${acct.token}` })).status,
-      ).toBe(200);
+      // Only step-1 / step / step+1 are inside the ±1 skew window, so spend them across the 3 codes:
+      // enable (step-1) → other-device login (step) → disable (step+1).
+      // Enable on step-1; the enable response re-issues the ACTING device's session (token + cookie).
+      const enable = await post(env, '/api/auth/totp/verify', { code: codeAtStep(secretBytes, step - 1) }, { Authorization: `Bearer ${acct.token}` });
+      expect(enable.status, await bodyText(enable)).toBe(200);
+      const actingToken = ((await enable.json()) as { token: string }).token;
 
-      // A fresh TOTP login mints a new live refresh family (enable's revoke-all killed the prior one).
-      const login = await post(env, '/api/auth/login', { username: 'tfa-off', password: 'tfa-off-pass-1', totp: codeAtStep(secretBytes, step) });
-      expect(login.status, await bodyText(login)).toBe(200);
-      const newToken = ((await login.json()) as { token: string }).token;
-      expect(live()).toBeGreaterThan(0);
+      // A SECOND device logs in with 2FA (consumes step) — its cookie must die when the acting device disables.
+      const other = await post(env, '/api/auth/login', { username: 'tfa-off', password: 'tfa-off-pass-1', totp: codeAtStep(secretBytes, step) });
+      expect(other.status, await bodyText(other)).toBe(200);
+      const otherCookie = refreshCookieValue(other)!;
 
-      // Disable 2FA (re-prove with step+1, > lastAcceptedStep) — a credential change → revoke-all.
-      const disable = await post(env, '/api/auth/totp/disable', { code: codeAtStep(secretBytes, step + 1) }, { Authorization: `Bearer ${newToken}` });
+      // Disable with the acting token, re-proving step+1 (> lastAcceptedStep=step) — revoke-all THEN re-issue.
+      const disable = await post(env, '/api/auth/totp/disable', { code: codeAtStep(secretBytes, step + 1) }, { Authorization: `Bearer ${actingToken}` });
       expect(disable.status, await bodyText(disable)).toBe(200);
-      expect(live()).toBe(0); // every refresh family revoked
+      const dbody = (await disable.json()) as { enabled: boolean; token: string };
+      expect(dbody.enabled).toBe(false);
+      expect(dbody.token).toMatch(/.+/);
+
+      // Acting device stays signed in (fresh cookie refreshes); the other device's cookie is revoked.
+      const freshCookie = refreshCookieValue(disable)!;
+      expect((await post(env, '/api/auth/refresh', {}, cookieHeader(freshCookie))).status).toBe(200);
+      expect((await post(env, '/api/auth/refresh', {}, cookieHeader(otherCookie))).status).toBe(401);
     },
     T,
   );
