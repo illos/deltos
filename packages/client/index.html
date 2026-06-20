@@ -1,5 +1,7 @@
 <!doctype html>
-<html lang="en">
+<!-- Default theme axes (Ember × Sans × system) set statically so the first paint matches the default
+     with no flash; themeStore overwrites these from device-local IDB on init (UI refresh, Lane 0). -->
+<html lang="en" data-palette="ember" data-voice="sans" data-mode="system">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -11,6 +13,10 @@
     <meta name="apple-mobile-web-app-title" content="deltos" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml" />
+    <!-- Preload the two everyday 400-weight faces on the critical path (default Sans body + Mono
+         metadata). crossorigin is required for font preloads even same-origin. -->
+    <link rel="preload" href="/fonts/ibm-plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/ibm-plex-mono-400.woff2" as="font" type="font/woff2" crossorigin />
     <title>deltos</title>
     <!--
       Render-before-data: paint the shell from inline critical CSS + static markup so first

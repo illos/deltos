@@ -45,7 +45,9 @@ export default defineConfig({
       filename: 'sw.ts',
       registerType: 'autoUpdate',
       injectManifest: {
-        globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest}'],
+        // woff2: precache the everyday fonts (Plex Sans default voice + Plex Mono metadata) at SW
+        // install so the first everyday load is instant + offline (UI refresh, Lane 0).
+        globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest,woff2}'],
       },
       manifest: {
         name: 'deltos',
