@@ -97,7 +97,25 @@ const _pending = new Set<NotebookId>();
  * 30s-poll + online-event) into at most one concurrent push, with at most one deferred follow-up,
  * while leaving other notebooks free to sync concurrently.
  */
+/**
+ * Sync suspension (#52 tenancy wipe). When suspended: no NEW cycle starts, and an in-flight cycle is
+ * allowed to finish its PUSH (so a logout flushes the account's own un-pushed edits to its own account —
+ * the secondary flush-first), but its PULL is SKIPPED so it can't re-populate the store AFTER a wipe.
+ * suspendSync() is called before a logout wipe; startSyncTriggers() resumes on (re-)login.
+ */
+let _suspended = false;
+export function suspendSync(): void {
+  _suspended = true;
+  if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
+  if (_maxWaitTimer) { clearTimeout(_maxWaitTimer); _maxWaitTimer = null; }
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+}
+export function resumeSync(): void {
+  _suspended = false;
+}
+
 export function syncNow(notebookId: NotebookId, apiBase = '/api'): void {
+  if (_suspended) return; // tenancy wipe in progress / logged out — do not start a cycle
   if (_inFlight.has(notebookId)) {
     _pending.add(notebookId);
     return;
@@ -112,6 +130,7 @@ async function runSync(notebookId: NotebookId, apiBase: string): Promise<void> {
     setState('syncing');
     await pushQueued(notebookId, apiBase);
     await pushNotebooks(apiBase);
+    if (_suspended) return; // suspended mid-cycle (e.g. logout): the push flushed; SKIP the re-populating pull
     await pullUpdates(notebookId, apiBase);
     const remaining = await getStore().queueCount(); // any queue left?
     setState(remaining > 0 ? 'pending' : 'idle');
@@ -466,6 +485,7 @@ function schedulePush(notebookId: NotebookId, apiBase: string): void {
  * tests that drive syncNow directly are unaffected.
  */
 export function startSyncTriggers(notebookId: NotebookId, apiBase = '/api'): () => void {
+  resumeSync(); // (re-)login clears any logout-time suspension so this account's sync runs normally
   // Visibility-gated pull cadence: poll ONLY while visible; suspend when hidden (battery + cost).
   function startPoll() {
     if (_pollTimer) return;

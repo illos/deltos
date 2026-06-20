@@ -2,10 +2,10 @@ import { NotebookIdSchema } from '@deltos/shared';
 import type { NotebookId } from '@deltos/shared';
 import { db } from './schema.js';
 
-const CURRENT_NOTEBOOK_KEY = 'current-notebook';
+export const CURRENT_NOTEBOOK_KEY = 'current-notebook';
 
 /** The old localStorage key (Phase-1 stub). Used once for migration then discarded. */
-const LEGACY_LS_KEY = 'deltos.defaultNotebookId';
+export const LEGACY_DEFAULT_NB_LS_KEY = 'deltos.defaultNotebookId';
 
 export async function readCurrentNotebookId(): Promise<NotebookId | null> {
   const row = await db.deviceState.get(CURRENT_NOTEBOOK_KEY);
@@ -28,12 +28,12 @@ export async function loadCurrentNotebookId(): Promise<NotebookId | null> {
   if (fromIdb) return fromIdb;
 
   if (typeof localStorage !== 'undefined') {
-    const raw = localStorage.getItem(LEGACY_LS_KEY);
+    const raw = localStorage.getItem(LEGACY_DEFAULT_NB_LS_KEY);
     if (raw) {
       const parsed = NotebookIdSchema.safeParse(raw);
       if (parsed.success) {
         await writeCurrentNotebookId(parsed.data);
-        localStorage.removeItem(LEGACY_LS_KEY);
+        localStorage.removeItem(LEGACY_DEFAULT_NB_LS_KEY);
         return parsed.data;
       }
     }

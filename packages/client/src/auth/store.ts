@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import type { AccessTokenResponse, RegisterResponse, TotpSetupResponse } from '@deltos/shared';
+import { ensureAccountScope, purgeAllLocalState } from '../db/accountScope.js';
+import { suspendSync } from '../lib/syncEngine.js';
 
 /**
  * Client auth store — USERNAME + PASSWORD (auth pivot; supersedes the passkey/WebAuthn stack).
@@ -176,6 +178,10 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       const res = await authFetch('/refresh');
       if (!res.ok) { if (!get().isAuthing) set({ isAuthed: false, sessionState: 'unauthed' }); return; }
       const s = (await res.json()) as AccessTokenResponse;
+      // #52 tenancy (option B): purge the local store if it belongs to another account (or is unmarked
+      // — first fixed-build load). AWAITED BEFORE the shell opens so there's no cold-boot flash of the
+      // prior account's notes, and so the list/switcher never read another account's data.
+      await ensureAccountScope(s.accountId);
       // A live ceremony owns the gate — don't let a background refresh open the shell underneath it.
       // recoveryEstablished rides the refresh (always true in devSys's impl — a durable cookie only
       // exists post-finalize); the gate routes a false to the forced-phrase screen as a fail-safe belt.
@@ -203,6 +209,9 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       return { ok: false, code };
     }
     const s = (await res.json()) as RegisterResponse;
+    // #52 tenancy (option B): a brand-new account on this device — purge any prior account's residue
+    // before this account's session begins (marker differs → wipe), so it starts on a clean local store.
+    await ensureAccountScope(s.accountId);
     // Session minted — access token only (signup never Set-Cookies; the durable cookie waits for
     // finalize) AND no recovery phrase (Option-B single-hash signup: the verifier isn't hashed here —
     // the phrase is minted by establishRecovery/rotate next, like the forced-phrase flow). The shell
@@ -226,6 +235,11 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       return { ok: false, code: 'invalid' }; // uniform — no username enumeration
     }
     const s = (await res.json()) as AccessTokenResponse;
+    // #52 tenancy (option B): a login may be a SWITCH to a different account on this device — purge the
+    // prior account's local store BEFORE we set the new session, so the shell (which opens via the route
+    // after this resolves) never reads the prior account's notes/notebooks and no un-pushed prior-account
+    // queue entry can drain under the new bearer (the W8 write-migration leak).
+    await ensureAccountScope(s.accountId);
     const recoveryEstablished = readRecoveryFlag(s);
     set({ bearerToken: s.token, accountId: s.accountId, username: s.username, recoveryEstablished, totpEnabled: readTotpFlag(s) });
     // recoveryRequired = the account was created but never finalized a recovery phrase (abandoned
@@ -235,7 +249,17 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   },
 
   async logout() {
+    // #52 tenancy — LOGOUT does a FULL client-local wipe (security primary), ordered so a re-login is clean:
+    // 1. suspendSync(): stop the poll + let any in-flight cycle finish its PUSH (flushes this account's own
+    //    un-pushed edits to its OWN account — the best-effort flush-first) but SKIP its pull, so nothing
+    //    re-populates after the wipe.
+    suspendSync();
+    // 2. Server logout (revoke all sessions + clear the refresh cookie) — needs the bearer, still in memory.
     try { await authFetch('/logout', undefined, get().bearerToken); } catch { /* clear locally regardless */ }
+    // 3. Wipe ALL local account state (Dexie tables + notebook pointer + sync cursors) + drop the marker.
+    try { await purgeAllLocalState(); } catch { /* best-effort; never block sign-out on a storage error */ }
+    // 4. Clear the in-memory session + close the gate. Net: no bearer, no refresh cookie, no local data,
+    //    no resident-account marker → the next login re-detects from a clean slate and re-pulls from seq 0.
     set({ bearerToken: null, accountId: null, username: null, recoveryEstablished: null, totpEnabled: false, isAuthed: false, isAuthing: false, sessionState: 'unauthed' });
   },
 

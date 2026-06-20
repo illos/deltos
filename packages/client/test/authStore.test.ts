@@ -12,6 +12,7 @@
  * uniform/non-disclosing failures on login + reset.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import 'fake-indexeddb/auto'; // init/login/register now call ensureAccountScope (#52) which touches Dexie
 import { useAuthStore } from '../src/auth/store.js';
 
 const DEFAULTS = {
@@ -44,7 +45,9 @@ function mockRoutes(map: Record<string, Response>, rest: Response) {
   }));
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  const { db } = await import('../src/db/schema.js');
+  await Promise.all(db.tables.map((t) => t.clear())); // #52: clean Dexie so ensureAccountScope starts fresh
   useAuthStore.setState(DEFAULTS, false);
 });
 afterEach(() => vi.unstubAllGlobals());

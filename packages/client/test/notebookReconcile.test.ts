@@ -72,6 +72,16 @@ describe('mergeNotebooks — adopt-canonical pointer reconcile (#52)', () => {
     expect(await currentId()).toBe(CANON);
   });
 
+  it('EXACTLY ONE default: merging a server set with one isDefault yields exactly one local default row (client renders default strictly from server isDefault, never fabricates a 2nd)', async () => {
+    const { db } = await import('../src/db/schema.js');
+    const { mergeNotebooks } = await import('../src/lib/syncEngine.js');
+    const work = 'nb-work-00000000-0000-4000-8000-000000000002';
+    // The server (partial unique index notebooks_oneDefault) can only ever send ONE isDefault=1.
+    await mergeNotebooks([syncNotebook(CANON, true), syncNotebook(work, false)]);
+    const defaults = (await db.notebooks.toArray()).filter((n) => n.isDefault && n.deletedAt === null);
+    expect(defaults.map((n) => n.id)).toEqual([CANON]); // exactly one, and it's the server's canonical
+  });
+
   it('IDEMPOTENT: a pointer that RESOLVES to a live notebook (a user-chosen one) is KEPT, not yanked to default', async () => {
     const { mergeNotebooks } = await import('../src/lib/syncEngine.js');
     const work = 'nb-work-00000000-0000-4000-8000-000000000002';
