@@ -149,7 +149,7 @@ export function NavContent({ onNavigate }: NavContentProps) {
 
       <div className="nav-content__footer">
         <Link to="/trash" className="nav-content__trash-link" onClick={onNavigate}>Trash</Link>
-        <button className="nav-content__settings-btn" onClick={() => { /* TODO: settings */ }}>
+        <button className="nav-content__settings-btn" onClick={() => { navigate('/settings'); onNavigate?.(); }}>
           Settings &amp; account
         </button>
       </div>

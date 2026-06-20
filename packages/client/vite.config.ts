@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import type { UserConfig } from 'vitest/config';
+import { execSync } from 'node:child_process';
 
 // The control dashboard injects a stable per-project HTTPS port; fall back to Vite's default
 // when running outside it. Binding 127.0.0.1 (not localhost→::1) is what `tailscale serve`
@@ -18,7 +19,15 @@ const testConfig: UserConfig['test'] = {
   ],
 };
 
+function gitShortSha(): string {
+  try { return execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim(); }
+  catch { return '0.0.0'; }
+}
+
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(gitShortSha()),
+  },
   // vite's own UserConfigExport has no `test` key (vitest reads it at runtime); typing it here would
   // pull vitest/config's defineConfig, which resolves a DIFFERENT vite version than the app's and
   // mismatches the plugin types. So suppress the one runtime-valid excess key — self-correcting: if

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
 import type { NotebookId } from '@deltos/shared';
@@ -10,6 +10,9 @@ import { ResetRoute } from './routes/ResetRoute.js';
 import { ForcedPhraseRoute } from './routes/ForcedPhraseRoute.js';
 import { TrashRoute } from './routes/TrashRoute.js';
 import { SearchRoute } from './routes/SearchRoute.js';
+const SettingsRoute = lazy(() =>
+  import('./routes/SettingsRoute.js').then((m) => ({ default: m.SettingsRoute })),
+);
 import { AllNotebooksScreen } from './views/AllNotebooksScreen.js';
 import { DrawerNav } from './components/DrawerNav.js';
 import { BottomNav } from './components/BottomNav.js';
@@ -257,6 +260,14 @@ function AuthedShell() {
           <Route path="/note/:id" element={<NoteRoute />} />
           <Route path="/trash" element={<TrashRoute />} />
           <Route path="/search" element={<SearchRoute />} />
+          <Route
+            path="/settings"
+            element={
+              <Suspense fallback={<div className="auth"><div className="auth__spinner" aria-label="Loading" /></div>}>
+                <SettingsRoute />
+              </Suspense>
+            }
+          />
           <Route path="/" element={<CollectionView notebookId={notebookId} />} />
           {/* Auth routes are the gate — redirect home in the shell (session re-established by init on reload). */}
           <Route path="/login" element={<Navigate to="/" replace />} />
