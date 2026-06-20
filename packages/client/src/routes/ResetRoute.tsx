@@ -40,12 +40,17 @@ export function ResetRoute() {
     setStep({ tag: 'busy' });
     resetWithPhrase(username.trim(), phrase.trim(), newPassword).then(async (result) => {
       if (result.ok) {
-        const r = await finalizeAuth();
-        if (r.ok) {
-          navigate('/', { replace: true });
-        } else {
-          setStep({ tag: 'form', error: 'Connection error — please try again' });
-        }
+        // Password is changed. Try to finalize a session — but /reset mints no session cookie
+        // by design, so /finalize may 503. Treat any finalize failure as graceful degradation:
+        // show success and route to /login rather than surfacing a false 'connection error'.
+        try {
+          const r = await finalizeAuth();
+          if (r.ok) {
+            navigate('/', { replace: true });
+            return;
+          }
+        } catch { /* finalize threw — fall through to done */ }
+        setStep({ tag: 'done' });
       } else {
         setStep({ tag: 'form', error: resetErrorMsg(result.code) });
       }
@@ -57,6 +62,21 @@ export function ResetRoute() {
       <div className="auth">
         <div className="auth__spinner" aria-label="Loading" />
         <p className="auth__subtitle">Resetting your password…</p>
+      </div>
+    );
+  }
+
+  if (step.tag === 'done') {
+    return (
+      <div className="auth">
+        <h1 className="auth__title">Password reset</h1>
+        <p className="auth__subtitle">Your password has been updated. Sign in to continue.</p>
+        <button
+          className="auth__btn auth__btn--primary"
+          onClick={() => navigate('/login', { replace: true })}
+        >
+          Sign in
+        </button>
       </div>
     );
   }
