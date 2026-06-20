@@ -30,8 +30,7 @@
       /* Critical-CSS token defaults = the Ember boot palette, MODE-AWARE so a light-mode device never
          flashes dark on cold load (load-feel gate). These paint the skeleton before the JS bundle (and
          tokens.css) load; tokens.css then supplies the full palette set + the user's chosen theme and
-         takes over via its higher-specificity [data-palette][data-mode] selectors. The legacy aliases
-         (--bg/--fg/--muted/--edge) keep the not-yet-retokenized styles.css rules working during Lane 2. */
+         takes over via its higher-specificity [data-palette][data-mode] selectors. */
       :root {
         color-scheme: light dark;
         --paper: #ffffff;
@@ -39,10 +38,6 @@
         --secondary: #6e6e76;
         --border: #e7e7eb;
         --nav: #f2f2f4;
-        --bg: var(--paper);
-        --fg: var(--ink);
-        --muted: var(--secondary);
-        --edge: var(--border);
       }
       @media (prefers-color-scheme: dark) {
         :root {
