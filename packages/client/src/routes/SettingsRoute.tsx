@@ -4,10 +4,10 @@
  * Sections: Account (username, accountId, sync status) | Security (sign-out,
  * recovery phrase, 2FA) | About (version string).
  *
- * 2FA session note (secSys #43 pending): both verifyTotp (enable) and
- * disableTotp (disable) are treated server-side as credential changes that
- * revoke all sessions, including this device's. After either succeeds, we
- * call logout() to clear local state then route to /login.
+ * 2FA: verifyTotp (enable) and disableTotp (disable) both require a TOTP code.
+ * The server revokes other sessions and re-issues a fresh bearer for THIS device
+ * (secSys #43 ruling @3340816) — no forced re-login; the store swaps bearerToken
+ * internally and totpEnabled flips on success.
  */
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -99,10 +99,9 @@ export function SettingsRoute() {
     setView({ tag: 'totp-enable-setup', uri: capturedUri, code: capturedCode, busy: true });
     verifyTotp(capturedCode).then((r: TotpVerifyResult) => {
       if (r.ok) {
-        // Server treats enable as a credential change — revoke all sessions incl. this device.
-        // Clear local state + re-login. (secSys #43: pending ruling on whether the acting
-        // session should survive via revoke-others+re-issue; the seam is here.)
-        void logout().then(() => navigate('/login', { replace: true }));
+        // Server revokes others + re-issues bearer for this device (secSys #43 @3340816);
+        // store swaps bearerToken + flips totpEnabled internally — just return to list.
+        setView({ tag: 'list' });
       } else {
         setView({ tag: 'totp-enable-setup', uri: capturedUri, code: capturedCode, error: 'Incorrect code — try again', busy: false });
       }
@@ -121,8 +120,8 @@ export function SettingsRoute() {
     setView({ tag: 'totp-disable-confirm', code: capturedCode, busy: true });
     disableTotp(capturedCode).then((r: TotpDisableResult) => {
       if (r.ok) {
-        // Same credential-change revoke — clear + re-login.
-        void logout().then(() => navigate('/login', { replace: true }));
+        // Server revokes others + re-issues bearer; store flips totpEnabled — return to list.
+        setView({ tag: 'list' });
       } else if (r.code === 'totp_invalid') {
         setView({ tag: 'totp-disable-confirm', code: capturedCode, busy: false, error: 'Incorrect code — try again' });
       } else {
@@ -269,8 +268,7 @@ export function SettingsRoute() {
             Scan the QR code with your authenticator app, then enter the 6-digit code to confirm.
           </p>
           <p className="settings__row-hint">
-            2FA is required only at new-device sign-in and after a reset — never at regular app
-            launch. After enabling, you&rsquo;ll sign back in to this device once.
+            2FA is required only at new-device sign-in and after a reset — never at regular app launch.
           </p>
           <div className="auth__qr">
             <QRCodeSVG value={view.uri} size={200} bgColor="transparent" fgColor="currentColor" />
@@ -321,8 +319,8 @@ export function SettingsRoute() {
         </div>
         <div className="settings__section">
           <p className="settings__confirm-body">
-            Enter your current authenticator code to disable two-factor authentication.
-            After disabling, you&rsquo;ll sign back in to this device once.
+            Enter your current authenticator code to confirm. Disabling 2FA removes the
+            extra code step at new-device sign-in.
           </p>
           <input
             className="auth__input auth__totp-input"

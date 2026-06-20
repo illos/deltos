@@ -5,8 +5,8 @@
  * ST-R2  Sign-out: button → confirm view → logout() + navigate /login
  * ST-R3  Recovery phrase: button → confirm view → establishRecovery() → PhraseStep mounts
  * ST-R4  2FA off: "Off" state + "Enable" button shown
- * ST-R5  2FA enable: Enable → QR setup → enter+verify code → verifyTotp() → /login
- * ST-R6  2FA on + disable: "On" + "Disable" → code entry → disableTotp(code) → /login
+ * ST-R5  2FA enable: Enable → QR setup → enter+verify code → verifyTotp() → back to list
+ * ST-R6  2FA on + disable: "On" + "Disable" → code entry → disableTotp(code) → back to list
  *
  * Each test mounts SettingsRoute directly via MemoryRouter so the full
  * rendering path (store hooks → DOM) is exercised. The auth store is mocked
@@ -191,8 +191,8 @@ describe('ST-R4 — 2FA off: shows Off status and Enable button', () => {
 
 // ── ST-R5: 2FA enable flow ────────────────────────────────────────────────────
 
-describe('ST-R5 — 2FA enable: Enable → QR setup → verify code → verifyTotp() → /login', () => {
-  it('Enable → setupTotp() → QR view → type code → verifyTotp() → /login', async () => {
+describe('ST-R5 — 2FA enable: Enable → QR setup → verify code → verifyTotp() → back to list', () => {
+  it('Enable → setupTotp() → QR view → type code → verifyTotp() → back to settings list', async () => {
     const user = userEvent.setup();
     mockAuthStore({ totpEnabled: false });
     await mountSettings();
@@ -221,17 +221,17 @@ describe('ST-R5 — 2FA enable: Enable → QR setup → verify code → verifyTo
       expect(verifyMock).toHaveBeenCalledWith('123456');
     });
 
-    // After success, session revoked — should navigate to /login
+    // After success, store swaps bearer internally — returns to settings list
     await waitFor(() => {
-      expect(screen.queryByTestId('login-page')).not.toBeNull();
+      expect(screen.queryByText('Two-factor authentication')).not.toBeNull();
     });
   });
 });
 
 // ── ST-R6: 2FA on + disable ──────────────────────────────────────────────────
 
-describe('ST-R6 — 2FA on: Disable → code entry → disableTotp(code) → /login', () => {
-  it('totpEnabled=true shows On + Disable; code entry + confirm calls disableTotp and /login', async () => {
+describe('ST-R6 — 2FA on: Disable → code entry → disableTotp(code) → back to list', () => {
+  it('totpEnabled=true shows On + Disable; code entry + confirm calls disableTotp, returns to list', async () => {
     const user = userEvent.setup();
     const disableMock = vi.fn(async (_code: string) => ({ ok: true } as const));
     mockAuthStore({ totpEnabled: true, disableTotp: disableMock });
@@ -260,9 +260,9 @@ describe('ST-R6 — 2FA on: Disable → code entry → disableTotp(code) → /lo
       expect(disableMock).toHaveBeenCalledWith('654321');
     });
 
-    // After success, session revoked — navigate to /login
+    // After success, store swaps bearer + flips totpEnabled — returns to settings list
     await waitFor(() => {
-      expect(screen.queryByTestId('login-page')).not.toBeNull();
+      expect(screen.queryByText('Two-factor authentication')).not.toBeNull();
     });
   });
 });
