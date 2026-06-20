@@ -128,6 +128,25 @@ export const dexieLocalStore: LocalStore = {
     });
   },
 
+  // --- session history capture (#45) ---
+  async captureSessionVersion(version: NoteVersion, retentionCap: number): Promise<void> {
+    // Insert + prune atomically, all scoped to [noteId+accountId] (client D6). The capture layer has
+    // already decided this checkpoint is material and precomputed the delta — this is the write + prune.
+    await db.transaction('rw', db.noteVersions, async () => {
+      await db.noteVersions.add(version);
+      // Prune only OUR 'session' rows beyond the cap; conflict rows are untouched (resolution clears them).
+      const sessions = (
+        await db.noteVersions.where('[noteId+accountId]').equals([version.noteId, version.accountId]).toArray()
+      )
+        .filter((v) => v.kind === 'session')
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt)); // oldest first
+      const excess = sessions.length - retentionCap;
+      if (excess > 0) {
+        await db.noteVersions.bulkDelete(sessions.slice(0, excess).map((v) => v.id));
+      }
+    });
+  },
+
   // --- sync queue ---
   queueEntries(): Promise<SyncQueueEntry[]> {
     return db.syncQueue.toArray();

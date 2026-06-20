@@ -7,6 +7,8 @@ import { noteHasContent } from '../lib/noteContent.js';
 import { useNote, useNotebooks } from '../db/storeHooks.js';
 import { mutateNotes } from '../db/mutate.js';
 import { notifyQueueWrite } from '../lib/syncEngine.js';
+import { getHistoryCapture } from '../lib/historyCapture.js';
+import { useAuthStore } from '../auth/store.js';
 import { NoteEditor } from '../editor/NoteEditor.js';
 import { resolveNoteView } from '../editor/views.js';
 import { ConflictView } from '../components/ConflictView.js';
@@ -44,6 +46,10 @@ export function NoteRoute() {
   const handleSave = useCallback(async (note: Note) => {
     await mutateNotes.put(note);
     notifyQueueWrite(note.notebookId);
+    // History capture (#45): feed the SEPARATE coarse session-version layer this already-debounced
+    // save as an edit signal. Fire-and-forget — it never blocks or alters the save/sync cadence.
+    const accountId = useAuthStore.getState().accountId;
+    if (accountId) void getHistoryCapture().recordEdit(note.id, note);
   }, []);
 
   // Must be above all early returns — hooks must be called in the same order every render.
@@ -65,6 +71,28 @@ export function NoteRoute() {
   if (note !== undefined && noteWasNewAndBlankRef.current === null) {
     noteWasNewAndBlankRef.current = note.version === 0 && !noteHasContent(note);
   }
+
+  // History capture (#45): open a capture session once the note is first loaded — its CURRENT content
+  // is the pre-edit baseline the session's delta is measured against. Guarded so a reactive note change
+  // (each save / a sync pull) never re-seeds the baseline. accountId scopes the version rows (client D6).
+  const captureOpenedRef = useRef(false);
+  useEffect(() => {
+    if (captureOpenedRef.current || !parsedNoteId || note === undefined) return;
+    const accountId = useAuthStore.getState().accountId;
+    if (!accountId) return;
+    captureOpenedRef.current = true;
+    getHistoryCapture().open(parsedNoteId, accountId, note);
+  }, [parsedNoteId, note]);
+
+  // Leave (b): on unmount, flush the session — captures the final state if materially changed. Separate
+  // effect keyed only to the note id so it fires exactly once when the route instance tears down.
+  useEffect(() => {
+    return () => {
+      if (parsedNoteId) void getHistoryCapture().leave(parsedNoteId);
+    };
+  // parsedNoteId is stable for the lifetime of this route instance.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parsedNoteId]);
 
   // B3: discard newly-created blank notes on unmount (#32 scoped: version=0 only).
   // discardBlankNote is atomic (re-checks blank in IDB), so if the user typed content

@@ -65,6 +65,16 @@ export interface LocalStore {
    */
   resolveConflict(noteId: NoteId, resolution: ConflictResolution, accountId: string): Promise<void>;
 
+  // --- session history capture (#45) ---
+  /**
+   * Append a coalesced edit-session checkpoint (kind:'session') and prune in ONE accountId-scoped
+   * transaction: after the insert, retain only the newest `retentionCap` `'session'` rows for this
+   * [noteId+accountId], deleting the oldest beyond the cap. `'conflict'` rows are NEVER pruned here
+   * (they're cleared only by conflict resolution). Pruning rides capture, not a timer (anti-bloat,
+   * standing value). The capture layer precomputes `charsAdded`/`charsRemoved` on the row.
+   */
+  captureSessionVersion(version: NoteVersion, retentionCap: number): Promise<void>;
+
   // --- sync queue: the Stream-B drainer's domain ---
   /** All queue entries (the engine dedupes/filters per notebook itself). */
   queueEntries(): Promise<SyncQueueEntry[]>;

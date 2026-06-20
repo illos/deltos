@@ -48,8 +48,9 @@ function blockToText(content: unknown): string {
   return '';
 }
 
-/** All text from a note's body blocks joined by spaces. */
-export function noteBodyText(note: Note): string {
+/** All text from a note's body blocks joined by spaces. Accepts any `{ body }` (version snapshots
+ *  carry the same body shape as a Note), so the history-capture delta layer can reuse it. */
+export function noteBodyText(note: Pick<Note, 'body'>): string {
   const body = (note.body as Array<{ content?: unknown }> | undefined) ?? [];
   return body
     .map((b) => blockToText(b.content))
