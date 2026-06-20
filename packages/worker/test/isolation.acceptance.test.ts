@@ -229,14 +229,32 @@ describe("D6 cross-account isolation (standing bar) — note.search (primary lea
 
 describe("D6 cross-account isolation (standing bar) — sync [GREEN: scopeSys dd86704]", () => {
 
-  it("sync.pull: A pulling B's notebookId returns empty, not B's notes", async () => {
+  it("sync.pull: A sees ONLY its own note, never B's — one-shot positive+negative (#12)", async () => {
     const { env, tokenA } = await buildFixture();
+
+    // Give A its OWN note first. The old A-with-no-notes variant could not distinguish
+    // "isolation correctly filtered B out" from "the pull just returned nothing" — an empty
+    // result is consistent with a totally broken scope. Proving A sees A *and* not-B in one
+    // shot is the real account-scope assertion (convergence tests only cover the positive dir).
+    const A_NOTEBOOK = '00000000-0000-4000-a000-000000000010';
+    const A_NOTE     = '00000000-0000-4000-a000-000000000011';
+    const pushA = await isoPost(env, '/api/sync/push', {
+      notebookId: A_NOTEBOOK,
+      entries: [{ id: A_NOTE, baseVersion: 0, draft: { title: 'a-account-own-note', properties: {}, body: [] } }],
+    }, tokenA);
+    expect(pushA.status).toBe(200);
+
+    // Pull is accountId-scoped server-side; the notebookId query param is inert post-Option-B.
+    // Even passing B's notebookId, A gets exactly its own note and never B's two notes.
     const res = await app.request(`/api/sync/pull?notebookId=${B_NOTEBOOK}&cursor=0`, {
       headers: { Authorization: `Bearer ${tokenA}` },
     }, env);
     expect(res.status).toBe(200);
-    const body = await res.json() as { notes: unknown[] };
-    expect(body.notes).toHaveLength(0);
+    const body = await res.json() as { notes: Array<{ id: string }> };
+    const ids = body.notes.map((n) => n.id);
+    expect(ids).toContain(A_NOTE);          // positive: A's own note IS returned
+    expect(ids).not.toContain(B_NOTE);      // negative: B's REST-created note absent
+    expect(ids).not.toContain(B_SYNC_NOTE); // negative: B's sync-pushed note absent
   });
 
   it("sync.push: A updating B's existing note gets conflict, not accepted", async () => {
