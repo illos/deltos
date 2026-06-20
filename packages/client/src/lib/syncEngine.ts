@@ -316,9 +316,8 @@ export async function mergePull(notes: SyncNote[]): Promise<void> {
 // Notebook sync helpers
 // ---------------------------------------------------------------------------
 
-async function mergeNotebooks(notebooks: SyncNotebook[]): Promise<void> {
+export async function mergeNotebooks(notebooks: SyncNotebook[]): Promise<void> {
   if (notebooks.length === 0) return;
-  const deletedIds: NotebookId[] = [];
   for (const nb of notebooks) {
     const row: NotebookRow = {
       id: nb.id as NotebookId,
@@ -332,14 +331,22 @@ async function mergeNotebooks(notebooks: SyncNotebook[]): Promise<void> {
       syncSeq: nb.syncSeq,
     };
     await getStore().putNotebook(row);
-    if (nb.deletedAt !== null) deletedIds.push(nb.id as NotebookId);
   }
-  // Reconcile current-notebook pointer:
-  // (a) fresh device (currentNotebookId === null) → auto-select the default on first pull
-  // (b) current notebook was deleted → fall back to default
+  // Reconcile the device-local current-notebook pointer to a REAL synced notebook. Adopt the account's
+  // canonical default when the pointer:
+  //   (a) is null (fresh device) — auto-select the default on first pull;
+  //   (b) was deleted; OR
+  //   (c) does NOT resolve to a live local notebook — a STALE/LEGACY pointer (the #52 root cause): a
+  //       Phase-1 per-device random default id (notebookPointer localStorage migration) or any id that
+  //       never synced as a notebook row. Left stale, new notes get stamped with that non-canonical id
+  //       and the server reassigns them to the canonical default on edit → they leave THIS view
+  //       ("vanish"). Reconciling to the canonical default makes the client adopt-canonical + idempotent
+  //       (a pointer that already resolves to ANY live notebook — default or a user's chosen one — is
+  //       kept, so this never yanks a user off a notebook they're legitimately viewing).
   const { currentNotebookId, setCurrentNotebook } = useNotebookStore.getState();
-  const currentDeleted = currentNotebookId !== null && deletedIds.includes(currentNotebookId);
-  if (!currentNotebookId || currentDeleted) {
+  const currentRow = currentNotebookId ? await getStore().getNotebook(currentNotebookId) : undefined;
+  const currentResolves = currentRow !== undefined && currentRow.deletedAt === null;
+  if (!currentResolves) {
     const defaultNb = notebooks.find((nb) => nb.isDefault && nb.deletedAt === null);
     if (defaultNb) await setCurrentNotebook(defaultNb.id as NotebookId);
   }
