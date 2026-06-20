@@ -220,8 +220,8 @@ function RestoreConfirm({ version, onConfirm, onCancel }: RestoreConfirmProps) {
       </div>
       <div className="history__confirm-body">
         <p>
-          Your current note will be saved as a history entry before the restore, so nothing is lost.
-          The restored content will sync normally.
+          If you have unsaved local edits, they will be captured as a history entry before the
+          restore. The restored content will sync normally.
         </p>
         <p className="history__confirm-version">
           Version from: <strong>{relativeTime(version.createdAt)}</strong>
