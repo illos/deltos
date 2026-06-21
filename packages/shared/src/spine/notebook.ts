@@ -7,9 +7,8 @@ import { NotebookIdSchema } from './ids.js';
  * notes — see [[sync-notebookid-per-device-regression]] Option B). A note belongs to exactly one
  * notebook (its `notebookId`); "move note" restamps that id on the server CAS path.
  *
- * There is ALWAYS exactly one DEFAULT notebook per account (the undeletable safety net + new-user
- * landing). `isDefault` is system-owned — the server sets it at account creation / backfill; the client
- * never creates or deletes the default.
+ * There is no stored "default" notebook — the synthetic "All Notes" aggregate (notebookId = null =
+ * uncategorized) serves that role. Every real notebook is equally deletable (#58 / #61).
  */
 
 /**
@@ -27,15 +26,12 @@ export const NotebookSchema = z.object({
   id: NotebookIdSchema,
   name: z.string().min(1).max(200),
   defaultCollectionView: CollectionViewSchema,
-  /** True for the single undeletable default notebook of the account. System-owned. */
-  isDefault: z.boolean(),
 });
 export type Notebook = z.infer<typeof NotebookSchema>;
 
 /**
  * The client-authored slice of a notebook (create/rename). The server owns `id` ownership scoping,
- * `isDefault`, `createdAt`/`updatedAt`/`version`/`deletedAt`/`syncSeq`. A client can never assert
- * `isDefault` — the default is created server-side only.
+ * `createdAt`/`updatedAt`/`version`/`deletedAt`/`syncSeq`.
  */
 export const NotebookDraftSchema = NotebookSchema.pick({
   name: true,

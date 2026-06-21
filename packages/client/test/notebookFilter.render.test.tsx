@@ -162,7 +162,7 @@ describe('NF-4 — P0 #52 regression gate: server-re-stamped note visibility', (
   async function seedCanonicalState() {
     const { db } = await import('../src/db/schema.js');
     await db.notebooks.put({
-      id: CANONICAL_NB_ID, name: 'Notes', isDefault: true, defaultCollectionView: 'list',
+      id: CANONICAL_NB_ID, name: 'Notes', defaultCollectionView: 'list',
       version: 1, createdAt: '2026-06-18T00:00:00.000Z', updatedAt: '2026-06-18T00:00:00.000Z',
       deletedAt: null, syncSeq: 1,
     });

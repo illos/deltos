@@ -25,13 +25,12 @@ beforeEach(async () => {
 const NOW = '2026-06-20T12:00:00.000Z';
 const CANON = 'nb-canon-00000000-0000-4000-8000-000000000001' as NotebookId;
 
-function syncNotebook(id: string, isDefault: boolean, deletedAt: string | null = null): SyncNotebook {
+function syncNotebook(id: string, _isDefault?: boolean, deletedAt: string | null = null): SyncNotebook {
   return {
     id: id as NotebookId,
     accountId: 'acct-1',
     name: 'Notes',
     defaultCollectionView: 'list',
-    isDefault,
     version: 1,
     createdAt: NOW,
     updatedAt: NOW,
@@ -72,14 +71,14 @@ describe('mergeNotebooks — pointer reconcile (#52 + #59 All Notes)', () => {
     expect(await currentId()).toBeNull(); // fell back to All Notes
   });
 
-  it('EXACTLY ONE default: merging a server set with one isDefault yields exactly one local default row (client renders default strictly from server isDefault, never fabricates a 2nd)', async () => {
+  it('EXACT COUNT: merging N server notebooks yields exactly N rows in IDB (client never fabricates extras)', async () => {
     const { db } = await import('../src/db/schema.js');
     const { mergeNotebooks } = await import('../src/lib/syncEngine.js');
     const work = 'nb-work-00000000-0000-4000-8000-000000000002';
-    // The server (partial unique index notebooks_oneDefault) can only ever send ONE isDefault=1.
-    await mergeNotebooks([syncNotebook(CANON, true), syncNotebook(work, false)]);
-    const defaults = (await db.notebooks.toArray()).filter((n) => n.isDefault && n.deletedAt === null);
-    expect(defaults.map((n) => n.id)).toEqual([CANON]); // exactly one, and it's the server's canonical
+    // isDefault is gone (#61) — the no-duplicate invariant is structural. Assert exact count instead.
+    await mergeNotebooks([syncNotebook(CANON), syncNotebook(work)]);
+    const live = (await db.notebooks.toArray()).filter((n) => n.deletedAt === null);
+    expect(live.map((n) => n.id).sort()).toEqual([CANON, work].sort());
   });
 
   it('IDEMPOTENT: a pointer that RESOLVES to a live notebook (a user-chosen one) is KEPT, not yanked to default', async () => {

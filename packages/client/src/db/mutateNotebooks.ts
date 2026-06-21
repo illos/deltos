@@ -9,9 +9,9 @@ import type { NotebookRow } from './schema.js';
  * Every operation is atomic: the row and the queue entry land in one transaction.
  *
  * Guards:
- *   - create: always non-default (isDefault is server-owned)
+ *   - create: new notebook (version 0 → server INSERT)
  *   - rename: no-op on missing or already-deleted notebooks
- *   - delete: no-op on default notebooks (server would reject; guard here prevents local confusion)
+ *   - delete: no-op on already-deleted notebooks; notes uncategorized (All Notes)
  */
 export const mutateNotebooks = {
   async create(name: string): Promise<NotebookId> {
@@ -21,7 +21,6 @@ export const mutateNotebooks = {
       id,
       name,
       defaultCollectionView: DEFAULT_COLLECTION_VIEW,
-      isDefault: false,
       version: 0,
       createdAt: now,
       updatedAt: now,

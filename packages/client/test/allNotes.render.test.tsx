@@ -61,7 +61,7 @@ describe('AN-1 — All Notes appears in switcher as undeletable first entry', ()
   it('renders All Notes button and has no more-options button for it', async () => {
     const { db } = await import('../src/db/schema.js');
     await db.notebooks.put({
-      id: NB_A, name: 'Work', isDefault: false, defaultCollectionView: 'list',
+      id: NB_A, name: 'Work', defaultCollectionView: 'list',
       version: 1, createdAt: '2026-06-18T00:00:00.000Z', updatedAt: '2026-06-18T00:00:00.000Z',
       deletedAt: null, syncSeq: 1,
     });
@@ -158,7 +158,7 @@ describe('AN-4 — move-note picker includes All Notes as an uncategorize target
     const note = makeNote(NOTE_A, NB_A, 'A note to move');
     await db.notes.put(note);
     await db.notebooks.put({
-      id: NB_A, name: 'Work', isDefault: false, defaultCollectionView: 'list',
+      id: NB_A, name: 'Work', defaultCollectionView: 'list',
       version: 1, createdAt: '2026-06-18T00:00:00.000Z', updatedAt: '2026-06-18T00:00:00.000Z',
       deletedAt: null, syncSeq: 1,
     });
@@ -192,21 +192,20 @@ describe('AN-4 — move-note picker includes All Notes as an uncategorize target
 
 // ── AN-5: No duplicate default ───────────────────────────────────────────────
 
-describe('AN-5 — no-duplicate-default: no code path creates a second default row', () => {
-  it('after merging server notebooks, at most one isDefault row exists in IDB', async () => {
+describe('AN-5 — no-duplicate-default: merge never duplicates notebooks', () => {
+  it('after merging 2 server notebooks, IDB contains exactly those 2 (no duplication, no fabrication)', async () => {
     const { db } = await import('../src/db/schema.js');
     const { mergeNotebooks } = await import('../src/lib/syncEngine.js');
     const NOW = '2026-06-20T12:00:00.000Z';
 
-    // Server can only send one isDefault=true (enforced by server partial unique index).
-    // This test asserts the CLIENT never fabricates a second isDefault row.
+    // isDefault is gone (#61) — the no-duplicate invariant is now structural (no column to duplicate).
+    // This test asserts the client stores exactly what the server sends, no more.
     await mergeNotebooks([
       {
         id: NB_A as NotebookId,
         accountId: 'acct-1',
         name: 'Notes',
         defaultCollectionView: 'list',
-        isDefault: true,
         version: 1,
         createdAt: NOW,
         updatedAt: NOW,
@@ -218,7 +217,6 @@ describe('AN-5 — no-duplicate-default: no code path creates a second default r
         accountId: 'acct-1',
         name: 'Work',
         defaultCollectionView: 'list',
-        isDefault: false,
         version: 1,
         createdAt: NOW,
         updatedAt: NOW,
@@ -228,9 +226,9 @@ describe('AN-5 — no-duplicate-default: no code path creates a second default r
     ] as Parameters<typeof mergeNotebooks>[0]);
 
     const allNotebooks = await db.notebooks.toArray();
-    const defaults = allNotebooks.filter((nb) => nb.isDefault && nb.deletedAt === null);
-    expect(defaults).toHaveLength(1);
-    expect(defaults[0]?.id).toBe(NB_A);
+    expect(allNotebooks).toHaveLength(2);
+    const ids = allNotebooks.map((nb) => nb.id).sort();
+    expect(ids).toEqual([NB_A, NB_B].sort());
   });
 });
 

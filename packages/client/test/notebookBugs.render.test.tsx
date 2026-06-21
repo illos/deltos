@@ -58,8 +58,8 @@ describe('B1 — NavContent delete affordance', () => {
   async function renderNav() {
     const { db } = await import('../src/db/schema.js');
     await db.notebooks.bulkPut([
-      { id: NB_DEFAULT, name: 'Notes', isDefault: true,  defaultCollectionView: 'list', version: 1, createdAt: '2026-06-18T00:00:00.000Z', updatedAt: '2026-06-18T00:00:00.000Z', deletedAt: null, syncSeq: 1 },
-      { id: NB_CUSTOM,  name: 'Work',  isDefault: false, defaultCollectionView: 'list', version: 1, createdAt: '2026-06-18T00:00:00.000Z', updatedAt: '2026-06-18T00:00:00.000Z', deletedAt: null, syncSeq: 1 },
+      { id: NB_DEFAULT, name: 'Notes', defaultCollectionView: 'list', version: 1, createdAt: '2026-06-18T00:00:00.000Z', updatedAt: '2026-06-18T00:00:00.000Z', deletedAt: null, syncSeq: 1 },
+      { id: NB_CUSTOM,  name: 'Work',  defaultCollectionView: 'list', version: 1, createdAt: '2026-06-18T00:00:00.000Z', updatedAt: '2026-06-18T00:00:00.000Z', deletedAt: null, syncSeq: 1 },
     ]);
     const { NavContent } = await import('../src/views/NavContent.js');
     render(
@@ -116,7 +116,7 @@ describe('B2 — selecting a notebook navigates to the list', () => {
   it('clicking a notebook from /note/:id lands on /', async () => {
     const { db } = await import('../src/db/schema.js');
     await db.notebooks.put({
-      id: NB_DEFAULT, name: 'Notes', isDefault: true, defaultCollectionView: 'list',
+      id: NB_DEFAULT, name: 'Notes', defaultCollectionView: 'list',
       version: 1, createdAt: '2026-06-18T00:00:00.000Z', updatedAt: '2026-06-18T00:00:00.000Z', deletedAt: null, syncSeq: 1,
     });
     await db.notes.put(makeNote(NOTE_ID, NB_DEFAULT, 'A note'));

@@ -23,7 +23,6 @@ export interface NotebookRow {
   accountId: string;
   name: string;
   defaultCollectionView: string;
-  isDefault: number; // SQLite boolean: 1 = the undeletable default (exactly one per account)
   version: number; // CAS counter (rename / delete)
   createdAt: string; // ISO-8601
   updatedAt: string; // ISO-8601

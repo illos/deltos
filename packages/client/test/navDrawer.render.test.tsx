@@ -28,7 +28,6 @@ beforeEach(async () => {
     id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' as import('@deltos/shared').NotebookId,
     name: 'My Notes',
     defaultCollectionView: 'list',
-    isDefault: true,
     version: 1,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',

@@ -14,7 +14,6 @@
 
 DELETE FROM notes;
 DELETE FROM notebooks;
-DELETE FROM notebookSyncSeq;
 DELETE FROM accountSyncSeq;
 DELETE FROM grants;
 DELETE FROM refreshSessions;

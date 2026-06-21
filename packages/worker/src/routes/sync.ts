@@ -48,13 +48,12 @@ function rowToSyncNote(row: NoteRow): SyncNote {
   return { ...rowToResponse(row), deletedAt: row.deletedAt ?? null, syncSeq: row.syncSeq };
 }
 
-/** NotebookRow (DB) → SyncNotebook (wire). isDefault is the SQLite 0/1 ⇒ boolean. */
+/** NotebookRow (DB) → SyncNotebook (wire). */
 function notebookRowToSync(row: NotebookRow): SyncNotebook {
   return {
     id: row.id as SyncNotebook['id'],
     name: row.name,
     defaultCollectionView: row.defaultCollectionView,
-    isDefault: row.isDefault === 1,
     version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -69,7 +68,6 @@ function notebookConflictRow(row: NotebookRow): NonNullable<Extract<NotebookPush
     id: row.id as SyncNotebook['id'],
     name: row.name,
     defaultCollectionView: row.defaultCollectionView,
-    isDefault: row.isDefault === 1,
     version: row.version,
   };
 }

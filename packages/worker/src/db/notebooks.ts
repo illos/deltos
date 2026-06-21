@@ -38,8 +38,8 @@ export async function insertNotebook(
     { sql: BUMP_SEQ_SQL, params: [accountId] },
     {
       sql: `
-        INSERT INTO notebooks (id, accountId, name, defaultCollectionView, isDefault, version, createdAt, updatedAt, syncSeq)
-        SELECT ?, ?, ?, ?, 0, ?, ?, ?, (${READ_SEQ_SQL})
+        INSERT INTO notebooks (id, accountId, name, defaultCollectionView, version, createdAt, updatedAt, syncSeq)
+        SELECT ?, ?, ?, ?, ?, ?, ?, (${READ_SEQ_SQL})
         WHERE NOT EXISTS (SELECT 1 FROM notebooks WHERE id = ?)
       `,
       params: [

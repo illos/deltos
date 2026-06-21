@@ -47,7 +47,6 @@ async function seedStore() {
     {
       id: NB_A,
       name: 'Notes',
-      isDefault: true,
       defaultCollectionView: 'list',
       version: 1,
       createdAt: '2026-06-19T00:00:00.000Z',
@@ -58,7 +57,6 @@ async function seedStore() {
     {
       id: NB_B,
       name: 'Work',
-      isDefault: false,
       defaultCollectionView: 'list',
       version: 1,
       createdAt: '2026-06-19T00:00:00.000Z',

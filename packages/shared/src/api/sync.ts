@@ -53,8 +53,8 @@ export type SyncPushEntry = z.infer<typeof SyncPushEntrySchema>;
  * One queued NOTEBOOK write to push. `baseVersion`: 0 = create, N = mutate at version N.
  *  - `draft` present, `delete` absent → create (baseVersion 0) or rename/retitle (baseVersion N).
  *  - `delete: true` → tombstone the notebook; its live notes are moved to Trash server-side
- *    (`sys:trashedAt`). The default notebook (server-owned `isDefault`) CANNOT be deleted → conflict.
- * A client can never create/assert the default; `isDefault` is not part of the draft.
+ *    (`sys:trashedAt`). Every notebook is deletable — there is no stored default (#58/#61).
+ * A client creates/deletes any owned notebook; the server CAS-guards the operation.
  */
 export const NotebookPushEntrySchema = z
   .object({

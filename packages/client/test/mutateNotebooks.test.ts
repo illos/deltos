@@ -22,7 +22,6 @@ beforeEach(async () => {
     id: DEFAULT_NB_ID,
     name: 'Notes',
     defaultCollectionView: 'list',
-    isDefault: true,
     version: 1,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
@@ -39,7 +38,6 @@ describe('NB-1 — create adds notebook row + queue entry', () => {
     const row = await db.notebooks.get(id);
     expect(row?.name).toBe('Work');
     expect(row?.deletedAt).toBeNull();
-    expect(row?.isDefault).toBe(false);
     const queue = await db.notebookQueue.toArray();
     expect(queue).toHaveLength(1);
     expect(queue[0]?.recordId).toBe(id);
@@ -89,7 +87,7 @@ describe('NB-4 — delete marks deletedAt + queues delete entry', () => {
 });
 
 describe('NB-5 — all notebooks are deletable (no stored default in the new model)', () => {
-  it('tombstones an isDefault notebook — All Notes is synthetic so every real notebook is deletable', async () => {
+  it('tombstones any real notebook — All Notes is synthetic so every real notebook is deletable', async () => {
     const { mutateNotebooks } = await import('../src/db/mutateNotebooks.js');
     const { db } = await import('../src/db/schema.js');
     await mutateNotebooks.delete(DEFAULT_NB_ID);

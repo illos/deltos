@@ -47,7 +47,6 @@ export interface NotebookRow {
   id: NotebookId;
   name: string;
   defaultCollectionView: string;
-  isDefault: boolean;
   version: number;
   createdAt: string;
   updatedAt: string;

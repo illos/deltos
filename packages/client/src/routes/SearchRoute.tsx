@@ -164,7 +164,6 @@ export function SearchRoute() {
     const allNotesRow: NotebookRow = {
       id: null as unknown as NotebookId,
       name: 'All Notes',
-      isDefault: false,
       defaultCollectionView: 'list',
       version: 0,
       createdAt: '',

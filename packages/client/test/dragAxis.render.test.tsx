@@ -72,7 +72,7 @@ beforeEach(async () => {
   localStorage.clear();
   await db.notebooks.put({
     id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' as NotebookId,
-    name: 'Notes', defaultCollectionView: 'list', isDefault: true,
+    name: 'Notes', defaultCollectionView: 'list',
     version: 1, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
     deletedAt: null, syncSeq: 1,
   });

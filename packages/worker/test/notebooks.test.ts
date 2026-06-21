@@ -25,6 +25,7 @@ const MIGRATIONS = [
   '0004_password-auth.sql', '0005_recovery-established.sql', '0006_account-sync-seq.sql',
   '0007_reconcile-account-sync-seq.sql', '0008_notebooks.sql', '0009_backfill-default-notebooks.sql',
   '0010_nullable-notebookid-all-notes.sql',
+  '0011_drop-isdefault-notebooksyncseg-notes_pull.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function sqliteAdapter(db: Database.Database): DbAdapter {
@@ -77,18 +78,16 @@ describe('notebooks — sync entity (mutate layer)', () => {
     db = sqliteAdapter(raw);
   });
 
-  it('#58: NO default notebook exists — a fresh account has zero notebooks, no isDefault row, no oneDefault index', async () => {
+  it('#58/#61: NO default notebook exists — a fresh account has zero notebooks (isDefault column dropped in 0011)', async () => {
     // Structural assertion: the duplicate-default bug class is eliminated by ABSENCE. There is no
-    // createDefaultNotebook (export removed), the unique-default index is dropped (migration 0010), and a
-    // new account starts empty — its notes are uncategorized (notebookId null → All Notes).
+    // createDefaultNotebook (removed @#58), no isDefault column (dropped @#61), and a new account starts
+    // empty — its notes are uncategorized (notebookId null → All Notes).
     const { notebooks } = await pullSince(db, ACCT, 0);
     expect(notebooks).toHaveLength(0);
-    // The oneDefault index is gone, and no client can assert isDefault (insertNotebook forces 0).
-    const raw = (db as unknown as { _raw?: unknown });
-    void raw; // (schema-level absence is verified on real D1 in the migration; here we assert behavior)
     const created = await insertNotebook(db, nbEntry(NB1, 0, 'Work'), ACCT, NOW);
     expect(created.outcome).toBe('accepted');
-    if (created.outcome === 'accepted') expect(created.row.isDefault).toBe(0); // never default
+    // isDefault column is gone — row has no such field (#61)
+    if (created.outcome === 'accepted') expect((created.row as Record<string, unknown>)['isDefault']).toBeUndefined();
   });
 
   it('create + rename a notebook (CAS); a stale rename conflicts', async () => {

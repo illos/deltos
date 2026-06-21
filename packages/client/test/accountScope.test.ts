@@ -38,7 +38,7 @@ async function seedAccountA() {
     version: 1, createdAt: 'x', updatedAt: 'x', syncStatus: 'synced', accountId: A,
   } as never);
   await db.notebooks.put({
-    id: NB_A, name: 'Notes', defaultCollectionView: 'list', isDefault: true,
+    id: NB_A, name: 'Notes', defaultCollectionView: 'list',
     version: 1, createdAt: 'x', updatedAt: 'x', deletedAt: null, syncSeq: 1,
   } as never);
   await db.noteVersions.add({

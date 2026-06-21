@@ -61,6 +61,7 @@ const ALL_MIGRATIONS = [
   '0006_account-sync-seq.sql', '0007_reconcile-account-sync-seq.sql',
   '0008_notebooks.sql', '0009_backfill-default-notebooks.sql',
   '0010_nullable-notebookid-all-notes.sql',
+  '0011_drop-isdefault-notebooksyncseg-notes_pull.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 const DG_AUD = 'deltos.v1.donegate';
 

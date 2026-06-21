@@ -22,6 +22,7 @@ const ALL_MIGRATIONS = [
   '0004_password-auth.sql', '0005_recovery-established.sql', '0006_account-sync-seq.sql',
   '0007_reconcile-account-sync-seq.sql', '0008_notebooks.sql', '0009_backfill-default-notebooks.sql',
   '0010_nullable-notebookid-all-notes.sql',
+  '0011_drop-isdefault-notebooksyncseg-notes_pull.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function d1Over(raw: Database.Database): D1Database {
@@ -60,7 +61,7 @@ const post = (env: Env, path: string, body: unknown, token: string) =>
 
 const pull = async (env: Env, token: string) => {
   const res = await app.request('/api/sync/pull?cursor=0', { headers: { Authorization: `Bearer ${token}` } }, env);
-  return res.json() as Promise<{ notes: Array<{ id: string; notebookId: string; version: number }>; notebooks: Array<{ id: string; isDefault: boolean }> }>;
+  return res.json() as Promise<{ notes: Array<{ id: string; notebookId: string; version: number }>; notebooks: Array<{ id: string }> }>;
 };
 
 const NOTE = '00000000-0000-4000-e000-000000000001';
