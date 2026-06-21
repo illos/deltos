@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate, useMatch } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
 import type { NotebookId } from '@deltos/shared';
 import { NewNote } from './routes/NewNote.js';
@@ -22,6 +22,7 @@ import { resolveCollectionView } from './lib/collectionViews.js';
 import type { CollectionViewProps } from './lib/collectionViews.js';
 import { useNotebookStore } from './lib/notebookStore.js';
 import { notePreview, formatSmartDate } from './lib/notePreview.js';
+import { ComposeNew, Search } from './icons/index.js';
 import { SyncIndicator } from './components/SyncIndicator.js';
 import { SessionStatus } from './components/SessionStatus.js';
 import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
@@ -114,6 +115,14 @@ export function HomeView({ notebookId }: CollectionViewProps) {
   const allNotes = useNotes();
   // null = All Notes = show every non-trashed note; a real id = filter to that notebook's notes.
   const notes = notebookId === null ? allNotes : allNotes.filter((n) => n.notebookId === notebookId);
+  // List header name: the current notebook, or "All Notes" for the null aggregate (#59).
+  const notebook = useCurrentNotebook();
+  const listName = notebookId === null ? 'All Notes' : (notebook?.name ?? '…');
+  // Selected-row (master-detail): the note open in the right region, from the URL — works even though
+  // HomeView renders OUTSIDE the note Route (useMatch reads the current location anywhere).
+  const noteMatch = useMatch('/note/:id');
+  const openNoteId = noteMatch?.params.id ?? null;
+  const navigate = useNavigate();
   // Single-open invariant: only one swipe row open at a time
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -131,10 +140,25 @@ export function HomeView({ notebookId }: CollectionViewProps) {
 
   return (
     <div className="home">
-      <div className="home__header">
-        <span className="home__title">Notes</span>
-        <Link to="/new" className="home__new-btn">+ New</Link>
+      {/* §2 list header: notebook name + N-notes count (top-left), compose icon top-right (off the FAB). */}
+      <header className="home__header">
+        <div className="home__heading">
+          <h1 className="home__title">{listName}</h1>
+          <span className="dt-meta--faint home__count">{notes.length} {notes.length === 1 ? 'note' : 'notes'}</span>
+        </div>
+        <Link to="/new" className="home__compose" aria-label="New note">
+          <ComposeNew size={21} />
+        </Link>
+      </header>
+
+      {/* §2 persistent search field. Static-vibe: a real field-look that opens the search view (region 3). */}
+      <div className="home__search">
+        <button className="home__search-field" onClick={() => navigate('/search')}>
+          <Search className="home__search-icon" size={15} />
+          <span className="home__search-placeholder">Search</span>
+        </button>
       </div>
+
       {notes.length === 0 ? (
         <p className="home__lede">No notes yet.</p>
       ) : (
@@ -142,6 +166,7 @@ export function HomeView({ notebookId }: CollectionViewProps) {
           {notes.map(note => {
             const { displayTitle, previewLine } = notePreview(note);
             const smartDate = formatSmartDate(note.updatedAt);
+            const selected = note.id === openNoteId;
             return (
               <li key={note.id}>
                 <SwipeRow
@@ -151,7 +176,11 @@ export function HomeView({ notebookId }: CollectionViewProps) {
                   onDelete={() => handleDelete(note)}
                   onDuplicate={() => handleDuplicate(note)}
                 >
-                  <Link to={`/note/${note.id}`} className="home__note-link">
+                  <Link
+                    to={`/note/${note.id}`}
+                    className={`home__note-link${selected ? ' home__note-link--selected' : ''}`}
+                    aria-current={selected ? 'page' : undefined}
+                  >
                     <span className="home__note-title">{displayTitle}</span>
                     <span className="home__note-meta">
                       <span className="home__note-date">{smartDate}</span>
@@ -165,10 +194,6 @@ export function HomeView({ notebookId }: CollectionViewProps) {
           })}
         </ul>
       )}
-
-      <div className="home__footer">
-        <Link to="/trash" className="home__trash-link">Trash</Link>
-      </div>
     </div>
   );
 }
