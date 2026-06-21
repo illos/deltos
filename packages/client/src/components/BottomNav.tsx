@@ -1,9 +1,21 @@
 import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
+import type { ComponentType } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { NavContent } from '../views/NavContent.js';
 import { getNavActions } from '../lib/bottomNavActions.js';
 import { lockBodyScroll, unlockBodyScroll } from '../lib/bodyScrollLock.js';
 import { useDragAxis } from '../lib/useDragAxis.js';
+import { ComposeNew, Undo, Redo, Search } from '../icons/index.js';
+import type { IconProps } from '../icons/index.js';
+
+// Action-slot icons, mapped by registry id (the registry stays data-only). Packet §4: New (compose,
+// --accent) · Undo · Redo · Search (--secondary), icon over a Plex Mono 10px label.
+const ACTION_ICONS: Record<string, ComponentType<IconProps>> = {
+  'new-note': ComposeNew,
+  undo: Undo,
+  redo: Redo,
+  search: Search,
+};
 
 /**
  * Mobile bottom nav — replaces the left-drawer container on mobile / tablet-portrait.
@@ -132,6 +144,8 @@ export function BottomNav() {
       navigate('/search');
       return;
     }
+    // 'undo' / 'redo' are present in the §4 action row (mockup) but INERT for the static-vibe phase —
+    // wiring them to the editor's undo/redo lands with the editor work (Deploy 3). No-op for now.
   }, [navigate]);
 
   const actions = getNavActions();
@@ -172,16 +186,20 @@ export function BottomNav() {
 
           {!expanded && (
             <div className="bottom-nav__actions" role="toolbar" aria-label="Navigation actions">
-              {actions.map((action) => (
-                <button
-                  key={action.id}
-                  className="bottom-nav__action"
-                  aria-label={action.ariaLabel}
-                  onClick={() => handleAction(action.id)}
-                >
-                  {action.label}
-                </button>
-              ))}
+              {actions.map((action) => {
+                const Icon = ACTION_ICONS[action.id];
+                return (
+                  <button
+                    key={action.id}
+                    className={`bottom-nav__action${action.id === 'new-note' ? ' bottom-nav__action--accent' : ''}`}
+                    aria-label={action.ariaLabel}
+                    onClick={() => handleAction(action.id)}
+                  >
+                    {Icon ? <Icon size={22} /> : null}
+                    <span className="bottom-nav__action-label">{action.label}</span>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

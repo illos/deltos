@@ -1664,12 +1664,14 @@ a.auth__link { display: inline; }
   z-index: 300;
   flex-direction: column;
   align-items: stretch;
-  background: var(--paper);
-  border-top: 1px solid var(--border);
+  /* §6 drag-up sheet — surface --nav, 22px top-radius, large soft shadow. */
+  background: var(--nav);
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.22);
   /* Fixed full height; translateY (set imperatively by JS) parks it off-screen when
      collapsed so only the bar (handle + actions) is visible at the bottom.
      GPU transform only — no max-height animation (that was the jank source). */
-  height: 75vh;
+  height: 76vh;
   overflow: hidden;
   will-change: transform;
 }
@@ -1697,13 +1699,13 @@ a.auth__link { display: inline; }
   flex-shrink: 0;
   touch-action: manipulation;
 }
+/* §6 grab handle — the --handle pill centered at the top of the bar. */
 .bottom-nav__handle-bar {
   display: block;
-  width: 2.5rem;
-  height: 3px;
-  background: var(--secondary);
+  width: 2.25rem;
+  height: 4px;
+  background: var(--handle);
   border-radius: 2px;
-  opacity: 0.5;
 }
 
 .bottom-nav__actions {
@@ -1711,19 +1713,24 @@ a.auth__link { display: inline; }
   gap: 0;
   padding: 0 0.5rem 0.35rem;
 }
+/* §4 action slot — icon over a Plex Mono 10px label; New = --accent, the rest --secondary. */
 .bottom-nav__action {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
   background: none;
   border: none;
-  color: inherit;
+  color: var(--secondary);
   cursor: pointer;
-  padding: 0.55rem 0.5rem;
-  font-size: 0.9rem;
-  text-align: center;
+  padding: 0.5rem 0.4rem;
   border-radius: 0.375rem;
   touch-action: manipulation;
 }
-.bottom-nav__action:active { background: var(--border); }
+.bottom-nav__action--accent { color: var(--accent); }
+.bottom-nav__action-label { font-family: var(--mono); font-size: 10px; }
+.bottom-nav__action:active { background: var(--sel); }
 
 .bottom-nav__sheet {
   flex: 1;
@@ -1789,19 +1796,10 @@ a.auth__link { display: inline; }
   /* Activate the bottom nav. */
   .bottom-nav { display: flex; }
 
-  /* ── #34 Edge-to-edge note list (#34) ──────────────────────────────── */
-  /* Remove the .home container's side gutters so list rows span full width. */
-  .home {
-    padding-left: 0;
-    padding-right: 0;
-    max-width: 100%;
-  }
-  /* Re-apply horizontal spacing to header, empty-state, and footer only. */
-  .home__header { padding-left: 1.25rem; padding-right: 1.25rem; }
-  .home__lede   { padding-left: 1.25rem; padding-right: 1.25rem; }
-  .home__footer  { padding-left: 1.25rem; padding-right: 1.25rem; }
-  /* Row text: nudge padding to feel right at full bleed (was 1rem, now 1.1rem). */
-  .home__note-link { padding-left: 1.1rem; padding-right: 1.1rem; }
+  /* ── §4 mobile home (note list) ──────────────────────────────────────
+     The §2 list is already full-bleed (no .home max-width/padding; rows carry 12px 18px). Mobile §4
+     only bumps the notebook-name title larger per the mobile mockup. */
+  .home__title { font-size: 27px; line-height: 1.15; }
 }
 
 /* ── Editor note actions (Move / History buttons in note header) ──────────── */

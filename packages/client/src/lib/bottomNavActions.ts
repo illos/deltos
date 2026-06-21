@@ -35,6 +35,10 @@ export function _clearNavRegistryForTest(): void {
   _registry.length = 0;
 }
 
-// Default v1 actions — registered at module init.
-registerNavAction({ id: 'new-note', label: '＋ New note', ariaLabel: 'New note' });
-registerNavAction({ id: 'search',   label: '🔍 Search',   ariaLabel: 'Search' });
+// Default actions — registered at module init. Packet §4 mobile action-slot row: New · Undo · Redo
+// · Search (icon over a Plex Mono 10px label). The label is now plain text — BottomNav renders the
+// icon mapped by id; future tooling/plugins push more descriptors without touching BottomNav.
+registerNavAction({ id: 'new-note', label: 'New',    ariaLabel: 'New note' });
+registerNavAction({ id: 'undo',     label: 'Undo',   ariaLabel: 'Undo' });
+registerNavAction({ id: 'redo',     label: 'Redo',   ariaLabel: 'Redo' });
+registerNavAction({ id: 'search',   label: 'Search', ariaLabel: 'Search' });
