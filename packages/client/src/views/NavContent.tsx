@@ -5,19 +5,24 @@ import { useNotebooks, useNotes } from '../db/storeHooks.js';
 import { useNotebookStore } from '../lib/notebookStore.js';
 import { mutateNotebooks } from '../db/mutateNotebooks.js';
 import { notifyQueueWrite } from '../lib/syncEngine.js';
+import { Notebook, BulletList, Plus, Trash, SettingsSliders } from '../icons/index.js';
 
 interface NavContentProps {
-  /** Called after a navigation action (notebook select, trash link). Lets the drawer close itself. */
+  /** Called after a navigation action (notebook select, trash link). Lets the drawer/sheet close itself. */
   onNavigate?: () => void;
 }
 
 /**
- * The single composable nav component. Renders in two containers:
- *   1. Inside DrawerNav (left pull-out drawer, mobile/tablet-portrait)
- *   2. Inside AllNotebooksScreen (full-screen cold-start fallback, no valid current notebook)
+ * The single composable nav component (UI refresh, Lane 2 Pass C content treatment). One surface,
+ * three containers: desktop left pane / mobile bottom sheet / cold-start full-screen.
  *
- * Desktop multi-pane (nav pane | list | note) = LATER — the component is already extractable
- * as-is because it carries no container logic.
+ * Built to the packet §1 nav spec: δ wordmark + "NOTEBOOKS" label + notebook rows (icon + name +
+ * count). The current row gets an accent LEFT-BAR + accent icon (navSys-3's confirmed treatment,
+ * refining §1's filled-bg). Per the packet there is NO per-row kebab/⋮ — the notebook-delete
+ * affordance is deferred to the phase-2 interactive pass.
+ *
+ * All Notes (#59 synthetic aggregate) is pinned ABOVE the notebooks (Jim's call), same row geometry,
+ * a distinct icon, undeletable. PROVISIONAL ("for now") — the icon + treatment may be refined later.
  */
 export function NavContent({ onNavigate }: NavContentProps) {
   const notebooks = useNotebooks();
@@ -26,7 +31,6 @@ export function NavContent({ onNavigate }: NavContentProps) {
   const setCurrentNotebook = useNotebookStore((s) => s.setCurrentNotebook);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
-  const [menuOpenId, setMenuOpenId] = useState<NotebookId | null>(null);
   const navigate = useNavigate();
 
   const countByNotebook = useMemo(() => {
@@ -37,7 +41,7 @@ export function NavContent({ onNavigate }: NavContentProps) {
     return m;
   }, [notes]);
 
-  // B2: selecting a notebook (or null = All Notes) always navigates to the list.
+  // Selecting a notebook (or null = All Notes) always navigates to the list.
   const handleSelect = useCallback(
     async (id: NotebookId | null) => {
       await setCurrentNotebook(id);
@@ -67,31 +71,23 @@ export function NavContent({ onNavigate }: NavContentProps) {
     setNewName('');
   }, []);
 
-  // B1: delete a notebook; its notes fall back to All Notes (uncategorized).
-  const handleDelete = useCallback(
-    async (id: NotebookId) => {
-      await mutateNotebooks.delete(id);
-      notifyQueueWrite(id);
-      setMenuOpenId(null);
-      if (id === currentNotebookId) {
-        await setCurrentNotebook(null); // fall back to All Notes
-        navigate('/');
-      }
-      onNavigate?.();
-    },
-    [currentNotebookId, setCurrentNotebook, navigate, onNavigate],
-  );
-
   return (
     <nav className="nav-content" aria-label="Notebooks">
+      {/* δ wordmark — δ is always Newsreader serif in --accent; "deltos" is always Plex Mono (invariants). */}
+      <Link to="/" className="nav-content__wordmark" onClick={onNavigate}>
+        <span className="dt-wordmark-delta nav-content__wordmark-delta">δ</span>
+        <span className="nav-content__wordmark-text">deltos</span>
+      </Link>
+
+      <p className="dt-label nav-content__label">Notebooks</p>
+
       <ul className="nav-content__list">
-        {/* All Notes — synthetic aggregate, always first, undeletable by construction */}
+        {/* All Notes — synthetic aggregate, pinned above the notebooks (Jim), distinct icon, undeletable. */}
         <li className={`nav-content__item${currentNotebookId === null ? ' nav-content__item--current' : ''}`}>
           <button className="nav-content__nb-btn" onClick={() => { void handleSelect(null); }}>
+            <BulletList className="nav-content__nb-icon" size={15} />
             <span className="nav-content__nb-name">All Notes</span>
-            <span className="nav-content__nb-meta">
-              <span className="nav-content__nb-count">{notes.length}</span>
-            </span>
+            <span className="nav-content__nb-count">{notes.length}</span>
           </button>
         </li>
         {notebooks.map((nb) => (
@@ -100,37 +96,10 @@ export function NavContent({ onNavigate }: NavContentProps) {
             className={`nav-content__item${nb.id === currentNotebookId ? ' nav-content__item--current' : ''}`}
           >
             <button className="nav-content__nb-btn" onClick={() => { void handleSelect(nb.id); }}>
+              <Notebook className="nav-content__nb-icon" size={15} />
               <span className="nav-content__nb-name">{nb.name}</span>
-              <span className="nav-content__nb-meta">
-                <span className="nav-content__nb-count">{countByNotebook[nb.id] ?? 0}</span>
-              </span>
+              <span className="nav-content__nb-count">{countByNotebook[nb.id] ?? 0}</span>
             </button>
-            {menuOpenId === nb.id ? (
-              <div className="nav-content__nb-menu" role="menu">
-                <button
-                  className="nav-content__nb-delete"
-                  role="menuitem"
-                  onClick={() => { void handleDelete(nb.id); }}
-                >
-                  Delete
-                </button>
-                <button
-                  className="nav-content__nb-menu-close"
-                  aria-label="Close menu"
-                  onClick={() => setMenuOpenId(null)}
-                >
-                  ✕
-                </button>
-              </div>
-            ) : (
-              <button
-                className="nav-content__nb-more"
-                aria-label={`More options for ${nb.name}`}
-                onClick={(e) => { e.stopPropagation(); setMenuOpenId(nb.id); }}
-              >
-                ⋮
-              </button>
-            )}
           </li>
         ))}
       </ul>
@@ -150,13 +119,20 @@ export function NavContent({ onNavigate }: NavContentProps) {
           </div>
         </form>
       ) : (
-        <button className="nav-content__new-btn" onClick={() => setCreating(true)}>＋ New notebook</button>
+        <button className="nav-content__new-btn" onClick={() => setCreating(true)}>
+          <Plus className="nav-content__nb-icon" size={15} />
+          <span>New notebook</span>
+        </button>
       )}
 
       <div className="nav-content__footer">
-        <Link to="/trash" className="nav-content__trash-link" onClick={onNavigate}>Trash</Link>
-        <button className="nav-content__settings-btn" onClick={() => { navigate('/settings'); onNavigate?.(); }}>
-          Settings &amp; account
+        <Link to="/trash" className="nav-content__footer-link" onClick={onNavigate}>
+          <Trash className="nav-content__nb-icon" size={15} />
+          <span>Trash</span>
+        </Link>
+        <button className="nav-content__footer-link" onClick={() => { navigate('/settings'); onNavigate?.(); }}>
+          <SettingsSliders className="nav-content__nb-icon" size={15} />
+          <span>Settings</span>
         </button>
       </div>
     </nav>

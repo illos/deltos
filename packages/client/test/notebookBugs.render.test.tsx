@@ -54,7 +54,10 @@ afterEach(() => {
 
 // ─── B1: delete notebook affordance ─────────────────────────────────────────
 
-describe('B1 — NavContent delete affordance', () => {
+// SKIPPED in Pass C (UI refresh): the per-notebook ⋮/delete kebab was removed to match packet §1
+// (no kebab in the nav). The notebook-delete affordance + these tests return in the phase-2
+// interactive-affordances pass — un-skip and adapt to the new trigger then.
+describe.skip('B1 — NavContent delete affordance', () => {
   async function renderNav() {
     const { db } = await import('../src/db/schema.js');
     await db.notebooks.bulkPut([

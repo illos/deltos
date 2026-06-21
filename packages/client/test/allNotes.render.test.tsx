@@ -78,13 +78,10 @@ describe('AN-1 — All Notes appears in switcher as undeletable first entry', ()
       expect(screen.queryByRole('button', { name: /^All Notes/ })).not.toBeNull();
     });
 
-    // All Notes has no "more options" menu (synthetic — undeletable by construction)
+    // All Notes is undeletable. Pass C (UI refresh) removed the per-row ⋮ kebab entirely (packet §1),
+    // so there's no "more options" anywhere — All Notes is undeletable by construction either way.
     expect(screen.queryByLabelText('More options for All Notes')).toBeNull();
-
-    // Real notebooks still get their menu
-    await waitFor(() => {
-      expect(screen.queryByLabelText('More options for Work')).not.toBeNull();
-    });
+    expect(screen.queryByLabelText('More options for Work')).toBeNull();
   });
 });
 
