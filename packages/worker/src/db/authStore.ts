@@ -250,6 +250,25 @@ export interface AuthStore {
   setRecoveryEstablished(accountId: string, established: boolean, updatedAt: string): Promise<void>;
 
   /**
+   * #50 RECOVERY-REKEY HARDENING. The recovery verifier folds accountId into its Argon2id pre-image
+   * (`peppered(['recovery', accountId, normalize(phrase)])`, AP-T10 — secSys-reviewed, INTENTIONAL, do
+   * NOT de-key). So if an account's accountId is ever RE-KEYED, the stored recoveryPhc — hashed under the
+   * OLD id — no longer verifies under the new id, silently stranding recovery-phrase reset (a 100%-correct
+   * phrase 401s). The phrase is one-way (no plaintext on the server), so it CANNOT be re-hashed to the new
+   * id. The ONLY correct response (secSys #76) is to RE-ESTABLISH: this atomically blanks the verifier to
+   * the unestablished sentinel AND clears recoveryEstablished, so the P0 belt forces a fresh
+   * /recovery/rotate (which re-keys recoveryPhc to the NEW accountId) before entry — recovery follows the
+   * key. Never silently re-hashes, never leaves stale-works-then-breaks, never silent-disabled.
+   *
+   * FAIL-CLOSED CONTRACT: accountId is IMMUTABLE today (server-random at signup; no runtime re-key path
+   * exists — only the one-time migration 0003 fingerprint→accountId re-point, the historical stranding
+   * source). IF any future migration or feature ever re-keys an accountId, it MUST call this for that
+   * account. SYMMETRY: only RECOVERY needs this — password (peppered(['password', password])) and the
+   * TOTP secret (AES-GCM under the global TOTP_ENC_KEY) are accountId-INDEPENDENT and survive a re-key.
+   */
+  invalidateRecoveryForRekey(accountId: string, unestablishedVerifier: string, updatedAt: string): Promise<void>;
+
+  /**
    * FINALIZE atomically (secSys (b)): set `recoveryEstablished=true` AND insert the durable refresh
    * session in ONE transaction (one db.batch), so the BELT flag and the SUSPENDERS cookie-backing row
    * can never diverge — there is no window where a durable session exists for an account whose recovery
@@ -386,6 +405,15 @@ export function createAuthStore(db: DbAdapter): AuthStore {
     },
 
     async createAccount(row) {
+      // ⚠️ accountId IMMUTABILITY CONTRACT (#50, secSys #76/#201). accountId is server-random and FIXED
+      // for the life of the account. NOTHING re-keys it at runtime — the ONLY `SET accountId` ever was the
+      // one-time migration 0003 fingerprint→accountId re-point (which silently stranded recovery on the
+      // pre-existing dogfood account, the 2026-06-20 reset-401 root). IF you EVER add a path that mutates
+      // an account's accountId (a future migration, account-merge, add-credential, or credential-rebind),
+      // you MUST call `invalidateRecoveryForRekey(accountId, UNESTABLISHED_VERIFIER, now)` for that account
+      // in the same change — the recovery verifier folds accountId into its pre-image (AP-T10) and CANNOT
+      // be re-hashed (one-way), so it must be invalidated → re-established under the new key. Password and
+      // the TOTP secret are accountId-INDEPENDENT and need nothing. See invalidateRecoveryForRekey above.
       await db.batch([
         {
           sql: `INSERT INTO accounts (accountId, createdAt) VALUES (?, ?)`,
@@ -660,6 +688,22 @@ export function createAuthStore(db: DbAdapter): AuthStore {
         {
           sql: `UPDATE passwordCredentials SET recoveryPhc = ?, updatedAt = ? WHERE accountId = ?`,
           params: [recoveryPhc, updatedAt, accountId],
+        },
+      ]);
+    },
+
+    async invalidateRecoveryForRekey(accountId, unestablishedVerifier, updatedAt) {
+      // #50: blank the verifier to the canonical UNESTABLISHED sentinel AND clear recoveryEstablished in
+      // ONE UPDATE (atomic — never a window where the flag and the verifier disagree, preserving the
+      // AP-T10/finalize invariant "recoveryEstablished=1 ⟹ a real PHC verifier exists"). The caller
+      // passes the SAME sentinel createPasswordCredential/signup uses, so /reset routes it through
+      // isPhc()→false → dummyRecoveryHash → fail() — byte-identical to the proven unestablished path — and
+      // the P0 belt forces a fresh /recovery/rotate at next login (recovery re-keys to the new accountId).
+      // Idempotent: a harmless no-op on an already-unestablished account.
+      await db.batch([
+        {
+          sql: `UPDATE passwordCredentials SET recoveryPhc = ?, recoveryEstablished = 0, updatedAt = ? WHERE accountId = ?`,
+          params: [unestablishedVerifier, updatedAt, accountId],
         },
       ]);
     },
