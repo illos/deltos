@@ -21,7 +21,7 @@
 /* The visible pill — the --handle token (grab affordance), quiet until hover/focus. */
 .resize-handle__pill {
   width: 3px;
-  height: 2.25rem;
+  height: 38px; /* packet §2: 3px-wide, 38px-tall, radius-2 --handle pill */
   border-radius: 2px;
   background: var(--handle);
   opacity: 0.6;

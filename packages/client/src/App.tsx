@@ -15,6 +15,8 @@ const SettingsRoute = lazy(() =>
 );
 import { DrawerNav } from './components/DrawerNav.js';
 import { BottomNav } from './components/BottomNav.js';
+import { ThreeRegionShell } from './components/ThreeRegionShell.js';
+import { useIsDesktop } from './lib/useIsDesktop.js';
 import { startSyncTriggers, syncNow } from './lib/syncEngine.js';
 import { resolveCollectionView } from './lib/collectionViews.js';
 import type { CollectionViewProps } from './lib/collectionViews.js';
@@ -185,6 +187,9 @@ function AuthedShell() {
   // navOpen / DrawerNav is desktop-only (mobile uses BottomNav via CSS)
   const [navOpen, setNavOpen] = useState(false);
   const navigate = useNavigate();
+  // Device class drives the structural fork: desktop = persistent 3-region master-detail; mobile =
+  // single-column push + bottom-sheet nav. Called before the early returns (rules-of-hooks).
+  const isDesktop = useIsDesktop();
 
   // Load the device-local current notebook from IDB on first mount (with localStorage migration).
   useEffect(() => { void initNotebook(); }, [initNotebook]);
@@ -218,6 +223,19 @@ function AuthedShell() {
   const notebookId: NotebookId | null = currentNotebookId;
   const CollectionView = resolveCollectionView(notebookId, HomeView);
 
+  // DESKTOP / tablet-landscape: the persistent 3-region shell (nav pane | resizable list | note
+  // master-detail). All routes render in the note region (Jim's decision (a)); nav + list stay
+  // mounted. No top bar / drawer / FAB / bottom-nav here — each region carries its own chrome.
+  if (isDesktop) {
+    return (
+      <>
+        <ThreeRegionShell notebookId={notebookId} CollectionView={CollectionView} />
+        <ConflictToastHostSlot />
+      </>
+    );
+  }
+
+  // MOBILE / tablet-portrait: single-column, route-driven (note pushes over the list) + bottom-sheet nav.
   return (
     <div className="shell">
       {/* Desktop: left-drawer nav (hidden on mobile via CSS). Mobile: BottomNav below. */}

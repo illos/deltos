@@ -1,0 +1,57 @@
+/* Desktop / tablet-landscape 3-region shell (Lane 2 Pass B) — STATIC-VIBE frame built to the packet's
+   §Layout literal spec (docs/design/ui-refresh/README.md). nav pane (fixed) | note list (resizable)
+   | active note (fills). Content treatment (rows, headers, toolbars) + affordances are later phases. */
+
+.shell-3region {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* §1 Nav pane — surface --nav, 1px right hairline, padding 20px 13px, vertical flex, ~222px fixed. */
+.shell-3region__nav {
+  flex: 0 0 222px;
+  box-sizing: border-box;
+  background: var(--nav);
+  border-right: 1px solid var(--border);
+  padding: 20px 13px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* §2 Note list pane — surface --list, 1px right hairline; width is the device-local resizable value
+   (inline style); position:relative per the packet. */
+.shell-3region__list {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  background: var(--list);
+  border-right: 1px solid var(--border);
+  position: relative;
+  overflow-y: auto;
+}
+
+/* §3 Active note — surface --paper, fills the remaining width, scrollable. */
+.shell-3region__note {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--paper);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Region-3 empty state (no note selected). */
+.empty-note {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 8rem;
+}
+.empty-note__text {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--faint);
+}
