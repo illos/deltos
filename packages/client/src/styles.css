@@ -1800,6 +1800,15 @@ a.auth__link { display: inline; }
      The §2 list is already full-bleed (no .home max-width/padding; rows carry 12px 18px). Mobile §4
      only bumps the notebook-name title larger per the mobile mockup. */
   .home__title { font-size: 27px; line-height: 1.15; }
+
+  /* Mobile home drops the desktop/legacy chrome (navSys-3 fidelity diff): NO top app-bar (status-bar
+     → big title → list), and NO header compose icon / search field — the δ wordmark lives in the nav
+     sheet, and New + Search are bottom-nav action slots. The sync indicator relocates to the note meta. */
+  .shell__bar { display: none; }
+  .home__compose { display: none; }
+  .home__search { display: none; }
+  /* With the app-bar gone, the list title clears the notch via the top safe-area inset. */
+  .home__header { padding-top: calc(18px + env(safe-area-inset-top)); }
 }
 
 /* ── Editor note actions (Move / History buttons in note header) ──────────── */
