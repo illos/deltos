@@ -1533,9 +1533,10 @@ a.auth__link { display: inline; }
 .nav-content__nb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-content__nb-count { flex-shrink: 0; font-family: var(--mono); font-size: 11px; color: var(--faint); }
 
-/* Current row — accent LEFT-BAR (no filled bg, navSys-3's confirmed nav treatment) + accent icon
-   + ink name + secondary count. */
+/* Current row (packet §1 + navSys-3) — ALL THREE together: --sel filled-bg + accent LEFT-BAR +
+   accent icon + --ink name + --secondary count. */
 .nav-content__item--current .nav-content__nb-btn {
+  background: var(--sel);
   border-left-color: var(--accent);
   color: var(--ink);
 }
