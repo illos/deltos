@@ -2125,8 +2125,12 @@ a.auth__link { display: inline; }
   white-space: nowrap; cursor: pointer; transition: all 0.12s ease;
   min-height: 36px;            /* comfortable tap target */
 }
+/* Active = the prototype's high-contrast INK-FILLED pill (btn() in Deltos Mixer.dc.html): --ink fill,
+   --paper label, --ink border, NO accent — the controls are monochrome. Inverts per mode/palette
+   (dark fill + light text in light mode; light fill + dark text in dark mode). Applies to all 3 groups
+   incl. the active palette-swatch chip. (Supersedes the spec §1.3 --sel/--accent CSS, a spec bug.) */
 .appearance__chip.is-active {
-  background: var(--sel); color: var(--ink); border-color: var(--accent); font-weight: 600;
+  background: var(--ink); color: var(--paper); border-color: var(--ink); font-weight: 600;
 }
 .appearance__chip:active { background: var(--sel); }
 /* Palette swatch dot = that palette's own light accent ring over its own surface */
