@@ -785,22 +785,26 @@
   touch-action: manipulation;
 }
 
-/* ProseMirror — base prose */
+/* ── ProseMirror element styles (Deploy 3, Lane 3 — spec §6, theme-var driven) ──
+   The editable ROOT carries the voice + body size (var(--note) is >=16px for every voice after the
+   Mono bump) so iOS never zooms on focus, regardless of child block sizes. No hardcoded hex. */
 .editor__pm .ProseMirror {
   outline: none;
   min-height: 200px;
-  line-height: 1.65;
+  font-family: var(--ff);
+  font-size: var(--note);
+  line-height: var(--line);
+  color: var(--body);
 }
 
-.editor__pm .ProseMirror p   { margin: 0 0 0.55em; }
-.editor__pm .ProseMirror h1  { font-size: 1.55rem; font-weight: 700; margin: 1.2em 0 0.4em; line-height: 1.2; }
+.editor__pm .ProseMirror p { margin: 0 0 0.55em; }
 
-/* Unified title node — always the first h1 in the document, no top margin */
-.editor__pm .ProseMirror h1[data-type="title"] {
-  margin-top: 0;
-  margin-bottom: 1rem;
-  letter-spacing: -0.01em;
+/* Headings — the unified title (first h1) + body h1/h2/h3 (Title/Heading/Subhead). */
+.editor__pm .ProseMirror h1 {
+  font-family: var(--ff); font-size: var(--h1); font-weight: var(--h1w); color: var(--ink);
+  line-height: 1.15; letter-spacing: -0.015em; margin: 1.2em 0 0.4em;
 }
+.editor__pm .ProseMirror h1[data-type="title"] { margin-top: 0; margin-bottom: 1rem; }
 /* Placeholder when title is empty (titlePlaceholderPlugin adds data-empty attr) */
 .editor__pm .ProseMirror h1[data-type="title"][data-empty]::before {
   content: 'Title';
@@ -810,81 +814,68 @@
   float: left;
   height: 0;
 }
-.editor__pm .ProseMirror h2  { font-size: 1.25rem; font-weight: 600; margin: 1.1em 0 0.4em; }
-.editor__pm .ProseMirror h3  { font-size: 1.05rem; font-weight: 600; margin: 1em 0 0.35em; }
-/* h4-h6 raised to 1rem: 0.95rem computes to ~15.2px at a 16px root, triggering iOS focus-zoom. */
+.editor__pm .ProseMirror h2 { font-family: var(--ff); font-size: var(--h2); font-weight: 600; color: var(--ink); margin: 1.1em 0 0.4em; }
+.editor__pm .ProseMirror h3 { font-family: var(--ff); font-size: calc(var(--h2) * 0.84); font-weight: 600; color: var(--ink); margin: 1em 0 0.35em; }
+/* h4-h6 kept >=16px (1rem) — not reachable from the UI (Title/Heading/Subhead only) but possible via paste. */
 .editor__pm .ProseMirror h4,
 .editor__pm .ProseMirror h5,
-.editor__pm .ProseMirror h6  { font-size: 1rem; font-weight: 600; margin: 0.9em 0 0.3em; }
+.editor__pm .ProseMirror h6 { font-size: 1rem; font-weight: 600; color: var(--ink); margin: 0.9em 0 0.3em; }
 
 .editor__pm .ProseMirror blockquote {
-  border-left: 3px solid var(--border);
-  margin: 0 0 0.55em;
-  padding-left: 1rem;
-  color: var(--secondary);
+  font-family: var(--ff); font-style: italic; font-size: var(--quote); color: var(--secondary);
+  border-left: 2px solid var(--accent); padding-left: 16px; margin: 0 0 0.55em;
 }
 
 .editor__pm .ProseMirror pre {
-  background: #1a1d2a;
-  border-radius: 0.35rem;
-  padding: 0.85rem 1rem;
-  overflow-x: auto;
-  margin: 0 0 0.55em;
+  font-family: var(--mono); font-size: 13px; color: var(--ink);
+  background: var(--sel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.85rem 1rem; white-space: pre-wrap; overflow-x: auto; margin: 0 0 0.55em;
 }
-
-.editor__pm .ProseMirror pre code {
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  /* 1rem: 0.875rem computes to ~14px at a 16px root, triggering iOS focus-zoom on this editable surface. */
-  font-size: 1rem;
-  background: none;
-  padding: 0;
-}
+.editor__pm .ProseMirror pre code { font-family: var(--mono); font-size: inherit; background: none; padding: 0; }
 
 .editor__pm .ProseMirror code {
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 0.875em;
-  background: #1a1d2a;
-  padding: 0.15em 0.35em;
-  border-radius: 0.2rem;
+  font-family: var(--mono); font-size: 0.88em;
+  background: var(--sel); padding: 1px 5px; border-radius: 4px;
 }
 
-.editor__pm .ProseMirror hr {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 1.2em 0;
+.editor__pm .ProseMirror a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+
+.editor__pm .ProseMirror hr { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+
+/* New marks (Lane 3). highlight = accent at 24% (matches the .dt highlight invariant in tokens.css). */
+.editor__pm .ProseMirror u { text-decoration: underline; }
+.editor__pm .ProseMirror s { text-decoration: line-through; }
+.editor__pm .ProseMirror mark {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: inherit; border-radius: 3px; padding: 0 2px;
 }
 
 .editor__pm .ProseMirror ul,
 .editor__pm .ProseMirror ol {
-  margin: 0 0 0.55em;
-  padding-left: 1.5rem;
+  font-family: var(--ff); font-size: var(--note); line-height: var(--line); color: var(--body);
+  margin: 0 0 0.55em; padding-left: 24px;
 }
-
 .editor__pm .ProseMirror li { margin-bottom: 0.2em; }
 
-/* Todo items — toggle rendered as a real button (works on iOS unlike ::before) */
-.editor__pm .ProseMirror [data-type="todo"] {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-}
+/* Checklist (todo_item) — 19px box, 1.6px --faint border, radius 6px; checked = --accent fill +
+   white check; checked label struck + --faint. Toggle is a real button (tappable on iOS). */
+.editor__pm .ProseMirror [data-type="todo"] { display: flex; align-items: baseline; gap: 11px; }
 .editor__pm .ProseMirror [data-type="todo"] .todo__check {
-  background: none;
-  border: none;
-  padding: 0;
-  margin: 0;
-  cursor: pointer;
-  font-size: 1em;
-  line-height: 1;
-  color: inherit;
-  flex-shrink: 0;
-  user-select: none;
-  -webkit-user-select: none;
+  flex-shrink: 0; box-sizing: border-box; width: 19px; height: 19px;
+  margin: 0.18em 0 0; padding: 0; position: relative; align-self: flex-start;
+  background: none; border: 1.6px solid var(--faint); border-radius: 6px; cursor: pointer;
+  user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+}
+.editor__pm .ProseMirror [data-type="todo"][data-checked="true"] .todo__check {
+  background: var(--accent); border-color: var(--accent);
+}
+.editor__pm .ProseMirror [data-type="todo"][data-checked="true"] .todo__check::after {
+  content: '✓'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 13px; font-weight: 700; line-height: 1; /* white check on accent — brand constant */
 }
 .editor__pm .ProseMirror [data-type="todo"] .todo__content { flex: 1; }
 .editor__pm .ProseMirror [data-type="todo"][data-checked="true"] .todo__content {
-  color: var(--secondary);
-  text-decoration: line-through;
+  color: var(--faint); text-decoration: line-through;
 }
 
 /* Plugin island placeholder */

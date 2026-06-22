@@ -27,7 +27,8 @@ export class TodoItemView implements NodeView {
     btn.type = 'button';
     btn.className = 'todo__check';
     btn.setAttribute('aria-label', (node.attrs.checked as boolean) ? 'Mark as incomplete' : 'Mark as done');
-    btn.textContent = (node.attrs.checked as boolean) ? '☑' : '☐';
+    // No text glyph — the checkbox is a CSS box (19px, accent-fill + white check when checked);
+    // the checked state is driven by the wrapper's data-checked attr (see styles.css §editor).
 
     // Stop mousedown from moving the PM cursor into the toggle area.
     btn.addEventListener('mousedown', (e) => { e.preventDefault(); });
@@ -62,7 +63,6 @@ export class TodoItemView implements NodeView {
     const checked = node.attrs.checked as boolean;
     this.dom.setAttribute('data-checked', checked ? 'true' : 'false');
     if (node.attrs.id) this.dom.setAttribute('data-id', node.attrs.id as string);
-    this.toggleBtn.textContent = checked ? '☑' : '☐';
     this.toggleBtn.setAttribute('aria-label', checked ? 'Mark as incomplete' : 'Mark as done');
     return true;
   }
