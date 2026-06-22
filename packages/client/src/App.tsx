@@ -10,6 +10,7 @@ import { ResetRoute } from './routes/ResetRoute.js';
 import { ForcedPhraseRoute } from './routes/ForcedPhraseRoute.js';
 import { TrashRoute } from './routes/TrashRoute.js';
 import { SearchRoute } from './routes/SearchRoute.js';
+import { KbProbe } from './routes/KbProbe.js';
 const SettingsRoute = lazy(() =>
   import('./routes/SettingsRoute.js').then((m) => ({ default: m.SettingsRoute })),
 );
@@ -70,6 +71,10 @@ function AppRoutes() {
   const isAuthing = useAuthStore((s) => s.isAuthing);
   // P0-belt: an explicit server false forces the phrase screen before shell entry (abandoned-signup).
   const recoveryEstablished = useAuthStore((s) => s.recoveryEstablished);
+  // #68 throwaway probe: an isolated, AUTH-BYPASSED test route so Jim can hit /kbprobe directly on the
+  // live site (no login friction) to feel-test inputmode=none. Hook called unconditionally above.
+  const kbProbe = useMatch('/kbprobe');
+  if (kbProbe) return <KbProbe />;
 
   switch (selectBootView(isAuthed, isAuthing, recoveryEstablished)) {
     // Cold-boot /refresh still in flight — a brief neutral hold before the gate decision resolves.

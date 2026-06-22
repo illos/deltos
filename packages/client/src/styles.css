@@ -2189,3 +2189,26 @@ a.auth__link { display: inline; }
 .appearance__chip--swatch[data-swatch-palette="graphite"] .appearance__swatch { background: #3B5BDB; box-shadow: inset 0 0 0 3px #FFFFFF; }
 .appearance__chip--swatch[data-swatch-palette="manila"]   .appearance__swatch { background: #9E3B2E; box-shadow: inset 0 0 0 3px #F8F7F0; }
 .appearance__chip--swatch[data-swatch-palette="ember"]    .appearance__swatch { background: #EE431C; box-shadow: inset 0 0 0 3px #FFFFFF; }
+
+/* ── #68 inputmode=none keyboard probe (throwaway, /kbprobe) ──────────────────── */
+.kbprobe { max-width: 680px; margin: 0 auto; padding: 1.5rem 1.25rem; box-sizing: border-box; }
+.kbprobe__title { font-family: var(--ff); font-size: var(--h2); color: var(--ink); margin: 0 0 0.5rem; }
+.kbprobe__hint  { font-family: var(--ff); font-size: 14px; color: var(--secondary); line-height: 1.5; margin: 0 0 1rem; }
+.kbprobe__editor {
+  min-height: 160px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--list); padding: 0.85rem 1rem; font-family: var(--ff); font-size: var(--note);
+  color: var(--body); outline: none;
+}
+.kbprobe__editor .ProseMirror { outline: none; min-height: 130px; }
+.kbprobe__pad {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 1rem;
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+}
+.kbprobe__key {
+  min-width: 44px; min-height: 48px; padding: 0 12px;
+  font-family: var(--ff); font-size: 18px; color: var(--ink);
+  background: var(--nav); border: 1px solid var(--border); border-radius: 8px;
+  cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+}
+.kbprobe__key:active { background: var(--sel); }
+.kbprobe__key--wide { flex: 1; min-width: 120px; }
