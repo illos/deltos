@@ -742,6 +742,39 @@
 .editor__tool-glyph--underline { text-decoration: underline; }
 .editor__tool-glyph--strike    { text-decoration: line-through; }
 
+/* ── Mobile grouped contextual bar (Deploy 3, Lane 3/4 — spec §3) ──────────────
+   Pinned to the bottom of the note sub-screen; full-bleed past .editor's padding. */
+.editor__mbar {
+  position: sticky; bottom: 0; z-index: 5;
+  margin: 0 -1.25rem -3rem; /* counter .editor's horizontal (1.25rem) + bottom (3rem) padding */
+  display: flex; flex-direction: column;
+  background: var(--nav); border-top: 1px solid var(--border);
+  padding-bottom: max(26px, env(safe-area-inset-bottom));
+}
+.editor__mbar-sub {
+  display: flex; justify-content: space-around; align-items: center;
+  background: var(--sel); border-bottom: 1px solid var(--border);
+  padding: 9px 14px; gap: 4px;
+}
+.editor__mbar-main {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 11px 20px;
+}
+.editor__mbar-groups  { display: flex; align-items: center; gap: 26px; }
+.editor__mbar-history { display: flex; align-items: center; gap: 20px; }
+.editor__mbar-divider { width: 1px; height: 22px; background: var(--border); flex-shrink: 0; }
+.editor__mgroup, .editor__mtool {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: var(--secondary); cursor: pointer;
+  padding: 4px; font-family: var(--ff); -webkit-tap-highlight-color: transparent;
+}
+.editor__mgroup.is-active,
+.editor__mtool.is-active { color: var(--accent); } /* active group / active mark = accent (spec §3) */
+.editor__mtool:disabled  { opacity: 0.4; cursor: default; }
+.editor__mgroup-glyph { font-size: 19px; font-weight: 600; line-height: 1; }
+.editor__mgroup-glyph--style  { font-family: Georgia, 'Newsreader', serif; }
+.editor__mgroup-glyph--format { font-weight: 700; }
+
 /* ProseMirror host div */
 .editor__pm {
   flex: 1;

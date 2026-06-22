@@ -59,8 +59,10 @@ describe('UB-1 — toolbar renders with Undo + Redo buttons', () => {
       expect(redoBtn()).not.toBeNull();
     });
 
-    expect(undoBtn()!.textContent).toBe('Undo');
-    expect(redoBtn()!.textContent).toBe('Redo');
+    // Deploy 3: undo/redo moved into the mobile MobileEditorBar as ICON buttons (aria-label only,
+    // no text). The buttons + their depth-driven disabled logic are unchanged.
+    expect(undoBtn()!.querySelector('svg')).not.toBeNull();
+    expect(redoBtn()!.querySelector('svg')).not.toBeNull();
   });
 });
 

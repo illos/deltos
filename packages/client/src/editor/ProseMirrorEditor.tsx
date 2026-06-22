@@ -13,6 +13,7 @@ import { buildPluginIslandNodeViews } from './nodeviews/PluginIsland.js';
 import { TodoItemView } from './nodeviews/TodoItem.js';
 import { sliceToPlainText } from './clipboard.js';
 import { EditorToolbar } from './EditorToolbar.js';
+import { MobileEditorBar } from './MobileEditorBar.js';
 import { deriveActiveState, EMPTY_ACTIVE_STATE } from './editorState.js';
 import type { EditorActiveState } from './editorState.js';
 import type { ToolDescriptor } from './editorTools.js';
@@ -218,21 +219,13 @@ export function ProseMirrorEditor({
 
   return (
     <>
-      {isDesktop ? (
-        // Desktop: the registry-driven formatting toolbar (Deploy 3, slice C).
-        <EditorToolbar active={active} run={runTool} />
-      ) : (
-        // Mobile: interim Undo/Redo toolbar — slice D replaces this with the grouped MobileEditorBar.
-        <div className="editor__toolbar" role="toolbar" aria-label="Editing tools">
-          <button className="editor__tool-btn" onClick={handleUndo} disabled={!active.canUndo} aria-label="Undo">
-            Undo
-          </button>
-          <button className="editor__tool-btn" onClick={handleRedo} disabled={!active.canRedo} aria-label="Redo">
-            Redo
-          </button>
-        </div>
-      )}
+      {/* Desktop: registry-driven formatting toolbar at the top (slice C). */}
+      {isDesktop && <EditorToolbar active={active} run={runTool} />}
       <div ref={containerRef} className="editor__pm" />
+      {/* Mobile: grouped contextual bar pinned to the bottom of the note sub-screen (slice D). */}
+      {!isDesktop && (
+        <MobileEditorBar active={active} run={runTool} onUndo={handleUndo} onRedo={handleRedo} />
+      )}
     </>
   );
 }
