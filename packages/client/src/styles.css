@@ -2108,3 +2108,30 @@ a.auth__link { display: inline; }
   color: #e05252;
   margin: 0.5rem 0 0;
 }
+
+/* ── Appearance picker (Lane 5) ─────────────────────────────────────────── */
+.appearance__group { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; }
+.appearance__group:not(:last-child) { border-bottom: 1px solid var(--border); }
+.appearance__group-label {       /* metadata label — invariant: Plex Mono, uppercase, tracked */
+  font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--faint);
+}
+.appearance__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.appearance__chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 13px; border-radius: 7px;
+  border: 1px solid var(--border); background: var(--paper);
+  color: var(--secondary); font-size: 13px; line-height: 1; letter-spacing: 0.2px;
+  white-space: nowrap; cursor: pointer; transition: all 0.12s ease;
+  min-height: 36px;            /* comfortable tap target */
+}
+.appearance__chip.is-active {
+  background: var(--sel); color: var(--ink); border-color: var(--accent); font-weight: 600;
+}
+.appearance__chip:active { background: var(--sel); }
+/* Palette swatch dot = that palette's own light accent ring over its own surface */
+.appearance__swatch { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--border); }
+.appearance__chip--swatch[data-swatch-palette="bone"]     .appearance__swatch { background: #A8662F; box-shadow: inset 0 0 0 3px #FAF7F0; }
+.appearance__chip--swatch[data-swatch-palette="graphite"] .appearance__swatch { background: #3B5BDB; box-shadow: inset 0 0 0 3px #FFFFFF; }
+.appearance__chip--swatch[data-swatch-palette="manila"]   .appearance__swatch { background: #9E3B2E; box-shadow: inset 0 0 0 3px #F8F7F0; }
+.appearance__chip--swatch[data-swatch-palette="ember"]    .appearance__swatch { background: #EE431C; box-shadow: inset 0 0 0 3px #FFFFFF; }

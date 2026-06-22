@@ -15,6 +15,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { useAuthStore } from '../auth/store.js';
 import type { TotpSetupResult, TotpVerifyResult, TotpDisableResult } from '../auth/store.js';
 import { PhraseStep } from '../components/PhraseStep.js';
+import { AppearanceSection } from '../components/AppearanceSection.js';
 import type { SessionState } from '../auth/store.js';
 
 function sessionLabel(s: SessionState): string {
@@ -389,7 +390,10 @@ export function SettingsRoute() {
         </div>
       </section>
 
-      {/* Section 2 — Security */}
+      {/* Section 2 — Appearance (Lane 5, additive) */}
+      <AppearanceSection />
+
+      {/* Section 3 — Security */}
       <section className="settings__section" aria-label="Security">
         <h2 className="settings__section-title">Security</h2>
         <button className="settings__row settings__row--btn" onClick={handleSignOut}>
