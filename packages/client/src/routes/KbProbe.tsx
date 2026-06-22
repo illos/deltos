@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Schema } from 'prosemirror-model';
 import { EditorState } from 'prosemirror-state';
 import type { Command } from 'prosemirror-state';
@@ -30,6 +31,8 @@ const LETTERS = ['t', 'h', 'e', 'q', 'u', 'i', 'c', 'k', 'a', 'o', 'n', 's'];
 export function KbProbe() {
   const mountRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // Back to the app — a PWA has no address bar, so the probe needs its own exit (client-route push).
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -66,6 +69,7 @@ export function KbProbe() {
 
   return (
     <div className="kbprobe">
+      <button type="button" className="kbprobe__back" onClick={() => navigate('/')}>‹ Back to app</button>
       <h1 className="kbprobe__title">inputmode=none keyboard probe</h1>
       <p className="kbprobe__hint">
         The native keyboard should STAY DOWN while this editor is focused (caret blinking). Type with the
