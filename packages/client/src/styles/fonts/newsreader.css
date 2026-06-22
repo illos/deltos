@@ -1,0 +1,9 @@
+/* Full Newsreader faces — Serif voice. Lazy: imported by themeStore (FONT_CHUNK.serif) on first Serif
+   selection, then SW-cached cache-first forever (/fonts/ rule in sw.ts). The δ-subset face (tokens.css)
+   covers the brand wordmark always; these cover body/headings/blockquote when Serif is the active voice. */
+@font-face { font-family:'Newsreader'; font-style:normal; font-weight:400; font-display:swap; src:url('/fonts/newsreader-400.woff2') format('woff2'); }
+@font-face { font-family:'Newsreader'; font-style:normal; font-weight:500; font-display:swap; src:url('/fonts/newsreader-500.woff2') format('woff2'); }
+@font-face { font-family:'Newsreader'; font-style:normal; font-weight:600; font-display:swap; src:url('/fonts/newsreader-600.woff2') format('woff2'); }
+@font-face { font-family:'Newsreader'; font-style:italic; font-weight:400; font-display:swap; src:url('/fonts/newsreader-400-italic.woff2') format('woff2'); }
+@font-face { font-family:'Newsreader'; font-style:italic; font-weight:500; font-display:swap; src:url('/fonts/newsreader-500-italic.woff2') format('woff2'); }
+@font-face { font-family:'Newsreader'; font-style:italic; font-weight:600; font-display:swap; src:url('/fonts/newsreader-600-italic.woff2') format('woff2'); }

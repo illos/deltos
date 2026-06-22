@@ -27,6 +27,19 @@
 @font-face { font-family:'IBM Plex Mono'; font-style:normal; font-weight:500; font-display:swap; src:url('/fonts/ibm-plex-mono-500.woff2') format('woff2'); }
 @font-face { font-family:'IBM Plex Mono'; font-style:normal; font-weight:600; font-display:swap; src:url('/fonts/ibm-plex-mono-600.woff2') format('woff2'); }
 
+/* ---- Newsreader δ-wordmark subset (invariant — ALWAYS loaded, brand glyph) ----
+   unicode-range scopes this face to just δ, so it never competes with the FULL Newsreader faces that
+   load lazily with the Serif voice (src/styles/fonts/newsreader.css). The browser picks this subset for
+   δ and the lazy full faces for everything else — so the brand δ is Newsreader serif under EVERY voice.
+   (Subset provenance: Google Fonts greek subset of Newsreader 600, 5.5KB — within the δ-budget; the box
+   lacks pip/fonttools + Google's literal text-subset endpoint 400s on server fetch, so the greek subset
+   is shipped scoped to δ. See public/fonts/README.md.) */
+@font-face {
+  font-family: 'Newsreader'; font-style: normal; font-weight: 600; font-display: swap;
+  src: url('/fonts/newsreader-delta.woff2') format('woff2');
+  unicode-range: U+03B4;
+}
+
 /* DEFAULT voice fallback vars so text renders correctly before [data-voice] is applied (mirrors Sans). */
 :root {
   --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace; /* metadata — invariant */

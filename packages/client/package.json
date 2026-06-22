@@ -38,6 +38,8 @@
   "devDependencies": {
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@fontsource/ibm-plex-sans": "^5.2.8",
+    "@fontsource/newsreader": "^5.2.10",
+    "@fontsource/space-grotesk": "^5.2.10",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^22.10.2",

@@ -65,8 +65,8 @@ export function resolvedMode(mode: Mode): 'light' | 'dark' {
 const FONT_CHUNK: Record<Voice, (() => Promise<unknown>) | null> = {
   sans: null, // precached
   mono: null, // reuses the precached Plex Mono metadata faces
-  serif: null, // TODO(Lane 5): () => import('../styles/fonts/newsreader.css')
-  grotesk: null, // TODO(Lane 5): () => import('../styles/fonts/space-grotesk.css')
+  serif:   () => import('../styles/fonts/newsreader.css'),   // Lane 5: full Newsreader faces, lazy
+  grotesk: () => import('../styles/fonts/space-grotesk.css'), // Lane 5: full Space Grotesk faces, lazy
 };
 
 /** Fetch the voice's font chunk on first selection (idempotent — the bundler caches the module). */

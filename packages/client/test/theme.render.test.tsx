@@ -154,11 +154,29 @@ describe('tokens.css — completeness + invariants', () => {
     expect(css).toMatch(/mark[^}]*color-mix\(in srgb, var\(--accent\) 24%/); // highlight = accent 24%
   });
 
-  it('precaches only the everyday faces (Plex Sans + Plex Mono); no lazy-voice @font-face yet', () => {
+  it('precaches the everyday faces + the always-loaded δ subset; lazy Serif/Grotesk faces stay out', () => {
     expect(css).toContain("src:url('/fonts/ibm-plex-sans-400.woff2')");
     expect(css).toContain("src:url('/fonts/ibm-plex-mono-400.woff2')");
-    // Newsreader / Space Grotesk woff2 are deferred to Lane 5 — not referenced yet.
+    // Lane 5: the δ-wordmark subset is always-loaded (brand invariant) and legitimately references a
+    // newsreader woff2, scoped to U+03B4 so it only ever paints δ.
+    expect(css).toContain('newsreader-delta.woff2');
+    expect(css).toMatch(/unicode-range:\s*U\+03B4/i);
+    // The FULL Serif faces + Space Grotesk live in the LAZY chunks, never in the always-loaded tokens.css.
+    expect(css).not.toContain('newsreader-400.woff2');
+    expect(css).not.toContain('newsreader-600-italic.woff2');
     expect(css).not.toContain('space-grotesk');
-    expect(css).not.toMatch(/src:url\([^)]*newsreader[^)]*\.woff2/i);
+  });
+});
+
+describe('lazy voice chunks — full faces live off the always-loaded sheet', () => {
+  const read = (p: string) => readFileSync(join(__dirname, p), 'utf8');
+  it('newsreader.css carries the full Serif faces (normal + italic)', () => {
+    const nr = read('../src/styles/fonts/newsreader.css');
+    expect(nr).toContain('newsreader-600.woff2');
+    expect(nr).toContain('newsreader-600-italic.woff2');
+  });
+  it('space-grotesk.css carries the full Grotesk faces', () => {
+    const sg = read('../src/styles/fonts/space-grotesk.css');
+    expect(sg).toContain('space-grotesk-700.woff2');
   });
 });

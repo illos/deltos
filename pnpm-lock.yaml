@@ -105,6 +105,12 @@ importers:
       '@fontsource/ibm-plex-sans':
         specifier: ^5.2.8
         version: 5.2.8
+      '@fontsource/newsreader':
+        specifier: ^5.2.10
+        version: 5.2.10
+      '@fontsource/space-grotesk':
+        specifier: ^5.2.10
+        version: 5.2.10
       '@testing-library/react':
         specifier: ^16.3.2
         version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -1347,6 +1353,12 @@ packages:
 
   '@fontsource/ibm-plex-sans@5.2.8':
     resolution: {integrity: sha512-eztSXjDhPhcpxNIiGTgMebdLP9qS4rWkysuE1V7c+DjOR0qiezaiDaTwQE7bTnG5HxAY/8M43XKDvs3cYq6ZYQ==}
+
+  '@fontsource/newsreader@5.2.10':
+    resolution: {integrity: sha512-TFaYzoFhDqarUyV2yYjgZZEwT4bpaj6sGBnXSnFknQ/QB8/9LzfY6IO9+inHOX4zzPp87Z7/KuG1OI5gr91Q3A==}
+
+  '@fontsource/space-grotesk@5.2.10':
+    resolution: {integrity: sha512-XNXEbT74OIITPqw2H6HXwPDp85fy43uxfBwFR5PU+9sLnjuLj12KlhVM9nZVN6q6dlKjkuN8JisW/OBxwxgUew==}
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -4759,6 +4771,10 @@ snapshots:
   '@fontsource/ibm-plex-mono@5.2.7': {}
 
   '@fontsource/ibm-plex-sans@5.2.8': {}
+
+  '@fontsource/newsreader@5.2.10': {}
+
+  '@fontsource/space-grotesk@5.2.10': {}
 
   '@humanfs/core@0.19.2':
     dependencies:
