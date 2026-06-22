@@ -17,6 +17,9 @@ const testConfig: UserConfig['test'] = {
     ['**/*.render.test.tsx', 'jsdom'],
     ['**/*.render.test.ts', 'jsdom'],
   ],
+  // Shared setup: PM-in-jsdom rect shim + post-test unmount (task #65 — stops the intermittent
+  // unhandled-error exit-1 from the editor render tests). Self-guards for the node environment.
+  setupFiles: ['./test/setup.ts'],
 };
 
 function gitShortSha(): string {

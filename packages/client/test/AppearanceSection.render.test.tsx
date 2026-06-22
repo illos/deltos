@@ -83,12 +83,14 @@ describe('AppearanceSection — active state reflects the store', () => {
       expect(checked[0].className).toContain('is-active');
     }
 
-    // Flip palette → active follows.
+    // Flip palette → active follows. setPalette is async (fire-and-forget onClick), so wait for MANILA
+    // specifically to become active — NOT just "one swatch active", which the pre-click Ember default
+    // already satisfies (that raced: the wait returned before the re-render and Manila read false).
     fireEvent.click(screen.getByRole('radio', { name: 'Manila' }));
     await waitFor(() =>
-      expect(container.querySelectorAll('.appearance__chip--swatch.is-active').length).toBe(1),
+      expect(screen.getByRole('radio', { name: 'Manila' }).getAttribute('aria-checked')).toBe('true'),
     );
-    expect(screen.getByRole('radio', { name: 'Manila' }).getAttribute('aria-checked')).toBe('true');
+    expect(container.querySelectorAll('.appearance__chip--swatch.is-active').length).toBe(1);
     expect(screen.getByRole('radio', { name: 'Ember' }).getAttribute('aria-checked')).toBe('false');
   });
 });

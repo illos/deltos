@@ -5,7 +5,7 @@
  * the active treatment tracks the selection.
  */
 import 'fake-indexeddb/auto';
-import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, cleanup, act, waitFor } from '@testing-library/react';
 import { fireEvent } from '@testing-library/react';
 import { TextSelection } from 'prosemirror-state';
@@ -14,18 +14,8 @@ import type { BlockBody, BlockId } from '@deltos/shared';
 import { deltoSchema } from '../src/editor/schema.js';
 import { ProseMirrorEditor } from '../src/editor/ProseMirrorEditor.js';
 
-// jsdom has no layout engine, so PM's scrollToSelection → coordsAtPos → getClientRects throws when a
-// command scrollIntoView()s. Give the relevant DOM prototypes a rect API so measurement is a harmless
-// zero rect. Production keeps the real scroll behaviour; this only patches the test environment.
-beforeAll(() => {
-  const rect = { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0, toJSON() { return {}; } };
-  const list = { length: 1, item: () => rect, 0: rect, [Symbol.iterator]: function* () { yield rect; } };
-  for (const proto of [globalThis.Element?.prototype, globalThis.Range?.prototype, globalThis.Text?.prototype]) {
-    if (!proto) continue;
-    (proto as unknown as { getClientRects: () => unknown }).getClientRects = () => list;
-    (proto as unknown as { getBoundingClientRect: () => unknown }).getBoundingClientRect = () => rect;
-  }
-});
+// The PM-in-jsdom rect shim now lives in the shared test/setup.ts (task #65), so it covers every
+// editor render test rather than just this one.
 
 const PID = '22222222-2222-4222-8222-222222222222' as BlockId;
 const body: BlockBody = [{ id: PID, type: 'paragraph', content: { segments: [{ text: 'hello' }] } }];
