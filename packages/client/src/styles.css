@@ -752,16 +752,6 @@
   background: var(--nav); border-top: 1px solid var(--border);
   padding-bottom: max(26px, env(safe-area-inset-bottom));
 }
-/* #66 float-above-keyboard: fixed to the layout viewport, lifted by the keyboard overlap (JS sets the
-   translateY). Keyboard-closed (translateY 0) it sits at the bottom like the sticky bar; keyboard-open it
-   floats just above the keyboard (and, honestly, above Apple's non-removable ^⌄✓ accessory bar). */
-.editor__mbar--floating {
-  position: fixed; left: 0; right: 0; bottom: 0; margin: 0;
-  transition: transform 0.18s ease; will-change: transform;
-}
-/* When lifted above the keyboard the home-indicator safe-area is covered by the keyboard, so drop the
-   safe-area pad to keep the floated bar slim (Jim's real-estate concern). */
-.editor__mbar--lifted { padding-bottom: 6px; }
 .editor__mbar-sub {
   display: flex; justify-content: space-around; align-items: center;
   background: var(--sel); border-bottom: 1px solid var(--border);

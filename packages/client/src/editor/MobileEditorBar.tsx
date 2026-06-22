@@ -5,14 +5,6 @@ import type { IconProps } from '../icons/index.js';
 import { toolsFor } from './editorTools.js';
 import type { ToolDescriptor, ToolGroup } from './editorTools.js';
 import type { EditorActiveState } from './editorState.js';
-import { useKeyboardInset } from '../lib/useKeyboardInset.js';
-
-// Float-above-keyboard is ON by default (task #66); ?kbfloat=off reverts to the layout-bottom sticky bar
-// so Jim can A/B the screen-real-estate tradeoff on the live site without a build change.
-function floatEnabledFromUrl(): boolean {
-  if (typeof window === 'undefined') return true;
-  return new URLSearchParams(window.location.search).get('kbfloat') !== 'off';
-}
 
 interface MobileEditorBarProps {
   active: EditorActiveState;
@@ -46,18 +38,8 @@ export function MobileEditorBar({ active, run, onUndo, onRedo }: MobileEditorBar
   const toggleGroup = (g: ToolGroup) => setActiveGroup((cur) => (cur === g ? null : g));
   const subTools = activeGroup ? toolsFor('mobile', activeGroup) : [];
 
-  // #66: float the bar just above the soft keyboard. When floating, the bar is fixed to the layout
-  // bottom and lifted by the keyboard overlap (translateY); the slim main row stays reachable while
-  // typing and the sub-row still grows UPWARD on demand. ?kbfloat=off keeps the old sticky bar.
-  const [floatEnabled] = useState(floatEnabledFromUrl);
-  const keyboardInset = useKeyboardInset();
-  const lifted = floatEnabled && keyboardInset > 0;
-  const className =
-    `editor__mbar${floatEnabled ? ' editor__mbar--floating' : ''}${lifted ? ' editor__mbar--lifted' : ''}`;
-  const style = floatEnabled ? { transform: `translateY(-${keyboardInset}px)` } : undefined;
-
   return (
-    <div className={className} style={style}>
+    <div className="editor__mbar">
       {activeGroup && (
         <div className="editor__mbar-sub" role="toolbar" aria-label={`${activeGroup} tools`}>
           {subTools.map((tool) => {
