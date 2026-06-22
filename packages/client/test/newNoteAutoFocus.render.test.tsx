@@ -120,7 +120,7 @@ describe('AF-3 — NoteRoute with isNew router state passes autoFocus=true to ed
 
     // Wait for note to load and PM to mount.
     await waitFor(() => {
-      expect(screen.queryByText('← Notes')).not.toBeNull();
+      expect(screen.queryByLabelText('Back to list')).not.toBeNull();
     });
 
     await waitFor(() => {
@@ -151,7 +151,7 @@ describe('AF-4 — NoteRoute without isNew state does not steal focus (existing 
     );
 
     await waitFor(() => {
-      expect(screen.queryByText('← Notes')).not.toBeNull();
+      expect(screen.queryByLabelText('Back to list')).not.toBeNull();
     });
 
     // Wait for PM to init fully before asserting absence of focus.

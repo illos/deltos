@@ -627,15 +627,50 @@
 
 /* ── Note editor ──────────────────────────────────────────────────────────────── */
 
-.editor__back {
-  display: block;
-  padding: 0.6rem 1.25rem;
-  color: var(--secondary);
-  text-decoration: none;
-  font-size: 0.85rem;
+/* §3 note meta toolbar — edited-time (left) · Synced + version-history + ⋯ (right). padding 15px 26px. */
+.editor__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 15px 26px;
   flex-shrink: 0;
 }
-.editor__back:hover { color: inherit; }
+.editor__edited {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.editor__meta-end {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+.editor__meta-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--secondary);
+  cursor: pointer;
+  padding: 2px;
+  touch-action: manipulation;
+}
+/* Back affordance — desktop master-detail keeps the list visible (no back); shown on mobile (§5). */
+.editor__back {
+  display: none;
+  align-items: center;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 
 .editor {
   flex: 1;
@@ -1731,6 +1766,9 @@ a.auth__link { display: inline; }
 .bottom-nav__action--accent { color: var(--accent); }
 .bottom-nav__action-label { font-family: var(--mono); font-size: 10px; }
 .bottom-nav__action:active { background: var(--sel); }
+/* Undo/Redo greyed + non-interactive until editor-undo wiring lands (Deploy 3) — avoids broken taps. */
+.bottom-nav__action:disabled { opacity: 0.32; cursor: default; }
+.bottom-nav__action:disabled:active { background: none; }
 
 .bottom-nav__sheet {
   flex: 1;
@@ -1801,6 +1839,9 @@ a.auth__link { display: inline; }
      only bumps the notebook-name title larger per the mobile mockup. */
   .home__title { font-size: 27px; line-height: 1.15; }
 
+  /* §5 mobile note sub-screen: show the back affordance (returns to the list; desktop hides it). */
+  .editor__back { display: inline-flex; }
+
   /* Mobile home drops the desktop/legacy chrome (navSys-3 fidelity diff): NO top app-bar (status-bar
      → big title → list), and NO header compose icon / search field — the δ wordmark lives in the nav
      sheet, and New + Search are bottom-nav action slots. The sync indicator relocates to the note meta. */
@@ -1811,23 +1852,8 @@ a.auth__link { display: inline; }
   .home__header { padding-top: calc(18px + env(safe-area-inset-top)); }
 }
 
-/* ── Editor note actions (Move / History buttons in note header) ──────────── */
-
-.editor__move-btn,
-.editor__history-btn {
-  display: inline-block;
-  background: none;
-  border: none;
-  color: var(--secondary);
-  font-size: 0.8rem;
-  padding: 0.2rem 1.25rem 0.4rem;
-  cursor: pointer;
-  touch-action: manipulation;
-  text-align: left;
-}
-
-.editor__move-btn:active,
-.editor__history-btn:active { color: inherit; }
+/* (editor__move-btn / __history-btn removed in the §3 meta pass — Move is now the ⋯ overflow, History
+   the version-history icon, both in .editor__meta.) */
 
 /* ── History panel ────────────────────────────────────────────────────────── */
 

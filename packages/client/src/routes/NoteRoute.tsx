@@ -14,7 +14,10 @@ import { resolveNoteView } from '../editor/views.js';
 import { ConflictView } from '../components/ConflictView.js';
 import { HistoryPanel } from '../components/HistoryPanel.js';
 import { useNoteVersions } from '../db/conflict.js';
-import type { ClientNote, NotebookRow, NoteVersion } from '../db/schema.js';
+import { formatSmartDate } from '../lib/notePreview.js';
+import { SyncIndicator } from '../components/SyncIndicator.js';
+import { VersionHistory, Ellipsis } from '../icons/index.js';
+import type { ClientNote, NoteVersion } from '../db/schema.js';
 
 /**
  * Loads a note by ID through the LocalStore seam and renders the appropriate view.
@@ -182,14 +185,30 @@ export function NoteRoute() {
   const ViewComponent = resolveNoteView(note, NoteEditor);
   return (
     <>
-      {/* Exit-with-conflict: if the note has an unresolved conflict, the back link
-          first routes through ?resolve so the user can resolve before leaving. */}
-      <Link
-        to={clientNote.hasConflict ? `/note/${parsedNoteId}?resolve` : '/'}
-        className="editor__back"
-      >
-        ← Notes
-      </Link>
+      {/* §3 note meta toolbar: back (mobile §5 — CSS-hidden on desktop's master-detail) + edited-time
+          on the left; Synced indicator + version-history + ⋯ overflow on the right. The formatting
+          toolbar (§3 block/inline controls) is Deploy-3, not here. */}
+      <header className="editor__meta">
+        {/* Exit-with-conflict: an unresolved conflict routes back through ?resolve first. */}
+        <Link
+          to={clientNote.hasConflict ? `/note/${parsedNoteId}?resolve` : '/'}
+          className="editor__back"
+          aria-label="Back to list"
+        >
+          <span aria-hidden="true">‹ </span>Notes
+        </Link>
+        <span className="dt-meta--faint editor__edited">Edited {formatSmartDate(note.updatedAt)}</span>
+        <div className="editor__meta-end">
+          {/* Relocated sync indicator (was the top-bar pill; the §3 home is its place now). */}
+          <SyncIndicator />
+          <button className="editor__meta-btn" onClick={() => setShowHistory(true)} aria-label="Version history">
+            <VersionHistory size={18} />
+          </button>
+          <button className="editor__meta-btn" onClick={() => setShowMove(true)} aria-label="More options">
+            <Ellipsis size={20} />
+          </button>
+        </div>
+      </header>
       {showMove && (
         <div className="editor__move-picker" role="dialog" aria-label="Move note to notebook">
           <p className="editor__move-title">Move to notebook</p>
@@ -218,8 +237,6 @@ export function NoteRoute() {
           <button className="editor__move-cancel" onClick={() => setShowMove(false)}>Cancel</button>
         </div>
       )}
-      <button className="editor__move-btn" onClick={() => setShowMove(true)}>Move to notebook…</button>
-      <button className="editor__history-btn" onClick={() => setShowHistory(true)}>History</button>
       <ViewComponent note={note} onSave={handleSave} autoFocus={isNew} />
     </>
   );

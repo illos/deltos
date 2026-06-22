@@ -171,11 +171,11 @@ describe('AN-4 — move-note picker includes All Notes as an uncategorize target
 
     // Wait for NoteRoute to load
     await waitFor(() => {
-      expect(screen.queryByText('Move to notebook…')).not.toBeNull();
+      expect(screen.queryByLabelText('More options')).not.toBeNull();
     });
 
     // Open the move picker
-    const moveBtn = screen.getByText('Move to notebook…');
+    const moveBtn = screen.getByLabelText('More options');
     await act(async () => { moveBtn.click(); });
 
     // All Notes must appear as a target in the picker

@@ -109,9 +109,9 @@ describe('NF-2 — NoteRoute renders note content (not blank)', () => {
     // "← Notes" and "Move to notebook…" are outside the editor chrome — if the component
     // crashes (P0-2 blank screen), neither renders. Their presence proves the hook fix holds.
     await waitFor(() => {
-      expect(screen.queryByText('← Notes')).not.toBeNull();
+      expect(screen.queryByLabelText('Back to list')).not.toBeNull();
     });
-    expect(screen.queryByText('Move to notebook…')).not.toBeNull();
+    expect(screen.queryByLabelText('More options')).not.toBeNull();
   });
 });
 

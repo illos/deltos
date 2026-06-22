@@ -185,7 +185,7 @@ describe('B3 — blank note discard on unmount', () => {
     // Wait for NoteRoute to fully load — "← Notes" appears only after the note
     // row is fetched from IDB and noteWasInitiallyBlankRef is set in the render body.
     await waitFor(() => {
-      expect(screen.queryByText('← Notes')).not.toBeNull();
+      expect(screen.queryByLabelText('Back to list')).not.toBeNull();
     });
 
     // Unmount triggers the blank-note discard
@@ -213,7 +213,7 @@ describe('B3 — blank note discard on unmount', () => {
 
     // Wait for NoteRoute to fully load
     await waitFor(() => {
-      expect(screen.queryByText('← Notes')).not.toBeNull();
+      expect(screen.queryByLabelText('Back to list')).not.toBeNull();
     });
 
     unmount();
@@ -242,7 +242,7 @@ describe('B3 — blank note discard on unmount', () => {
 
     // Wait for NoteRoute to fully load
     await waitFor(() => {
-      expect(screen.queryByText('← Notes')).not.toBeNull();
+      expect(screen.queryByLabelText('Back to list')).not.toBeNull();
     });
 
     unmount();

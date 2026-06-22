@@ -188,11 +188,15 @@ export function BottomNav() {
             <div className="bottom-nav__actions" role="toolbar" aria-label="Navigation actions">
               {actions.map((action) => {
                 const Icon = ACTION_ICONS[action.id];
+                // Undo/Redo are DISABLED for ship (no editor-undo wiring yet — Deploy 3). Greyed +
+                // non-interactive so they read as "not available here", never as broken tap-targets.
+                const disabled = action.id === 'undo' || action.id === 'redo';
                 return (
                   <button
                     key={action.id}
                     className={`bottom-nav__action${action.id === 'new-note' ? ' bottom-nav__action--accent' : ''}`}
                     aria-label={action.ariaLabel}
+                    disabled={disabled}
                     onClick={() => handleAction(action.id)}
                   >
                     {Icon ? <Icon size={22} /> : null}
