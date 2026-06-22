@@ -12,6 +12,11 @@ import { spineToPmDoc, pmDocToSpine, extractTitleFromDoc } from './serializer.js
 import { buildPluginIslandNodeViews } from './nodeviews/PluginIsland.js';
 import { TodoItemView } from './nodeviews/TodoItem.js';
 import { sliceToPlainText } from './clipboard.js';
+import { EditorToolbar } from './EditorToolbar.js';
+import { deriveActiveState, EMPTY_ACTIVE_STATE } from './editorState.js';
+import type { EditorActiveState } from './editorState.js';
+import type { ToolDescriptor } from './editorTools.js';
+import { useIsDesktop } from '../lib/useIsDesktop.js';
 
 interface ProseMirrorEditorProps {
   noteId: string;
@@ -72,8 +77,9 @@ export function ProseMirrorEditor({
 }: ProseMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const [canUndo, setCanUndo] = useState(false);
-  const [canRedo, setCanRedo] = useState(false);
+  const isDesktop = useIsDesktop();
+  // One selection-driven snapshot drives every toolbar button + undo/redo availability.
+  const [active, setActive] = useState<EditorActiveState>(EMPTY_ACTIVE_STATE);
 
   // Keep onChange and onLeave in refs so they're always current without re-running the effect.
   const onChangeRef = useRef(onChange);
@@ -98,12 +104,21 @@ export function ProseMirrorEditor({
     view.focus();
   }, []);
 
+  // Run a registry tool's command against the live view, then refocus (the button used
+  // mouseDown+preventDefault to preserve the selection). The shared commands.ts layer means a toolbar
+  // tap, a keymap shortcut, and a markdown input rule that mean the same thing run the same command.
+  const runTool = useCallback((tool: ToolDescriptor) => {
+    const view = viewRef.current;
+    if (!view) return;
+    tool.command(deltoSchema)(view.state, view.dispatch);
+    view.focus();
+  }, []);
+
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Reset undo/redo availability for the incoming note (fresh history).
-    setCanUndo(false);
-    setCanRedo(false);
+    // Reset active state for the incoming note (fresh history, cursor unset).
+    setActive(EMPTY_ACTIVE_STATE);
 
     const doc = spineToPmDoc(deltoSchema, initialBody, initialTitle);
 
@@ -147,9 +162,9 @@ export function ProseMirrorEditor({
         const newState = view.state.apply(tr);
         view.updateState(newState);
 
-        // Always sync undo/redo availability (undo/redo themselves are doc changes).
-        setCanUndo(undoDepth(newState) > 0);
-        setCanRedo(redoDepth(newState) > 0);
+        // Recompute the selection-driven active snapshot on EVERY transaction (selection moves are
+        // transactions too) so toolbar marks/block + undo/redo availability stay reactive from one place.
+        setActive(deriveActiveState(newState, undoDepth(newState) > 0, redoDepth(newState) > 0));
 
         if (!tr.docChanged) return;
 
@@ -179,6 +194,7 @@ export function ProseMirrorEditor({
     });
 
     viewRef.current = view;
+    setActive(deriveActiveState(view.state, false, false));
     onViewInit?.(view);
     if (autoFocus) view.focus();
 
@@ -202,24 +218,20 @@ export function ProseMirrorEditor({
 
   return (
     <>
-      <div className="editor__toolbar" role="toolbar" aria-label="Editing tools">
-        <button
-          className="editor__tool-btn"
-          onClick={handleUndo}
-          disabled={!canUndo}
-          aria-label="Undo"
-        >
-          Undo
-        </button>
-        <button
-          className="editor__tool-btn"
-          onClick={handleRedo}
-          disabled={!canRedo}
-          aria-label="Redo"
-        >
-          Redo
-        </button>
-      </div>
+      {isDesktop ? (
+        // Desktop: the registry-driven formatting toolbar (Deploy 3, slice C).
+        <EditorToolbar active={active} run={runTool} />
+      ) : (
+        // Mobile: interim Undo/Redo toolbar — slice D replaces this with the grouped MobileEditorBar.
+        <div className="editor__toolbar" role="toolbar" aria-label="Editing tools">
+          <button className="editor__tool-btn" onClick={handleUndo} disabled={!active.canUndo} aria-label="Undo">
+            Undo
+          </button>
+          <button className="editor__tool-btn" onClick={handleRedo} disabled={!active.canRedo} aria-label="Redo">
+            Redo
+          </button>
+        </div>
+      )}
       <div ref={containerRef} className="editor__pm" />
     </>
   );

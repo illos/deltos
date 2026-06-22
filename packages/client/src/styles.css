@@ -717,6 +717,31 @@
   cursor: default;
 }
 
+/* ── Desktop formatting toolbar (Deploy 3, Lane 3/4 — spec §2) ─────────────────
+   One flat wrapping row; 4 groups separated by a 1px×18px hairline divider. */
+.editor__fmtbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+  padding: 8px 18px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.editor__fmtbar-divider {
+  width: 1px; height: 18px; background: var(--border); margin: 0 4px; flex-shrink: 0;
+}
+.editor__tool {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-radius: 6px; padding: 5px 7px;
+  min-width: 28px; min-height: 28px; color: var(--secondary); cursor: pointer;
+  font-family: var(--ff); transition: background 0.12s ease, color 0.12s ease;
+}
+.editor__tool:hover:not(:disabled) { background: var(--sel); }
+.editor__tool.is-active { background: var(--sel); color: var(--ink); }
+.editor__tool:disabled { opacity: 0.4; cursor: default; }
+/* B/I/U/S as styled glyphs (locked decision 3 — match the mock exactly), not icons. */
+.editor__tool-glyph { font-size: 13px; line-height: 1; }
+.editor__tool-glyph--bold      { font-weight: 700; }
+.editor__tool-glyph--italic    { font-style: italic; font-family: Georgia, 'Newsreader', serif; }
+.editor__tool-glyph--underline { text-decoration: underline; }
+.editor__tool-glyph--strike    { text-decoration: line-through; }
+
 /* ProseMirror host div */
 .editor__pm {
   flex: 1;

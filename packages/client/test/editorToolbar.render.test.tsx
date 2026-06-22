@@ -1,0 +1,103 @@
+/**
+ * Deploy 3 — slice C: desktop EditorToolbar render gate (rendered-UI gate). Mounts ProseMirrorEditor
+ * at a desktop viewport and asserts the registry-driven toolbar's real DOM: 4 ordered groups + 3
+ * dividers + accessible labels, a mark toggles the selection, a block button changes the block, and
+ * the active treatment tracks the selection.
+ */
+import 'fake-indexeddb/auto';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { render, cleanup, act, waitFor } from '@testing-library/react';
+import { fireEvent } from '@testing-library/react';
+import { TextSelection } from 'prosemirror-state';
+import type { EditorView } from 'prosemirror-view';
+import type { BlockBody, BlockId } from '@deltos/shared';
+import { deltoSchema } from '../src/editor/schema.js';
+import { ProseMirrorEditor } from '../src/editor/ProseMirrorEditor.js';
+
+// jsdom has no layout engine, so PM's scrollToSelection → coordsAtPos → getClientRects throws when a
+// command scrollIntoView()s. Give the relevant DOM prototypes a rect API so measurement is a harmless
+// zero rect. Production keeps the real scroll behaviour; this only patches the test environment.
+beforeAll(() => {
+  const rect = { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0, toJSON() { return {}; } };
+  const list = { length: 1, item: () => rect, 0: rect, [Symbol.iterator]: function* () { yield rect; } };
+  for (const proto of [globalThis.Element?.prototype, globalThis.Range?.prototype, globalThis.Text?.prototype]) {
+    if (!proto) continue;
+    (proto as unknown as { getClientRects: () => unknown }).getClientRects = () => list;
+    (proto as unknown as { getBoundingClientRect: () => unknown }).getBoundingClientRect = () => rect;
+  }
+});
+
+const PID = '22222222-2222-4222-8222-222222222222' as BlockId;
+const body: BlockBody = [{ id: PID, type: 'paragraph', content: { segments: [{ text: 'hello' }] } }];
+
+function mount(onViewInit?: (v: EditorView | null) => void) {
+  return render(
+    <ProseMirrorEditor noteId="n1" initialTitle="T" initialBody={body} onChange={() => {}} onViewInit={onViewInit} />,
+  );
+}
+const fmtbar = () => document.querySelector('.editor__fmtbar') as HTMLElement | null;
+const btn = (label: string) => document.querySelector(`.editor__fmtbar button[aria-label="${label}"]`) as HTMLButtonElement | null;
+
+beforeEach(() => {
+  // Desktop viewport → useIsDesktop true → the formatting toolbar renders (not the mobile interim bar).
+  vi.stubGlobal('matchMedia', (q: string) => ({ matches: true, media: q, addEventListener() {}, removeEventListener() {} }));
+});
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+describe('EditorToolbar — desktop structure', () => {
+  it('renders 4 groups in order, 3 dividers, and every tool with an accessible label', async () => {
+    mount();
+    await waitFor(() => expect(fmtbar()).not.toBeNull());
+
+    expect(document.querySelectorAll('.editor__fmtbar-divider').length).toBe(3);
+    for (const label of [
+      'Title', 'Heading', 'Subhead', 'Body', 'Mono',         // style
+      'Bold', 'Italic', 'Underline', 'Strikethrough', 'Highlight', 'Code', 'Link', // format (link desktop)
+      'Bullet list', 'Numbered list', 'Checklist',           // lists
+      'Quote', 'Divider',                                    // insert (image omitted)
+    ]) {
+      expect(btn(label), `${label} button`).not.toBeNull();
+    }
+    // Image is intentionally absent.
+    expect(btn('Image')).toBeNull();
+    // First 5 buttons are the style group in order.
+    const labels = [...document.querySelectorAll('.editor__fmtbar button')].slice(0, 5).map((b) => b.getAttribute('aria-label'));
+    expect(labels).toEqual(['Title', 'Heading', 'Subhead', 'Body', 'Mono']);
+  });
+});
+
+describe('EditorToolbar — commands act on the selection', () => {
+  it('clicking Bold with a selection wraps it in bold; clicking again removes it', async () => {
+    let view: EditorView | null = null;
+    mount((v) => { view = v; });
+    await waitFor(() => expect(view).not.toBeNull());
+    const v = view!;
+    // 'hello' content: title 'T'(nodeSize 3) → paragraph opens at 3, content at 4, 'hello' 4..9.
+    act(() => { v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, 4, 9))); });
+
+    fireEvent.mouseDown(btn('Bold')!);
+    expect(v.state.doc.rangeHasMark(4, 9, deltoSchema.marks['bold']!)).toBe(true);
+
+    act(() => { v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, 4, 9))); });
+    fireEvent.mouseDown(btn('Bold')!);
+    expect(v.state.doc.rangeHasMark(4, 9, deltoSchema.marks['bold']!)).toBe(false);
+  });
+
+  it('clicking Heading turns the paragraph into an h2 and the button reads active', async () => {
+    let view: EditorView | null = null;
+    mount((v) => { view = v; });
+    await waitFor(() => expect(view).not.toBeNull());
+    const v = view!;
+    act(() => { v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, 6))); });
+
+    fireEvent.mouseDown(btn('Heading')!);
+    expect(v.state.doc.child(1).type.name).toBe('heading');
+    expect(v.state.doc.child(1).attrs.level).toBe(2);
+    // Active treatment reflects the selection now sitting in an h2.
+    await waitFor(() => expect(btn('Heading')!.getAttribute('aria-pressed')).toBe('true'));
+
+    // Body reverts to paragraph.
+    fireEvent.mouseDown(btn('Body')!);
+    expect(v.state.doc.child(1).type.name).toBe('paragraph');
+  });
+});
