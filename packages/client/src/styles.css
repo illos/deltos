@@ -871,7 +871,7 @@
 }
 .editor__pm .ProseMirror [data-type="todo"][data-checked="true"] .todo__check::after {
   content: '✓'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  color: #fff; font-size: 13px; font-weight: 700; line-height: 1; /* white check on accent — brand constant */
+  color: var(--on-accent); font-size: 13px; font-weight: 700; line-height: 1; /* check on accent (a11y #64 token) */
 }
 .editor__pm .ProseMirror [data-type="todo"] .todo__content { flex: 1; }
 .editor__pm .ProseMirror [data-type="todo"][data-checked="true"] .todo__content {
@@ -1691,7 +1691,7 @@ a.auth__link { display: inline; }
   padding: 0.45rem 0.75rem;
   touch-action: manipulation;
 }
-.nav-content__new-confirm { background: var(--accent); color: #fff; }
+.nav-content__new-confirm { background: var(--accent); color: var(--on-accent); }
 .nav-content__new-cancel { background: var(--sel); color: var(--body); }
 
 /* Footer (§1) — top-bordered group: Trash + Settings, icon + label, Plex Mono 12px, --secondary. */
