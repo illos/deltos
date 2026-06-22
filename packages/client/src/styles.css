@@ -2190,6 +2190,41 @@ a.auth__link { display: inline; }
 .appearance__chip--swatch[data-swatch-palette="manila"]   .appearance__swatch { background: #9E3B2E; box-shadow: inset 0 0 0 3px #F8F7F0; }
 .appearance__chip--swatch[data-swatch-palette="ember"]    .appearance__swatch { background: #EE431C; box-shadow: inset 0 0 0 3px #FFFFFF; }
 
+/* ── #69 custom on-screen keyboard — Phase 1 (geometry-matched to iPhone 15 Plus) ──
+   Metrics from docs/specs/custom-keyboard.md §2.1 (CSS pt = CSS px on iOS; 430px-wide viewport on
+   Jim's device = pixel-match). All as vars so navSys's overlay diff tunes in one place. */
+.kb {
+  --kb-key-w: 37px;     /* letter key width (pitch 42.7 − gap 6) */
+  --kb-key-h: 43px;     /* key height */
+  --kb-gap: 6px;        /* horizontal gap */
+  --kb-row-gap: 12px;   /* vertical gap (row pitch 55 = key-h 43 + 12) */
+  --kb-radius: 8px;
+  --kb-side: 3px;       /* side margin — row 1 reaches near full width */
+  --kb-fn-w: 46px;      /* shift / delete width */
+  --kb-r4-w: 92px;      /* 123 / return width (eyeball; overlay refines) */
+  background: var(--nav);
+  padding: 10px var(--kb-side) max(8px, env(safe-area-inset-bottom));
+  box-sizing: border-box; user-select: none; -webkit-user-select: none;
+  touch-action: none;
+}
+.kb__grid { display: flex; flex-direction: column; gap: var(--kb-row-gap); }
+.kb__row { display: flex; justify-content: center; align-items: center; gap: var(--kb-gap); }
+.kb__row--r3, .kb__row--r4 { justify-content: space-between; }
+.kb__row-mid { display: flex; gap: var(--kb-gap); } /* the 7 ZXCVBNM keys, centered between shift/delete */
+.kb__key {
+  width: var(--kb-key-w); height: var(--kb-key-h); flex-shrink: 0; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--list); color: var(--ink); border: none; border-radius: var(--kb-radius);
+  font-family: var(--ff); font-size: 22px; font-weight: 400; line-height: 1;
+  -webkit-tap-highlight-color: transparent; touch-action: none; cursor: pointer;
+}
+.kb__key:active { background: var(--sel); }
+.kb__key--fn { width: var(--kb-fn-w); font-size: 18px; color: var(--secondary); background: var(--border); }
+.kb__key--shift.is-active { background: var(--paper); color: var(--ink); } /* one-shot armed */
+.kb__key--mode, .kb__key--return { width: var(--kb-r4-w); font-size: 16px; }
+.kb__key--space { flex: 1; min-width: 0; font-size: 15px; color: var(--secondary); }
+.kb__key:disabled { opacity: 0.55; cursor: default; }
+
 /* ── #68 inputmode=none keyboard probe (throwaway, /kbprobe) ──────────────────── */
 .kbprobe { max-width: 680px; margin: 0 auto; padding: 1.5rem 1.25rem; box-sizing: border-box; }
 .kbprobe__back {
@@ -2203,7 +2238,7 @@ a.auth__link { display: inline; }
   background: var(--list); padding: 0.85rem 1rem; font-family: var(--ff); font-size: var(--note);
   color: var(--body); outline: none;
 }
-.kbprobe__editor .ProseMirror { outline: none; min-height: 130px; }
+.kbprobe__editor .ProseMirror { outline: none; min-height: 130px; white-space: pre-wrap; }
 .kbprobe__pad {
   display: flex; flex-wrap: wrap; gap: 8px; margin-top: 1rem;
   padding-bottom: max(20px, env(safe-area-inset-bottom));
