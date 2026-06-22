@@ -11,16 +11,26 @@ import type { Slice, Node as PmNode } from 'prosemirror-model';
  */
 
 function inlineText(node: PmNode): string {
-  // Inline content: gather text with simple mark indicators.
-  // Code marks get backtick wrapping for readability; bold/italic omitted
-  // (plain text doesn't support those — the HTML flavour preserves them).
+  // Inline content → markdown-flavoured text/plain (the HTML flavour preserves marks losslessly
+  // for in-app paste; this is the readable export when pasting into a terminal/email/another app).
+  // Wraps are applied innermost→outermost in a STABLE order — code, bold, italic, strike, highlight,
+  // underline — so nested marks produce deterministic output (code first so a code run isn't
+  // re-interpreted as emphasis). Link wraps outermost at the mark boundary.
   let out = '';
   node.forEach((child) => {
     if (child.type.name === 'hard_break') { out += '\n'; return; }
     if (child.type.name !== 'text') return;
-    const text = child.text ?? '';
-    const hasCode = child.marks.some((m) => m.type.name === 'code');
-    out += hasCode ? '`' + text + '`' : text;
+    let text = child.text ?? '';
+    const has = (name: string) => child.marks.some((m) => m.type.name === name);
+    if (has('code'))          text = '`' + text + '`';
+    if (has('bold'))          text = '**' + text + '**';
+    if (has('italic'))        text = '*' + text + '*';
+    if (has('strikethrough')) text = '~~' + text + '~~';
+    if (has('highlight'))     text = '==' + text + '==';
+    if (has('underline'))     text = '<u>' + text + '</u>'; // no MD equivalent — HTML span
+    const link = child.marks.find((m) => m.type.name === 'link');
+    if (link) text = '[' + text + '](' + (link.attrs.href as string) + ')';
+    out += text;
   });
   return out;
 }

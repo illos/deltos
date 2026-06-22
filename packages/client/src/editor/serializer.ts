@@ -13,6 +13,9 @@ export interface TextSegment {
   bold?: true;
   italic?: true;
   code?: true;
+  underline?: true;   // NEW
+  strike?: true;      // NEW — maps the schema mark 'strikethrough'
+  highlight?: true;   // NEW
   link?: string; // href
 }
 
@@ -35,7 +38,7 @@ export interface ListContent      { ordered: boolean }
 function isString(x: unknown): x is string { return typeof x === 'string'; }
 function isBool(x: unknown): x is boolean   { return typeof x === 'boolean'; }
 
-function isTextSegment(x: unknown): x is TextSegment {
+export function isTextSegment(x: unknown): x is TextSegment {
   if (!x || typeof x !== 'object') return false;
   const o = x as Record<string, unknown>;
   // schema.text('') throws RangeError — empty text nodes are never valid in PM.
@@ -43,7 +46,11 @@ function isTextSegment(x: unknown): x is TextSegment {
   if ('bold' in o && o['bold'] !== true) return false;
   if ('italic' in o && o['italic'] !== true) return false;
   if ('code' in o && o['code'] !== true) return false;
+  if ('underline' in o && o['underline'] !== true) return false;
+  if ('strike' in o && o['strike'] !== true) return false;
+  if ('highlight' in o && o['highlight'] !== true) return false;
   if ('link' in o && !isString(o['link'])) return false;
+  // Forward-compatible: unknown future flags are ignored, not rejected.
   return true;
 }
 
@@ -120,9 +127,12 @@ function inlineToSegments(node: PmNode): TextSegment[] {
     }
     if (child.type.name !== 'text') return;
     const seg: TextSegment = { text: child.text ?? '' };
-    if (child.marks.some((m) => m.type.name === 'bold'))   seg.bold   = true;
-    if (child.marks.some((m) => m.type.name === 'italic')) seg.italic = true;
-    if (child.marks.some((m) => m.type.name === 'code'))   seg.code   = true;
+    if (child.marks.some((m) => m.type.name === 'bold'))          seg.bold      = true;
+    if (child.marks.some((m) => m.type.name === 'italic'))        seg.italic    = true;
+    if (child.marks.some((m) => m.type.name === 'code'))          seg.code      = true;
+    if (child.marks.some((m) => m.type.name === 'underline'))     seg.underline = true;
+    if (child.marks.some((m) => m.type.name === 'strikethrough')) seg.strike    = true;
+    if (child.marks.some((m) => m.type.name === 'highlight'))     seg.highlight = true;
     const linkMark = child.marks.find((m) => m.type.name === 'link');
     if (linkMark) seg.link = linkMark.attrs.href as string;
     segments.push(seg);
@@ -276,10 +286,13 @@ export function pmDocToSpine(doc: PmNode): BlockBody {
 function segmentsToPmInline(schema: Schema, segments: TextSegment[]): PmNode[] {
   return segments.map((seg) => {
     const marks = [
-      ...(seg.bold   ? [schema.marks['bold']!.create()]   : []),
-      ...(seg.italic ? [schema.marks['italic']!.create()] : []),
-      ...(seg.code   ? [schema.marks['code']!.create()]   : []),
-      ...(seg.link   ? [schema.marks['link']!.create({ href: seg.link, title: null })] : []),
+      ...(seg.bold      ? [schema.marks['bold']!.create()]          : []),
+      ...(seg.italic    ? [schema.marks['italic']!.create()]        : []),
+      ...(seg.code      ? [schema.marks['code']!.create()]          : []),
+      ...(seg.underline ? [schema.marks['underline']!.create()]     : []),
+      ...(seg.strike    ? [schema.marks['strikethrough']!.create()] : []),
+      ...(seg.highlight ? [schema.marks['highlight']!.create()]     : []),
+      ...(seg.link      ? [schema.marks['link']!.create({ href: seg.link, title: null })] : []),
     ];
     if (seg.text === '\n') return schema.nodes['hard_break']!.create();
     return schema.text(seg.text, marks);

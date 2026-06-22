@@ -183,6 +183,36 @@ export const deltoSchema = new Schema({
       parseDOM: [{ tag: 'code' }],
       toDOM: () => ['code', 0] as const,
     },
+    // Mark order matters for serialization stability — these three append after `code`, before `link`
+    // (link stays last with inclusive:false so it doesn't extend on typing). Schema key for strike is
+    // `strikethrough`; the UI `data-cmd="strike"` is just an id that command code maps to this mark.
+    underline: {
+      parseDOM: [
+        { tag: 'u' },
+        { style: 'text-decoration=underline' },
+        { style: 'text-decoration-line=underline' },
+      ],
+      toDOM: () => ['u', 0] as const,
+    },
+    strikethrough: {
+      parseDOM: [
+        { tag: 's' },
+        { tag: 'del' },
+        { tag: 'strike' },
+        { style: 'text-decoration=line-through' },
+        { style: 'text-decoration-line=line-through' },
+      ],
+      toDOM: () => ['s', 0] as const,
+    },
+    highlight: {
+      parseDOM: [
+        { tag: 'mark' },
+        // Defensive for GDocs/Word paste, which carries highlight as a background colour. The bare
+        // <mark> tag rule above is the primary path; narrow/drop this if real paste proves it greedy.
+        { style: 'background-color', getAttrs: (v) => (typeof v === 'string' && v !== '' && v !== 'transparent' ? null : false) },
+      ],
+      toDOM: () => ['mark', 0] as const,
+    },
     link: {
       attrs: { href: {}, title: { default: null } },
       inclusive: false,
