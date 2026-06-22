@@ -15,6 +15,7 @@ import { undo, redo } from 'prosemirror-history';
 import { keymap } from 'prosemirror-keymap';
 import type { Command } from 'prosemirror-state';
 import type { DeltoSchema } from './schema.js';
+import { toggleMarkCmd, linkCommand } from './commands.js';
 
 /**
  * Keyboard bindings for the deltos editor. Keeps standard editing muscle-memory intact
@@ -53,10 +54,15 @@ export function buildKeymap(schema: DeltoSchema) {
   bindings['Mod-y'] = redo;
   bindings['Mod-Shift-z'] = redo;
 
-  // Inline marks
+  // Inline marks (the new bindings route through the shared commands.ts builders so a shortcut, a
+  // toolbar tap, and a markdown trigger that mean the same thing run the same command).
   if (marks['bold'])   bindings['Mod-b'] = toggleMark(marks['bold']);
   if (marks['italic']) bindings['Mod-i'] = toggleMark(marks['italic']);
   if (marks['code'])   bindings['Mod-`'] = toggleMark(marks['code']);
+  if (marks['underline'])     bindings['Mod-u'] = toggleMarkCmd(schema, 'underline');
+  if (marks['strikethrough']) bindings['Mod-Shift-x'] = toggleMarkCmd(schema, 'strikethrough'); // GitHub/Notion convention
+  if (marks['highlight'])     bindings['Mod-Shift-h'] = toggleMarkCmd(schema, 'highlight');
+  if (marks['link'])          bindings['Mod-k'] = linkCommand(schema); // prompts on a non-empty selection
 
   // Headings
   if (nodes['heading']) {
