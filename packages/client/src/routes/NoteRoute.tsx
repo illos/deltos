@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useParams, Link, useSearchParams, Navigate, useLocation } from 'react-router-dom';
+import { useParams, Link, useSearchParams, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import type { Note, NoteId, NotebookId } from '@deltos/shared';
 import { NoteIdSchema } from '@deltos/shared';
 import { getStore } from '../db/store.js';
@@ -16,7 +16,9 @@ import { HistoryPanel } from '../components/HistoryPanel.js';
 import { useNoteVersions } from '../db/conflict.js';
 import { formatSmartDate } from '../lib/notePreview.js';
 import { SyncIndicator } from '../components/SyncIndicator.js';
-import { VersionHistory, Ellipsis } from '../icons/index.js';
+import { VersionHistory, Ellipsis, Trash } from '../icons/index.js';
+import { useIsDesktop } from '../lib/useIsDesktop.js';
+import { showActionToast } from '../lib/toastEvents.js';
 import type { ClientNote, NoteVersion } from '../db/schema.js';
 
 /**
@@ -42,6 +44,9 @@ export function NoteRoute() {
   const [showMove, setShowMove] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const notebooks = useNotebooks();
+  const navigate = useNavigate();
+  // Desktop-only note-delete trashcan lives in the §3 meta row (mobile keeps swipe-to-delete).
+  const isDesktop = useIsDesktop();
 
   // B3 blank-note discard: track whether note was version=0+blank on first load.
   // Only newly-created notes (version=0, UNSYNCED) are candidates for discard;
@@ -99,6 +104,19 @@ export function NoteRoute() {
     setShowHistory(false);
   }, [note]);
 
+  // Desktop note-delete: reuses the exact soft-delete→Trash path the mobile SwipeRow uses
+  // (recoverable, sticky, identical behavior) + the same Undo toast, then returns region 3 to
+  // the list/empty state. Note delete only — separate from the parked notebook-delete affordance.
+  const handleDeleteNote = useCallback(() => {
+    if (!note) return;
+    mutateNotes.softDelete(note).catch(console.error);
+    showActionToast(`"${note.title || 'Untitled'}" deleted`, {
+      label: 'Undo',
+      fn: () => { mutateNotes.restore(note).catch(console.error); },
+    });
+    navigate('/');
+  }, [note, navigate]);
+
   // Capture new+blank state on first load — only version=0 notes are candidates.
   // Must be above early returns — rules-of-hooks.
   if (note !== undefined && noteWasNewAndBlankRef.current === null) {
@@ -124,7 +142,6 @@ export function NoteRoute() {
       if (parsedNoteId) void getHistoryCapture().leave(parsedNoteId);
     };
   // parsedNoteId is stable for the lifetime of this route instance.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parsedNoteId]);
 
   // B3: discard newly-created blank notes on unmount (#32 scoped: version=0 only).
@@ -137,7 +154,6 @@ export function NoteRoute() {
       void getStore().discardBlankNote(parsedNoteId);
     };
   // parsedNoteId is stable for the lifetime of this route instance.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parsedNoteId]);
 
   if (!noteId?.success) {
@@ -204,6 +220,13 @@ export function NoteRoute() {
           <button className="editor__meta-btn" onClick={() => setShowHistory(true)} aria-label="Version history">
             <VersionHistory size={18} />
           </button>
+          {/* Desktop-only delete trashcan, sits next to history (mobile deletes via swipe). Soft-delete
+              → Trash, recoverable; the Ellipsis ⋯ stays the last overflow slot. */}
+          {isDesktop && (
+            <button className="editor__meta-btn" onClick={handleDeleteNote} aria-label="Delete note">
+              <Trash size={18} />
+            </button>
+          )}
           <button className="editor__meta-btn" onClick={() => setShowMove(true)} aria-label="More options">
             <Ellipsis size={20} />
           </button>
