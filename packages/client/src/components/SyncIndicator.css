@@ -1,23 +1,31 @@
-/* Sync status indicator — pill badge in the shell header bar. */
+/* Sync status indicator — §3 note-meta treatment: a status DOT + the word (Plex Mono, --secondary),
+   NO bordered pill. The 'synced' dot is ALWAYS green --sync (hard invariant — never the accent);
+   other states tint the dot to signal at a glance. */
 
 .sync-indicator {
-  margin-left: auto;
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
   color: var(--secondary);
+  text-transform: capitalize; /* "synced" → "Synced" */
   white-space: nowrap;
   user-select: none;
   -webkit-user-select: none;
 }
 
-/* State colours — each gets a distinct hue to distinguish at a glance */
-.sync-indicator--idle       { color: #6ee7a8; border-color: #1f3b2c; } /* green  — confirmed synced */
-.sync-indicator--local-only { color: var(--secondary); border-color: var(--border); } /* grey   — no session, never synced */
-.sync-indicator--syncing    { color: #7eb8f5; border-color: #1a2c3d; } /* blue   — actively pushing/pulling */
-.sync-indicator--pending    { color: #c8b46e; border-color: #3b321f; } /* amber  — writes queued, debounce ticking */
-.sync-indicator--offline    { color: #f0b86e; border-color: #3b321f; } /* orange — no connectivity */
-.sync-indicator--error      { color: #f08f6e; border-color: #3b1f1f; } /* red    — last sync attempt failed */
+.sync-indicator__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sync); /* synced = the always-green --sync dot (invariant); per-state overrides below */
+  flex-shrink: 0;
+}
+
+/* Per-state dot colour. 'synced' (idle) keeps the green --sync default above. */
+.sync-indicator--local-only .sync-indicator__dot { background: var(--faint); } /* grey — never synced this session */
+.sync-indicator--syncing    .sync-indicator__dot { background: #7eb8f5; }      /* blue   — pushing/pulling */
+.sync-indicator--pending    .sync-indicator__dot { background: #c8b46e; }      /* amber  — writes queued */
+.sync-indicator--offline    .sync-indicator__dot { background: #f0b86e; }      /* orange — no connectivity */
+.sync-indicator--error      .sync-indicator__dot { background: #f08f6e; }      /* red    — last sync failed */

@@ -66,6 +66,9 @@ export function SyncIndicator() {
       aria-live="polite"
       aria-label={`Sync status: ${STATE_TITLE[effectiveState]}`}
     >
+      {/* §3 treatment: a status DOT (green --sync when synced — the always-green invariant) + the
+          word, no bordered pill. The dot colour reflects the state; only 'synced' is the green --sync. */}
+      <span className="sync-indicator__dot" aria-hidden="true" />
       {label}
     </span>
   );
