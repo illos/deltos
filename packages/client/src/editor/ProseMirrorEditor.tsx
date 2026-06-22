@@ -8,6 +8,7 @@ import type { BlockBody } from '@deltos/shared';
 import { deltoSchema } from './schema.js';
 import { uniqueBlockIdPlugin } from './plugins/blockId.js';
 import { buildKeymapPlugin } from './keymap.js';
+import { buildInputRulesPlugin } from './inputRules.js';
 import { spineToPmDoc, pmDocToSpine, extractTitleFromDoc } from './serializer.js';
 import { buildPluginIslandNodeViews } from './nodeviews/PluginIsland.js';
 import { TodoItemView } from './nodeviews/TodoItem.js';
@@ -127,6 +128,9 @@ export function ProseMirrorEditor({
       doc,
       plugins: [
         buildKeymapPlugin(deltoSchema),
+        // Input rules MUST precede uniqueBlockIdPlugin so its appendTransaction runs AFTER the rule's
+        // transaction and mints ids for any nodes the rule created (divider, list wrappers).
+        buildInputRulesPlugin(deltoSchema),
         history({ newGroupDelay: HISTORY_GROUP_DELAY_MS }),
         dropCursor(),
         gapCursor(),
