@@ -2273,8 +2273,9 @@ a.auth__link { display: inline; }
    as uneven once the mic joined history). Groups flex-fill the left; history (mic · undo · redo) sits right. */
 .elt-groups  { display: flex; align-items: center; gap: 16px; flex: 1 1 auto; min-width: 0; }
 .elt-history { display: flex; align-items: center; gap: 16px; flex: 0 0 auto; }
-/* The selector mic (§6.1) = a first-class control — accent-tinted so it reads as primary, not just a tool. */
-.elt-mic { color: var(--accent); }
+/* The selector mic (§6.1): idle = NEUTRAL (inherits the resting .editor__mtool secondary colour, like its
+   row-mates) so it doesn't read as permanently active; only while RECORDING does .is-active tint it accent
+   (Jim feel-test: the always-orange mic looked perpetually on). No standalone .elt-mic colour rule. */
 /* Per-group submenu — a layer ABOVE the keys (grows the Deck upward; keys never move). In restyle mode
    (keypad hidden) it sits directly above the selector row. Matches the mbar sub-row look.
    margin-top cancels the Deck's 10px top padding so the submenu sits FLUSH to the dock top (Jim feel-test):
