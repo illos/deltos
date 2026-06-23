@@ -1,138 +1,122 @@
 /**
- * #69 Phase 1 — the custom keyboard. Two concerns:
- *  - KeyGrid (the text-context layout): functional keys — letters (lowercase default), shift one-shot,
- *    space (stacks incl. trailing), backspace (own char-delete; tap=one, hold=accelerating), return.
- *  - KeyboardSurface (the footprint): renders the layout for the active context; the keypad is the
- *    'text' layout, replaceable AND hideable (a context with no registered layout renders nothing).
- * Geometry is navSys's overlay-diff gate; hold-accel cadence is Jim's on-device feel.
+ * Deck — Phase 1. Two concerns, now split along the extraction boundary (#69 §0.5):
+ *  - Keypad (the editor LOADOUT, Deck core): functional keys via ABSTRACT KeyActions (no editor types) —
+ *    letters (lowercase default + reactive case), shift one-shot, space (stacks), backspace (tap + hold
+ *    accel), return; zero-dead-zone hit cells; row 3 has all 7 letters incl M.
+ *  - Deck (the surface): shows the loadout registered for the active context; backplane-swallow.
+ *  - deriveDeckContext (deltos adapter, PM-specific): selection → context key.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/react';
 import { Schema } from 'prosemirror-model';
 import { EditorState, NodeSelection } from 'prosemirror-state';
-import { EditorView } from 'prosemirror-view';
-import { KeyGrid } from '../src/editor/KeyGrid.js';
-import { KeyboardSurface, deriveKeyboardContext } from '../src/editor/KeyboardSurface.js';
+import { Keypad, Deck } from '../src/deck/index.js';
+import type { KeyActions } from '../src/deck/index.js';
+import { deriveDeckContext } from '../src/editor/deckAdapter.js';
 
-// Minimal schema with a SELECTABLE atom node so we can exercise NodeSelection (non-text context).
-const schema = new Schema({
-  nodes: {
-    doc: { content: 'block+' },
-    paragraph: { group: 'block', content: 'text*', toDOM: () => ['p', 0], parseDOM: [{ tag: 'p' }] },
-    widget: { group: 'block', atom: true, selectable: true, toDOM: () => ['div', { 'data-widget': '' }], parseDOM: [{ tag: 'div[data-widget]' }] },
-    text: {},
-  },
-  marks: {},
-});
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
-let view: EditorView;
-afterEach(() => { cleanup(); view?.destroy(); vi.useRealTimers(); vi.restoreAllMocks(); });
-
-function mountGrid() {
-  const mount = document.createElement('div');
-  document.body.appendChild(mount);
-  view = new EditorView(mount, {
-    state: EditorState.create({ doc: schema.node('doc', null, [schema.node('paragraph')]), schema }),
-  });
-  view.focus();
-  render(<KeyGrid view={view} />);
+// Stub KeyActions — accumulate a text buffer so we can assert the keypad's abstract output without PM.
+function mountKeypad() {
+  let buffer = '';
+  const actions: KeyActions = {
+    insert: (t) => { buffer += t; },
+    backspace: () => { buffer = buffer.slice(0, -1); },
+    enter: () => { buffer += '\n'; },
+  };
+  render(<Keypad actions={actions} />);
+  return { text: () => buffer };
 }
-const key = (label: string) => document.querySelector(`.kb__key[aria-label="${label}"]`) as HTMLButtonElement;
+const key = (label: string) => document.querySelector(`.keypad__key[aria-label="${label}"]`) as HTMLButtonElement;
 const tap = (label: string) => fireEvent.pointerDown(key(label));
-const text = () => view.state.doc.textContent;
 
-describe('KeyGrid — structure + typing', () => {
-  it('renders the 4 rows + the full key set', () => {
-    mountGrid();
-    expect(document.querySelectorAll('.kb__row').length).toBe(4);
-    for (const l of ['Q', 'A', 'Z', 'Shift', 'Backspace', 'Space', 'Return']) expect(key(l), l).not.toBeNull();
+describe('Keypad — structure + typing (editor loadout, abstract actions)', () => {
+  it('renders the 4 rows + the full key set; row 3 has all 7 letters incl M', () => {
+    mountKeypad();
+    expect(document.querySelectorAll('.keypad__row').length).toBe(4);
+    for (const l of ['Q', 'A', 'Shift', 'Backspace', 'Space', 'Return', 'Z', 'X', 'C', 'V', 'B', 'N', 'M']) {
+      expect(key(l), l).not.toBeNull();
+    }
   });
 
-  it('every key is a tiling hit CELL with the visible key as a centered .kb__face (#349 zero dead zones)', () => {
-    mountGrid();
-    const keys = [...document.querySelectorAll('.kb__key')];
+  it('every key is a tiling hit CELL with the visible key as a centered .keypad__face (#349)', () => {
+    mountKeypad();
+    const keys = [...document.querySelectorAll('.keypad__key')];
     expect(keys.length).toBeGreaterThan(20);
-    // The hit target (button) wraps a single visible face — the cell tiles, the face stays at geometry.
-    for (const k of keys) expect(k.querySelector('.kb__face'), k.getAttribute('aria-label') ?? '').not.toBeNull();
-  });
-  it('row 3 renders all 7 letters including M (regression: the wrapper dropped M)', () => {
-    mountGrid();
-    for (const l of ['Z', 'X', 'C', 'V', 'B', 'N', 'M']) expect(key(l), l).not.toBeNull();
+    for (const k of keys) expect(k.querySelector('.keypad__face')).not.toBeNull();
   });
 
-  it('letters insert lowercase by default', () => { mountGrid(); tap('Q'); tap('A'); tap('Z'); expect(text()).toBe('qaz'); });
+  it('letters insert lowercase by default', () => { const { text } = mountKeypad(); tap('Q'); tap('A'); tap('Z'); expect(text()).toBe('qaz'); });
 
-  it('key labels are reactive to shift case (lowercase default, UPPERCASE when shift armed)', () => {
-    mountGrid();
-    expect(key('Q').querySelector('.kb__face')!.textContent).toBe('q'); // unshifted → lowercase
+  it('shift one-shot capitalizes the next letter then releases; labels react to case', () => {
+    const { text } = mountKeypad();
+    expect(key('Q').querySelector('.keypad__face')!.textContent).toBe('q');
     tap('Shift');
-    expect(key('Q').querySelector('.kb__face')!.textContent).toBe('Q'); // armed → uppercase
-    tap('Q'); // one-shot consumed → back to lowercase
-    expect(key('A').querySelector('.kb__face')!.textContent).toBe('a');
-  });
-  it('shift one-shot: capitalizes the next letter then auto-releases', () => {
-    mountGrid();
-    tap('Shift');
-    expect(key('Shift').getAttribute('aria-pressed')).toBe('true');
+    expect(key('Q').querySelector('.keypad__face')!.textContent).toBe('Q');
     tap('Q'); tap('W');
     expect(text()).toBe('Qw');
-    expect(key('Shift').getAttribute('aria-pressed')).toBe('false');
+    expect(key('Q').querySelector('.keypad__face')!.textContent).toBe('q'); // one-shot consumed
   });
-  it('space stacks (multiple interior + a trailing space)', () => {
-    mountGrid();
-    tap('A'); tap('Space'); tap('Space'); tap('B'); tap('Space');
-    expect(text()).toBe('a  b ');
-  });
-  it('backspace tap deletes one char', () => {
-    mountGrid();
-    tap('A'); tap('B'); tap('C');
+
+  it('space stacks; backspace tap deletes one; return inserts a break', () => {
+    const { text } = mountKeypad();
+    tap('A'); tap('Space'); tap('Space'); tap('B');
+    expect(text()).toBe('a  b');
     fireEvent.pointerDown(key('Backspace')); fireEvent.pointerUp(key('Backspace'));
-    expect(text()).toBe('ab');
+    expect(text()).toBe('a  ');
+    tap('Return');
+    expect(text()).toBe('a  \n');
   });
-  it('return splits the block', () => {
-    mountGrid();
-    tap('A'); tap('Return'); tap('B');
-    expect(view.state.doc.childCount).toBe(2);
-  });
+
   it('backspace hold deletes more than one char (accelerating repeat)', () => {
     vi.useFakeTimers();
-    mountGrid();
+    const { text } = mountKeypad();
     tap('A'); tap('B'); tap('C'); tap('D'); tap('E');
     fireEvent.pointerDown(key('Backspace'));
     vi.advanceTimersByTime(380 + 200 + 182);
     fireEvent.pointerUp(key('Backspace'));
     expect(text().length).toBeLessThan(4);
   });
+
+  it('the inert 123 key is a real (non-disabled) button — preserves focus, not a dismisser', () => {
+    mountKeypad();
+    const mode = document.querySelector('.keypad__key--mode') as HTMLButtonElement;
+    expect(mode.disabled).toBe(false);
+    expect(mode.className).toContain('keypad__key--inert');
+  });
 });
 
-describe('KeyboardSurface — context-driven footprint', () => {
-  it('renders the keypad for the text context', () => {
-    render(<KeyboardSurface view={null} context="text" />);
-    expect(document.querySelector('.kb__grid')).not.toBeNull();
-    expect(document.querySelector('.kb[data-kb-context="text"]')).not.toBeNull();
+describe('Deck — context-driven surface', () => {
+  it('shows the loadout for the active context + swallows backplane pointerdown', () => {
+    render(<Deck context="text" loadouts={{ text: <div data-testid="lo">keypad</div> }} />);
+    const deck = document.querySelector('.deck') as HTMLElement;
+    expect(deck).not.toBeNull();
+    expect(document.querySelector('[data-testid="lo"]')).not.toBeNull();
+    const ev = new Event('pointerdown', { bubbles: true, cancelable: true });
+    deck.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
   });
-  it('renders NOTHING for a context with no registered layout (keypad hideable)', () => {
-    const { container } = render(<KeyboardSurface view={null} context="node:widget" />);
+  it('renders NOTHING for a context with no registered loadout (surface hideable)', () => {
+    const { container } = render(<Deck context="node:widget" loadouts={{ text: <div /> }} />);
     expect(container.firstChild).toBeNull();
   });
+});
 
-  it('the surface swallows pointerdown on the backplane/gaps (preventDefault → editor never blurs)', () => {
-    render(<KeyboardSurface view={null} context="text" />);
-    // A tap on the container/gap (not a key) must be preventDefaulted so focus stays on the editor.
-    const surface = document.querySelector('.kb') as HTMLElement;
-    const ev = new Event('pointerdown', { bubbles: true, cancelable: true });
-    surface.dispatchEvent(ev);
-    expect(ev.defaultPrevented).toBe(true);
-    // And the inert 123 key is a real (non-disabled) focus-preserving button, not a dismisser.
-    const mode = document.querySelector('.kb__key--mode') as HTMLButtonElement;
-    expect(mode.disabled).toBe(false);
+describe('deriveDeckContext (deltos adapter)', () => {
+  const schema = new Schema({
+    nodes: {
+      doc: { content: 'block+' },
+      paragraph: { group: 'block', content: 'text*', toDOM: () => ['p', 0] },
+      widget: { group: 'block', atom: true, selectable: true, toDOM: () => ['div', { 'data-widget': '' }] },
+      text: {},
+    },
+    marks: {},
   });
-  it('deriveKeyboardContext: TextSelection → text, NodeSelection → node:<type>', () => {
-    // Lead with a paragraph so the default selection is a text caret; the widget follows for the node case.
+  it('TextSelection → "text", NodeSelection → "node:<type>"', () => {
     const base = EditorState.create({ doc: schema.node('doc', null, [schema.node('paragraph'), schema.node('widget')]), schema });
-    expect(deriveKeyboardContext(base)).toBe('text'); // default caret in the paragraph
-    const widgetPos = base.doc.child(0).nodeSize; // position just before the widget
+    expect(deriveDeckContext(base)).toBe('text');
+    const widgetPos = base.doc.child(0).nodeSize;
     const nodeSel = base.apply(base.tr.setSelection(NodeSelection.create(base.doc, widgetPos)));
-    expect(deriveKeyboardContext(nodeSel)).toBe('node:widget');
+    expect(deriveDeckContext(nodeSel)).toBe('node:widget');
   });
 });

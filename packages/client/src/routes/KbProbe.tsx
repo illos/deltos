@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Schema } from 'prosemirror-model';
 import { EditorState } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import { KeyboardSurface, deriveKeyboardContext } from '../editor/KeyboardSurface.js';
-import type { KeyboardContext } from '../editor/KeyboardSurface.js';
+import { Deck, Keypad } from '../deck/index.js';
+import type { DeckContext, DeckLoadoutRegistry } from '../deck/index.js';
+import { deriveDeckContext, buildPmKeyActions } from '../editor/deckAdapter.js';
 
 /**
  * /kbprobe — the isolated test route (auth-bypassed in App). Originally the #68 inputmode=none probe;
@@ -26,12 +27,17 @@ const schema = new Schema({
 
 export function KbProbe() {
   const mountRef = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState<EditorView | null>(null);
-  // The keyboard footprint reacts to the editor selection (Phase-1 context is always 'text' here since
-  // the minimal schema has no selectable nodes, but the surface is wired selection-aware from day one).
-  const [context, setContext] = useState<KeyboardContext>('text');
+  const viewRef = useRef<EditorView | null>(null);
+  const [ready, setReady] = useState(false);
+  // The Deck reacts to the editor selection (Phase-1 context is always 'text' here since the minimal
+  // schema has no selectable nodes, but the surface is wired selection-aware from day one).
+  const [context, setContext] = useState<DeckContext>('text');
   // Back to the app — a PWA has no address bar, so the probe needs its own exit (client-route push).
   const navigate = useNavigate();
+
+  // The keypad's KeyActions wired to the probe's PM view via the SAME deltos adapter the real editor uses.
+  const deckActions = useRef(buildPmKeyActions(() => viewRef.current)).current;
+  const deckLoadouts = useMemo<DeckLoadoutRegistry>(() => ({ text: <Keypad actions={deckActions} /> }), [deckActions]);
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -43,12 +49,13 @@ export function KbProbe() {
       dispatchTransaction(tr) {
         const next = v.state.apply(tr);
         v.updateState(next);
-        setContext(deriveKeyboardContext(next));
+        setContext(deriveDeckContext(next));
       },
     });
-    setView(v);
+    viewRef.current = v;
+    setReady(true);
     v.focus();
-    return () => { v.destroy(); setView(null); };
+    return () => { v.destroy(); viewRef.current = null; setReady(false); };
   }, []);
 
   return (
@@ -60,7 +67,7 @@ export function KbProbe() {
         the key geometry vs muscle memory, multiple/trailing spaces, and backspace tap + hold-to-repeat.
       </p>
       <div ref={mountRef} className="kbprobe__editor" />
-      <KeyboardSurface view={view} context={context} />
+      {ready && <Deck context={context} loadouts={deckLoadouts} />}
     </div>
   );
 }

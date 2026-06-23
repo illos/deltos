@@ -1,7 +1,7 @@
 /**
  * #69 Phase 1 slice 2 — the opt-in toggle + real-editor integration. Default OFF: the editor behaves
  * exactly as today (native keyboard, MobileEditorBar, no inputmode). ON: the editor suppresses the
- * native keyboard (inputmode=none) and shows the KeyboardSurface — driven by the toggle (editor mounted),
+ * native keyboard (inputmode=none) and shows the Deck — driven by the toggle (editor mounted),
  * NOT by editor focus, so incidental tap-blurs / the backplane can't tear it down.
  */
 import 'fake-indexeddb/auto';
@@ -47,33 +47,33 @@ describe('editor integration (mobile)', () => {
     await waitFor(() => expect(pmEl()).not.toBeNull());
     expect(document.querySelector('button[aria-label="Undo"]')).not.toBeNull(); // MobileEditorBar present
     expect(pmEl()!.getAttribute('inputmode')).not.toBe('none');
-    expect(document.querySelector('.kb__grid')).toBeNull();
+    expect(document.querySelector('.keypad')).toBeNull();
   });
 
-  it('ON: inputmode=none + KeyboardSurface keypad (toggle-driven), MobileEditorBar gone', async () => {
+  it('ON: inputmode=none + Deck keypad (toggle-driven), MobileEditorBar gone', async () => {
     await writeCustomKeyboard(true);
     render(<ProseMirrorEditor noteId="n2" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
     // async read → custom on → view recreated with inputmode=none + the keyboard shown
     await waitFor(() => expect(pmEl()?.getAttribute('inputmode')).toBe('none'));
-    await waitFor(() => expect(document.querySelector('.kb__grid')).not.toBeNull());
-    expect(document.querySelector('.kb__key[aria-label="Q"]')).not.toBeNull();
+    await waitFor(() => expect(document.querySelector('.keypad')).not.toBeNull());
+    expect(document.querySelector('.keypad__key[aria-label="Q"]')).not.toBeNull();
     expect(document.querySelector('button[aria-label="Undo"]')).toBeNull(); // bar replaced by the keyboard
   });
 
   it('the keyboard is NOT focus-gated: a blur does not tear it down (#69 drop fix)', async () => {
     await writeCustomKeyboard(true);
     render(<ProseMirrorEditor noteId="n3" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
-    await waitFor(() => expect(document.querySelector('.kb__grid')).not.toBeNull());
+    await waitFor(() => expect(document.querySelector('.keypad')).not.toBeNull());
     fireEvent.blur(pmEl()!); // a backplane / near-miss tap blurs the editor — must NOT hide the keyboard
-    expect(document.querySelector('.kb__grid')).not.toBeNull();
+    expect(document.querySelector('.keypad')).not.toBeNull();
   });
 
   it('the inert 123 key is a real (non-disabled) button so it preserves focus, not a dismisser', async () => {
     await writeCustomKeyboard(true);
     render(<ProseMirrorEditor noteId="n4" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
-    await waitFor(() => expect(document.querySelector('.kb__key--mode')).not.toBeNull());
-    const mode = document.querySelector('.kb__key--mode') as HTMLButtonElement;
+    await waitFor(() => expect(document.querySelector('.keypad__key--mode')).not.toBeNull());
+    const mode = document.querySelector('.keypad__key--mode') as HTMLButtonElement;
     expect(mode.disabled).toBe(false);                 // NOT disabled (disabled buttons swallow no events)
-    expect(mode.className).toContain('kb__key--inert'); // greyed via class
+    expect(mode.className).toContain('keypad__key--inert'); // greyed via class
   });
 });

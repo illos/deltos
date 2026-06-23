@@ -228,8 +228,8 @@ function AuthedShell() {
   // stranded in custom mode — Jim's call.)
   const [customKbEnabled] = useCustomKeyboard();
   useEffect(() => {
-    document.body.classList.toggle('kb-custom', customKbEnabled && !isDesktop);
-    return () => { document.body.classList.remove('kb-custom'); };
+    document.body.classList.toggle('deck-custom', customKbEnabled && !isDesktop);
+    return () => { document.body.classList.remove('deck-custom'); };
   }, [customKbEnabled, isDesktop]);
 
   // Load the device-local current notebook from IDB on first mount (with localStorage migration).

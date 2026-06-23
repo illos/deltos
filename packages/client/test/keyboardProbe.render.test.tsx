@@ -20,7 +20,7 @@ describe('KbProbe — inputmode=none + custom keyboard mounted', () => {
     expect(pm()!.getAttribute('inputmode')).toBe('none');
     expect(pm()!.getAttribute('contenteditable')).toBe('true');
     // The real #69 grid is mounted (not the old throwaway keypad).
-    expect(document.querySelector('.kb__grid')).not.toBeNull();
-    expect(document.querySelector('.kb__key[aria-label="Q"]')).not.toBeNull();
+    expect(document.querySelector('.keypad')).not.toBeNull();
+    expect(document.querySelector('.keypad__key[aria-label="Q"]')).not.toBeNull();
   });
 });

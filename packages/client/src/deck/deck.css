@@ -1,0 +1,64 @@
+/* Deck — the adaptive control surface (#69). Co-located with the module + imported by Deck.tsx, so it
+   travels with the Deck on extraction.
+
+   THEMING CONTRACT: this stylesheet consumes the HOST's theme tokens as CSS custom properties — never
+   hardcodes colour — so in deltos it inherits the active palette (4 × light/dark) by construction, and a
+   future host just supplies its own values. Host must define: --nav --list --ink --sel --border
+   --secondary --paper --faint. The label FONT is pinned to system-ui INSIDE the Deck (a geometry
+   invariant — the host's selectable fonts have different glyph metrics that would break the pixel match). */
+
+/* The DECK surface — owns the bottom slot, fixed to the viewport bottom (inputmode=none means no native
+   keyboard shrinks the viewport, so the Deck owns it). */
+.deck {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+  background: var(--nav);
+  padding: 10px 0 max(8px, env(safe-area-inset-bottom));
+  box-sizing: border-box; user-select: none; -webkit-user-select: none;
+  touch-action: none;
+}
+
+/* ── Keypad loadout — geometry matched to the iPhone 15 Plus native keyboard (#69 §2.1) ──────────────
+   Metrics as vars so an overlay diff tunes them in one place. */
+.keypad {
+  --kp-key-w: 37px;     /* letter key width (pitch 42.7 − gap 6) */
+  --kp-key-h: 43px;     /* key height */
+  --kp-gap: 6px;        /* the old inter-key gap — now absorbed into the hit cells */
+  --kp-row-gap: 12px;   /* vertical gap (row pitch 55 = key-h 43 + 12) */
+  --kp-radius: 8px;
+  --kp-fn-w: 50px;      /* shift / delete face width (native ~50pt) */
+  --kp-r4-w: 99px;      /* 123 / return face width (native ~99pt; space flex-fills) */
+  display: flex; flex-direction: column; gap: 0;
+}
+/* Zero dead zones (#349): cells tile edge-to-edge (gap 0) horizontally AND vertically (cell = key pitch),
+   with the visible .keypad__face centered inside at the unchanged geometry. */
+.keypad__row { display: flex; justify-content: center; align-items: center; gap: 0; }
+
+/* The CELL = the invisible hit target: full pitch, transparent, tiles edge-to-edge so a tap that lands in
+   a former gap hits the nearest key. No visible style here. */
+.keypad__key {
+  flex: 0 0 calc(var(--kp-key-w) + var(--kp-gap));   /* horizontal pitch */
+  height: calc(var(--kp-key-h) + var(--kp-row-gap)); /* row pitch — tiles vertically too */
+  box-sizing: border-box; padding: 0; background: none; border: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: none;
+}
+/* The visible key — matched geometry, centered in its cell. Font pinned to system-ui (Deck invariant). */
+.keypad__face {
+  width: var(--kp-key-w); height: var(--kp-key-h); box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--list); color: var(--ink); border-radius: var(--kp-radius);
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 22px; font-weight: 400; line-height: 1;
+}
+.keypad__key:active .keypad__face { background: var(--sel); }
+/* Wider keys: the CELL pitch grows (key + gap); the FACE keeps the matched key width. */
+.keypad__key--fn { flex-basis: calc(var(--kp-fn-w) + var(--kp-gap)); }
+.keypad__key--fn .keypad__face { width: var(--kp-fn-w); font-size: 18px; color: var(--secondary); background: var(--border); }
+.keypad__key--shift.is-active .keypad__face { background: var(--paper); color: var(--ink); } /* one-shot armed */
+.keypad__key--mode, .keypad__key--return { flex-basis: calc(var(--kp-r4-w) + var(--kp-gap)); }
+.keypad__key--mode .keypad__face, .keypad__key--return .keypad__face { width: var(--kp-r4-w); font-size: 16px; }
+.keypad__key--space { flex: 1 1 auto; }
+.keypad__key--space .keypad__face { width: 100%; font-size: 15px; color: var(--secondary); }
+/* Phase-1-inert keys (e.g. 123) — greyed but NOT a disabled <button> (disabled buttons swallow no pointer
+   events → can't preventDefault → blur the editor). Same element/handlers as live keys. */
+.keypad__key--inert .keypad__face { opacity: 0.5; }

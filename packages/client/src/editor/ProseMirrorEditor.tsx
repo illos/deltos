@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { EditorState, Plugin } from 'prosemirror-state';
 import { EditorView, Decoration, DecorationSet } from 'prosemirror-view';
 import { history, undo, redo, undoDepth, redoDepth } from 'prosemirror-history';
@@ -15,8 +15,9 @@ import { TodoItemView } from './nodeviews/TodoItem.js';
 import { sliceToPlainText } from './clipboard.js';
 import { EditorToolbar } from './EditorToolbar.js';
 import { MobileEditorBar } from './MobileEditorBar.js';
-import { KeyboardSurface, deriveKeyboardContext } from './KeyboardSurface.js';
-import type { KeyboardContext } from './KeyboardSurface.js';
+import { Deck, Keypad } from '../deck/index.js';
+import type { DeckContext, DeckLoadoutRegistry } from '../deck/index.js';
+import { deriveDeckContext, buildPmKeyActions } from './deckAdapter.js';
 import { deriveActiveState, EMPTY_ACTIVE_STATE } from './editorState.js';
 import type { EditorActiveState } from './editorState.js';
 import type { ToolDescriptor } from './editorTools.js';
@@ -84,18 +85,21 @@ export function ProseMirrorEditor({
   const viewRef = useRef<EditorView | null>(null);
   const isDesktop = useIsDesktop();
   // #69: the custom keyboard is opt-in (Settings, default OFF) + mobile-only. When ON the editor
-  // suppresses the native keyboard (inputmode=none) and shows our context-driven KeyboardSurface.
+  // suppresses the native keyboard (inputmode=none) and shows our context-driven Deck.
   const [customKbEnabled] = useCustomKeyboard();
   const customKb = customKbEnabled && !isDesktop;
   // One selection-driven snapshot drives every toolbar button + undo/redo availability.
   const [active, setActive] = useState<EditorActiveState>(EMPTY_ACTIVE_STATE);
-  // Reactive view + selection context for the KeyboardSurface. The keyboard's visibility is driven by
+  // Reactive view + selection context for the Deck. The keyboard's visibility is driven by
   // customKb (editor mounted = a note open + the toggle on), NOT by editor focus — a focus-gated
   // keyboard was being torn down by incidental tap-blurs (#69 single-tap) and by sync-driven re-renders
   // that drop focus (#328 irregular hide). Owning the bottom slot whenever a note is open is robust to
   // both and matches the north-star (the footprint is always the surface while editing).
-  const [view, setView] = useState<EditorView | null>(null);
-  const [kbContext, setKbContext] = useState<KeyboardContext>('text');
+  const [deckContext, setDeckContext] = useState<DeckContext>('text');
+  // The keypad's abstract KeyActions, wired to PM via the adapter (closes over viewRef → stable across
+  // view re-creation). The Deck loadout registry for this host: the 'text' context → the keypad.
+  const deckActions = useRef(buildPmKeyActions(() => viewRef.current)).current;
+  const deckLoadouts = useMemo<DeckLoadoutRegistry>(() => ({ text: <Keypad actions={deckActions} /> }), [deckActions]);
 
   // Keep onChange and onLeave in refs so they're always current without re-running the effect.
   const onChangeRef = useRef(onChange);
@@ -188,7 +192,7 @@ export function ProseMirrorEditor({
         // transactions too) so toolbar marks/block + undo/redo availability stay reactive from one place.
         setActive(deriveActiveState(newState, undoDepth(newState) > 0, redoDepth(newState) > 0));
         // #69: the keyboard footprint is a pure function of context — re-derive it from the selection.
-        setKbContext(deriveKeyboardContext(newState));
+        setDeckContext(deriveDeckContext(newState));
 
         if (!tr.docChanged) return;
 
@@ -218,9 +222,8 @@ export function ProseMirrorEditor({
     });
 
     viewRef.current = view;
-    setView(view);
     setActive(deriveActiveState(view.state, false, false));
-    setKbContext(deriveKeyboardContext(view.state));
+    setDeckContext(deriveDeckContext(view.state));
     onViewInit?.(view);
     if (autoFocus) view.focus();
 
@@ -237,7 +240,6 @@ export function ProseMirrorEditor({
       onLeaveRef.current?.();
       view.destroy();
       viewRef.current = null;
-      setView(null);
       onViewInit?.(null);
     };
   // Recreate the view when the keyboard mode flips (customKb decides inputmode=none at creation).
@@ -252,7 +254,7 @@ export function ProseMirrorEditor({
       {/* Mobile, custom keyboard ON: the context-driven keyboard footprint owns the bottom while a note
           is open (driven by the toggle, NOT editor focus — focus-gating let incidental tap-blurs + the
           backplane tear it down). #69. */}
-      {customKb && <KeyboardSurface view={view} context={kbContext} />}
+      {customKb && <Deck context={deckContext} loadouts={deckLoadouts} />}
       {/* Mobile, custom keyboard OFF: today's grouped contextual bar + native keyboard (slice D). */}
       {!isDesktop && !customKb && (
         <MobileEditorBar active={active} run={runTool} onUndo={handleUndo} onRedo={handleRedo} />
