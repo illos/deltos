@@ -118,6 +118,16 @@ export function ProseMirrorEditor({
     view.focus();
   }, []);
 
+  // #69: while the custom keyboard owns the bottom slot, suppress the universal bottom nav (both are
+  // fixed-bottom and would overlap). Nav + keyboard can't both own the bottom — the keyboard wins while
+  // a field is focused. (Next slice absorbs the nav controls into the surface as the 'navigation'
+  // context; this is the tight unblock so the feel-test keeps moving.)
+  useEffect(() => {
+    const active = customKb && editorFocused;
+    document.body.classList.toggle('kb-active', active);
+    return () => { document.body.classList.remove('kb-active'); };
+  }, [customKb, editorFocused]);
+
   // Run a registry tool's command against the live view, then refocus (the button used
   // mouseDown+preventDefault to preserve the selection). The shared commands.ts layer means a toolbar
   // tap, a keymap shortcut, and a markdown input rule that mean the same thing run the same command.

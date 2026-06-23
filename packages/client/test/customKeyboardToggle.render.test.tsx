@@ -48,13 +48,17 @@ describe('editor integration (mobile)', () => {
     expect(document.querySelector('.kb__grid')).toBeNull();
   });
 
-  it('ON: inputmode=none + KeyboardSurface keypad, MobileEditorBar gone', async () => {
+  it('ON: inputmode=none + KeyboardSurface keypad, MobileEditorBar gone, nav suppressed', async () => {
     await writeCustomKeyboard(true);
-    render(<ProseMirrorEditor noteId="n2" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
+    const { unmount } = render(<ProseMirrorEditor noteId="n2" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
     // async read → custom on → view recreated with inputmode=none + the keyboard shown (focused)
     await waitFor(() => expect(pmEl()?.getAttribute('inputmode')).toBe('none'));
     await waitFor(() => expect(document.querySelector('.kb__grid')).not.toBeNull());
     expect(document.querySelector('.kb__key[aria-label="Q"]')).not.toBeNull();
     expect(document.querySelector('button[aria-label="Undo"]')).toBeNull(); // bar replaced by the keyboard
+    // the universal bottom nav is suppressed while the keyboard owns the bottom slot
+    await waitFor(() => expect(document.body.classList.contains('kb-active')).toBe(true));
+    unmount();
+    expect(document.body.classList.contains('kb-active')).toBe(false); // restored on leave
   });
 });

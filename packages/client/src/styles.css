@@ -2213,6 +2213,9 @@ a.auth__link { display: inline; }
 /* Caret clearance: when the keyboard is up, give the editable bottom space so the last lines can scroll
    clear of the keyboard (Phase-1 approximation of the ~226px keyboard height + safe-area; refined later). */
 .editor__pm--kb { padding-bottom: 264px; scroll-padding-bottom: 264px; }
+/* While the custom keyboard owns the bottom slot, suppress the universal bottom nav (both fixed-bottom →
+   would overlap). ProseMirrorEditor toggles body.kb-active while the keyboard is showing. */
+body.kb-active .bottom-nav { display: none; }
 .kb__grid { display: flex; flex-direction: column; gap: var(--kb-row-gap); }
 .kb__row { display: flex; justify-content: center; align-items: center; gap: var(--kb-gap); }
 .kb__row--r3, .kb__row--r4 { justify-content: space-between; }
