@@ -84,7 +84,12 @@
    loadouts (nav) don't use this composition → no base region → they sit flush. */
 .keypad-loadout__base {
   height: 47px; flex: 0 0 47px;
-  display: flex; align-items: center; justify-content: center; gap: 10px;
+  /* EQUIDISTANT row (Jim feel-test ×2): every control evenly spaced edge-to-edge, no left/right cluster
+     split. The host's selector wrappers (.elt-groups/.elt-history) use display:contents so THEIR buttons
+     promote to direct flex items here — so space-evenly distributes ALL icons (Aa·B·+·mic·undo·redo·toggle)
+     uniformly, not just the clusters. gap:0 so justify owns 100% of the spacing (a gap would stack on top
+     and re-introduce unevenness). */
+  display: flex; align-items: center; justify-content: space-evenly; gap: 0;
   padding: 0 12px; box-sizing: border-box;
 }
 

@@ -2269,10 +2269,11 @@ a.auth__link { display: inline; }
    these Deck-specific layer CONTAINERS are new. */
 /* Selector row (in the base region, below the keys): groups flex-fill the left, Undo/Redo + the show/hide
    toggle sit at the right. */
-/* Both clusters share ONE gap so the inter-icon rhythm is even across the row (Jim feel-test: 20 vs 14 read
-   as uneven once the mic joined history). Groups flex-fill the left; history (mic · undo · redo) sits right. */
-.elt-groups  { display: flex; align-items: center; gap: 16px; flex: 1 1 auto; min-width: 0; }
-.elt-history { display: flex; align-items: center; gap: 16px; flex: 0 0 auto; }
+/* display:contents dissolves these two wrappers from layout so their buttons promote to direct flex items
+   of .keypad-loadout__base — letting its space-evenly distribute EVERY icon (Aa·B·+·mic·undo·redo·toggle)
+   equidistantly, with no left/right cluster split or margin-auto (Jim feel-test ×2: the cluster split was
+   the root of the uneven/bunched spacing). The role="toolbar" semantics stay on the wrappers. */
+.elt-groups, .elt-history { display: contents; }
 /* The selector mic (§6.1): idle = NEUTRAL (inherits the resting .editor__mtool secondary colour, like its
    row-mates) so it doesn't read as permanently active; only while RECORDING does .is-active tint it accent
    (Jim feel-test: the always-orange mic looked perpetually on). No standalone .elt-mic colour rule. */
