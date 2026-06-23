@@ -29,6 +29,7 @@ import {
 import { sync } from './routes/sync.js';
 import { passwordAuth } from './routes/passwordAuth.js';
 import { transcribe } from './routes/transcribe.js';
+import { unfurl } from './routes/unfurl.js';
 
 const app = new Hono<AppEnv>();
 
@@ -85,6 +86,14 @@ app.route('/api/auth', passwordAuth);
 // ---------------------------------------------------------------------------
 
 app.route('/api/transcribe', transcribe);
+
+// ---------------------------------------------------------------------------
+// Rich-embed UNFURL route (rich-embeds spec §2, rung-2) — authenticated server-side link
+// metadata fetch. Returns { url, title, description, image, favicon, siteName } parsed from
+// og: tags + <title>. KV-cached per URL. SSRF controls + F13 auth guard built in.
+// ---------------------------------------------------------------------------
+
+app.route('/api/unfurl', unfurl);
 
 // ---------------------------------------------------------------------------
 // Helpers

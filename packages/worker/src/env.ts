@@ -47,4 +47,13 @@ export interface Env {
    * rejected by the gate BEFORE any Argon2id work (gate-before-hash).
    */
   TURNSTILE_SECRET?: string;
+  /**
+   * KV namespace for the unfurl result cache (GET /api/unfurl). Results are stored keyed by
+   * normalized URL with a 1-hour TTL so repeated renders of the same link don't re-fetch.
+   * Optional: when unbound the route still works, just without caching.
+   *
+   * To wire: run `wrangler kv namespace create unfurl-cache`, then add the returned id to
+   * wrangler.jsonc under `kv_namespaces` with `binding: "UNFURL_CACHE"`.
+   */
+  UNFURL_CACHE?: KVNamespace;
 }

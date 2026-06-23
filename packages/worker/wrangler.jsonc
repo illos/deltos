@@ -47,6 +47,12 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"],
   },
+  // Rich-embed unfurl cache (GET /api/unfurl). Not yet wired — add after creating the namespace:
+  //   wrangler kv namespace create unfurl-cache   # copy the returned id into the block below
+  // "kv_namespaces": [
+  //   { "binding": "UNFURL_CACHE", "id": "<paste-id-here>" },
+  // ],
+  //
   // Reserved per the locked architecture — NOT wired in Phase 0:
   //   - Durable Objects (live collaboration's promote-to-DO seam; the E2EE relay)
   //   - R2 (the content-addressed blob store)
