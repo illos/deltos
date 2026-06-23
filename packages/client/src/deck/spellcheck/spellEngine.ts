@@ -23,6 +23,10 @@ export interface SpellEngine {
 }
 
 export function createSpellEngine(): SpellEngine {
+  // Defensive: no Worker (SSR / test env) → an inert engine (spellcheck simply produces nothing).
+  if (typeof Worker === 'undefined') {
+    return { check: async () => [], lookup: async () => [], dispose: () => {} };
+  }
   const worker = new Worker(new URL('./spellWorker.js', import.meta.url), { type: 'module' });
   worker.postMessage({ type: 'init', dict: dictRaw } satisfies SpellRequest);
 

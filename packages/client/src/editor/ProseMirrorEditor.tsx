@@ -20,6 +20,11 @@ import type { DeckContext, DeckLoadoutRegistry } from '../deck/index.js';
 import { deriveDeckContext, buildPmKeyActions } from './deckAdapter.js';
 import { useDeckHost } from '../components/DeckHost.js';
 import { useEditorLoadoutTools, EditorGroupSelector, EditorGroupSubmenu } from './editorLoadoutTools.js';
+import { createSpellcheckPlugin, applySpellCorrection } from './spellcheckPlugin.js';
+import type { SpellTap } from './spellcheckPlugin.js';
+import { SpellSuggestionPopover } from './SpellSuggestionPopover.js';
+import { useSpellcheckStore } from '../lib/useSpellcheck.js';
+import type { SpellEngine } from '../deck/index.js';
 import { deriveActiveState, EMPTY_ACTIVE_STATE } from './editorState.js';
 import type { EditorActiveState } from './editorState.js';
 import type { ToolDescriptor } from './editorTools.js';
@@ -85,6 +90,10 @@ export function ProseMirrorEditor({
 }: ProseMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // #69 §5 spellcheck: the base plugin list (so the spellcheck plugin can be added/removed by reconfigure
+  // when the toggle flips) + the lazily-created off-thread engine.
+  const basePluginsRef = useRef<Plugin[]>([]);
+  const spellEngineRef = useRef<SpellEngine | null>(null);
   const isDesktop = useIsDesktop();
   // #69: the custom keyboard is opt-in (Settings, default OFF) + mobile-only. When ON the editor
   // suppresses the native keyboard (inputmode=none) and shows our context-driven Deck.
@@ -92,6 +101,13 @@ export function ProseMirrorEditor({
   const customKb = customKbEnabled && !isDesktop;
   // One selection-driven snapshot drives every toolbar button + undo/redo availability.
   const [active, setActive] = useState<EditorActiveState>(EMPTY_ACTIVE_STATE);
+  // #69 §5 spellcheck: on only when the toggle is enabled AND its deviceState read has resolved (so a
+  // user who disabled it never spins up the worker during the brief IDB read). The popover anchors a
+  // tapped misspelling's suggestions.
+  const spellOn = useSpellcheckStore((s) => s.enabled && s._loaded);
+  const [spellPopover, setSpellPopover] = useState<
+    { x: number; y: number; from: number; to: number; word: string; suggestions: string[] } | null
+  >(null);
   // Reactive view + selection context for the Deck. The keyboard's visibility is driven by
   // customKb (editor mounted = a note open + the toggle on), NOT by editor focus — a focus-gated
   // keyboard was being torn down by incidental tap-blurs (#69 single-tap) and by sync-driven re-renders
@@ -188,6 +204,22 @@ export function ProseMirrorEditor({
     return () => publishEditor(null);
   }, [customKb, deckContext, deckLoadouts, publishEditor]);
 
+  // #69 §5: hydrate the spellcheck toggle from deviceState once (sets _loaded → gates engine creation).
+  useEffect(() => {
+    if (!useSpellcheckStore.getState()._loaded) void useSpellcheckStore.getState().init();
+  }, []);
+
+  // A squiggle was tapped → look up suggestions (off-thread) + open the popover anchored at the word.
+  const handleSpellTap = useCallback((t: SpellTap) => {
+    const engine = spellEngineRef.current;
+    if (!engine) return;
+    void engine.lookup(t.word, 6).then((sugs) => {
+      if (t.view.isDestroyed) return;
+      const coords = t.view.coordsAtPos(t.from);
+      setSpellPopover({ x: coords.left, y: coords.bottom + 4, from: t.from, to: t.to, word: t.word, suggestions: sugs.map((s) => s.word) });
+    });
+  }, []);
+
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -196,20 +228,19 @@ export function ProseMirrorEditor({
 
     const doc = spineToPmDoc(deltoSchema, initialBody, initialTitle);
 
-    const state = EditorState.create({
-      doc,
-      plugins: [
-        buildKeymapPlugin(deltoSchema),
-        // Input rules MUST precede uniqueBlockIdPlugin so its appendTransaction runs AFTER the rule's
-        // transaction and mints ids for any nodes the rule created (divider, list wrappers).
-        buildInputRulesPlugin(deltoSchema),
-        history({ newGroupDelay: HISTORY_GROUP_DELAY_MS }),
-        dropCursor(),
-        gapCursor(),
-        uniqueBlockIdPlugin,
-        titlePlaceholderPlugin,
-      ],
-    });
+    const basePlugins: Plugin[] = [
+      buildKeymapPlugin(deltoSchema),
+      // Input rules MUST precede uniqueBlockIdPlugin so its appendTransaction runs AFTER the rule's
+      // transaction and mints ids for any nodes the rule created (divider, list wrappers).
+      buildInputRulesPlugin(deltoSchema),
+      history({ newGroupDelay: HISTORY_GROUP_DELAY_MS }),
+      dropCursor(),
+      gapCursor(),
+      uniqueBlockIdPlugin,
+      titlePlaceholderPlugin,
+    ];
+    basePluginsRef.current = basePlugins; // #69 §5: the spellcheck plugin is added on top via reconfigure
+    const state = EditorState.create({ doc, plugins: basePlugins });
 
     const view = new EditorView(containerRef.current, {
       state,
@@ -306,6 +337,32 @@ export function ProseMirrorEditor({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId, customKb]);
 
+  // #69 §5: attach the spellcheck plugin when the toggle is ON. The engine is dynamic-imported from its
+  // DIRECT module (not deck/index — that's statically imported here) so Rollup code-splits the ~50k dict
+  // into a deferred chunk + the worker. Added/removed via reconfigure on the live view; re-runs when the
+  // view is recreated (noteId / customKb) so the new view gets the plugin. Cleanup unloads the engine.
+  useEffect(() => {
+    const view = viewRef.current;
+    // No Worker (jsdom/test, SSR) → skip entirely: no dynamic import, no engine, no squiggles.
+    if (!view || !spellOn || typeof Worker === 'undefined') return;
+    let cancelled = false;
+    void import('../deck/spellcheck/spellEngine.js').then(({ createSpellEngine }) => {
+      if (cancelled || view.isDestroyed) return;
+      const engine = createSpellEngine();
+      spellEngineRef.current = engine;
+      view.updateState(view.state.reconfigure({
+        plugins: [...basePluginsRef.current, createSpellcheckPlugin(engine, handleSpellTap)],
+      }));
+    });
+    return () => {
+      cancelled = true;
+      setSpellPopover(null);
+      if (!view.isDestroyed) view.updateState(view.state.reconfigure({ plugins: basePluginsRef.current }));
+      spellEngineRef.current?.dispose();
+      spellEngineRef.current = null;
+    };
+  }, [spellOn, noteId, customKb, handleSpellTap]);
+
   return (
     <>
       {/* Desktop: registry-driven formatting toolbar at the top (slice C). */}
@@ -317,6 +374,21 @@ export function ProseMirrorEditor({
       {/* Mobile, custom keyboard OFF: today's grouped contextual bar + native keyboard (slice D). */}
       {!isDesktop && !customKb && (
         <MobileEditorBar active={active} run={runTool} onUndo={handleUndo} onRedo={handleRedo} />
+      )}
+      {/* #69 §5: suggestion popover for a tapped misspelling — replace in one txn, then close. */}
+      {spellPopover && (
+        <SpellSuggestionPopover
+          x={spellPopover.x}
+          y={spellPopover.y}
+          word={spellPopover.word}
+          suggestions={spellPopover.suggestions}
+          onPick={(w) => {
+            const v = viewRef.current;
+            if (v) applySpellCorrection(v, spellPopover.from, spellPopover.to, w);
+            setSpellPopover(null);
+          }}
+          onClose={() => setSpellPopover(null)}
+        />
       )}
     </>
   );

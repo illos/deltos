@@ -2279,6 +2279,31 @@ a.auth__link { display: inline; }
    next slice. */
 body.deck-custom .bottom-nav { display: none; }
 
+/* #69 §5 local spellcheck — misspelled-word squiggle (decoration) + the tap-to-correct popover (host-side;
+   the engine is in deck-core). Red wavy underline matches the app's danger red (#e05252). */
+.spell-error {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: #e05252;
+  text-decoration-skip-ink: none;
+}
+.spell-popover {
+  position: fixed; z-index: 400; /* above the Deck (50), bottom-nav (300), full-screen-nav (350) */
+  background: var(--list); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  padding: 4px; min-width: 140px; max-width: 70vw;
+  display: flex; flex-direction: column; max-height: 50vh; overflow-y: auto;
+}
+.spell-popover__item {
+  appearance: none; -webkit-appearance: none; background: none; border: none; text-align: left;
+  color: var(--ink); font-family: var(--ff); font-size: 16px; line-height: 1.2; /* ≥16px = no iOS zoom */
+  padding: 11px 14px; min-height: 44px; border-radius: 6px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.spell-popover__item:active { background: var(--sel); }
+.spell-popover__empty { color: var(--secondary); font-size: 14px; padding: 11px 14px; }
+
 /* The Deck's NAVIGATION loadout (slice B) — the lean New + Search row shown in the Deck footprint while
    browsing (no note open). Host-side styling (the loadout is deltos-specific); mirrors the bottom-nav
    action slots for visual continuity. The label font is the host's --mono (not a Deck geometry invariant
