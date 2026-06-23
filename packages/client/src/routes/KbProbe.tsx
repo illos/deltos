@@ -6,6 +6,7 @@ import { EditorView } from 'prosemirror-view';
 import { Deck, Keypad } from '../deck/index.js';
 import type { DeckContext, DeckLoadoutRegistry } from '../deck/index.js';
 import { deriveDeckContext, buildPmKeyActions } from '../editor/deckAdapter.js';
+import { createDefaultFormulaRegistry } from '../plugins/formula/index.js';
 
 /**
  * /kbprobe — the isolated test route (auth-bypassed in App). Originally the #68 inputmode=none probe;
@@ -36,7 +37,8 @@ export function KbProbe() {
   const navigate = useNavigate();
 
   // The keypad's KeyActions wired to the probe's PM view via the SAME deltos adapter the real editor uses.
-  const deckActions = useRef(buildPmKeyActions(() => viewRef.current)).current;
+  // The probe's minimal schema has no `formula` node, so the formula framework is inert here (guarded).
+  const deckActions = useRef(buildPmKeyActions(() => viewRef.current, createDefaultFormulaRegistry())).current;
   const deckLoadouts = useMemo<DeckLoadoutRegistry>(() => ({ text: <Keypad actions={deckActions} /> }), [deckActions]);
 
   useEffect(() => {

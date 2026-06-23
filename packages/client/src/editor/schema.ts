@@ -44,6 +44,43 @@ export const deltoSchema = new Schema({
       toDOM: () => ['br'] as const,
     },
 
+    // Inline-formula node (docs/specs/inline-formulas.md) — the framework substrate. CONTENT-BEARING (not
+    // an atom): its inline text content IS the editable SPEC (so the expression edits inline + live-
+    // recomputes + backspace-unwraps, exactly as the shipped math chip). `ftype` selects the registered
+    // formula type; `state` is a type-specific slot (e.g. a future dice last-roll; null for math). A
+    // type-dispatched NodeView (formulaNodeView) renders the per-type OUTPUT after the editable spec. The
+    // toDOM/parseDOM here are the serialization/clipboard fallback; the spine round-trip carries it as a
+    // formula segment (no migration).
+    formula: {
+      inline: true,
+      group: 'inline',
+      content: 'text*',
+      marks: '', // the spec is plain text — no marks inside
+      attrs: { ftype: { default: 'math' }, state: { default: null } },
+      toDOM: (node) =>
+        [
+          'span',
+          {
+            'data-formula': 'true',
+            'data-formula-type': node.attrs.ftype as string,
+            ...(node.attrs.state != null ? { 'data-formula-state': JSON.stringify(node.attrs.state) } : {}),
+          },
+          0,
+        ] as const,
+      parseDOM: [
+        {
+          tag: 'span[data-formula]',
+          getAttrs: (dom) => {
+            const el = dom as HTMLElement;
+            const raw = el.getAttribute('data-formula-state');
+            let state: unknown = null;
+            if (raw) { try { state = JSON.parse(raw); } catch { state = null; } }
+            return { ftype: el.getAttribute('data-formula-type') || 'math', state };
+          },
+        },
+      ],
+    },
+
     // ── Text blocks ──────────────────────────────────────────────────────────
     paragraph: {
       group: 'block',

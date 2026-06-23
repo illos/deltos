@@ -14,10 +14,10 @@ import { buildPluginIslandNodeViews } from './nodeviews/PluginIsland.js';
 // Importing the embeds plugin registers the link_card NodeView (side-effect) + provides the paste-to-card
 // handler (#69 E2b). Editor core never imports plugins; this host wiring is the single allowed touch-point.
 import { linkCardPastePlugin } from '../plugins/embeds/index.js';
-// Inline-math plugin (docs/specs/inline-math.md) — self-contained: brings its OWN '=' input rule, the
-// live-result decoration, and the backspace-unwrap keymap. Editor core never imports plugins; this is the
-// single host wiring touch-point (same pattern as the embeds plugin above).
-import { buildMathPlugins } from '../plugins/math/mathPlugin.js';
+// Inline-formula framework (docs/specs/inline-formulas.md) — self-contained: the registry (math is the
+// Phase-1 type), the '=' auto + '[...]' bracket input rules, the backspace-unwrap keymap, and the
+// type-dispatched NodeView. Editor core never imports plugins; this is the single host wiring touch-point.
+import { createDefaultFormulaRegistry, buildFormulaPlugins, buildFormulaNodeView } from '../plugins/formula/index.js';
 import { TodoItemView } from './nodeviews/TodoItem.js';
 import { sliceToPlainText } from './clipboard.js';
 import { EditorToolbar } from './EditorToolbar.js';
@@ -165,9 +165,13 @@ export function ProseMirrorEditor({
   // that drop focus (#328 irregular hide). Owning the bottom slot whenever a note is open is robust to
   // both and matches the north-star (the footprint is always the surface while editing).
   const [deckContext, setDeckContext] = useState<DeckContext>('text');
+  // Inline-formula registry (docs/specs/inline-formulas.md) — Phase-1 holds math; injected into the plugins,
+  // the NodeView, AND the deckAdapter (so the '=' / '[...]' triggers fire on the custom keypad too). Stable
+  // per editor instance (loadout-aware: a future loadout could build its own).
+  const formulaRegistry = useRef(createDefaultFormulaRegistry()).current;
   // The keypad's abstract KeyActions, wired to PM via the adapter (closes over viewRef → stable across
   // view re-creation). The Deck loadout registry for this host: the 'text' context → the keypad.
-  const deckActions = useRef(buildPmKeyActions(() => viewRef.current)).current;
+  const deckActions = useRef(buildPmKeyActions(() => viewRef.current, formulaRegistry)).current;
   // #69 C-manual: keypad show/hide. The keypad LAYER collapses (the note reclaims its height); a persistent
   // base region keeps the show/hide toggle. State lives HERE (not in the Deck) because auto-show keys off PM
   // focus and the caret clearance depends on it. Default shown (entering a note shows the keypad, as before).
@@ -316,10 +320,10 @@ export function ProseMirrorEditor({
     const doc = spineToPmDoc(deltoSchema, initialBody, initialTitle);
 
     const basePlugins: Plugin[] = [
-      // Inline-math FIRST: its Backspace-unwrap keymap must intercept before the base keymap (a chip-edge
-      // backspace unwraps; everything else falls through). Its '=' input rule + result decoration are
+      // Inline-formula FIRST: its Backspace-unwrap keymap must intercept before the base keymap (a chip-edge
+      // backspace unwraps; everything else falls through). Its '=' auto + '[...]' bracket input rules are
       // order-independent. Self-contained — does not touch core inputRules.ts.
-      ...buildMathPlugins(deltoSchema),
+      ...buildFormulaPlugins(formulaRegistry),
       buildKeymapPlugin(deltoSchema),
       // Input rules MUST precede uniqueBlockIdPlugin so its appendTransaction runs AFTER the rule's
       // transaction and mints ids for any nodes the rule created (divider, list wrappers).
@@ -349,6 +353,8 @@ export function ProseMirrorEditor({
         ...buildPluginIslandNodeViews(deltoSchema),
         todo_item: (node, view, getPos) =>
           new TodoItemView(node, view, getPos as () => number | undefined),
+        // Inline-formula node → type-dispatched NodeView (editable spec + per-type output widget).
+        formula: buildFormulaNodeView(formulaRegistry),
       },
       // Plain text clipboard: markdown-flavoured structure for text/plain flavour.
       clipboardTextSerializer: sliceToPlainText,

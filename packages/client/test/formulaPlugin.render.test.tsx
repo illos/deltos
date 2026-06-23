@@ -1,0 +1,214 @@
+/**
+ * Inline-formula FRAMEWORK + math-type integration tests (docs/specs/inline-formulas.md). Real
+ * ProseMirror EditorView with the formula plugins + the type-dispatched NodeView. This is the regression
+ * gate for the math refactor: every behavior the shipped math chip had (the '=' trigger fires/skips,
+ * precedence, live recompute, div0 subtle error, backspace-unwrap, the deckAdapter/keypad path) must stay
+ * green — now via a formula NODE instead of a mark. Plus the new framework surface: the '[...]' bracket
+ * path, the registry, the deckAdapter dual-wire for both triggers, and the spine round-trip (incl. the
+ * legacy math-mark → node upgrade).
+ */
+import { describe, it, expect, afterEach } from 'vitest';
+import { EditorState, TextSelection } from 'prosemirror-state';
+import { EditorView } from 'prosemirror-view';
+import { deltoSchema } from '../src/editor/schema.js';
+import {
+  createDefaultFormulaRegistry,
+  buildFormulaPlugins,
+  buildFormulaNodeView,
+  formulaTriggerOnInsert,
+  unwrapFormulaBackspace,
+} from '../src/plugins/formula/index.js';
+import { spineToPmDoc, pmDocToSpine, type TextSegment } from '../src/editor/serializer.js';
+import type { BlockBody } from '@deltos/shared';
+
+let view: EditorView | null = null;
+afterEach(() => { view?.destroy(); view = null; document.body.innerHTML = ''; });
+
+const registry = createDefaultFormulaRegistry();
+
+/** Mount an editor (formula plugins + NodeView) whose body paragraph holds `text`, caret at the end. */
+function mountWithText(text: string): EditorView {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const para = deltoSchema.nodes['paragraph']!.create({ id: null }, text ? deltoSchema.text(text) : []);
+  const title = deltoSchema.nodes['title']!.create({ id: null });
+  const doc = deltoSchema.nodes['doc']!.create(null, [title, para]);
+  let state = EditorState.create({ doc, plugins: buildFormulaPlugins(registry) });
+  state = state.apply(state.tr.setSelection(TextSelection.atEnd(state.doc)));
+  view = new EditorView(container, { state, nodeViews: { formula: buildFormulaNodeView(registry) } });
+  return view;
+}
+
+/** Mount from a spine body (exercises the round-trip / NodeView render path). */
+function mountFromBody(body: BlockBody): EditorView {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const doc = spineToPmDoc(deltoSchema, body, '');
+  view = new EditorView(container, {
+    state: EditorState.create({ doc, plugins: buildFormulaPlugins(registry) }),
+    nodeViews: { formula: buildFormulaNodeView(registry) },
+  });
+  return view;
+}
+
+function type(v: EditorView, ch: string): void {
+  const { from } = v.state.selection;
+  v.someProp('handleTextInput', (f) => f(v, from, from, ch));
+}
+
+/** The spec text inside the formula node (the editable expression), or null if no formula node. */
+function formulaSpec(v: EditorView): string | null {
+  let found: string | null = null;
+  v.state.doc.descendants((node) => {
+    if (node.type.name === 'formula') found = node.textContent;
+  });
+  return found;
+}
+const formulaType = (v: EditorView): string | null => {
+  let t: string | null = null;
+  v.state.doc.descendants((node) => { if (node.type.name === 'formula') t = node.attrs.ftype as string; });
+  return t;
+};
+const resultValue = (v: EditorView) => (v.dom.parentElement ?? document).querySelector('.formula-output__value')?.textContent ?? null;
+const hasErrorResult = (v: EditorView) => !!(v.dom.parentElement ?? document).querySelector('.formula-output--error');
+
+describe('formula framework — math via the "=" auto-trigger (regression gate)', () => {
+  it('fires on a trailing numeric expression: a math formula node + live result; "=" consumed', () => {
+    const v = mountWithText('1 + 1');
+    type(v, '=');
+    expect(formulaSpec(v)).toBe('1 + 1');
+    expect(formulaType(v)).toBe('math');
+    expect(resultValue(v)).toBe('2');
+  });
+
+  it('precedence + the x alias', () => {
+    const v = mountWithText('1 + 4 - 2 / 10'); type(v, '='); expect(resultValue(v)).toBe('4.8');
+    const v2 = mountWithText('10 x 2'); type(v2, '='); expect(resultValue(v2)).toBe('20');
+  });
+
+  it('fires mid-sentence on the trailing run only', () => {
+    const v = mountWithText('I paid 10 x 2');
+    type(v, '=');
+    expect(formulaSpec(v)).toBe('10 x 2');
+    expect(resultValue(v)).toBe('20');
+  });
+
+  it('does NOT fire on prose', () => {
+    const v = mountWithText('name = value');
+    type(v, '=');
+    expect(formulaSpec(v)).toBeNull();
+    expect(resultValue(v)).toBeNull();
+  });
+});
+
+describe('formula framework — the "[...]" explicit bracket path', () => {
+  it('a bracketed math expression becomes a math formula on the closing "]"', () => {
+    const v = mountWithText('[1 + 1');
+    type(v, ']');
+    expect(formulaSpec(v)).toBe('1 + 1');
+    expect(formulaType(v)).toBe('math');
+    expect(resultValue(v)).toBe('2');
+  });
+
+  it('a non-matching bracket stays LITERAL text (no formula)', () => {
+    const v = mountWithText('[note to self');
+    type(v, ']'); // the rule returns null → no formula; PM would insert the ']' normally (the harness
+    expect(formulaSpec(v)).toBeNull();                 // doesn't simulate the default insert)
+    expect(v.state.doc.textContent).toContain('note to self'); // content survives as plain text
+  });
+});
+
+describe('formula framework — live recompute + error', () => {
+  it('recomputes when the marked expression is edited', () => {
+    const v = mountWithText('12 + 3');
+    type(v, '=');
+    expect(resultValue(v)).toBe('15');
+    // delete the trailing '3' from inside the formula node's content → "12 + " → recompute to error
+    const sel = TextSelection.atEnd(v.state.doc); // caret at doc end; step into the node's content
+    v.dispatch(v.state.tr.setSelection(sel));
+    // remove the last char of the formula's spec
+    let specEnd = 0;
+    v.state.doc.descendants((node, pos) => { if (node.type.name === 'formula') specEnd = pos + node.nodeSize - 1; });
+    v.dispatch(v.state.tr.delete(specEnd - 1, specEnd));
+    expect(resultValue(v)).toBeNull();
+    expect(hasErrorResult(v)).toBe(true);
+  });
+
+  it('div by zero → subtle error (never crashes)', () => {
+    const v = mountFromBody([{
+      id: 'b1' as BlockBody[number]['id'], type: 'paragraph',
+      content: { segments: [{ text: '1 / 0', formula: { type: 'math', state: null } } satisfies TextSegment] },
+    }]);
+    expect(resultValue(v)).toBeNull();
+    expect(hasErrorResult(v)).toBe(true);
+  });
+});
+
+describe('formula framework — backspace-unwrap', () => {
+  it('backspace at the chip right edge removes the formula node (back to plain text)', () => {
+    const v = mountWithText('1 + 1');
+    type(v, '=');
+    expect(formulaSpec(v)).toBe('1 + 1');
+    expect(unwrapFormulaBackspace(v.state, v.dispatch)).toBe(true);
+    expect(formulaSpec(v)).toBeNull();
+    expect(v.state.doc.textContent).toBe('1 + 1'); // spec preserved as plain text
+  });
+
+  it('is a no-op when the caret is not after a formula', () => {
+    const v = mountWithText('hello');
+    expect(unwrapFormulaBackspace(v.state, v.dispatch)).toBe(false);
+  });
+});
+
+// REGRESSION ([[deck-keypad-bypasses-inputrules-keymap]]): both triggers must fire on the deckAdapter
+// (custom-keyboard) path, which bypasses input rules. formulaTriggerOnInsert is what deckAdapter calls.
+describe('formula framework — custom-keyboard insert path (deckAdapter dual-wiring)', () => {
+  it('"=" fires the math trigger on the keypad path (no input rule); "=" not inserted', () => {
+    const v = mountWithText('10 + 5');
+    expect(formulaTriggerOnInsert(v.state, v.dispatch, registry, '=')).toBe(true);
+    expect(formulaSpec(v)).toBe('10 + 5');
+    expect(resultValue(v)).toBe('15');
+    expect(v.state.doc.textContent).toBe('10 + 5');
+  });
+
+  it('"]" fires the bracket trigger on the keypad path', () => {
+    const v = mountWithText('[2 + 2');
+    expect(formulaTriggerOnInsert(v.state, v.dispatch, registry, ']')).toBe(true);
+    expect(formulaSpec(v)).toBe('2 + 2');
+    expect(resultValue(v)).toBe('4');
+  });
+
+  it('a plain char does not fire (keypad inserts it normally)', () => {
+    const v = mountWithText('10 + 5');
+    expect(formulaTriggerOnInsert(v.state, v.dispatch, registry, 'a')).toBe(false);
+  });
+});
+
+describe('formula framework — spine round-trip + legacy upgrade', () => {
+  it('a formula node survives pmDocToSpine → spineToPmDoc (spec + type; result never stored)', () => {
+    const body: BlockBody = [{
+      id: 'b1' as BlockBody[number]['id'], type: 'paragraph',
+      content: { segments: [{ text: '2 + 2', formula: { type: 'math', state: null } } satisfies TextSegment] },
+    }];
+    const round = pmDocToSpine(spineToPmDoc(deltoSchema, body, ''));
+    const seg = (round[0]!.content as { segments: TextSegment[] }).segments[0]!;
+    expect(seg.text).toBe('2 + 2');
+    expect(seg.formula).toEqual({ type: 'math', state: null });
+    expect('math' in seg).toBe(false); // not written as the legacy mark
+  });
+
+  it('LEGACY: an old math-MARK segment upgrades to a formula node on load (no migration)', () => {
+    const body: BlockBody = [{
+      id: 'b1' as BlockBody[number]['id'], type: 'paragraph',
+      content: { segments: [{ text: '3 + 4', math: true } satisfies TextSegment] }, // pre-framework shape
+    }];
+    const v = mountFromBody(body);
+    expect(formulaSpec(v)).toBe('3 + 4');   // became a formula node
+    expect(formulaType(v)).toBe('math');
+    expect(resultValue(v)).toBe('7');       // and renders live
+    // re-saves as a formula segment, not the legacy mark
+    const round = pmDocToSpine(v.state.doc);
+    const seg = (round[0]!.content as { segments: TextSegment[] }).segments[0]!;
+    expect(seg.formula).toEqual({ type: 'math', state: null });
+  });
+});

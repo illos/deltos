@@ -3,7 +3,8 @@ import { NodeSelection, TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { baseKeymap, deleteSelection, joinBackward } from 'prosemirror-commands';
 import type { DeckContext, KeyActions } from '../deck/index.js';
-import { unwrapMathBackspace, mathTriggerOnInsert } from '../plugins/math/mathPlugin.js';
+import { unwrapFormulaBackspace, formulaTriggerOnInsert } from '../plugins/formula/index.js';
+import type { FormulaRegistry } from '../plugins/formula/index.js';
 
 /**
  * The deltos↔Deck ADAPTER (#69 §0.5). ALL ProseMirror-specific code lives here, never in Deck core: the
@@ -24,7 +25,7 @@ export function deriveDeckContext(state: EditorState): DeckContext {
  * across view re-creation. Each action runs against the live view and refocuses (focus is a host concern;
  * the keypad's pointerdown-preventDefault already keeps focus, this is belt).
  */
-export function buildPmKeyActions(getView: () => EditorView | null): KeyActions {
+export function buildPmKeyActions(getView: () => EditorView | null, formulaRegistry: FormulaRegistry): KeyActions {
   const run = (fn: (v: EditorView) => void) => {
     const v = getView();
     if (!v) return;
@@ -33,19 +34,20 @@ export function buildPmKeyActions(getView: () => EditorView | null): KeyActions 
   };
   return {
     insert: (text) => run((v) => {
-      // Inline-math '=' trigger on the CUSTOM-KEYBOARD path: the keypad bypasses the input rule, so the
-      // trigger must run here too (same dual-wiring as backspace-unwrap). On '=', if the text before the
-      // caret is a trailing arithmetic run, wrap it as math instead of inserting the '='.
-      if (text === '=' && mathTriggerOnInsert(v.state, v.dispatch)) return;
+      // Inline-formula triggers on the CUSTOM-KEYBOARD path: the keypad bypasses input rules, so the '='
+      // auto-detect AND the '[...]' bracket trigger must run here too ([[deck-keypad-bypasses-inputrules-keymap]]).
+      // formulaTriggerOnInsert fires for a trigger char (e.g. '=') or a closing ']'; if it wraps a formula
+      // it consumes the char (returns true), else we insert normally.
+      if (formulaTriggerOnInsert(v.state, v.dispatch, formulaRegistry, text)) return;
       v.dispatch(v.state.tr.insertText(text));
     }),
     enter: () => run((v) => { (baseKeymap['Enter'] as Command)(v.state, v.dispatch, v); }),
     // Own the char-delete: baseKeymap.Backspace only joins at block boundaries (the native keyboard did
     // mid-text delete), and inputmode=none suppressed the native keyboard — so the keypad owns it.
     backspace: () => run((v) => {
-      // Inline-math (§7-adjacent): a backspace at a math chip's right edge unwraps it to plain text first
-      // (the custom keyboard bypasses the keymap, so the unwrap command is shared here too).
-      if (unwrapMathBackspace(v.state, v.dispatch)) return;
+      // Inline-formula: a backspace at a formula chip's right edge unwraps it to plain text first (the
+      // custom keyboard bypasses the keymap, so the unwrap command is shared here too).
+      if (unwrapFormulaBackspace(v.state, v.dispatch)) return;
       const { selection } = v.state;
       if (!selection.empty) { deleteSelection(v.state, v.dispatch); return; }
       if (selection.$from.parentOffset > 0) { v.dispatch(v.state.tr.delete(selection.from - 1, selection.from)); return; }

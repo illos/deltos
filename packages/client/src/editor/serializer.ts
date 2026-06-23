@@ -16,7 +16,11 @@ export interface TextSegment {
   underline?: true;   // NEW
   strike?: true;      // NEW — maps the schema mark 'strikethrough'
   highlight?: true;   // NEW
-  math?: true;        // NEW — inline-math expression (the marked text is the persisted source of truth)
+  math?: true;        // LEGACY — old inline-math MARK (pre-framework). Read-only: upgraded to a formula
+                      // node on load (segmentsToPmInline); never written. Kept for back-compat with chips
+                      // persisted before the formula framework (docs/specs/inline-formulas.md §2 shim).
+  formula?: { type: string; state: unknown }; // NEW — inline-formula node: text = the spec; type + state
+                      // attrs. The result is NEVER stored (recomputed on render). No migration.
   link?: string; // href
 }
 
@@ -51,6 +55,10 @@ export function isTextSegment(x: unknown): x is TextSegment {
   if ('strike' in o && o['strike'] !== true) return false;
   if ('highlight' in o && o['highlight'] !== true) return false;
   if ('math' in o && o['math'] !== true) return false;
+  if ('formula' in o) {
+    const f = o['formula'];
+    if (!f || typeof f !== 'object' || !isString((f as Record<string, unknown>)['type'])) return false;
+  }
   if ('link' in o && !isString(o['link'])) return false;
   // Forward-compatible: unknown future flags are ignored, not rejected.
   return true;
@@ -127,6 +135,16 @@ function inlineToSegments(node: PmNode): TextSegment[] {
       segments.push({ text: '\n' });
       return;
     }
+    // Inline-formula node → a formula segment: text = the spec, plus { type, state }. The result is NOT
+    // stored (recomputed on render). The math MARK is no longer emitted (math is a formula node now); the
+    // mark stays parse-only in the schema for clipboard back-compat + the load-time upgrade shim.
+    if (child.type.name === 'formula') {
+      segments.push({
+        text: child.textContent,
+        formula: { type: child.attrs.ftype as string, state: child.attrs.state ?? null },
+      });
+      return;
+    }
     if (child.type.name !== 'text') return;
     const seg: TextSegment = { text: child.text ?? '' };
     if (child.marks.some((m) => m.type.name === 'bold'))          seg.bold      = true;
@@ -135,7 +153,6 @@ function inlineToSegments(node: PmNode): TextSegment[] {
     if (child.marks.some((m) => m.type.name === 'underline'))     seg.underline = true;
     if (child.marks.some((m) => m.type.name === 'strikethrough')) seg.strike    = true;
     if (child.marks.some((m) => m.type.name === 'highlight'))     seg.highlight = true;
-    if (child.marks.some((m) => m.type.name === 'math'))          seg.math      = true;
     const linkMark = child.marks.find((m) => m.type.name === 'link');
     if (linkMark) seg.link = linkMark.attrs.href as string;
     segments.push(seg);
@@ -287,7 +304,14 @@ export function pmDocToSpine(doc: PmNode): BlockBody {
 // ── Spine → PM doc ────────────────────────────────────────────────────────────────────────
 
 function segmentsToPmInline(schema: Schema, segments: TextSegment[]): PmNode[] {
+  const formulaNode = schema.nodes['formula'];
   return segments.map((seg) => {
+    // Inline-formula node: text = the spec. NEW path (seg.formula) + the LEGACY shim (seg.math, the old
+    // math MARK) which upgrades to a formula node ftype 'math' on load (no migration; re-saves as a node).
+    const asFormula = seg.formula ?? (seg.math ? { type: 'math', state: null } : null);
+    if (asFormula && formulaNode && seg.text.length > 0) {
+      return formulaNode.create({ ftype: asFormula.type, state: asFormula.state ?? null }, schema.text(seg.text));
+    }
     const marks = [
       ...(seg.bold      ? [schema.marks['bold']!.create()]          : []),
       ...(seg.italic    ? [schema.marks['italic']!.create()]        : []),
@@ -295,7 +319,6 @@ function segmentsToPmInline(schema: Schema, segments: TextSegment[]): PmNode[] {
       ...(seg.underline ? [schema.marks['underline']!.create()]     : []),
       ...(seg.strike    ? [schema.marks['strikethrough']!.create()] : []),
       ...(seg.highlight ? [schema.marks['highlight']!.create()]     : []),
-      ...(seg.math      ? [schema.marks['math']!.create()]          : []),
       ...(seg.link      ? [schema.marks['link']!.create({ href: seg.link, title: null })] : []),
     ];
     if (seg.text === '\n') return schema.nodes['hard_break']!.create();

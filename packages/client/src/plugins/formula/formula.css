@@ -1,0 +1,34 @@
+/* Inline-formula chip (docs/specs/inline-formulas.md §2). The `formula` node renders as: an editable mono
+   SPEC (.formula__spec, the node's contentDOM) + a non-editable per-type OUTPUT slot (.formula__output)
+   the type fills. Consumes host theme tokens (no hardcoded colour), same contract as the Deck/embeds styles.
+   The output kind is type-owned: math = '= N' text; a future hexcolor = a swatch; a future dice = a button. */
+
+.formula {
+  white-space: pre; /* keep the spec's spaces intact */
+}
+
+/* The editable expression — inline mono, subtly chipped (distinct from plain code). */
+.formula__spec {
+  font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+  background: var(--list);
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
+/* The per-type output slot (non-editable). Math fills it with a muted '= N'; the value is emphasized. */
+.formula__output {
+  font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+  color: var(--secondary);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.formula-output__value {
+  font-weight: 700;
+  color: var(--accent, var(--ink));
+}
+
+/* Div-by-zero / malformed (math) → a SUBTLE error state (no crash, no loud styling). */
+.formula-output--error {
+  color: var(--secondary);
+  opacity: 0.55;
+}
