@@ -57,8 +57,37 @@ export function linkifyTrailingUrl(state: EditorState, dispatch?: (tr: Transacti
   return true;
 }
 
-/** Hardware ENTER boundary: linkify a trailing URL, then perform the normal Enter (returns false when there's
- *  no trailing URL so the editor's normal Enter chain is untouched). Mirrors the formula boundary keymap. */
+/**
+ * Backspace at the RIGHT EDGE of a linked run → strip the 'link' mark across the whole contiguous run
+ * (keep the text, delete NO char), CONSUMING the backspace; a second backspace then deletes normally. The
+ * link thus edits/undoes like an inline formula: unwrap to plain URL text, which SPACE/ENTER then re-links
+ * (#74). Returns false (normal delete) when the caret isn't at a linked run's right edge. Shared by the
+ * keymap (hardware) + deckAdapter.backspace (the Deck bypasses the keymap — [[deck-keypad-bypasses-…]]).
+ *
+ * A form-created link whose visible text is a custom Title (not a URL) also unwraps to that title text;
+ * it simply won't auto-relink (not a URL) — expected, not special-cased.
+ */
+export const unwrapLinkBackspace: Command = (state, dispatch): boolean => {
+  const link = state.schema.marks['link'];
+  if (!link || !state.selection.empty) return false;
+  const $pos = state.doc.resolve(state.selection.from);
+  const before = $pos.nodeBefore;
+  if (!before || !before.isText || !link.isInSet(before.marks)) return false; // not at a linked run's right edge
+  const after = $pos.nodeAfter;
+  if (after && after.isText && link.isInSet(after.marks)) return false; // caret is INSIDE the run, not at its edge
+  // Walk back over the contiguous linked text nodes to the run start.
+  let from = $pos.pos;
+  for (;;) {
+    const nb = state.doc.resolve(from).nodeBefore;
+    if (nb && nb.isText && link.isInSet(nb.marks)) from -= nb.nodeSize;
+    else break;
+  }
+  if (dispatch) dispatch(state.tr.removeMark(from, $pos.pos, link));
+  return true;
+};
+
+/** Hardware boundary keymap: ENTER linkifies a trailing URL then does the normal Enter; BACKSPACE unwraps a
+ *  link at its right edge (#74). Both return false when not applicable, so the normal chains are untouched. */
 export function buildAutolinkKeymap(): Plugin {
   const enter: Command = (state, dispatch, view) => {
     if (!dispatch || !view) return false;
@@ -66,5 +95,5 @@ export function buildAutolinkKeymap(): Plugin {
     baseKeymap['Enter']!(view.state, view.dispatch, view);
     return true;
   };
-  return keymap({ Enter: enter });
+  return keymap({ Enter: enter, Backspace: unwrapLinkBackspace });
 }

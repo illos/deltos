@@ -12,7 +12,9 @@ import { keymap } from 'prosemirror-keymap';
 import { baseKeymap } from 'prosemirror-commands';
 import { deltoSchema } from '../src/editor/schema.js';
 import { buildInputRulesPlugin } from '../src/editor/inputRules.js';
-import { detectTrailingUrl, linkifyTrailingUrl, buildAutolinkKeymap } from '../src/editor/autolink.js';
+import { detectTrailingUrl, linkifyTrailingUrl, buildAutolinkKeymap, unwrapLinkBackspace } from '../src/editor/autolink.js';
+import { buildPmKeyActions } from '../src/editor/deckAdapter.js';
+import { createDefaultFormulaRegistry } from '../src/plugins/formula/index.js';
 
 let view: EditorView | null = null;
 afterEach(() => { view?.destroy(); view = null; document.body.innerHTML = ''; });
@@ -104,5 +106,53 @@ describe('autolink — ENTER boundary (keymap + deckAdapter primitive)', () => {
     v.someProp('handleKeyDown', (f) => f(v, new KeyboardEvent('keydown', { key: 'Enter' })));
     expect(linkHref(v)).toBeNull();
     expect(paraCount(v)).toBe(2);
+  });
+});
+
+// Mount a paragraph whose text carries the link mark, caret at the end (the run's RIGHT EDGE).
+function mountLinked(text: string, plugins: Plugin[]): EditorView {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const link = deltoSchema.marks['link']!.create({ href: 'https://google.com/', title: null });
+  const para = deltoSchema.nodes['paragraph']!.create({ id: null }, deltoSchema.text(text, [link]));
+  const doc = deltoSchema.nodes['doc']!.create(null, [deltoSchema.nodes['title']!.create({ id: null }), para]);
+  let state = EditorState.create({ doc, plugins });
+  state = state.apply(state.tr.setSelection(TextSelection.atEnd(state.doc)));
+  view = new EditorView(container, { state });
+  return view;
+}
+
+describe('autolink — BACKSPACE unwrap + SPACE/ENTER re-link (#74; keymap + Deck)', () => {
+  const registry = createDefaultFormulaRegistry();
+
+  it('HARDWARE Backspace at a linked run right edge: strips the mark, keeps text, deletes NO char', () => {
+    const v = mountLinked('google.com', [buildAutolinkKeymap(), keymap(baseKeymap)]);
+    expect(linkHref(v)).toBe('https://google.com/');
+    v.someProp('handleKeyDown', (f) => f(v, new KeyboardEvent('keydown', { key: 'Backspace' })));
+    expect(linkHref(v)).toBeNull();
+    expect(v.state.doc.textContent).toBe('google.com'); // text intact — only the mark was removed
+  });
+
+  it('unwrapLinkBackspace returns false when NOT at a link edge (normal delete)', () => {
+    const v = mount('hello', [keymap(baseKeymap)]);
+    expect(unwrapLinkBackspace(v.state, v.dispatch)).toBe(false);
+  });
+
+  it('DECK Backspace (keypad path, bypasses the keymap) unwraps the link; a SECOND deletes a char', () => {
+    const v = mountLinked('google.com', []);
+    const acts = buildPmKeyActions(() => v, registry);
+    acts.backspace();
+    expect(linkHref(v)).toBeNull();
+    expect(v.state.doc.textContent).toBe('google.com'); // first backspace: unlink only
+    acts.backspace();
+    expect(v.state.doc.textContent).toBe('google.co'); // second: normal char delete
+  });
+
+  it('DECK SPACE re-links a trailing URL (the current gap) — links AND inserts the space', () => {
+    const v = mount('google.com', []);
+    expect(linkHref(v)).toBeNull();
+    buildPmKeyActions(() => v, registry).sentenceSpace!();
+    expect(linkHref(v)).toBe('https://google.com/'); // re-linked on the Deck space path
+    expect(v.state.doc.textContent).toBe('google.com '); // space inserted, not consumed
   });
 });

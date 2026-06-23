@@ -5,7 +5,7 @@ import { baseKeymap, deleteSelection, joinBackward } from 'prosemirror-commands'
 import type { DeckContext, KeyActions } from '../deck/index.js';
 import { unwrapFormulaBackspace, formulaTriggerOnInsert, maybeWrapBoundaryFormula } from '../plugins/formula/index.js';
 import type { FormulaRegistry } from '../plugins/formula/index.js';
-import { linkifyTrailingUrl } from './autolink.js';
+import { linkifyTrailingUrl, unwrapLinkBackspace } from './autolink.js';
 
 /**
  * The deltos↔Deck ADAPTER (#69 §0.5). ALL ProseMirror-specific code lives here, never in Deck core: the
@@ -55,6 +55,9 @@ export function buildPmKeyActions(getView: () => EditorView | null, formulaRegis
       // Inline-formula: a backspace at a formula chip's right edge unwraps it to plain text first (the
       // custom keyboard bypasses the keymap, so the unwrap command is shared here too).
       if (unwrapFormulaBackspace(v.state, v.dispatch)) return;
+      // Link (#74): a backspace at a linked run's right edge unwraps it to plain URL text (dual-wired here
+      // for the Deck since it bypasses the keymap). Formula nodes vs link marks don't overlap → order safe.
+      if (unwrapLinkBackspace(v.state, v.dispatch)) return;
       const { selection } = v.state;
       if (!selection.empty) { deleteSelection(v.state, v.dispatch); return; }
       if (selection.$from.parentOffset > 0) { v.dispatch(v.state.tr.delete(selection.from - 1, selection.from)); return; }
@@ -65,6 +68,11 @@ export function buildPmKeyActions(getView: () => EditorView | null, formulaRegis
     // trailing space with a period+space (a new sentence). Anything else (sentence already ends in
     // punctuation, line start, a non-letter before the space) falls back to a plain space (the skip rule).
     sentenceSpace: () => run((v) => {
+      // SPACE boundary on the keypad path (#74): re-link a trailing URL BEFORE the space — the space
+      // autolink is an inputRules.ts rule, so it fires on hardware but NOT the Deck (Jim's primary path).
+      // No char inserted; the already-linked guard prevents double-apply. Then the normal space logic runs
+      // on the updated state.
+      linkifyTrailingUrl(v.state, v.dispatch);
       const { selection } = v.state;
       if (!selection.empty) { v.dispatch(v.state.tr.insertText(' ')); return; }
       const $from = selection.$from;
