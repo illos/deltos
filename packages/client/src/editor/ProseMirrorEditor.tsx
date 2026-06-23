@@ -602,6 +602,12 @@ export function ProseMirrorEditor({
             onSubmit: submitLink,
             onCancel: cancelLink,
           }}
+          spell={spellSuggest ? {
+            word: spellSuggest.word,
+            suggestions: spellSuggest.suggestions,
+            onPick: (w) => handleSpellPick(spellSuggest.from, spellSuggest.to, w),
+            onAddToDictionary: () => handleAddToDictionary(spellSuggest.word),
+          } : null}
         />
       )}
       <div
@@ -617,9 +623,9 @@ export function ProseMirrorEditor({
         <MobileEditorBar active={active} run={runTool} onUndo={handleUndo} onRedo={handleRedo} />
       )}
       {/* #69 §5.1: suggestion presentation is platform-adaptive. Custom-keyboard mode → the Deck TOP-SLOT
-          bar (rendered via deckLoadouts topSlot above). Non-Deck (desktop / native-kbd) → the anchored
-          popover fallback (no Deck top slot there). */}
-      {spellSuggest && !customKb && (
+          bar (deckLoadouts topSlot above). Desktop → the control strip's context row (passed as `spell`
+          above). Only the mobile NATIVE-keyboard case (no Deck, no strip) falls back to the anchored popover. */}
+      {spellSuggest && !customKb && !isDesktop && (
         <SpellSuggestionPopover
           x={spellSuggest.x}
           y={spellSuggest.y}

@@ -41,6 +41,8 @@ describe('EditorControlStrip — desktop flat (expanded)', () => {
     // No group-SELECTOR toggle buttons (that was the collapsed model); divider(s) separate groups instead.
     expect(btn('Style')).toBeNull();
     expect(document.querySelectorAll('.editor__deck-strip-divider').length).toBeGreaterThan(0);
+    // The context row is ALWAYS present (reserved) even with no link/spell active → no page jump later.
+    expect(document.querySelector('.editor__deck-strip-context')).not.toBeNull();
   });
 
   it('Bold toggles the selection directly (no group to open first)', async () => {

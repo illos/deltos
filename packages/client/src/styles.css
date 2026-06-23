@@ -740,17 +740,30 @@
    the link form. */
 .editor__deck-strip {
   position: sticky; top: 0; z-index: 20; flex-shrink: 0;
-  background: var(--paper); border-bottom: 1px solid var(--border);
+  /* FULL-BLEED: span the whole window width even though we sit inside .editor's centered 680px column —
+     the note title/body stay centered below, the deck is a full-width band above (like the meta row).
+     margin-top counters .editor's 1.5rem top padding so the band abuts the meta; margin-bottom is the
+     breathing room before the title. (Coupled to .editor's top padding.) */
+  width: 100vw; margin-left: calc(50% - 50vw);
+  margin-top: -1.5rem; margin-bottom: 0.75rem;
+  background: var(--paper);
 }
-.editor__deck-strip-row { display: flex; align-items: center; padding: 4px 14px; }
-.editor__deck-strip-row--sub { border-top: 1px solid var(--border); }
+.editor__deck-strip-row { display: flex; align-items: center; padding: 6px 18px; }
 /* Flat primary row: all tools expanded inline (wraps if narrow), hairline dividers between groups, with
-   Undo/Redo pushed to the right. */
-.editor__deck-strip-row--flat { flex-wrap: wrap; gap: 2px; }
+   Undo/Redo pushed to the right. The border delineates the toolbar from the context row below. */
+.editor__deck-strip-row--flat { flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--border); }
 .editor__deck-strip-divider {
   width: 1px; height: 18px; background: var(--border); margin: 0 6px; flex-shrink: 0;
 }
 .editor__deck-strip-history { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+/* Context row — ALWAYS reserved at a constant height (no page jump), filled with the link form / the spell
+   suggestion bar / nothing. Tall enough for the bar so an occupant never grows the row. */
+.editor__deck-strip-context {
+  display: flex; align-items: center; min-height: 48px; padding: 0 18px; box-sizing: border-box;
+}
+.editor__deck-strip-context > * { flex: 1 1 auto; min-width: 0; }
+/* The reused spell bar sits flush in the desktop context row (drop its mobile-Deck band bg/border). */
+.editor__deck-strip-context .spell-bar { padding: 4px 0; background: transparent; border-bottom: none; }
 /* Desktop affordance on the reused mobile tool buttons inside the strip (mobile has no hover). */
 .editor__deck-strip .editor__mtool:hover:not(:disabled) { background: var(--sel); }
 .editor__deck-strip .editor__mtool:disabled { opacity: 0.4; cursor: default; }
