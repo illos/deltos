@@ -106,12 +106,13 @@ describe('NF-2 — NoteRoute renders note content (not blank)', () => {
       </MemoryRouter>,
     );
 
-    // "← Notes" and "Move to notebook…" are outside the editor chrome — if the component
-    // crashes (P0-2 blank screen), neither renders. Their presence proves the hook fix holds.
+    // "← Notes" + the version-history button are outside the editor chrome — if the component crashes
+    // (P0-2 blank screen), neither renders. Their presence proves the hook fix holds. (The move "More
+    // options" button was removed in #76 — the move affordance returns as a swipe→sheet in #78.)
     await waitFor(() => {
       expect(screen.queryByLabelText('Back to list')).not.toBeNull();
     });
-    expect(screen.queryByLabelText('More options')).not.toBeNull();
+    expect(screen.queryByLabelText('Version history')).not.toBeNull();
   });
 });
 

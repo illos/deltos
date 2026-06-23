@@ -682,6 +682,17 @@
   align-items: center;
   gap: 16px;
   flex-shrink: 0;
+  margin-left: auto; /* pushed right — the edited-time span (the old flex:1 spacer) moved above the title (#77) */
+}
+/* #77 edited-time line: a faint, NON-EDITABLE row just above the note title, in the centered text column
+   (matches .editor__pm) and left-aligned. Reuses dt-meta--faint for color. */
+.editor__edited-line {
+  align-self: center;
+  width: 100%;
+  max-width: 680px;
+  margin: 0 0 0.5rem;
+  font-family: var(--mono);
+  font-size: 11px;
 }
 .editor__meta-btn {
   display: flex;

@@ -14,8 +14,8 @@
 
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, cleanup, waitFor, act } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { render, cleanup, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import type { Note, NotebookId } from '@deltos/shared';
 import { screen } from './renderHelpers.js';
 
@@ -148,44 +148,9 @@ describe('AN-3 — uncategorized note (notebookId=null) visibility', () => {
 });
 
 // ── AN-4: Move picker includes All Notes ────────────────────────────────────
-
-describe('AN-4 — move-note picker includes All Notes as an uncategorize target', () => {
-  it('All Notes button appears in the move picker when the picker is open', async () => {
-    const { db } = await import('../src/db/schema.js');
-    const note = makeNote(NOTE_A, NB_A, 'A note to move');
-    await db.notes.put(note);
-    await db.notebooks.put({
-      id: NB_A, name: 'Work', defaultCollectionView: 'list',
-      version: 1, createdAt: '2026-06-18T00:00:00.000Z', updatedAt: '2026-06-18T00:00:00.000Z',
-      deletedAt: null, syncSeq: 1,
-    });
-
-    const { NoteRoute } = await import('../src/routes/NoteRoute.js');
-    render(
-      <MemoryRouter initialEntries={[`/note/${NOTE_A}`]}>
-        <Routes>
-          <Route path="/note/:id" element={<NoteRoute />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    // Wait for NoteRoute to load
-    await waitFor(() => {
-      expect(screen.queryByLabelText('More options')).not.toBeNull();
-    });
-
-    // Open the move picker
-    const moveBtn = screen.getByLabelText('More options');
-    await act(async () => { moveBtn.click(); });
-
-    // All Notes must appear as a target in the picker
-    await waitFor(() => {
-      const dialog = document.querySelector('[aria-label="Move note to notebook"]');
-      expect(dialog).not.toBeNull();
-      expect(dialog!.textContent).toContain('All Notes');
-    });
-  });
-});
+// RETIRED in #76: the inline NoteRoute move-picker (and its "More options" ellipsis) were removed for the
+// V1 chrome cleanup — Jim sequenced the move affordance out until #78 re-adds it as a swipe→bottom-sheet.
+// The "All Notes = uncategorize target" coverage this test owned returns with #78's sheet test.
 
 // ── AN-5: No duplicate default ───────────────────────────────────────────────
 

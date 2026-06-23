@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import type { Note, BlockBody } from '@deltos/shared';
 import { ProseMirrorEditor } from './ProseMirrorEditor.js';
+import { formatSmartDate } from '../lib/notePreview.js';
 
 export interface NoteEditorProps {
   note: Note;
@@ -51,6 +52,7 @@ export function NoteEditor({ note, onSave, autoFocus = false }: NoteEditorProps)
         initialBody={note.body}
         onChange={handleDocChange}
         autoFocus={autoFocus}
+        editedLabel={`Edited ${formatSmartDate(note.updatedAt)}`}
       />
     </div>
   );

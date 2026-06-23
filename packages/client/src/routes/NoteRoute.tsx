@@ -1,10 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useParams, Link, useSearchParams, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import type { Note, NoteId, NotebookId } from '@deltos/shared';
+import type { Note, NoteId } from '@deltos/shared';
 import { NoteIdSchema } from '@deltos/shared';
 import { getStore } from '../db/store.js';
 import { noteHasContent } from '../lib/noteContent.js';
-import { useNote, useNotebooks } from '../db/storeHooks.js';
+import { useNote } from '../db/storeHooks.js';
 import { mutateNotes } from '../db/mutate.js';
 import { notifyQueueWrite } from '../lib/syncEngine.js';
 import { getHistoryCapture } from '../lib/historyCapture.js';
@@ -14,9 +14,8 @@ import { resolveNoteView } from '../editor/views.js';
 import { ConflictView } from '../components/ConflictView.js';
 import { HistoryPanel } from '../components/HistoryPanel.js';
 import { useNoteVersions } from '../db/conflict.js';
-import { formatSmartDate } from '../lib/notePreview.js';
 import { SyncIndicator } from '../components/SyncIndicator.js';
-import { VersionHistory, Ellipsis, Trash } from '../icons/index.js';
+import { VersionHistory, Trash } from '../icons/index.js';
 import { useIsDesktop } from '../lib/useIsDesktop.js';
 import { showActionToast } from '../lib/toastEvents.js';
 import type { ClientNote, NoteVersion } from '../db/schema.js';
@@ -41,9 +40,7 @@ export function NoteRoute() {
   // ConflictView is gated behind an explicit ?resolve param — never auto-triggered by sync.
   // Paths that set it: badge-tap (ConflictBadgeSlot) and back-with-conflict (← Notes below).
   const isResolving = searchParams.has('resolve');
-  const [showMove, setShowMove] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const notebooks = useNotebooks();
   const navigate = useNavigate();
   // Desktop-only note-delete trashcan lives in the §3 meta row (mobile keeps swipe-to-delete).
   const isDesktop = useIsDesktop();
@@ -63,15 +60,6 @@ export function NoteRoute() {
     if (accountId) void getHistoryCapture().recordEdit(note.id, note);
     await mutateNotes.put(note);
     notifyQueueWrite(note.notebookId);
-  }, []);
-
-  // Must be above all early returns — hooks must be called in the same order every render.
-  // targetId: null = move to All Notes (uncategorize); a real id = move to that notebook.
-  const handleMove = useCallback(async (currentNote: Note, targetId: NotebookId | null) => {
-    if (targetId === currentNote.notebookId) { setShowMove(false); return; }
-    await mutateNotes.put({ ...currentNote, notebookId: targetId });
-    notifyQueueWrite(targetId);
-    setShowMove(false);
   }, []);
 
   const noteId = id ? NoteIdSchema.safeParse(id) : null;
@@ -201,9 +189,9 @@ export function NoteRoute() {
   const ViewComponent = resolveNoteView(note, NoteEditor);
   return (
     <>
-      {/* §3 note meta toolbar: back (mobile §5 — CSS-hidden on desktop's master-detail) + edited-time
-          on the left; Synced indicator + version-history + ⋯ overflow on the right. The formatting
-          toolbar (§3 block/inline controls) is Deploy-3, not here. */}
+      {/* §3 note meta toolbar: back (mobile §5 — CSS-hidden on desktop's master-detail) on the left;
+          Synced indicator + version-history (+ desktop delete) on the right. The edited-time moved to a
+          faint line above the title (#77); the move affordance returns as a swipe→sheet (#78). */}
       <header className="editor__meta">
         {/* Exit-with-conflict: an unresolved conflict routes back through ?resolve first. */}
         <Link
@@ -213,7 +201,6 @@ export function NoteRoute() {
         >
           <span aria-hidden="true">‹ </span>Notes
         </Link>
-        <span className="dt-meta--faint editor__edited">Edited {formatSmartDate(note.updatedAt)}</span>
         <div className="editor__meta-end">
           {/* Relocated sync indicator (was the top-bar pill; the §3 home is its place now). */}
           <SyncIndicator />
@@ -221,45 +208,14 @@ export function NoteRoute() {
             <VersionHistory size={18} />
           </button>
           {/* Desktop-only delete trashcan, sits next to history (mobile deletes via swipe). Soft-delete
-              → Trash, recoverable; the Ellipsis ⋯ stays the last overflow slot. */}
+              → Trash, recoverable. */}
           {isDesktop && (
             <button className="editor__meta-btn" onClick={handleDeleteNote} aria-label="Delete note">
               <Trash size={18} />
             </button>
           )}
-          <button className="editor__meta-btn" onClick={() => setShowMove(true)} aria-label="More options">
-            <Ellipsis size={20} />
-          </button>
         </div>
       </header>
-      {showMove && (
-        <div className="editor__move-picker" role="dialog" aria-label="Move note to notebook">
-          <p className="editor__move-title">Move to notebook</p>
-          <ul className="editor__move-list">
-            <li key="all-notes">
-              <button
-                className={`editor__move-nb${note.notebookId === null ? ' editor__move-nb--current' : ''}`}
-                onClick={() => { void handleMove(note, null); }}
-                disabled={note.notebookId === null}
-              >
-                All Notes
-              </button>
-            </li>
-            {notebooks.map((nb) => (
-              <li key={nb.id}>
-                <button
-                  className={`editor__move-nb${nb.id === note.notebookId ? ' editor__move-nb--current' : ''}`}
-                  onClick={() => { void handleMove(note, nb.id); }}
-                  disabled={nb.id === note.notebookId}
-                >
-                  {nb.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-          <button className="editor__move-cancel" onClick={() => setShowMove(false)}>Cancel</button>
-        </div>
-      )}
       <ViewComponent note={note} onSave={handleSave} autoFocus={isNew} />
     </>
   );

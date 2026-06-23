@@ -58,6 +58,8 @@ interface ProseMirrorEditorProps {
   onLeave?: () => void;
   /** Test seam: called with the EditorView on creation and null on destruction. */
   onViewInit?: (view: EditorView | null) => void;
+  /** #77: a faint, NON-EDITABLE "Edited …" line rendered above the title (outside the contenteditable). */
+  editedLabel?: string;
 }
 
 const SAVE_DEBOUNCE_MS = 400;
@@ -104,6 +106,7 @@ export function ProseMirrorEditor({
   autoFocus = false,
   onLeave,
   onViewInit,
+  editedLabel,
 }: ProseMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -624,6 +627,9 @@ export function ProseMirrorEditor({
           link={LINK_FORM_AT_BOTTOM ? undefined : linkSlot}
         />
       )}
+      {/* #77: faint "Edited …" line above the title. A plain sibling of the PM container (NOT inside the
+          contenteditable) → non-editable, never captures caret/selection. Centers to the text column. */}
+      {editedLabel && <div className="editor__edited-line dt-meta--faint">{editedLabel}</div>}
       <div
         ref={containerRef}
         {...keypadSwipe}

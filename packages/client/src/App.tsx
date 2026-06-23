@@ -243,6 +243,10 @@ function AuthedShell() {
   // Device class drives the structural fork: desktop = persistent 3-region master-detail; mobile =
   // single-column push + bottom-sheet nav. Called before the early returns (rules-of-hooks).
   const isDesktop = useIsDesktop();
+  // #76: on MOBILE the note view carries its own top bar (editor__meta with back/history/sync), so the
+  // global shell__bar would be a redundant SECOND bar — suppress it on the note route. (Desktop uses the
+  // 3-region shell, which has no shell__bar, so it's already single-bar.)
+  const onNoteRoute = useMatch('/note/:id') != null;
   // #69: in custom-keyboard mode (toggle ON, mobile) the standalone universal bottom nav is PERMANENTLY
   // gone — not hidden-while-typing (that flashed it back under Jim's thumb every time the keyboard
   // dropped). Toggle-driven body class, independent of the keyboard being up/down. Slice B absorbs
@@ -310,7 +314,7 @@ function AuthedShell() {
       {/* Mobile-only full-screen nav overlay (#69 global nav — visible even in deck-custom mode). */}
       <FullScreenNav open={overlayOpen} onClose={() => setOverlayOpen(false)} />
 
-      <header className="shell__bar">
+      {!onNoteRoute && <header className="shell__bar">
         {/*
           Desktop: the notebook name is a trigger for the drawer.
           Mobile (via CSS .shell__nb-trigger--mobile-readonly): just a context label —
@@ -345,7 +349,7 @@ function AuthedShell() {
             <Ellipsis size={24} />
           </button>
         </div>
-      </header>
+      </header>}
 
       <main className="shell__main">
         <Routes>
