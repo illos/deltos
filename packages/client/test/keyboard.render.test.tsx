@@ -78,11 +78,57 @@ describe('Keypad — structure + typing (editor loadout, abstract actions)', () 
     expect(text().length).toBeLessThan(4);
   });
 
-  it('the inert 123 key is a real (non-disabled) button — preserves focus, not a dismisser', () => {
+  it('the 123 mode key is a real (non-disabled) button — preserves focus, not a dismisser', () => {
     mountKeypad();
     const mode = document.querySelector('.keypad__key--mode') as HTMLButtonElement;
-    expect(mode.disabled).toBe(false);
-    expect(mode.className).toContain('keypad__key--inert');
+    expect(mode.disabled).toBe(false); // real <button> → pointerdown preventable → keeps host focus
+  });
+});
+
+// ── #69 Phase-2a — number (123) & symbol (#+=) layers + the switch state machine ───────────────────────
+describe('Keypad — number & symbol layers + layer switching (#69 Phase-2a)', () => {
+  it('123 switches letters → numbers; the digit row + number-layer keys appear, QWERTY is gone', () => {
+    mountKeypad();
+    expect(key('Q')).not.toBeNull(); // letters layer
+    tap('Numbers and symbols'); // the 123 mode key
+    for (const l of ['1', '2', '0', '-', '@', 'Symbols', 'Letters', 'Backspace', 'Space', 'Return']) {
+      expect(key(l), l).not.toBeNull();
+    }
+    expect(key('Q')).toBeNull(); // letters gone
+    expect(document.querySelectorAll('.keypad__row').length).toBe(4); // still 4 rows
+  });
+
+  it('#+= switches numbers → symbols; 123 (row 3) returns numbers → symbols-and-back', () => {
+    mountKeypad();
+    tap('Numbers and symbols'); // → numbers
+    tap('Symbols');             // → symbols (the #+= row-3 switch)
+    for (const l of ['[', ']', '{', '#', '€', '£', '•', 'Numbers', 'Letters']) {
+      expect(key(l), l).not.toBeNull();
+    }
+    expect(key('1')).toBeNull(); // number row-1 gone
+    tap('Numbers'); // symbols → numbers (the 123 row-3 switch)
+    expect(key('1')).not.toBeNull();
+    expect(key('[')).toBeNull();
+  });
+
+  it('ABC returns to letters from both layers and resets shift to lowercase', () => {
+    const { text } = mountKeypad();
+    tap('Shift'); // arm uppercase on the letters layer
+    tap('Numbers and symbols'); // → numbers (switch key sits where shift was; shift untouched here)
+    tap('Letters'); // ABC → back to letters
+    expect(key('Q')).not.toBeNull();
+    expect(key('Q').querySelector('.keypad__face')!.textContent).toBe('q'); // shift reset on return
+    tap('Q');
+    expect(text()).toBe('q');
+  });
+
+  it('number / symbol / shared-punct keys insert their literal character (no shift)', () => {
+    const { text } = mountKeypad();
+    tap('Numbers and symbols');
+    tap('1'); tap('0'); tap('@'); tap('.'); // digits + a number key + shared punctuation
+    tap('Symbols');
+    tap('#'); tap('•');
+    expect(text()).toBe('10@.#•');
   });
 });
 

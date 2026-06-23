@@ -79,12 +79,11 @@ describe('editor integration (mobile)', () => {
     expect(document.querySelector('.keypad')).not.toBeNull();
   });
 
-  it('the inert 123 key is a real (non-disabled) button so it preserves focus, not a dismisser', async () => {
+  it('the 123 mode key is a real (non-disabled) button so it preserves focus, not a dismisser', async () => {
     await writeCustomKeyboard(true);
     inShell(<ProseMirrorEditor noteId="n4" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
     await waitFor(() => expect(document.querySelector('.keypad__key--mode')).not.toBeNull());
     const mode = document.querySelector('.keypad__key--mode') as HTMLButtonElement;
-    expect(mode.disabled).toBe(false);                 // NOT disabled (disabled buttons swallow no events)
-    expect(mode.className).toContain('keypad__key--inert'); // greyed via class
+    expect(mode.disabled).toBe(false);                 // NOT disabled (disabled buttons swallow no events → blur the editor)
   });
 });

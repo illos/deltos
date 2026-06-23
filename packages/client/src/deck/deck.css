@@ -63,6 +63,15 @@
    events → can't preventDefault → blur the editor). Same element/handlers as live keys. */
 .keypad__key--inert .keypad__face { opacity: 0.5; }
 
+/* ── #69 Phase-2a — number (123) & symbol (#+=) layer keys ──────────────────────────────────────────
+   Two new layers share the keypad geometry: rows 1 & 2 are 10 full-width cells (same grid as QWERTY
+   row 1). On row 3 the layer-switch key (#+= / 123) sits where shift was = fn-width; the 5 shared
+   punctuation keys (. , ? ! ') are WIDER than letter keys — they equal-fill the span between the switch
+   and delete fn-keys (each face filling its cell), matching the native iPhone number/symbol row 3. */
+.keypad__key--switch .keypad__face { font-size: 15px; } /* 3-char label (#+= / 123) fits the fn face */
+.keypad__key--punct { flex: 1 1 0; }                    /* equal-fill the middle of row 3 (wider cells) */
+.keypad__key--punct .keypad__face { width: calc(100% - var(--kp-gap)); } /* the wider face fills its cell */
+
 /* ── KeypadLoadout (#69 C-manual) — collapsible keypad layer + persistent base region ───────────────── */
 .keypad-loadout { display: flex; flex-direction: column; }
 
