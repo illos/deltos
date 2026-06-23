@@ -56,6 +56,9 @@ interface KeypadLoadoutProps {
   onToggleLock: () => void;
   /** Host-injected base-region controls (editor loadout v1: group selector / Undo·Redo). */
   baseExtra?: ReactNode;
+  /** Host-injected layer ABOVE the keys (editor loadout v1: the active group's submenu). Grows the Deck
+   *  upward into the note — the keys never move. Null = nothing (keys + base region at rest). */
+  submenu?: ReactNode;
 }
 
 export function KeypadLoadout({
@@ -65,6 +68,7 @@ export function KeypadLoadout({
   onToggleKeypad,
   onToggleLock,
   baseExtra,
+  submenu,
 }: KeypadLoadoutProps) {
   // Tap vs long-press on one button: a timer started on pointerdown fires the lock; a pointerup before it
   // is a tap (toggle). preventDefault keeps the host editor focused (the Deck also swallows at the
@@ -86,6 +90,8 @@ export function KeypadLoadout({
 
   return (
     <div className="keypad-loadout">
+      {/* Submenu layer — ABOVE the keys (grows the Deck upward; keys never move). Null = nothing. */}
+      {submenu}
       {keypadShown && <Keypad actions={actions} />}
       {/* Persistent base region — the control home below the keys; present in both sub-states. */}
       <div className="keypad-loadout__base">

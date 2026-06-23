@@ -19,6 +19,7 @@ import { KeypadLoadout } from '../deck/index.js';
 import type { DeckContext, DeckLoadoutRegistry } from '../deck/index.js';
 import { deriveDeckContext, buildPmKeyActions } from './deckAdapter.js';
 import { useDeckHost } from '../components/DeckHost.js';
+import { useEditorLoadoutTools, EditorGroupSelector, EditorGroupSubmenu } from './editorLoadoutTools.js';
 import { deriveActiveState, EMPTY_ACTIVE_STATE } from './editorState.js';
 import type { EditorActiveState } from './editorState.js';
 import type { ToolDescriptor } from './editorTools.js';
@@ -111,31 +112,11 @@ export function ProseMirrorEditor({
   useLayoutEffect(() => { lockedRef.current = locked; });
   const toggleKeypad = useCallback(() => setKeypadShown((s) => !s), []);
   const toggleLock = useCallback(() => setLocked((l) => !l), []);
-  const deckLoadouts = useMemo<DeckLoadoutRegistry>(
-    () => ({
-      text: (
-        <KeypadLoadout
-          actions={deckActions}
-          keypadShown={keypadShown}
-          locked={locked}
-          onToggleKeypad={toggleKeypad}
-          onToggleLock={toggleLock}
-        />
-      ),
-    }),
-    [deckActions, keypadShown, locked, toggleKeypad, toggleLock],
-  );
-
-  // #69 slice B: the Deck no longer lives in the editor — it's mounted once at the app-shell level
-  // (DeckHostProvider) so it persists across routes (keypad while editing, nav loadout while browsing).
-  // The editor PUBLISHES its loadout + live context to the host while a note is open, and withdraws
-  // (null) on unmount → the host falls back to the navigation loadout.
+  // #69 editor-loadout v1: the group selector (below keys) + per-group submenu (above keys) share one
+  // open-group state. They're host-injected into the generic KeypadLoadout; the loadout itself is
+  // assembled below, once the tool runners (runTool / handleUndo / handleRedo) are defined.
+  const { activeGroup, toggleGroup } = useEditorLoadoutTools();
   const { publishEditor } = useDeckHost();
-  useEffect(() => {
-    if (!customKb) { publishEditor(null); return; }
-    publishEditor({ context: deckContext, loadouts: deckLoadouts });
-    return () => publishEditor(null);
-  }, [customKb, deckContext, deckLoadouts, publishEditor]);
 
   // Keep onChange and onLeave in refs so they're always current without re-running the effect.
   const onChangeRef = useRef(onChange);
@@ -169,6 +150,43 @@ export function ProseMirrorEditor({
     tool.command(deltoSchema)(view.state, view.dispatch);
     view.focus();
   }, []);
+
+  // The editor loadout published to the Deck: the collapsible keypad + the persistent base region (group
+  // selector + Undo/Redo + show/hide toggle) + the active group's submenu above the keys. The tool UI is
+  // host-injected (deltos Deploy-3 registry) into the generic core KeypadLoadout via baseExtra + submenu.
+  const deckLoadouts = useMemo<DeckLoadoutRegistry>(
+    () => ({
+      text: (
+        <KeypadLoadout
+          actions={deckActions}
+          keypadShown={keypadShown}
+          locked={locked}
+          onToggleKeypad={toggleKeypad}
+          onToggleLock={toggleLock}
+          baseExtra={
+            <EditorGroupSelector
+              activeGroup={activeGroup}
+              toggleGroup={toggleGroup}
+              active={active}
+              onUndo={handleUndo}
+              onRedo={handleRedo}
+            />
+          }
+          submenu={<EditorGroupSubmenu activeGroup={activeGroup} active={active} run={runTool} />}
+        />
+      ),
+    }),
+    [deckActions, keypadShown, locked, toggleKeypad, toggleLock, activeGroup, toggleGroup, active, handleUndo, handleRedo, runTool],
+  );
+
+  // #69 slice B: the Deck mounts once at the app-shell level (DeckHostProvider) so it persists across
+  // routes. The editor PUBLISHES its loadout + live context while a note is open, withdraws (null) on
+  // unmount → the host falls back to the navigation loadout.
+  useEffect(() => {
+    if (!customKb) { publishEditor(null); return; }
+    publishEditor({ context: deckContext, loadouts: deckLoadouts });
+    return () => publishEditor(null);
+  }, [customKb, deckContext, deckLoadouts, publishEditor]);
 
   useEffect(() => {
     if (!containerRef.current) return;

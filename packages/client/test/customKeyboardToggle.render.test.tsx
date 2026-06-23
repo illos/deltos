@@ -66,7 +66,9 @@ describe('editor integration (mobile)', () => {
     await waitFor(() => expect(pmEl()?.getAttribute('inputmode')).toBe('none'));
     await waitFor(() => expect(document.querySelector('.keypad')).not.toBeNull());
     expect(document.querySelector('.keypad__key[aria-label="Q"]')).not.toBeNull();
-    expect(document.querySelector('button[aria-label="Undo"]')).toBeNull(); // bar replaced by the keyboard
+    // MobileEditorBar is replaced by the Deck. (Don't proxy on the Undo button — the Deck editor loadout
+    // now has its own Undo in the selector row; assert the MobileEditorBar container itself is gone.)
+    expect(document.querySelector('.editor__mbar')).toBeNull();
   });
 
   it('the keyboard is NOT focus-gated: a blur does not tear it down (#69 drop fix)', async () => {

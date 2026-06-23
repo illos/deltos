@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react';
 import type { Command } from 'prosemirror-state';
 import type { IconProps } from '../icons/index.js';
-import { Highlight, InlineCode, Link, BulletList, NumberedList, Checklist, Quote, Divider } from '../icons/index.js';
+import { Highlight, InlineCode, Link, BulletList, NumberedList, Checklist, Quote, Divider, Plus } from '../icons/index.js';
 import type { DeltoSchema } from './schema.js';
 import type { EditorActiveState } from './editorState.js';
 import { commandFor } from './commands.js';
@@ -89,3 +89,22 @@ export function toolsFor(surface: 'desktop' | 'mobile', group: ToolGroup): ToolD
     .filter((t) => t.group === group && (t.surface === 'both' || t.surface === surface))
     .sort((a, b) => a.order - b.order);
 }
+
+/**
+ * Group-level toggle metadata — the label + visible affordance for each group's selector control
+ * (Aa=style, B=format, ☰=lists, +=insert). Shared by every surface that renders a group selector:
+ * the mobile MobileEditorBar (native-keyboard mode) and the Deck editor loadout (custom-keyboard mode),
+ * so the group affordances stay identical across both.
+ */
+export interface GroupToggle {
+  group: ToolGroup;
+  label: string;
+  glyph?: string;
+  icon?: ComponentType<IconProps>;
+}
+export const GROUP_TOGGLES: readonly GroupToggle[] = [
+  { group: 'style',  label: 'Style',  glyph: 'Aa' },
+  { group: 'format', label: 'Format', glyph: 'B' },
+  { group: 'lists',  label: 'Lists',  icon: BulletList },
+  { group: 'insert', label: 'Insert', icon: Plus },
+];

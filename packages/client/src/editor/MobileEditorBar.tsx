@@ -1,8 +1,6 @@
 import { useState } from 'react';
-import type { ComponentType } from 'react';
-import { Undo, Redo, BulletList, Plus } from '../icons/index.js';
-import type { IconProps } from '../icons/index.js';
-import { toolsFor } from './editorTools.js';
+import { Undo, Redo } from '../icons/index.js';
+import { toolsFor, GROUP_TOGGLES } from './editorTools.js';
 import type { ToolDescriptor, ToolGroup } from './editorTools.js';
 import type { EditorActiveState } from './editorState.js';
 
@@ -14,16 +12,6 @@ interface MobileEditorBarProps {
 }
 
 type ActiveGroup = ToolGroup | null;
-
-// Main-row group toggles (spec §3): Aa=style, B=format, ☰=lists, +=insert. Aa/B are styled text
-// glyphs; lists/insert are icons. The active group's control turns --accent.
-interface GroupToggle { group: ToolGroup; label: string; glyph?: string; icon?: ComponentType<IconProps> }
-const GROUP_TOGGLES: readonly GroupToggle[] = [
-  { group: 'style',  label: 'Style',  glyph: 'Aa' },
-  { group: 'format', label: 'Format', glyph: 'B' },
-  { group: 'lists',  label: 'Lists',  icon: BulletList },
-  { group: 'insert', label: 'Insert', icon: Plus },
-];
 
 /**
  * Mobile grouped contextual bar (spec §3). Pinned to the bottom of the note sub-screen. Two rows:
