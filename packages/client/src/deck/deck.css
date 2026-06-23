@@ -149,11 +149,15 @@
 .voice-loadout__wave { padding: 8px 14px 0; }
 .voice-waveform { display: block; width: 100%; height: 44px; color: var(--accent); } /* canvas stroke = color */
 .voice-loadout__pane {
-  flex: 1 1 auto; min-height: 96px; display: flex; align-items: center; justify-content: center;
+  flex: 1 1 auto; min-height: 96px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px; overflow-y: auto;
   padding: 16px; text-align: center;
 }
 .voice-loadout__status { color: var(--secondary); font-family: var(--ff); font-size: 15px; }
 .voice-loadout__text { color: var(--ink); font-family: var(--ff); font-size: 16px; }
+/* §6.2 rough live-preview draft: greyed + italic so it reads as PROVISIONAL — the final pass on stop
+   replaces it with the clean committed text. */
+.voice-loadout__text--draft { color: var(--secondary); font-style: italic; font-size: 15px; }
 .voice-loadout__base {
   display: flex; align-items: center; justify-content: center;
   padding: 0 12px max(8px, env(safe-area-inset-bottom)); min-height: 47px;

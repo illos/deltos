@@ -221,7 +221,11 @@ export function ProseMirrorEditor({
   // #69 §6.1 voice: the Deck's voice loadout (deck-core) wired to deltos's concrete Transcriber (single-
   // flight POST /api/transcribe) + commit-to-note. The mic control lives in the selector; while recording,
   // the VoiceLoadout replaces the keypad. transcriber is stable; commit inserts the final transcript at caret.
-  const transcriber = useRef(createDeltosTranscriber()).current;
+  // Two transcriber instances (§6.2 clip-cap): the FINAL full-audio pass sends ?final=1 (25MB server cap);
+  // the live-preview CHUNK calls omit it (small per-phrase WAVs, 5MB cap). Separate instances so the final
+  // pass's single-flight is never debounced by chunk calls.
+  const transcriber = useRef(createDeltosTranscriber({ final: true })).current;
+  const chunkTranscriber = useRef(createDeltosTranscriber({ final: false })).current;
   const micSupported = isAudioCaptureSupported();
   const commitTranscript = useCallback((transcript: string) => {
     const v = viewRef.current;
@@ -229,10 +233,12 @@ export function ProseMirrorEditor({
     v.dispatch(v.state.tr.insertText(transcript).scrollIntoView());
     v.focus();
   }, []);
-  const voice = useVoiceMode(transcriber, commitTranscript);
+  // §6.2 live chunked preview: feed the chunk transcriber so useVoiceMode runs the rolling VAD draft while
+  // recording (greyed); the final pass on stop replaces it + commits.
+  const voice = useVoiceMode(transcriber, commitTranscript, { chunkTranscriber: chunkTranscriber.transcribe });
   // Destructure so the deckLoadouts memo deps are the specific values (start/stop are stable useCallbacks;
-  // state/stream change) rather than the always-new `voice` object.
-  const { state: voiceState, stream: voiceStream, start: voiceStart, stop: voiceStop } = voice;
+  // state/stream/draft change) rather than the always-new `voice` object.
+  const { state: voiceState, stream: voiceStream, draft: voiceDraft, start: voiceStart, stop: voiceStop } = voice;
 
   // The editor loadout published to the Deck: the collapsible keypad + the persistent base region (group
   // selector + Undo/Redo + show/hide toggle) + the active group's submenu above the keys. The tool UI is
@@ -242,7 +248,7 @@ export function ProseMirrorEditor({
       // §6.1: while recording/transcribing, the VoiceLoadout REPLACES the keypad loadout (waveform top +
       // transcript pane + Stop). Otherwise the keypad loadout, whose selector carries the mic control.
       text: voiceState !== 'idle' ? (
-        <VoiceLoadout state={voiceState} stream={voiceStream} onStop={() => void voiceStop()} />
+        <VoiceLoadout state={voiceState} stream={voiceStream} transcript={voiceDraft} onStop={() => void voiceStop()} />
       ) : (
         <KeypadLoadout
           actions={deckActions}
@@ -283,7 +289,7 @@ export function ProseMirrorEditor({
         />
       ),
     }),
-    [deckActions, keypadShown, locked, toggleKeypad, toggleLock, activeGroup, toggleGroup, active, handleUndo, handleRedo, runTool, spellSuggest, handleSpellPick, handleAddToDictionary, voiceState, voiceStream, voiceStart, voiceStop, micSupported],
+    [deckActions, keypadShown, locked, toggleKeypad, toggleLock, activeGroup, toggleGroup, active, handleUndo, handleRedo, runTool, spellSuggest, handleSpellPick, handleAddToDictionary, voiceState, voiceStream, voiceDraft, voiceStart, voiceStop, micSupported],
   );
 
   // #69 slice B: the Deck mounts once at the app-shell level (DeckHostProvider) so it persists across

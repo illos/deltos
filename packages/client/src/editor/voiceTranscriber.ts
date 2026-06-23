@@ -13,7 +13,14 @@ import type { Transcriber } from '../deck/index.js';
  */
 const MIN_INTERVAL_MS = 1000;
 
-export function createDeltosTranscriber(): Transcriber {
+/**
+ * Create a deltos Transcriber. `final` (§6.2) selects the server clip-cap via ?final=1: the chunked-FINAL
+ * full-audio pass passes `{ final: true }` (25MB cap); the live-preview CHUNK transcriber and plain §6.1
+ * dictation omit it (5MB cap). Each instance has its OWN single-flight, so the final pass is never debounced
+ * by chunk calls (the host wires two separate instances).
+ */
+export function createDeltosTranscriber(options: { final?: boolean } = {}): Transcriber {
+  const final = options.final ?? false;
   let inFlight: Promise<{ transcript: string }> | null = null;
   let lastStartedAt = 0;
 
@@ -25,7 +32,7 @@ export function createDeltosTranscriber(): Transcriber {
         return Promise.resolve({ transcript: '' }); // too soon — debounce a rapid repeat into a no-op
       }
       lastStartedAt = now;
-      inFlight = transcribe(blob)
+      inFlight = transcribe(blob, '/api', final)
         .then((r) => ({ transcript: r.transcript }))
         .finally(() => { inFlight = null; });
       return inFlight;

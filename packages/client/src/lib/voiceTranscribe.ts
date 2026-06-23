@@ -45,10 +45,14 @@ function authHeader(): Record<string, string> {
  * the server base64-encodes it for Whisper. Resolves with the transcript + the source audio; rejects with
  * a {@link TranscribeError} on auth/model/transport failure.
  */
-export async function transcribe(audio: Blob, apiBase = '/api'): Promise<Transcription> {
+export async function transcribe(audio: Blob, apiBase = '/api', final = false): Promise<Transcription> {
+  // §6.2 clip-cap (secSys ruling): the chunked-FINAL full-audio pass sets ?final=1 so the server selects
+  // its higher (25MB) cap instead of the 5MB dictation cap. The marker only SELECTS between two
+  // server-defined bounded caps — it can't set an arbitrary size — so an untrusted value is safe. Per-phrase
+  // chunk calls omit it (correctly capped at 5MB). The worker honours this in its two-cap route selection.
   let res: Response;
   try {
-    res = await fetch(`${apiBase}/transcribe`, {
+    res = await fetch(`${apiBase}/transcribe${final ? '?final=1' : ''}`, {
       method: 'POST',
       // The blob's own type drives the Content-Type so the server/Whisper sees the right container.
       headers: { 'Content-Type': audio.type || 'application/octet-stream', ...authHeader() },

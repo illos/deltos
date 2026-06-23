@@ -14,13 +14,14 @@ import type { VoiceState } from './useVoiceMode.js';
 interface VoiceLoadoutProps {
   state: VoiceState;
   stream: MediaStream | null;
-  /** Future §6.2 live-preview text; empty in the base (recording shows a status, not text). */
+  /** §6.2 rough live-preview transcript (greyed draft) accumulated while recording; '' when none yet. */
   transcript?: string;
   /** Stop recording (tap-toggle mode). Hold-to-talk stops on pointer release via the mic control. */
   onStop: () => void;
 }
 
 export function VoiceLoadout({ state, stream, transcript, onStop }: VoiceLoadoutProps) {
+  const draft = transcript ?? '';
   return (
     <div className="voice-loadout">
       <div className="voice-loadout__wave">
@@ -28,9 +29,14 @@ export function VoiceLoadout({ state, stream, transcript, onStop }: VoiceLoadout
       </div>
       <div className="voice-loadout__pane" aria-live="polite">
         {state === 'transcribing' ? (
-          <span className="voice-loadout__status">Transcribing…</span>
-        ) : transcript ? (
-          <span className="voice-loadout__text">{transcript}</span>
+          // Final authoritative pass running: keep the rough draft visible (greyed) under a finalizing beat.
+          <>
+            {draft && <span className="voice-loadout__text voice-loadout__text--draft">{draft}</span>}
+            <span className="voice-loadout__status">Finalizing…</span>
+          </>
+        ) : draft ? (
+          // Live preview: rough, trailing, GREYED — the final pass on stop replaces it with the clean text.
+          <span className="voice-loadout__text voice-loadout__text--draft">{draft}</span>
         ) : (
           <span className="voice-loadout__status">Listening… tap Stop when you’re done</span>
         )}
@@ -39,11 +45,11 @@ export function VoiceLoadout({ state, stream, transcript, onStop }: VoiceLoadout
         <button
           type="button"
           className="voice-loadout__stop"
-          aria-label={state === 'transcribing' ? 'Transcribing' : 'Stop recording'}
+          aria-label={state === 'transcribing' ? 'Finalizing' : 'Stop recording'}
           disabled={state === 'transcribing'}
           onPointerDown={(e) => { e.preventDefault(); onStop(); }}
         >
-          {state === 'transcribing' ? 'Transcribing…' : '■ Stop'}
+          {state === 'transcribing' ? 'Finalizing…' : '■ Stop'}
         </button>
       </div>
     </div>
