@@ -66,9 +66,18 @@ describe('KeypadLoadout — collapsible keypad + persistent base region', () => 
     expect(onToggleKeypad).not.toHaveBeenCalled();
   });
 
-  it('LOCKED: the toggle shows the lock indicator + "(locked)" in its label', () => {
+  it('UNLOCKED: keyboard icon + direction chevron (⌄ shown / ⌃ hidden) — chevron = "auto may move"', () => {
+    const { rerender } = render(<KeypadLoadout {...props} keypadShown locked={false} />);
+    expect(toggle().querySelector('.deck-kbd-toggle__icon')).not.toBeNull();
+    expect(toggle().querySelector('.deck-kbd-toggle__chevron')!.textContent).toBe('⌄');
+    rerender(<KeypadLoadout {...props} keypadShown={false} locked={false} />);
+    expect(toggle().querySelector('.deck-kbd-toggle__chevron')!.textContent).toBe('⌃');
+  });
+
+  it('LOCKED: keyboard icon only — the REMOVED chevron is the lock indicator (+ "(locked)" label)', () => {
     render(<KeypadLoadout {...props} keypadShown locked />);
-    expect(toggle().className).toContain('is-locked');
+    expect(toggle().querySelector('.deck-kbd-toggle__icon')).not.toBeNull(); // keyboard icon stays
+    expect(toggle().querySelector('.deck-kbd-toggle__chevron')).toBeNull();   // chevron gone = pinned
     expect(toggle().getAttribute('aria-label')).toContain('(locked)');
   });
 });
@@ -120,7 +129,7 @@ describe('keypad show/hide — editor integration', () => {
     act(() => { vi.advanceTimersByTime(460); });
     fireEvent.pointerUp(toggle());
     vi.useRealTimers();
-    expect(toggle().className).toContain('is-locked');
+    expect(toggle().querySelector('.deck-kbd-toggle__chevron')).toBeNull(); // locked = chevron removed
     act(() => { fireEvent.focus(pmEl()!); }); // auto suspended → must NOT re-show
     expect(document.querySelector('.keypad')).toBeNull();
   });

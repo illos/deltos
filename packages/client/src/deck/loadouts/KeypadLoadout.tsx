@@ -23,6 +23,27 @@ import { Keypad } from './Keypad.js';
 
 const LONG_PRESS_MS = 450;
 
+/**
+ * Keyboard glyph for the show/hide toggle — the native iOS dismiss-keyboard affordance. DECK-CORE-LOCAL
+ * inline SVG by design: the Deck must not import the host's icon set (extraction boundary). Matches the
+ * deltos fine-line look by convention (24×24, currentColor stroke, 1.5 round caps/joins) so it sits with
+ * the host's icons, without coupling to them. currentColor → it inherits the button's themed colour.
+ */
+function KeyboardGlyph() {
+  return (
+    <svg
+      className="deck-kbd-toggle__icon"
+      width="20" height="20" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="2.5" y="6" width="19" height="12" rx="2.5" />
+      <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 13.5h.01M18 13.5h.01" />
+      <path d="M9.5 13.5h5" />
+    </svg>
+  );
+}
+
 interface KeypadLoadoutProps {
   actions: KeyActions;
   /** Is the keypad layer visible. Host-owned (drives auto-show + caret clearance). */
@@ -71,7 +92,7 @@ export function KeypadLoadout({
         {baseExtra}
         <button
           type="button"
-          className={`deck-kbd-toggle${locked ? ' is-locked' : ''}`}
+          className="deck-kbd-toggle"
           aria-label={`${keypadShown ? 'Hide' : 'Show'} keyboard${locked ? ' (locked)' : ''}`}
           aria-pressed={keypadShown}
           onPointerDown={onDown}
@@ -79,7 +100,10 @@ export function KeypadLoadout({
           onPointerLeave={clear}
           onPointerCancel={clear}
         >
-          <span className="deck-kbd-toggle__chevron">{keypadShown ? '⌄' : '⌃'}</span>
+          <KeyboardGlyph />
+          {/* The chevron shows direction (⌄ hide / ⌃ show) AND is the lock indicator: present = auto may
+              move the keyboard; ABSENT (locked) = pinned, won't move on its own. Long-press toggles it. */}
+          {!locked && <span className="deck-kbd-toggle__chevron">{keypadShown ? '⌄' : '⌃'}</span>}
         </button>
       </div>
     </div>

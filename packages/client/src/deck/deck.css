@@ -88,6 +88,7 @@
   cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: none;
 }
 .deck-kbd-toggle:active { background: var(--sel); }
-.deck-kbd-toggle__chevron { font-size: 17px; line-height: 1; }
-/* Locked = auto suspended (pinned). Accent text + ring so "the keyboard can't move itself" reads at a glance. */
-.deck-kbd-toggle.is-locked { color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
+/* Keyboard glyph + a direction chevron. The chevron is ALSO the lock indicator: rendered when unlocked
+   (auto may move the keyboard), removed when locked (pinned) — so no separate locked-state rule. */
+.deck-kbd-toggle__icon { display: block; flex: 0 0 auto; }
+.deck-kbd-toggle__chevron { font-size: 15px; line-height: 1; }
