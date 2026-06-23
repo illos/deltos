@@ -9,7 +9,7 @@ import { isToolActive } from './editorState.js';
 
 /**
  * TOOL-DESCRIPTOR REGISTRY — the single data-driven source for both editor surfaces. The desktop
- * EditorToolbar and the mobile MobileEditorBar both RENDER from this array (filtered by surface,
+ * EditorControlStrip and the mobile Deck editor loadout both RENDER from this array (filtered by surface,
  * grouped, ordered); there is no second hardcoded button list. Adding a tool later = appending a
  * descriptor — zero core toolbar changes. The runtime plugin-REGISTRATION api is intentionally out of
  * scope (a future attachment plugin will pull it into existence against a real need); this is only the

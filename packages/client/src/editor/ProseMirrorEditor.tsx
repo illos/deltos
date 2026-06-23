@@ -20,7 +20,7 @@ import { linkCardPastePlugin } from '../plugins/embeds/index.js';
 import { createDefaultFormulaRegistry, buildFormulaPlugins, buildFormulaNodeView } from '../plugins/formula/index.js';
 import { TodoItemView } from './nodeviews/TodoItem.js';
 import { sliceToPlainText } from './clipboard.js';
-import { EditorToolbar } from './EditorToolbar.js';
+import { EditorControlStrip } from './EditorControlStrip.js';
 import { MobileEditorBar } from './MobileEditorBar.js';
 import { KeypadLoadout } from '../deck/index.js';
 import type { DeckContext, DeckLoadoutRegistry, KeyActions } from '../deck/index.js';
@@ -304,17 +304,17 @@ export function ProseMirrorEditor({
   const runTool = useCallback((tool: ToolDescriptor) => {
     const view = viewRef.current;
     if (!view) return;
-    // Deck link: window.prompt (the default linkCommand path) is unreliable in an installed PWA → open the
-    // inline URL+Title form instead. (Desktop keeps the prompt path until the desktop-Deck migration —
-    // customKb is false there.) Clean creation form: type title + url → inserts the linked title at the caret.
-    if (tool.id === 'link' && customKb) {
+    // Link: open the inline URL+Title form on BOTH targets (mobile = keypad-fed LinkEntryBar in the Deck
+    // top slot; desktop = native-input DesktopLinkForm in the control strip). Replaces the old window.prompt
+    // path entirely (unreliable in an installed PWA). Clean creation form → inserts the linked title at caret.
+    if (tool.id === 'link') {
       setLinkTitle(''); setLinkUrl(''); setActiveLinkField('title');
       setLinkOpen(true);
       return;
     }
     tool.command(deltoSchema)(view.state, view.dispatch);
     view.focus();
-  }, [customKb]);
+  }, []);
 
   // #69 §6.1 voice: the Deck's voice loadout (deck-core) wired to deltos's concrete Transcriber (single-
   // flight POST /api/transcribe) + commit-to-note. The mic control lives in the selector; while recording,
@@ -585,8 +585,27 @@ export function ProseMirrorEditor({
 
   return (
     <>
-      {/* Desktop: registry-driven formatting toolbar at the top (slice C). */}
-      {isDesktop && <EditorToolbar active={active} run={runTool} />}
+      {/* Desktop: the Deck editor loadout AS the toolbar — selector + submenu (same registry as mobile),
+          a top-anchored sticky strip, no keypad/mic/toggle. Replaces the old flat EditorToolbar. */}
+      {isDesktop && (
+        <EditorControlStrip
+          activeGroup={activeGroup}
+          toggleGroup={toggleGroup}
+          active={active}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          runTool={runTool}
+          link={{
+            open: linkOpen,
+            title: linkTitle,
+            url: linkUrl,
+            onChangeTitle: setLinkTitle,
+            onChangeUrl: setLinkUrl,
+            onSubmit: submitLink,
+            onCancel: cancelLink,
+          }}
+        />
+      )}
       <div
         ref={containerRef}
         {...keypadSwipe}

@@ -734,22 +734,41 @@
 
 /* ── Desktop formatting toolbar (Deploy 3, Lane 3/4 — spec §2) ─────────────────
    One flat wrapping row; 4 groups separated by a 1px×18px hairline divider. */
-.editor__fmtbar {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
-  padding: 8px 18px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+/* #69 DESKTOP DECK STRIP — the editor loadout rendered as a top-anchored sticky toolbar (replaces the old
+   flat .editor__fmtbar). Same control components as the mobile Deck (selector + submenu), no keypad. The
+   selector row puts the group buttons left + Undo/Redo right; the sub row shows the open group's tools or
+   the link form. */
+.editor__deck-strip {
+  position: sticky; top: 0; z-index: 20; flex-shrink: 0;
+  background: var(--paper); border-bottom: 1px solid var(--border);
 }
-.editor__fmtbar-divider {
-  width: 1px; height: 18px; background: var(--border); margin: 0 4px; flex-shrink: 0;
+.editor__deck-strip-row { display: flex; align-items: center; padding: 4px 14px; }
+.editor__deck-strip-row--sub { border-top: 1px solid var(--border); }
+/* Inside the strip, undo display:contents (the mobile equidistant hack) → real flex clusters: groups left,
+   history (Undo/Redo) pushed right. */
+.editor__deck-strip .elt-groups  { display: flex; align-items: center; gap: 6px; }
+.editor__deck-strip .elt-history { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+/* The submenu inside the strip: left-aligned, no negative top margin (that was for the mobile Deck slot). */
+.editor__deck-strip .elt-sub {
+  margin-top: 0; justify-content: flex-start; gap: 8px; flex: 1 1 auto;
+  background: transparent; border-bottom: none;
 }
-.editor__tool {
-  display: inline-flex; align-items: center; justify-content: center;
-  background: transparent; border: none; border-radius: 6px; padding: 5px 7px;
-  min-width: 28px; min-height: 28px; color: var(--secondary); cursor: pointer;
-  font-family: var(--ff); transition: background 0.12s ease, color 0.12s ease;
+/* Desktop link form (native inputs) in the sub row. */
+.editor__link-form { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; }
+.editor__link-input {
+  font-family: var(--ff); font-size: 16px; color: var(--ink); /* ≥16px = no iOS zoom (harmless on desktop) */
+  background: var(--list); border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 10px; min-height: 32px;
 }
-.editor__tool:hover:not(:disabled) { background: var(--sel); }
-.editor__tool.is-active { background: var(--sel); color: var(--ink); }
-.editor__tool:disabled { opacity: 0.4; cursor: default; }
+.editor__link-input--url { flex: 1 1 auto; font-family: var(--mono); min-width: 0; }
+.editor__link-btn {
+  appearance: none; -webkit-appearance: none; border: 1px solid var(--border); cursor: pointer;
+  background: var(--list); color: var(--ink); font-family: var(--ff); font-size: 14px;
+  padding: 6px 14px; min-height: 32px; border-radius: 8px;
+}
+.editor__link-apply { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.editor__link-apply:disabled { opacity: 0.5; cursor: default; }
+.editor__link-btn:not(:disabled):hover { background: var(--sel); }
 /* B/I/U/S as styled glyphs (locked decision 3 — match the mock exactly), not icons. Per-glyph sizes
    per the prototype so the mark glyphs read a touch bolder than the block-style word-labels (13px). */
 .editor__tool-glyph { font-size: 13px; line-height: 1; }
