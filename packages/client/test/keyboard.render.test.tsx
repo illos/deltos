@@ -47,6 +47,14 @@ describe('KeyGrid — structure + typing', () => {
     expect(document.querySelectorAll('.kb__row').length).toBe(4);
     for (const l of ['Q', 'A', 'Z', 'Shift', 'Backspace', 'Space', 'Return']) expect(key(l), l).not.toBeNull();
   });
+
+  it('every key is a tiling hit CELL with the visible key as a centered .kb__face (#349 zero dead zones)', () => {
+    mountGrid();
+    const keys = [...document.querySelectorAll('.kb__key')];
+    expect(keys.length).toBeGreaterThan(20);
+    // The hit target (button) wraps a single visible face — the cell tiles, the face stays at geometry.
+    for (const k of keys) expect(k.querySelector('.kb__face'), k.getAttribute('aria-label') ?? '').not.toBeNull();
+  });
   it('letters insert lowercase by default', () => { mountGrid(); tap('Q'); tap('A'); tap('Z'); expect(text()).toBe('qaz'); });
   it('shift one-shot: capitalizes the next letter then auto-releases', () => {
     mountGrid();

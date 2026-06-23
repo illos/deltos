@@ -73,15 +73,19 @@ export function KeyGrid({ view }: KeyGridProps) {
   const press = (handler: () => void) => (e: React.PointerEvent) => { e.preventDefault(); handler(); };
 
   return (
+    // Zero dead zones (#349): every key BUTTON is a hit CELL that tiles edge-to-edge (no inter-key gap),
+    // and the visible key is a smaller .kb__face centered inside at the overlay-matched geometry. A tap
+    // that lands in what was a gap now hits the nearest key's cell. Visuals unchanged; only the invisible
+    // hit area grew to fill the gaps.
     <div className="kb__grid" role="group" aria-label="Keyboard">
       <div className="kb__row">
         {ROW1.map((c) => (
-          <button key={c} type="button" className="kb__key" aria-label={c} onPointerDown={press(() => insertChar(c))}>{c}</button>
+          <button key={c} type="button" className="kb__key" aria-label={c} onPointerDown={press(() => insertChar(c))}><span className="kb__face">{c}</span></button>
         ))}
       </div>
       <div className="kb__row kb__row--r2">
         {ROW2.map((c) => (
-          <button key={c} type="button" className="kb__key" aria-label={c} onPointerDown={press(() => insertChar(c))}>{c}</button>
+          <button key={c} type="button" className="kb__key" aria-label={c} onPointerDown={press(() => insertChar(c))}><span className="kb__face">{c}</span></button>
         ))}
       </div>
       <div className="kb__row kb__row--r3">
@@ -90,11 +94,11 @@ export function KeyGrid({ view }: KeyGridProps) {
           className={`kb__key kb__key--fn kb__key--shift${shifted ? ' is-active' : ''}`}
           aria-label="Shift" aria-pressed={shifted}
           onPointerDown={press(() => setShifted((s) => !s))}
-        >⇧</button>
+        ><span className="kb__face">⇧</span></button>
         {/* The 7 letters stay centered between the wider shift/delete (aligned under row 2). */}
         <div className="kb__row-mid">
           {ROW3.map((c) => (
-            <button key={c} type="button" className="kb__key" aria-label={c} onPointerDown={press(() => insertChar(c))}>{c}</button>
+            <button key={c} type="button" className="kb__key" aria-label={c} onPointerDown={press(() => insertChar(c))}><span className="kb__face">{c}</span></button>
           ))}
         </div>
         <button
@@ -105,7 +109,7 @@ export function KeyGrid({ view }: KeyGridProps) {
           onPointerUp={stopBackspace}
           onPointerLeave={stopBackspace}
           onPointerCancel={stopBackspace}
-        >⌫</button>
+        ><span className="kb__face">⌫</span></button>
       </div>
       <div className="kb__row kb__row--r4">
         {/* 123 is inert in Phase 1 (number/symbol layer = Phase 2). NOT a disabled <button>: a disabled
@@ -114,9 +118,9 @@ export function KeyGrid({ view }: KeyGridProps) {
             same pointerdown+preventDefault — just greyed + no-op, so it preserves focus exactly like the
             others. */}
         <button type="button" className="kb__key kb__key--fn kb__key--mode kb__key--inert"
-          aria-label="Numbers and symbols (Phase 2)" onPointerDown={press(() => { /* Phase 2 */ })}>123</button>
-        <button type="button" className="kb__key kb__key--space" aria-label="Space" onPointerDown={press(insertSpace)}>space</button>
-        <button type="button" className="kb__key kb__key--fn kb__key--return" aria-label="Return" onPointerDown={press(runReturn)}>⏎</button>
+          aria-label="Numbers and symbols (Phase 2)" onPointerDown={press(() => { /* Phase 2 */ })}><span className="kb__face">123</span></button>
+        <button type="button" className="kb__key kb__key--space" aria-label="Space" onPointerDown={press(insertSpace)}><span className="kb__face">space</span></button>
+        <button type="button" className="kb__key kb__key--fn kb__key--return" aria-label="Return" onPointerDown={press(runReturn)}><span className="kb__face">⏎</span></button>
       </div>
     </div>
   );

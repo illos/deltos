@@ -2224,29 +2224,43 @@ a.auth__link { display: inline; }
    nav back under the user's thumb). The keyboard owns the bottom; nav controls return via the surface's
    'navigation' context next slice. */
 body.kb-custom .bottom-nav { display: none; }
-.kb__grid { display: flex; flex-direction: column; gap: var(--kb-row-gap); }
-.kb__row { display: flex; justify-content: center; align-items: center; gap: var(--kb-gap); }
-.kb__row--r3, .kb__row--r4 { justify-content: space-between; }
-.kb__row-mid { display: flex; gap: var(--kb-gap); } /* the 7 ZXCVBNM keys, centered between shift/delete */
+/* Zero dead zones (#349): cells tile edge-to-edge (gap 0) horizontally AND vertically (cell = key pitch
+   = key size + the old gap), with the visible .kb__face centered inside at the unchanged geometry. */
+.kb__grid { display: flex; flex-direction: column; gap: 0; }
+.kb__row { display: flex; justify-content: center; align-items: center; gap: 0; }
+.kb__row-mid { display: flex; gap: 0; } /* the 7 ZXCVBNM cells tile between shift/delete */
+
+/* The CELL = the invisible hit target: full pitch, transparent, tiles edge-to-edge so a tap that lands
+   in a former gap hits the nearest key. No visible style here. */
 .kb__key {
-  width: var(--kb-key-w); height: var(--kb-key-h); flex-shrink: 0; box-sizing: border-box;
+  flex: 0 0 calc(var(--kb-key-w) + var(--kb-gap));   /* horizontal pitch */
+  height: calc(var(--kb-key-h) + var(--kb-row-gap)); /* row pitch — tiles vertically too */
+  box-sizing: border-box; padding: 0; background: none; border: none;
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--list); color: var(--ink); border: none; border-radius: var(--kb-radius);
-  /* Labels pinned to the system font — NOT var(--ff): the app has 4 selectable fonts whose glyph
-     metrics differ, which would disturb the pixel-matched key geometry (#69 §2.3a). Colour inherits the
-     theme (tokens below); font stays geometry-invariant across all app voices. Also the most native look. */
+  cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: none;
+}
+/* The visible key — overlay-matched geometry (UNCHANGED), centered in its cell. Labels pinned to the
+   system font (NOT var(--ff)): the app's 4 selectable fonts have different glyph metrics that would
+   disturb the pixel-matched geometry (#69 §2.3a). Colour inherits the theme tokens. */
+.kb__face {
+  width: var(--kb-key-w); height: var(--kb-key-h); box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--list); color: var(--ink); border-radius: var(--kb-radius);
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-size: 22px; font-weight: 400; line-height: 1;
-  -webkit-tap-highlight-color: transparent; touch-action: none; cursor: pointer;
 }
-.kb__key:active { background: var(--sel); }
-.kb__key--fn { width: var(--kb-fn-w); font-size: 18px; color: var(--secondary); background: var(--border); }
-.kb__key--shift.is-active { background: var(--paper); color: var(--ink); } /* one-shot armed */
-.kb__key--mode, .kb__key--return { width: var(--kb-r4-w); font-size: 16px; }
-.kb__key--space { flex: 1; min-width: 0; font-size: 15px; color: var(--secondary); }
+.kb__key:active .kb__face { background: var(--sel); }
+/* Wider keys: the CELL pitch grows (key + gap); the FACE keeps the matched key width. */
+.kb__key--fn { flex-basis: calc(var(--kb-fn-w) + var(--kb-gap)); }
+.kb__key--fn .kb__face { width: var(--kb-fn-w); font-size: 18px; color: var(--secondary); background: var(--border); }
+.kb__key--shift.is-active .kb__face { background: var(--paper); color: var(--ink); } /* one-shot armed */
+.kb__key--mode, .kb__key--return { flex-basis: calc(var(--kb-r4-w) + var(--kb-gap)); }
+.kb__key--mode .kb__face, .kb__key--return .kb__face { width: var(--kb-r4-w); font-size: 16px; }
+.kb__key--space { flex: 1 1 auto; }
+.kb__key--space .kb__face { width: 100%; font-size: 15px; color: var(--secondary); }
 /* Phase-1-inert keys (e.g. 123) — greyed but NOT a disabled <button> (disabled buttons swallow no
    pointer events → can't preventDefault → blur the editor). Same element/handlers as live keys. */
-.kb__key--inert { opacity: 0.5; }
+.kb__key--inert .kb__face { opacity: 0.5; }
 
 /* ── #68 inputmode=none keyboard probe (throwaway, /kbprobe) ──────────────────── */
 .kbprobe { max-width: 680px; margin: 0 auto; padding: 1.5rem 1.25rem; box-sizing: border-box; }
