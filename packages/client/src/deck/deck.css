@@ -129,3 +129,11 @@
 }
 /* shown only while pressed → gone on release (matches native). :active holds through a sustained press. */
 .keypad__key--char:active .keypad__pop { display: inline-flex; }
+
+/* ── #69 §7.4 — caret-trackpad mode ───────────────────────────────────────────────────────────────────
+   Long-press space → the whole keypad becomes a relative caret trackpad. Native cue: the KEYS REMAIN
+   (grid/shapes stay) but the LABELS DISAPPEAR. Hide every glyph (faces + any pressed key-pop) while
+   keeping the key tiles; touch-action:none so the drag never scrolls the page. */
+.keypad--trackpad .keypad__face { color: transparent; }
+.keypad--trackpad .keypad__pop { display: none !important; }
+.keypad--trackpad { touch-action: none; }

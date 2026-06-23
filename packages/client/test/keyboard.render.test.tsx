@@ -7,7 +7,7 @@
  *  - deriveDeckContext (deltos adapter, PM-specific): selection → context key.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { render, cleanup, fireEvent } from '@testing-library/react';
+import { render, cleanup, fireEvent, act } from '@testing-library/react';
 import { Schema } from 'prosemirror-model';
 import { EditorState, NodeSelection } from 'prosemirror-state';
 import { Keypad, Deck } from '../src/deck/index.js';
@@ -29,6 +29,9 @@ function mountKeypad() {
 }
 const key = (label: string) => document.querySelector(`.keypad__key[aria-label="${label}"]`) as HTMLButtonElement;
 const tap = (label: string) => fireEvent.pointerDown(key(label));
+// Space COMMITS on release (§7.4 — a long-press is the caret trackpad, never an inserted space), so a
+// space TAP is a down+up pair.
+const tapSpace = () => { const s = key('Space'); fireEvent.pointerDown(s); fireEvent.pointerUp(s); };
 
 describe('Keypad — structure + typing (editor loadout, abstract actions)', () => {
   it('renders the 4 rows + the full key set; row 3 has all 7 letters incl M', () => {
@@ -60,7 +63,7 @@ describe('Keypad — structure + typing (editor loadout, abstract actions)', () 
 
   it('space stacks; backspace tap deletes one; return inserts a break', () => {
     const { text } = mountKeypad();
-    tap('A'); tap('Space'); tap('Space'); tap('B');
+    tap('A'); tapSpace(); tapSpace(); tap('B');
     expect(text()).toBe('a  b');
     fireEvent.pointerDown(key('Backspace')); fireEvent.pointerUp(key('Backspace'));
     expect(text()).toBe('a  ');
@@ -282,19 +285,19 @@ describe('Keypad — double-space → period (§7.1)', () => {
   it('a rapid second space replaces the trailing space with ". " after a letter', () => {
     const { text } = mountWithHost();
     tap('A'); tap('B');         // 'Ab' (the doc-start auto-cap caps the A; B releases to lower)
-    tap('Space'); tap('Space'); // double-space → ". "
+    tapSpace(); tapSpace(); // double-space → ". "
     expect(text()).toBe('Ab. ');
   });
 
   it('skips (plain double space) when there is no letter before the first space', () => {
     const { text } = mountWithHost();
-    tap('Space'); tap('Space'); // nothing before → two plain spaces, no period
+    tapSpace(); tapSpace(); // nothing before → two plain spaces, no period
     expect(text()).toBe('  ');
   });
 
   it('a non-space key between the two spaces breaks the run (no period)', () => {
     const { text } = mountWithHost();
-    tap('A'); tap('Space'); tap('B'); tap('Space');
+    tap('A'); tapSpace(); tap('B'); tapSpace();
     expect(text()).toBe('A b '); // A capitalized (doc start); the run broke at B → both spaces stay plain
   });
 });
@@ -320,7 +323,7 @@ describe('Keypad — auto-capitalize (§7.3)', () => {
   it('re-arms after a double-space period (pairs with §7.1)', () => {
     const { text } = mountWithHost();
     tap('A'); tap('B');
-    tap('Space'); tap('Space'); // → 'Ab. ' → new sentence
+    tapSpace(); tapSpace(); // → 'Ab. ' → new sentence
     expect(qFace()).toBe('Q');
     tap('C');
     expect(text()).toBe('Ab. C');
@@ -331,5 +334,62 @@ describe('Keypad — auto-capitalize (§7.3)', () => {
     tap('A');            // doc-start cap consumed → 'A', lower
     tap('B'); tap('C');  // mid-word, no boundary
     expect(text()).toBe('Abc');
+  });
+});
+
+// ── #69 §7.4 — long-press space → caret trackpad ───────────────────────────────────────────────────────
+function mountTrackpad() {
+  const moves: Array<[number, number]> = [];
+  let buffer = '';
+  const actions: KeyActions = {
+    insert: (t) => { buffer += t; },
+    backspace: () => {},
+    enter: () => {},
+    moveCaret: (dx, dy) => moves.push([dx, dy]),
+  };
+  render(<Keypad actions={actions} />);
+  return { moves, text: () => buffer };
+}
+const trackpadOn = () => document.querySelector('.keypad--trackpad') !== null;
+
+describe('Keypad — long-press space → caret trackpad (§7.4)', () => {
+  it('long-press enters trackpad mode; release exits; a quick tap inserts a space instead', () => {
+    vi.useFakeTimers();
+    const { text } = mountTrackpad();
+    const space = key('Space');
+    fireEvent.pointerDown(space, { pointerId: 1, clientX: 100, clientY: 100 });
+    expect(trackpadOn()).toBe(false); // not yet — still within the long-press delay
+    act(() => { vi.advanceTimersByTime(300); });
+    expect(trackpadOn()).toBe(true); // entered (letters-vanish cue via the class)
+    fireEvent.pointerUp(space, { pointerId: 1 });
+    expect(trackpadOn()).toBe(false); // exited on release
+    expect(text()).toBe(''); // a long-press NEVER commits a space
+
+    // a quick tap (down+up before the long-press fires) DOES commit a space
+    fireEvent.pointerDown(space, { pointerId: 2, clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(space, { pointerId: 2 });
+    expect(text()).toBe(' ');
+  });
+
+  it('emits RELATIVE moveCaret step intents proportional to the drag (horizontal=chars, vertical=lines)', () => {
+    vi.useFakeTimers();
+    const { moves } = mountTrackpad();
+    const space = key('Space');
+    fireEvent.pointerDown(space, { pointerId: 1, clientX: 100, clientY: 100 });
+    act(() => { vi.advanceTimersByTime(300); });
+    fireEvent.pointerMove(space, { clientX: 124, clientY: 100 }); // +24px → +3 chars (8px/char)
+    fireEvent.pointerMove(space, { clientX: 124, clientY: 60 });  // -40px → -2 lines (20px/line)
+    fireEvent.pointerUp(space, { pointerId: 1 });
+    expect(moves).toContainEqual([3, 0]);
+    expect(moves).toContainEqual([0, -2]);
+  });
+
+  it('without host moveCaret support, long-press is a no-op (never enters trackpad)', () => {
+    vi.useFakeTimers();
+    mountKeypad(); // the bare stub has no moveCaret
+    const space = key('Space');
+    fireEvent.pointerDown(space, { pointerId: 1, clientX: 0, clientY: 0 });
+    act(() => { vi.advanceTimersByTime(300); });
+    expect(trackpadOn()).toBe(false);
   });
 });

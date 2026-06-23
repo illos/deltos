@@ -51,12 +51,25 @@ type ShiftState = 'lower' | 'oneshot' | 'locked';
 const SHIFT_DOUBLE_TAP_MS = 300; // two shift taps within this = caps lock
 const DOUBLE_SPACE_MS = 600;     // two spaces within this (no intervening key) = "→ . " (§7.1)
 
+// §7.4 caret trackpad: long-press the spacebar → the whole keypad becomes a relative caret trackpad.
+const SPACE_LONG_PRESS_MS = 300; // hold the spacebar this long → enter trackpad mode
+const TRACKPAD_CHAR_PX = 8;      // horizontal drag px per one char step
+const TRACKPAD_LINE_PX = 20;     // vertical drag px per one line step
+
 export function Keypad({ actions }: KeypadProps) {
   const [layer, setLayer] = useState<Layer>('letters');
   const [shift, setShift] = useState<ShiftState>('lower');
+  const [trackpad, setTrackpad] = useState(false); // §7.4 — caret-placement mode (letters vanish)
   const bkspTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastShiftTapRef = useRef(0); // performance.now() of the previous shift tap (double-tap detection)
   const lastSpaceAtRef = useRef(0);  // performance.now() of the previous space (0 = reset by any other key)
+  // Space-trackpad gesture refs (mutated in pointer handlers — avoid stale-closure re-renders).
+  const spaceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const trackpadOnRef = useRef(false); // long-press fired this gesture (mirror of `trackpad` for handlers)
+  const lastXRef = useRef(0);
+  const lastYRef = useRef(0);
+  const accXRef = useRef(0); // sub-step accumulators (px) for proportional, relative stepping
+  const accYRef = useRef(0);
 
   // §7.3 auto-capitalize: ask the host (PULL) whether the next letter should cap; arm the one-shot if so.
   // Only arms from 'lower' — never overrides a manual one-shot/caps-lock. Called after edits that can open
@@ -107,6 +120,45 @@ export function Keypad({ actions }: KeypadProps) {
     maybeAutoCap();
   };
   const onEnter = () => { lastSpaceAtRef.current = 0; actions.enter(); maybeAutoCap(); };
+
+  // §7.4 — spacebar gesture. The space COMMITS on release (a tap), so a long-press never inserts a space:
+  // long-press → enter trackpad mode (capture the pointer so the WHOLE keypad acts as the trackpad), then
+  // pointermove emits RELATIVE moveCaret step intents; release exits. No host moveCaret → no trackpad.
+  const onSpaceDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const el = e.currentTarget;
+    const pointerId = e.pointerId;
+    lastXRef.current = e.clientX; lastYRef.current = e.clientY;
+    accXRef.current = 0; accYRef.current = 0;
+    spaceTimerRef.current = setTimeout(() => {
+      if (!actions.moveCaret) return; // host has no caret-move → trackpad unavailable
+      trackpadOnRef.current = true;
+      setTrackpad(true);
+      try { el.setPointerCapture(pointerId); } catch { /* jsdom / unsupported — capture is best-effort */ }
+    }, SPACE_LONG_PRESS_MS);
+  };
+  const onSpaceMove = (e: React.PointerEvent) => {
+    if (!trackpadOnRef.current) return; // only track once trackpad mode is active
+    accXRef.current += e.clientX - lastXRef.current;
+    accYRef.current += e.clientY - lastYRef.current;
+    lastXRef.current = e.clientX; lastYRef.current = e.clientY;
+    let stepX = 0; let stepY = 0;
+    while (accXRef.current >= TRACKPAD_CHAR_PX) { stepX += 1; accXRef.current -= TRACKPAD_CHAR_PX; }
+    while (accXRef.current <= -TRACKPAD_CHAR_PX) { stepX -= 1; accXRef.current += TRACKPAD_CHAR_PX; }
+    while (accYRef.current >= TRACKPAD_LINE_PX) { stepY += 1; accYRef.current -= TRACKPAD_LINE_PX; }
+    while (accYRef.current <= -TRACKPAD_LINE_PX) { stepY -= 1; accYRef.current += TRACKPAD_LINE_PX; }
+    if (stepX !== 0 || stepY !== 0) actions.moveCaret?.(stepX, stepY);
+  };
+  const onSpaceEnd = (e: React.PointerEvent) => {
+    if (spaceTimerRef.current) { clearTimeout(spaceTimerRef.current); spaceTimerRef.current = null; }
+    if (trackpadOnRef.current) {
+      trackpadOnRef.current = false;
+      setTrackpad(false);
+      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* best-effort */ }
+    } else {
+      onSpace(); // a tap (no long-press) commits the space
+    }
+  };
   // Shift tap, native model: from caps-lock ANY tap → lower (checked first, so a quick unlock tap is never
   // mis-read as a double-tap). Otherwise two taps within the window = caps lock; a lone tap toggles
   // oneshot/lower. Mirrors native exactly.
@@ -158,7 +210,15 @@ export function Keypad({ actions }: KeypadProps) {
     <button type="button" className="keypad__key keypad__key--fn keypad__key--mode" aria-label={aria} onPointerDown={press(() => goLayer(target))}><span className="keypad__face">{lbl}</span></button>
   );
   const spaceKey = (
-    <button type="button" className="keypad__key keypad__key--space" aria-label="Space" onPointerDown={press(onSpace)}><span className="keypad__face">space</span></button>
+    <button
+      type="button"
+      className="keypad__key keypad__key--space"
+      aria-label="Space"
+      onPointerDown={onSpaceDown}
+      onPointerMove={onSpaceMove}
+      onPointerUp={onSpaceEnd}
+      onPointerCancel={onSpaceEnd}
+    ><span className="keypad__face">space</span></button>
   );
   const returnKey = (
     <button type="button" className="keypad__key keypad__key--fn keypad__key--return" aria-label="Return" onPointerDown={press(onEnter)}><span className="keypad__face">⏎</span></button>
@@ -178,7 +238,7 @@ export function Keypad({ actions }: KeypadProps) {
     // Shift key: ⇪ (caps lock) when locked, ⇧ otherwise; is-oneshot / is-locked drive the 3 distinct visuals.
     const shiftClass = shift === 'oneshot' ? ' is-oneshot' : shift === 'locked' ? ' is-locked' : '';
     return (
-      <div className="keypad" role="group" aria-label="Keyboard">
+      <div className={`keypad${trackpad ? ' keypad--trackpad' : ''}`} role="group" aria-label="Keyboard">
         <div className="keypad__row">{LETTERS_R1.map(letterKey)}</div>
         <div className="keypad__row keypad__row--r2">{LETTERS_R2.map(letterKey)}</div>
         {/* Row 3 is flat — shift, the 7 letters, delete all tile edge-to-edge directly. */}
@@ -209,7 +269,7 @@ export function Keypad({ actions }: KeypadProps) {
     ? switchKey('#+=', 'symbols', 'Symbols')
     : switchKey('123', 'numbers', 'Numbers');
   return (
-    <div className="keypad" role="group" aria-label="Keyboard">
+    <div className={`keypad${trackpad ? ' keypad--trackpad' : ''}`} role="group" aria-label="Keyboard">
       <div className="keypad__row">{r1.map(litKey)}</div>
       <div className="keypad__row">{r2.map(litKey)}</div>
       <div className="keypad__row keypad__row--r3">
