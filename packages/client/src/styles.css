@@ -2310,6 +2310,9 @@ body.deck-custom .bottom-nav { display: none; }
 .spell-bar {
   display: flex; flex-direction: row; align-items: center; gap: 8px;
   overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  /* pan-x OVERRIDES the Deck's touch-action:none so the bar scrolls horizontally; tap-vs-scroll apply is
+     gated by the movement threshold in SpellSuggestionBar (apply on a near-stationary pointerup only). */
+  touch-action: pan-x;
   padding: 8px 12px; background: var(--sel); border-bottom: 1px solid var(--border);
 }
 .spell-bar::-webkit-scrollbar { display: none; }

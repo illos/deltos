@@ -9,16 +9,27 @@ import { SpellSuggestionBar } from '../src/editor/SpellSuggestionBar.js';
 afterEach(cleanup);
 
 const pill = (label: string) =>
-  document.querySelector(`.spell-bar__pill[role="option"]`) && [...document.querySelectorAll('.spell-bar__pill')].find((b) => b.textContent === label);
+  [...document.querySelectorAll('.spell-bar__pill')].find((b) => b.textContent === label) as HTMLElement | undefined;
 
 describe('SpellSuggestionBar', () => {
-  it('renders the suggestions as pills; tapping one calls onPick with that word', () => {
+  it('renders the suggestions as pills; a deliberate TAP (no movement) calls onPick with that word', () => {
     const onPick = vi.fn();
     render(<SpellSuggestionBar word="recieve" suggestions={['receive', 'relieve', 'believe']} onPick={onPick} />);
     const pills = [...document.querySelectorAll('.spell-bar__pill')];
     expect(pills.map((p) => p.textContent)).toEqual(['receive', 'relieve', 'believe']);
-    fireEvent.pointerDown(pill('relieve')!);
+    // tap = pointerdown then pointerup at ~the same spot
+    fireEvent.pointerDown(pill('relieve')!, { clientX: 40, clientY: 8 });
+    fireEvent.pointerUp(pill('relieve')!, { clientX: 42, clientY: 9 });
     expect(onPick).toHaveBeenCalledWith('relieve');
+  });
+
+  it('a SCROLL (pointer moved past the threshold) does NOT apply a suggestion', () => {
+    const onPick = vi.fn();
+    render(<SpellSuggestionBar word="recieve" suggestions={['receive', 'relieve']} onPick={onPick} />);
+    // pointerup far from pointerdown = a horizontal scroll, not a tap
+    fireEvent.pointerDown(pill('receive')!, { clientX: 20, clientY: 8 });
+    fireEvent.pointerUp(pill('receive')!, { clientX: 120, clientY: 10 });
+    expect(onPick).not.toHaveBeenCalled();
   });
 
   it('shows an empty state when there are no suggestions', () => {
