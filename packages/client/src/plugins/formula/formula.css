@@ -3,21 +3,30 @@
    the type fills. Consumes host theme tokens (no hardcoded colour), same contract as the Deck/embeds styles.
    The output kind is type-owned: math = '= N' text; a future hexcolor = a swatch; a future dice = a button. */
 
+/* The whole formula reads as ONE defined inline PILL — [ spec = output ] together (Jim) — styled at the
+   FRAMEWORK level (the outer NodeView wrapper) so math now + future hexcolor/dice all inherit the unified
+   look; a type still owns what renders INSIDE its output slot. The spec stays editable (it's the contentDOM
+   inside this pill — typing/recompute/backspace-unwrap unchanged). box-decoration-break keeps the pill
+   coherent if it wraps across lines. */
 .formula {
   white-space: pre; /* keep the spec's spaces intact */
-}
-
-/* The editable expression — inline mono, subtly chipped (distinct from plain code). */
-.formula__spec {
   font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
   background: var(--list);
-  border-radius: 4px;
-  padding: 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 5px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* The editable expression — just the mono text inside the pill (the pill is the chrome now, not the spec). */
+.formula__spec {
+  font-family: inherit;
 }
 
 /* The per-type output slot (non-editable). Math fills it with a muted '= N'; the value is emphasized. */
 .formula__output {
-  font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+  font-family: inherit;
   color: var(--secondary);
   -webkit-user-select: none;
   user-select: none;
