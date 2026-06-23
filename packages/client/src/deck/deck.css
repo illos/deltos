@@ -63,13 +63,31 @@
    events → can't preventDefault → blur the editor). Same element/handlers as live keys. */
 .keypad__key--inert .keypad__face { opacity: 0.5; }
 
-/* The keypad-positioning band (#369/#370 → #384) — a CONSTANT-height layer below the keys (last child of
-   .keypad), above the Deck's safe-area pad. It travels WITH the keypad (layer model §0.6): keypad-bearing
-   loadouts carry it, key-less loadouts (nav) sit flush. Empty now (restores the ~47pt the native keyboard
-   reserves for its emoji/mic utility row, so the keys land at the native vertical position); the editor
-   loadout's group selector fills it later — FIXED height regardless of fill → keys never shift. Pinned px
-   = a geometry invariant (like the keypad), tunable in one place via the overlay diff. Centers content. */
-.keypad__slot {
+/* ── KeypadLoadout (#69 C-manual) — collapsible keypad layer + persistent base region ───────────────── */
+.keypad-loadout { display: flex; flex-direction: column; }
+
+/* The persistent BASE region — the control home BELOW the keys (layer model §0.6). Constant height: it puts
+   the keys at the native vertical position when the keypad is shown (the ~47pt band native reserves for its
+   emoji/mic row, #369/#384) and remains as a slim bar when the keypad layer is collapsed. Editor loadout
+   v1 fills it further (group selector / Undo·Redo) — the fixed height means the keys never shift. Key-less
+   loadouts (nav) don't use this composition → no base region → they sit flush. */
+.keypad-loadout__base {
   height: 47px; flex: 0 0 47px;
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 0 12px; box-sizing: border-box;
 }
+
+/* Show/hide-keyboard toggle — generic Deck chrome (toggling a layer is Deck-level behavior). Tap = flip
+   the keypad; long-press = LOCK (suspend auto-show/hide). Font pinned to system-ui (Deck invariant). */
+.deck-kbd-toggle {
+  appearance: none; -webkit-appearance: none; border: none;
+  background: var(--list); color: var(--secondary);
+  height: 32px; min-width: 60px; padding: 0 16px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 15px; line-height: 1;
+  cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: none;
+}
+.deck-kbd-toggle:active { background: var(--sel); }
+.deck-kbd-toggle__chevron { font-size: 17px; line-height: 1; }
+/* Locked = auto suspended (pinned). Accent text + ring so "the keyboard can't move itself" reads at a glance. */
+.deck-kbd-toggle.is-locked { color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }

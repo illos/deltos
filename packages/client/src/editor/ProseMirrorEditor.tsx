@@ -15,7 +15,7 @@ import { TodoItemView } from './nodeviews/TodoItem.js';
 import { sliceToPlainText } from './clipboard.js';
 import { EditorToolbar } from './EditorToolbar.js';
 import { MobileEditorBar } from './MobileEditorBar.js';
-import { Keypad } from '../deck/index.js';
+import { KeypadLoadout } from '../deck/index.js';
 import type { DeckContext, DeckLoadoutRegistry } from '../deck/index.js';
 import { deriveDeckContext, buildPmKeyActions } from './deckAdapter.js';
 import { useDeckHost } from '../components/DeckHost.js';
@@ -100,7 +100,31 @@ export function ProseMirrorEditor({
   // The keypad's abstract KeyActions, wired to PM via the adapter (closes over viewRef → stable across
   // view re-creation). The Deck loadout registry for this host: the 'text' context → the keypad.
   const deckActions = useRef(buildPmKeyActions(() => viewRef.current)).current;
-  const deckLoadouts = useMemo<DeckLoadoutRegistry>(() => ({ text: <Keypad actions={deckActions} /> }), [deckActions]);
+  // #69 C-manual: keypad show/hide. The keypad LAYER collapses (the note reclaims its height); a persistent
+  // base region keeps the show/hide toggle. State lives HERE (not in the Deck) because auto-show keys off PM
+  // focus and the caret clearance depends on it. Default shown (entering a note shows the keypad, as before).
+  const [keypadShown, setKeypadShown] = useState(true);
+  // locked = auto-show/hide suspended (long-press the toggle). "tap drives; long-press decides if the
+  // keyboard may drive itself." Read inside the PM focus handler (created once at view-creation) → ref.
+  const [locked, setLocked] = useState(false);
+  const lockedRef = useRef(locked);
+  useLayoutEffect(() => { lockedRef.current = locked; });
+  const toggleKeypad = useCallback(() => setKeypadShown((s) => !s), []);
+  const toggleLock = useCallback(() => setLocked((l) => !l), []);
+  const deckLoadouts = useMemo<DeckLoadoutRegistry>(
+    () => ({
+      text: (
+        <KeypadLoadout
+          actions={deckActions}
+          keypadShown={keypadShown}
+          locked={locked}
+          onToggleKeypad={toggleKeypad}
+          onToggleLock={toggleLock}
+        />
+      ),
+    }),
+    [deckActions, keypadShown, locked, toggleKeypad, toggleLock],
+  );
 
   // #69 slice B: the Deck no longer lives in the editor — it's mounted once at the app-shell level
   // (DeckHostProvider) so it persists across routes (keypad while editing, nav loadout while browsing).
@@ -220,6 +244,12 @@ export function ProseMirrorEditor({
       // change (iOS fires blur during the swipe-back gesture, ~300ms before navigation
       // completes — enough lead time for IndexedDB to finish before the list mounts).
       handleDOMEvents: {
+        // #69 C-manual auto-show: returning focus to the note re-shows the keypad — UNLESS locked (lock
+        // suspends auto). A manual hide stays hidden until the next focus-in or a manual show-tap.
+        focus: () => {
+          if (!lockedRef.current) setKeypadShown(true);
+          return false;
+        },
         blur: () => {
           if (saveTimerRef.current !== null) {
             clearTimeout(saveTimerRef.current);
@@ -262,7 +292,7 @@ export function ProseMirrorEditor({
     <>
       {/* Desktop: registry-driven formatting toolbar at the top (slice C). */}
       {isDesktop && <EditorToolbar active={active} run={runTool} />}
-      <div ref={containerRef} className={`editor__pm${customKb ? ' editor__pm--kb' : ''}`} />
+      <div ref={containerRef} className={`editor__pm${customKb ? ' editor__pm--kb' : ''}${customKb && !keypadShown ? ' editor__pm--kb-collapsed' : ''}`} />
       {/* Mobile, custom keyboard ON: the Deck (mounted at the shell via DeckHostProvider) owns the bottom
           slot; the editor publishes its keypad loadout + live context to it (see the publishEditor effect
           above), so it persists across routes and isn't torn down by incidental tap-blurs. #69 slice B. */}

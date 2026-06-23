@@ -10,4 +10,5 @@
  */
 export { Deck } from './Deck.js';
 export { Keypad } from './loadouts/Keypad.js';
+export { KeypadLoadout } from './loadouts/KeypadLoadout.js';
 export type { DeckContext, KeyActions, DeckLoadoutRegistry } from './types.js';

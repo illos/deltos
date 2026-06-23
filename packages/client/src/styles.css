@@ -2200,6 +2200,10 @@ a.auth__link { display: inline; }
    Caret clearance: when the Deck is up, give the editable bottom space so the last lines scroll clear of
    it (approximation of keypad + the 47px reserved slot + safe-area; tune on-device with the overlay). */
 .editor__pm--kb { padding-bottom: 311px; scroll-padding-bottom: 311px; }
+/* #69 C-manual: keypad hidden → the Deck collapses to just the slim base bar (toggle), so the note reclaims
+   the keypad's height — clear only the base region + safe-area. Must follow .editor__pm--kb to win (same
+   specificity). Approximate (base 47 + safe + margin) — tune on-device. */
+.editor__pm--kb-collapsed { padding-bottom: 72px; scroll-padding-bottom: 72px; }
 /* In custom-keyboard mode (toggle ON, mobile) the standalone universal bottom nav is PERMANENTLY gone —
    AuthedShell toggles body.deck-custom from the opt-in flag, NOT the Deck's up/down (which flashed the nav
    back under the user's thumb). The Deck owns the bottom; nav controls return via its 'navigation' loadout

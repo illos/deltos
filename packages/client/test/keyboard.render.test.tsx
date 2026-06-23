@@ -84,14 +84,6 @@ describe('Keypad — structure + typing (editor loadout, abstract actions)', () 
     expect(mode.disabled).toBe(false);
     expect(mode.className).toContain('keypad__key--inert');
   });
-
-  it('carries its constant-height positioning band as the last layer (travels with the keypad — #369/#384)', () => {
-    mountKeypad();
-    const slot = document.querySelector('.keypad > .keypad__slot');
-    expect(slot).not.toBeNull();
-    // It's the LAST child of the keypad (below row 4) so the band sits beneath the keys.
-    expect(document.querySelector('.keypad')!.lastElementChild).toBe(slot);
-  });
 });
 
 describe('Deck — context-driven surface', () => {
@@ -109,10 +101,12 @@ describe('Deck — context-driven surface', () => {
     expect(container.firstChild).toBeNull();
   });
   it('adds NO positioning band of its own — a key-less loadout sits flush (#384)', () => {
-    // The band travels with the keypad, not the Deck surface: a non-keypad loadout has no .keypad__slot.
+    // The base region belongs to the keypad loadout, not the Deck surface: a plain loadout has neither
+    // a keypad-loadout base region nor the show/hide toggle.
     render(<Deck context="text" loadouts={{ text: <div data-testid="lo">flush</div> }} />);
     expect(document.querySelector('[data-testid="lo"]')).not.toBeNull();
-    expect(document.querySelector('.keypad__slot')).toBeNull();
+    expect(document.querySelector('.keypad-loadout__base')).toBeNull();
+    expect(document.querySelector('.deck-kbd-toggle')).toBeNull();
   });
 });
 

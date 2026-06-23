@@ -47,8 +47,10 @@ describe('DeckHostProvider — shell-level Deck + navigation loadout', () => {
     expect(navAction('New note')).not.toBeNull();
     expect(navAction('Search')).not.toBeNull();
     expect(document.querySelector('.keypad')).toBeNull();
-    // The nav loadout has NO keypad → sits flush, no 47px positioning band (#384).
-    expect(document.querySelector('.keypad__slot')).toBeNull();
+    // The nav loadout has NO keypad → sits flush (no base region) and NO show/hide-keyboard button:
+    // there's no keyboard to toggle while browsing (#384 / C-manual — editor-context chrome only).
+    expect(document.querySelector('.keypad-loadout__base')).toBeNull();
+    expect(document.querySelector('.deck-kbd-toggle')).toBeNull();
   });
 
   it('mounts NOTHING when disabled (non-custom mode)', () => {
