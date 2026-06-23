@@ -23,6 +23,9 @@ import { useDragAxis } from '../lib/useDragAxis.js';
 const SNAP_OPEN = 60;
 const FAR_RIGHT = 240;
 const OPEN_RIGHT = 120; // 2 × 60px buttons
+// #78 LEFT-drag seam (opposite the delete/copy side) → a single Move button → notebook-picker sheet.
+const SNAP_OPEN_LEFT = 50; // drag left ≥ this → snap the Move seam open
+const OPEN_LEFT = 84; // resting width of the Move button
 
 export interface SwipeRowProps {
   isOpen: boolean;
@@ -30,10 +33,12 @@ export interface SwipeRowProps {
   onClose: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
+  /** #78 left-drag Move seam → open the notebook-picker sheet for this row. (WIP: HomeView wiring pending.) */
+  onMove?: () => void;
   children: React.ReactNode;
 }
 
-export function SwipeRow({ isOpen, onOpen, onClose, onDelete, onDuplicate, children }: SwipeRowProps) {
+export function SwipeRow({ isOpen, onOpen, onClose, onDelete, onDuplicate, onMove, children }: SwipeRowProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const foregroundRef = useRef<HTMLDivElement>(null);
   const copyBtnRef = useRef<HTMLButtonElement>(null);
@@ -49,6 +54,8 @@ export function SwipeRow({ isOpen, onOpen, onClose, onDelete, onDuplicate, child
   onDeleteRef.current = onDelete;
   onCloseRef.current = onClose;
   onOpenRef.current = onOpen;
+  // Which side the row is resting open on (drives getBase). Cleared on close.
+  const sideRef = useRef<'left' | 'right' | null>(null);
 
   // ── Imperative helpers ───────────────────────────────────────────────
 
@@ -109,7 +116,7 @@ export function SwipeRow({ isOpen, onOpen, onClose, onDelete, onDuplicate, child
   useEffect(() => {
     const was = prevIsOpen.current;
     prevIsOpen.current = isOpen;
-    if (was && !isOpen) snapTo(0);
+    if (was && !isOpen) { sideRef.current = null; snapTo(0); }
   });
 
   useEffect(() => {
@@ -125,22 +132,29 @@ export function SwipeRow({ isOpen, onOpen, onClose, onDelete, onDuplicate, child
 
   const dragHandlers = useDragAxis({
     axis: 'x',
-    getBase: () => (isDeletingRef.current ? 0 : isOpen ? OPEN_RIGHT : 0),
-    min: -30,
+    getBase: () => (isDeletingRef.current ? 0 : isOpen ? (sideRef.current === 'left' ? -OPEN_LEFT : OPEN_RIGHT) : 0),
+    // Move seam only exists when wired (onMove): then allow the left open (+ rubber-band); else the prior -30.
+    min: onMove ? -(OPEN_LEFT + 20) : -30,
     onMove: (pos) => applyDx(pos),
     onSettle: (pos) => {
       if (pos >= FAR_RIGHT) {
         commitDelete();
       } else if (pos >= SNAP_OPEN) {
+        sideRef.current = 'right';
         snapTo(OPEN_RIGHT);
+        onOpenRef.current();
+      } else if (onMove && pos <= -SNAP_OPEN_LEFT) {
+        sideRef.current = 'left'; // open the Move seam (no fling-commit — Move is a tap)
+        snapTo(-OPEN_LEFT);
         onOpenRef.current();
       } else {
         if (isOpen) onCloseRef.current();
+        sideRef.current = null;
         snapTo(0);
       }
     },
     onTap: () => {
-      if (isOpen) { onCloseRef.current(); snapTo(0); }
+      if (isOpen) { onCloseRef.current(); sideRef.current = null; snapTo(0); }
     },
   });
 
@@ -165,7 +179,16 @@ export function SwipeRow({ isOpen, onOpen, onClose, onDelete, onDuplicate, child
             Delete
           </button>
         </div>
-        <div className="swipe-row__back-left" aria-hidden="true" />
+        {onMove && (
+          <div className="swipe-row__back-left">
+            <button
+              className="swipe-row__btn swipe-row__btn--move"
+              onClick={(e) => { e.stopPropagation(); onClose(); sideRef.current = null; snapTo(0); onMove(); }}
+            >
+              Move
+            </button>
+          </div>
+        )}
       </div>
 
       <div

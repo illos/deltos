@@ -1309,12 +1309,14 @@ a.auth__link { display: inline; }
   align-items: stretch;
 }
 
-/* Left-swipe seam: future Pin slot, anchored to right edge (rubber-bands in v1) */
+/* Left-swipe seam: the MOVE button (#78), anchored to the right edge (revealed by left drag). */
 .swipe-row__back-left {
   position: absolute;
   right: 0;
   top: 0;
   bottom: 0;
+  display: flex;
+  align-items: stretch;
 }
 
 .swipe-row__btn {
@@ -1334,6 +1336,8 @@ a.auth__link { display: inline; }
 
 .swipe-row__btn--copy   { background: #3b82f6; color: #fff; }
 .swipe-row__btn--delete { background: #ef4444; color: #fff; }
+/* #78 Move seam button (left drag) — theme accent so it reads as a primary action (light/dark/system). */
+.swipe-row__btn--move   { background: var(--accent); color: #fff; min-width: 84px; }
 
 /* Foreground: slides imperatively over the back layer; explicit bg to cover buttons */
 .swipe-row__foreground {
