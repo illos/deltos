@@ -54,7 +54,9 @@
 /* Wider keys: the CELL pitch grows (key + gap); the FACE keeps the matched key width. */
 .keypad__key--fn { flex-basis: calc(var(--kp-fn-w) + var(--kp-gap)); }
 .keypad__key--fn .keypad__face { width: var(--kp-fn-w); font-size: 18px; color: var(--secondary); background: var(--border); }
-.keypad__key--shift.is-active .keypad__face { background: var(--paper); color: var(--ink); } /* one-shot armed */
+/* 3-state shift (§7) — oneshot = armed (light), locked = caps lock (inverted fill); lower = default. */
+.keypad__key--shift.is-oneshot .keypad__face { background: var(--paper); color: var(--ink); }
+.keypad__key--shift.is-locked .keypad__face { background: var(--ink); color: var(--paper); }
 .keypad__key--mode, .keypad__key--return { flex-basis: calc(var(--kp-r4-w) + var(--kp-gap)); }
 .keypad__key--mode .keypad__face, .keypad__key--return .keypad__face { width: var(--kp-r4-w); font-size: 16px; }
 .keypad__key--space { flex: 1 1 auto; }
@@ -101,3 +103,29 @@
    (auto may move the keyboard), removed when locked (pinned) — so no separate locked-state rule. */
 .deck-kbd-toggle__icon { display: block; flex: 0 0 auto; }
 .deck-kbd-toggle__chevron { font-size: 15px; line-height: 1; }
+
+/* ── #69 §7 — key-pop on press (the native magnified balloon above a pressed CHARACTER key) ───────────
+   CSS-only via :active (no per-press React re-render): the balloon is a hidden child of each character key
+   (keypad__key--char = letters + number/symbol/punct keys; NEVER space/fn — native doesn't pop those),
+   shown only while the key is pressed and removed on release. The char key is the positioning context. The
+   exact native blob shape is acknowledged long-tail polish (§7.2); this is a clean rounded magnifier. */
+.keypad__key--char { position: relative; }
+.keypad__pop {
+  display: none;
+  position: absolute;
+  /* float the balloon above the key (clear of the fingertip) */
+  bottom: calc(var(--kp-key-h) * 0.6);
+  left: 50%; transform: translateX(-50%);
+  min-width: calc(var(--kp-key-w) * 1.5);
+  height: calc(var(--kp-key-h) * 1.2);
+  padding: 0 8px; box-sizing: border-box;
+  align-items: center; justify-content: center;
+  background: var(--list); color: var(--ink);
+  border-radius: 12px;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 30px; font-weight: 400; line-height: 1;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22);
+  pointer-events: none; z-index: 10;
+}
+/* shown only while pressed → gone on release (matches native). :active holds through a sustained press. */
+.keypad__key--char:active .keypad__pop { display: inline-flex; }

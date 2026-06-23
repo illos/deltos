@@ -43,10 +43,18 @@ const BKSP_START_MS = 200;  // first repeat interval
 const BKSP_MIN_MS = 55;     // fastest cadence
 const BKSP_ACCEL = 18;      // ms shaved per tick
 
+// 3-STATE SHIFT (§7.3) — native iPhone model exactly:
+//   lower → (tap) → oneshot (next letter caps, then back to lower) → (tap) → lower
+//   any → (DOUBLE-tap) → locked (caps lock) → (tap) → lower
+// The shift key shows all three states distinctly (see deck.css .is-oneshot / .is-locked).
+type ShiftState = 'lower' | 'oneshot' | 'locked';
+const SHIFT_DOUBLE_TAP_MS = 300; // two shift taps within this = caps lock
+
 export function Keypad({ actions }: KeypadProps) {
   const [layer, setLayer] = useState<Layer>('letters');
-  const [shifted, setShifted] = useState(false);
+  const [shift, setShift] = useState<ShiftState>('lower');
   const bkspTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastShiftTapRef = useRef(0); // performance.now() of the previous shift tap (double-tap detection)
 
   const startBackspace = () => {
     actions.backspace(); // immediate first delete on press
@@ -66,11 +74,25 @@ export function Keypad({ actions }: KeypadProps) {
   const press = (handler: () => void) => (e: React.PointerEvent) => { e.preventDefault(); handler(); };
 
   const insertLetter = (c: string) => {
-    actions.insert(shifted ? c : c.toLowerCase());
-    if (shifted) setShifted(false); // shift is one-shot
+    const upper = shift === 'oneshot' || shift === 'locked';
+    actions.insert(upper ? c : c.toLowerCase());
+    if (shift === 'oneshot') setShift('lower'); // one-shot consumed; caps-lock persists
   };
-  // Switch layers. Going back to letters resets the one-shot shift to lowercase.
-  const goLayer = (l: Layer) => { if (l === 'letters') setShifted(false); setLayer(l); };
+  // Shift tap, native model: from caps-lock ANY tap → lower (checked first, so a quick unlock tap is never
+  // mis-read as a double-tap). Otherwise two taps within the window = caps lock; a lone tap toggles
+  // oneshot/lower. Mirrors native exactly.
+  const onShiftTap = () => {
+    const now = performance.now();
+    const sinceLast = now - lastShiftTapRef.current;
+    lastShiftTapRef.current = now;
+    setShift((s) => {
+      if (s === 'locked') return 'lower';
+      if (sinceLast < SHIFT_DOUBLE_TAP_MS) return 'locked';
+      return s === 'lower' ? 'oneshot' : 'lower';
+    });
+  };
+  // Switch layers. Going back to letters resets shift to lowercase (one-shot/lock don't span layers).
+  const goLayer = (l: Layer) => { if (l === 'letters') setShift('lower'); setLayer(l); };
 
   // ── shared key builders ─────────────────────────────────────────────────────
   const deleteKey = (
@@ -84,13 +106,19 @@ export function Keypad({ actions }: KeypadProps) {
       onPointerCancel={stopBackspace}
     ><span className="keypad__face">⌫</span></button>
   );
-  // A literal-insert key (number / symbol layers — no shift).
+  // A literal-insert key (number / symbol layers — no shift). keypad__key--char gets the press key-pop.
   const litKey = (ch: string) => (
-    <button key={ch} type="button" className="keypad__key" aria-label={ch} onPointerDown={press(() => actions.insert(ch))}><span className="keypad__face">{ch}</span></button>
+    <button key={ch} type="button" className="keypad__key keypad__key--char" aria-label={ch} onPointerDown={press(() => actions.insert(ch))}>
+      <span className="keypad__pop" aria-hidden="true">{ch}</span>
+      <span className="keypad__face">{ch}</span>
+    </button>
   );
   // Row-3 punctuation key — wider than a letter key (fills the span between the two fn keys).
   const punctKey = (ch: string) => (
-    <button key={ch} type="button" className="keypad__key keypad__key--punct" aria-label={ch} onPointerDown={press(() => actions.insert(ch))}><span className="keypad__face">{ch}</span></button>
+    <button key={ch} type="button" className="keypad__key keypad__key--char keypad__key--punct" aria-label={ch} onPointerDown={press(() => actions.insert(ch))}>
+      <span className="keypad__pop" aria-hidden="true">{ch}</span>
+      <span className="keypad__face">{ch}</span>
+    </button>
   );
   // Row-3 layer-switch key (#+= / 123) — sits where shift was, fn-width.
   const switchKey = (lbl: string, target: Layer, aria: string) => (
@@ -109,11 +137,17 @@ export function Keypad({ actions }: KeypadProps) {
 
   // ── letters (QWERTY) layer ──────────────────────────────────────────────────
   if (layer === 'letters') {
-    // Visible key case is reactive to shift (= the shift feedback): UPPERCASE when armed, lowercase otherwise.
-    const label = (c: string) => (shifted ? c : c.toLowerCase());
+    // Visible key case is reactive to shift (the feedback): UPPERCASE when armed (oneshot/locked), else lower.
+    const upper = shift === 'oneshot' || shift === 'locked';
+    const label = (c: string) => (upper ? c : c.toLowerCase());
     const letterKey = (c: string) => (
-      <button key={c} type="button" className="keypad__key" aria-label={c} onPointerDown={press(() => insertLetter(c))}><span className="keypad__face">{label(c)}</span></button>
+      <button key={c} type="button" className="keypad__key keypad__key--char" aria-label={c} onPointerDown={press(() => insertLetter(c))}>
+        <span className="keypad__pop" aria-hidden="true">{label(c)}</span>
+        <span className="keypad__face">{label(c)}</span>
+      </button>
     );
+    // Shift key: ⇪ (caps lock) when locked, ⇧ otherwise; is-oneshot / is-locked drive the 3 distinct visuals.
+    const shiftClass = shift === 'oneshot' ? ' is-oneshot' : shift === 'locked' ? ' is-locked' : '';
     return (
       <div className="keypad" role="group" aria-label="Keyboard">
         <div className="keypad__row">{LETTERS_R1.map(letterKey)}</div>
@@ -122,10 +156,11 @@ export function Keypad({ actions }: KeypadProps) {
         <div className="keypad__row keypad__row--r3">
           <button
             type="button"
-            className={`keypad__key keypad__key--fn keypad__key--shift${shifted ? ' is-active' : ''}`}
-            aria-label="Shift" aria-pressed={shifted}
-            onPointerDown={press(() => setShifted((s) => !s))}
-          ><span className="keypad__face">⇧</span></button>
+            className={`keypad__key keypad__key--fn keypad__key--shift${shiftClass}`}
+            aria-label={shift === 'locked' ? 'Caps lock' : 'Shift'}
+            aria-pressed={shift !== 'lower'}
+            onPointerDown={press(onShiftTap)}
+          ><span className="keypad__face">{shift === 'locked' ? '⇪' : '⇧'}</span></button>
           {LETTERS_R3.map(letterKey)}
           {deleteKey}
         </div>

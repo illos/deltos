@@ -51,7 +51,7 @@ describe('Keypad — structure + typing (editor loadout, abstract actions)', () 
   it('shift one-shot capitalizes the next letter then releases; labels react to case', () => {
     const { text } = mountKeypad();
     expect(key('Q').querySelector('.keypad__face')!.textContent).toBe('q');
-    tap('Shift');
+    tapShift();
     expect(key('Q').querySelector('.keypad__face')!.textContent).toBe('Q');
     tap('Q'); tap('W');
     expect(text()).toBe('Qw');
@@ -113,7 +113,7 @@ describe('Keypad — number & symbol layers + layer switching (#69 Phase-2a)', (
 
   it('ABC returns to letters from both layers and resets shift to lowercase', () => {
     const { text } = mountKeypad();
-    tap('Shift'); // arm uppercase on the letters layer
+    tapShift(); // arm uppercase on the letters layer
     tap('Numbers and symbols'); // → numbers (switch key sits where shift was; shift untouched here)
     tap('Letters'); // ABC → back to letters
     expect(key('Q')).not.toBeNull();
@@ -172,5 +172,87 @@ describe('deriveDeckContext (deltos adapter)', () => {
     const widgetPos = base.doc.child(0).nodeSize;
     const nodeSel = base.apply(base.tr.setSelection(NodeSelection.create(base.doc, widgetPos)));
     expect(deriveDeckContext(nodeSel)).toBe('node:widget');
+  });
+});
+
+// ── #69 §7 — 3-state shift + key-pop ───────────────────────────────────────────────────────────────────
+const shiftKey = () => document.querySelector('.keypad__key--shift') as HTMLButtonElement;
+const shiftFace = () => shiftKey().querySelector('.keypad__face')!.textContent;
+const qFace = () => key('Q').querySelector('.keypad__face')!.textContent;
+// Tap shift by CLASS (its aria-label flips to "Caps lock" when locked, so an aria-label query would miss).
+const tapShift = () => fireEvent.pointerDown(shiftKey());
+
+describe('Keypad — 3-state shift (§7.3)', () => {
+  it('lower → tap → one-shot: next letter caps, then releases to lower', () => {
+    const { text } = mountKeypad();
+    expect(qFace()).toBe('q'); // lower default
+    tapShift();
+    expect(qFace()).toBe('Q'); // armed (one-shot)
+    expect(shiftKey().className).toContain('is-oneshot');
+    expect(shiftKey().getAttribute('aria-pressed')).toBe('true');
+    tap('Q'); tap('W');
+    expect(text()).toBe('Qw'); // only the first letter capitalized
+    expect(qFace()).toBe('q'); // released back to lower
+  });
+
+  it('one-shot → tap (deliberate, outside the double-tap window) → lower (disarm)', async () => {
+    mountKeypad();
+    tapShift();
+    expect(shiftKey().className).toContain('is-oneshot');
+    await new Promise((r) => setTimeout(r, 320)); // exceed the 300ms double-tap window
+    tapShift();
+    expect(qFace()).toBe('q'); // back to lower
+    expect(shiftKey().className).not.toContain('is-oneshot');
+  });
+
+  it('double-tap → caps lock: every letter caps + stays locked; glyph ⇪, aria Caps lock', () => {
+    const { text } = mountKeypad();
+    tapShift(); tapShift(); // two quick taps = caps lock
+    expect(shiftKey().className).toContain('is-locked');
+    expect(shiftFace()).toBe('⇪');
+    expect(shiftKey().getAttribute('aria-label')).toBe('Caps lock');
+    tap('A'); tap('B'); tap('C');
+    expect(text()).toBe('ABC'); // all caps — lock persists across letters
+    expect(qFace()).toBe('Q'); // still showing uppercase
+  });
+
+  it('caps lock → tap → lower (even a quick tap unlocks, never re-locks)', () => {
+    mountKeypad();
+    tapShift(); tapShift(); // lock
+    expect(shiftKey().className).toContain('is-locked');
+    tapShift(); // quick unlock tap
+    expect(shiftKey().className).not.toContain('is-locked');
+    expect(qFace()).toBe('q');
+  });
+
+  it('switching to the number layer and back resets shift to lower', () => {
+    mountKeypad();
+    tapShift(); tapShift(); // lock
+    tap('Numbers and symbols'); // → numbers
+    tap('Letters'); // → back to letters
+    expect(shiftKey().className).not.toContain('is-locked');
+    expect(qFace()).toBe('q');
+  });
+});
+
+describe('Keypad — key-pop on press (§7.2)', () => {
+  it('character keys carry a key-pop balloon; space/shift/delete do NOT', () => {
+    mountKeypad();
+    // letter keys are character keys with a pop balloon
+    expect(key('Q').className).toContain('keypad__key--char');
+    expect(key('Q').querySelector('.keypad__pop')).not.toBeNull();
+    // fn / space keys are NOT character keys and have no pop (native doesn't pop them)
+    expect(key('Space').className).not.toContain('keypad__key--char');
+    expect(key('Space').querySelector('.keypad__pop')).toBeNull();
+    expect(shiftKey().querySelector('.keypad__pop')).toBeNull();
+    expect(key('Backspace').querySelector('.keypad__pop')).toBeNull();
+  });
+
+  it('number/symbol character keys also carry the pop, but the layer-switch fn keys do not', () => {
+    mountKeypad();
+    tap('Numbers and symbols');
+    expect(key('1').className).toContain('keypad__key--char');
+    expect(key('1').querySelector('.keypad__pop')).not.toBeNull();
+    expect(key('Symbols').className).not.toContain('keypad__key--char'); // #+= switch = fn, no pop
   });
 });
