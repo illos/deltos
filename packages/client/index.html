@@ -12,7 +12,15 @@
     <meta name="description" content="A private, multi-surface notes framework." />
     <!-- iOS installed-PWA hints -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- NOT black-translucent: that runs content FULL-SCREEN under the status bar in standalone, and with
+         the html,body,#root{height:100%} model iOS sized the layout viewport to (screen − status bar)
+         anchored at the screen top → the whole app shifted UP (header collided with the clock, a dark gap
+         below the bottom bar), and any position:fixed element's hit-test diverged from its paint by the
+         status-bar inset (custom-keyboard taps landed a row high). 'black' makes iOS reserve the status
+         bar, so the WebView = below it → height:100% fills correctly, no underlap/gap, fixed hit-test
+         aligns. Fits the dark-default app; theme-color metas above colour the bar. (#69 / #339 — standalone
+         only; never a Safari tab.) -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="deltos" />
     <!-- Brand icons (Lane 5) — gold-serif-δ on graphite. -->
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180.png" />
