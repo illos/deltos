@@ -6,7 +6,7 @@
     "types": ["vite/client", "vite-plugin-pwa/client"],
     "noEmit": true
   },
-  // The service worker runs in the WebWorker lib, not DOM — typechecked separately.
+  // Workers run in the WebWorker lib, not DOM — typechecked separately (tsconfig.sw.json).
   "include": ["src"],
-  "exclude": ["src/sw.ts"]
+  "exclude": ["src/sw.ts", "src/deck/spellcheck/spellWorker.ts"]
 }

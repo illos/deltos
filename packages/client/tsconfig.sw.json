@@ -5,5 +5,5 @@
     "types": [],
     "noEmit": true
   },
-  "include": ["src/sw.ts"]
+  "include": ["src/sw.ts", "src/deck/spellcheck/spellWorker.ts"]
 }

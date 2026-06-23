@@ -12,3 +12,11 @@ export { Deck } from './Deck.js';
 export { Keypad } from './loadouts/Keypad.js';
 export { KeypadLoadout } from './loadouts/KeypadLoadout.js';
 export type { DeckContext, KeyActions, DeckLoadoutRegistry } from './types.js';
+
+// Local spellcheck (#69 §5) — the SymSpell engine, off-thread + lazy. Editor-agnostic (plain strings →
+// ranges/suggestions); the deltos editor adapter wires it to ProseMirror decorations.
+// LAZY CONTRACT: the host must DYNAMICALLY import this (await import(...)) so the ~50k-word dict rides a
+// deferred chunk — a STATIC import would pull the dict into the main bundle. Type below is static (free).
+export { createSpellEngine } from './spellcheck/spellEngine.js';
+export type { SpellEngine } from './spellcheck/spellEngine.js';
+export type { MisspelledRange, SpellSuggestion } from './spellcheck/symspell.js';
