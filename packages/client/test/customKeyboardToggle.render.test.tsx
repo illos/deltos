@@ -5,7 +5,7 @@
  */
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, cleanup, waitFor, act, renderHook } from '@testing-library/react';
+import { render, cleanup, waitFor, act, renderHook, fireEvent } from '@testing-library/react';
 import type { BlockBody } from '@deltos/shared';
 import { db } from '../src/db/schema.js';
 import { readCustomKeyboard, writeCustomKeyboard } from '../src/db/kbPointer.js';
@@ -60,5 +60,18 @@ describe('editor integration (mobile)', () => {
     await waitFor(() => expect(document.body.classList.contains('kb-active')).toBe(true));
     unmount();
     expect(document.body.classList.contains('kb-active')).toBe(false); // restored on leave
+  });
+
+  it('a blur that immediately refocuses (tap-to-reposition) does NOT hide the keyboard (#69 regression)', async () => {
+    await writeCustomKeyboard(true);
+    render(<ProseMirrorEditor noteId="n3" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
+    await waitFor(() => expect(document.querySelector('.kb__grid')).not.toBeNull());
+
+    const ed = pmEl()!;
+    fireEvent.blur(ed);   // schedules the debounced hide
+    fireEvent.focus(ed);  // refocus within the window → cancels it
+    // The keyboard never tore down; the nav stays suppressed.
+    expect(document.querySelector('.kb__grid')).not.toBeNull();
+    expect(document.body.classList.contains('kb-active')).toBe(true);
   });
 });

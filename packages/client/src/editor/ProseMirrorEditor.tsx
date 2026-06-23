@@ -94,6 +94,11 @@ export function ProseMirrorEditor({
   const [view, setView] = useState<EditorView | null>(null);
   const [kbContext, setKbContext] = useState<KeyboardContext>('text');
   const [editorFocused, setEditorFocused] = useState(false);
+  // Debounce the focus-LOSS so an incidental tap that immediately refocuses (e.g. tapping the note text
+  // to reposition the caret — iOS blurs then refocuses) does NOT tear the keyboard down. Only a focus
+  // loss that STAYS lost past the window hides it. (#69 regression: with the bottom-nav now suppressed,
+  // taps reach the editor and the raw blur was killing the keyboard on a single tap.)
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep onChange and onLeave in refs so they're always current without re-running the effect.
   const onChangeRef = useRef(onChange);
@@ -212,10 +217,17 @@ export function ProseMirrorEditor({
       // change (iOS fires blur during the swipe-back gesture, ~300ms before navigation
       // completes — enough lead time for IndexedDB to finish before the list mounts).
       handleDOMEvents: {
-        // #69: the custom keyboard appears only while the editor is focused (like a native keyboard).
-        focus: () => { setEditorFocused(true); return false; },
+        // #69: the custom keyboard appears while the editor is focused. A focus cancels any pending
+        // hide (so a tap-to-reposition blur→refocus never tears the keyboard down).
+        focus: () => {
+          if (blurTimer.current) { clearTimeout(blurTimer.current); blurTimer.current = null; }
+          setEditorFocused(true);
+          return false;
+        },
         blur: () => {
-          setEditorFocused(false);
+          // Hide is DEBOUNCED — only if focus stays lost past the window (genuine leave, not a tap).
+          if (blurTimer.current) clearTimeout(blurTimer.current);
+          blurTimer.current = setTimeout(() => { setEditorFocused(false); blurTimer.current = null; }, 300);
           if (saveTimerRef.current !== null) {
             clearTimeout(saveTimerRef.current);
             saveTimerRef.current = null;
@@ -246,6 +258,7 @@ export function ProseMirrorEditor({
       }
       // Signal the note is being left (after the final save so Dexie has latest content).
       onLeaveRef.current?.();
+      if (blurTimer.current) { clearTimeout(blurTimer.current); blurTimer.current = null; }
       view.destroy();
       viewRef.current = null;
       setView(null);
