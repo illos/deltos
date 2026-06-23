@@ -15,6 +15,7 @@ const SettingsRoute = lazy(() =>
   import('./routes/SettingsRoute.js').then((m) => ({ default: m.SettingsRoute })),
 );
 import { DrawerNav } from './components/DrawerNav.js';
+import { FullScreenNav } from './components/FullScreenNav.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ThreeRegionShell } from './components/ThreeRegionShell.js';
 import { DeckHostProvider } from './components/DeckHost.js';
@@ -25,7 +26,7 @@ import { resolveCollectionView } from './lib/collectionViews.js';
 import type { CollectionViewProps } from './lib/collectionViews.js';
 import { useNotebookStore } from './lib/notebookStore.js';
 import { notePreview, formatSmartDate } from './lib/notePreview.js';
-import { ComposeNew, Search } from './icons/index.js';
+import { ComposeNew, Search, Ellipsis } from './icons/index.js';
 import { SyncIndicator } from './components/SyncIndicator.js';
 import { SessionStatus } from './components/SessionStatus.js';
 import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
@@ -218,6 +219,8 @@ function AuthedShell() {
   const notebookName = currentNotebookId === null ? 'All Notes' : (notebook?.name ?? '…');
   // navOpen / DrawerNav is desktop-only (mobile uses BottomNav via CSS)
   const [navOpen, setNavOpen] = useState(false);
+  // overlayOpen / FullScreenNav is mobile-only — the global 3-dot menu (#69 nav gap-fill)
+  const [overlayOpen, setOverlayOpen] = useState(false);
   const navigate = useNavigate();
   // Device class drives the structural fork: desktop = persistent 3-region master-detail; mobile =
   // single-column push + bottom-sheet nav. Called before the early returns (rules-of-hooks).
@@ -286,6 +289,8 @@ function AuthedShell() {
     <div className="shell">
       {/* Desktop: left-drawer nav (hidden on mobile via CSS). Mobile: BottomNav below. */}
       <DrawerNav open={navOpen} onClose={() => setNavOpen(false)} />
+      {/* Mobile-only full-screen nav overlay (#69 global nav — visible even in deck-custom mode). */}
+      <FullScreenNav open={overlayOpen} onClose={() => setOverlayOpen(false)} />
 
       <header className="shell__bar">
         {/*
@@ -312,6 +317,15 @@ function AuthedShell() {
           <button className="shell__search-btn shell__search-btn--desktop-only" aria-label="Search" onClick={() => navigate('/search')}>🔍</button>
           <SessionStatus />
           <SyncIndicator />
+          {/* Global 3-dot nav button — mobile-only (#69 gap-fill: stays visible in body.deck-custom). */}
+          <button
+            className="shell__nav-btn shell__nav-btn--mobile-only"
+            onClick={() => setOverlayOpen(true)}
+            aria-label="Open navigation"
+            aria-expanded={overlayOpen}
+          >
+            <Ellipsis size={24} />
+          </button>
         </div>
       </header>
 

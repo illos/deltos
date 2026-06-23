@@ -1860,6 +1860,42 @@ a.auth__link { display: inline; }
   outline: none;
 }
 
+/* ── Global nav button (3-dot, mobile-only #69) ──────────────────────────── */
+.shell__nav-btn {
+  background: none;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  padding: 0.25rem;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+}
+.shell__nav-btn:active { opacity: 0.6; }
+/* hidden on desktop (persistent left pane handles nav); shown on mobile via @media block below */
+.shell__nav-btn--mobile-only { display: none; }
+
+/* ── Full-screen nav overlay (#69 global nav) ─────────────────────────────── */
+.full-screen-nav {
+  position: fixed;
+  inset: 0;
+  background: var(--paper);
+  z-index: 350; /* above DrawerNav (200) and BottomNav (300) */
+  padding-top: env(safe-area-inset-top);
+  overflow-y: auto;
+  box-sizing: border-box;
+  transform: translateY(100%);
+  transition: transform 0.22s ease;
+  pointer-events: none;
+}
+.full-screen-nav--open {
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
 /* Mobile / tablet-portrait: activate bottom nav, deactivate desktop nav controls. */
 @media (max-width: 768px) {
   /* Left drawer — keep in DOM but visually absent (BottomNav replaces it). */
@@ -1898,14 +1934,12 @@ a.auth__link { display: inline; }
   /* §5 mobile note sub-screen: show the back affordance (returns to the list; desktop hides it). */
   .editor__back { display: inline-flex; }
 
-  /* Mobile home drops the desktop/legacy chrome (navSys-3 fidelity diff): NO top app-bar (status-bar
-     → big title → list), and NO header compose icon / search field — the δ wordmark lives in the nav
-     sheet, and New + Search are bottom-nav action slots. The sync indicator relocates to the note meta. */
-  .shell__bar { display: none; }
+  /* Mobile home: top app-bar is VISIBLE (hosts the 3-dot nav button #69). Desktop-only elements
+     already hidden via --desktop-only classes. New + Search remain BottomNav slots. */
   .home__compose { display: none; }
   .home__search { display: none; }
-  /* With the app-bar gone, the list title clears the notch via the top safe-area inset. */
-  .home__header { padding-top: calc(18px + env(safe-area-inset-top)); }
+  /* Show 3-dot global nav button (hidden on desktop). */
+  .shell__nav-btn--mobile-only { display: flex; }
 }
 
 /* (editor__move-btn / __history-btn removed in the §3 meta pass — Move is now the ⋯ overflow, History
@@ -2204,6 +2238,21 @@ a.auth__link { display: inline; }
    the keypad's height — clear only the base region + safe-area. Must follow .editor__pm--kb to win (same
    specificity). Approximate (base 47 + safe + margin) — tune on-device. */
 .editor__pm--kb-collapsed { padding-bottom: 72px; scroll-padding-bottom: 72px; }
+
+/* #69 editor loadout v1 (commit 2) — the Deploy-3 tool registry ASSEMBLED into the Deck's layers,
+   host-injected into the generic KeypadLoadout. Reuses the MobileEditorBar BUTTON + glyph classes
+   (.editor__mgroup / .editor__mtool / .editor__*-glyph / .is-active) for an identical, proven look; only
+   these Deck-specific layer CONTAINERS are new. */
+/* Selector row (in the base region, below the keys): groups flex-fill the left, Undo/Redo + the show/hide
+   toggle sit at the right. */
+.elt-groups  { display: flex; align-items: center; gap: 20px; flex: 1 1 auto; min-width: 0; }
+.elt-history { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; }
+/* Per-group submenu — a layer ABOVE the keys (grows the Deck upward; keys never move). In restyle mode
+   (keypad hidden) it sits directly above the selector row. Matches the mbar sub-row look. */
+.elt-sub {
+  display: flex; justify-content: space-around; align-items: center; gap: 4px;
+  background: var(--sel); border-bottom: 1px solid var(--border); padding: 9px 14px;
+}
 /* In custom-keyboard mode (toggle ON, mobile) the standalone universal bottom nav is PERMANENTLY gone —
    AuthedShell toggles body.deck-custom from the opt-in flag, NOT the Deck's up/down (which flashed the nav
    back under the user's thumb). The Deck owns the bottom; nav controls return via its 'navigation' loadout
