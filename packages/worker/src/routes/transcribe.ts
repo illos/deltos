@@ -28,9 +28,17 @@ import { resolvePrincipal } from '../auth.js';
  *  legacy `@cf/openai/whisper` takes); its output `.text` is the full transcript. */
 const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo';
 
-/** Cap the accepted upload defensively (base64 inflates ~33% and the inference is paid). ~25 MB of audio
- *  is far more than any dictation clip; long-form VOICE-MEMO chunking is a future, separate concern (§6). */
-const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+/**
+ * Cap for the DICTATION path. 120s of opus/aac at 256 kbps ≈ 3.7 MB; 5 MB gives comfortable headroom
+ * while bounding both the paid Whisper inference cost and Worker memory (base64 inflates ~33% and inference
+ * loads the full audio). A future chunked VOICE-MEMO path will carry its own larger cap — that path does
+ * not exist yet, so 5 MB is effectively THE cap.
+ *
+ * ⚠️ DEFERRED — PER-ACCOUNT RATE-LIMIT: a durable per-account throttle (e.g. requests/min + cumulative
+ * audio-seconds/day) is HARD-REQUIRED before this endpoint is exposed to more than one user. secSys ruling
+ * @c1210fc deferred it pre-real-users but explicitly did NOT waive it. Add it here before multi-user launch.
+ */
+const MAX_AUDIO_BYTES = 5 * 1024 * 1024;
 
 export const transcribe = new Hono<AppEnv>();
 
@@ -52,6 +60,16 @@ transcribe.post('/', async (c: AppContext) => {
 
   // 3. Read the raw audio bytes from the request body. The client POSTs the captured blob directly as the
   //    body (audio/* content type); the transcript, not the audio, is the artifact we return.
+  //
+  //    Content-Length precheck: if the declared size already exceeds the cap, reject NOW before buffering.
+  //    Without this, arrayBuffer() pulls up to the platform's ~100MB body limit into Worker memory before
+  //    we can reject — a memory-pressure amplifier on a 128MB budget. If the client lies low (declares
+  //    small, sends large), the post-buffer check below still catches it.
+  const declaredLen = parseInt(c.req.header('content-length') ?? '', 10);
+  if (!Number.isNaN(declaredLen) && declaredLen > MAX_AUDIO_BYTES) {
+    return apiError(c, 413, 'payload_too_large', 'audio exceeds the maximum size for a single transcription');
+  }
+
   const buf = await c.req.arrayBuffer();
   if (buf.byteLength === 0) {
     return apiError(c, 400, 'invalid_request', 'empty audio body');

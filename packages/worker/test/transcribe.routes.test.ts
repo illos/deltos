@@ -157,10 +157,23 @@ describe('POST /api/transcribe — voice-to-text (spec §6)', () => {
     expect(ai.run).not.toHaveBeenCalled();
   });
 
+  it('Content-Length precheck: 413 before buffering when declared size exceeds cap', async () => {
+    const { ai } = stubAI();
+    // Body is tiny (1 KB) but Content-Length declares 6 MB > the 5 MB dictation cap.
+    // The route must 413 BEFORE calling arrayBuffer() so no large allocation occurs.
+    const res = await postAudio(
+      makeEnv({ AI: ai as unknown as Ai }),
+      new Uint8Array(1024),
+      { 'content-length': String(6 * 1024 * 1024) },
+    );
+    expect(res.status).toBe(413);
+    expect(ai.run).not.toHaveBeenCalled();
+  });
+
   it('oversize body: 413 payload_too_large (defensive cap before inference)', async () => {
     const { ai } = stubAI();
-    // 26 MB > the 25 MB cap.
-    const res = await postAudio(makeEnv({ AI: ai as unknown as Ai }), new Uint8Array(26 * 1024 * 1024));
+    // 6 MB > the 5 MB dictation cap. Content-Length fires first here (body and header agree).
+    const res = await postAudio(makeEnv({ AI: ai as unknown as Ai }), new Uint8Array(6 * 1024 * 1024));
     expect(res.status).toBe(413);
     expect(ai.run).not.toHaveBeenCalled();
   });
