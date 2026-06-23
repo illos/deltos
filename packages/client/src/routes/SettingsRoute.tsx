@@ -16,6 +16,7 @@ import { useAuthStore } from '../auth/store.js';
 import type { TotpSetupResult, TotpVerifyResult, TotpDisableResult } from '../auth/store.js';
 import { PhraseStep } from '../components/PhraseStep.js';
 import { AppearanceSection } from '../components/AppearanceSection.js';
+import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
 import type { SessionState } from '../auth/store.js';
 
 function sessionLabel(s: SessionState): string {
@@ -50,6 +51,7 @@ export function SettingsRoute() {
   const totpEnabled = useAuthStore((s) => s.totpEnabled);
 
   const navigate = useNavigate();
+  const [customKeyboard, setCustomKeyboard] = useCustomKeyboard();
   const [view, setView] = useState<View>({ tag: 'list' });
 
   // ── Sign out ─────────────────────────────────────────────────────────────
@@ -450,6 +452,19 @@ export function SettingsRoute() {
         <button className="settings__row settings__row--btn" onClick={() => navigate('/kbprobe')}>
           <span className="settings__row-label">Keyboard probe (#68)</span>
           <span className="settings__row-value settings__row-value--muted">inputmode=none ›</span>
+        </button>
+        {/* #69 custom-keyboard opt-in — default OFF, device-local. ON = the real mobile editor uses our
+            keyboard (no native, no numbers yet); OFF = native keyboard as today. Works in the PWA. */}
+        <button
+          className="settings__row settings__row--btn"
+          role="switch"
+          aria-checked={customKeyboard}
+          onClick={() => setCustomKeyboard(!customKeyboard)}
+        >
+          <span className="settings__row-label">Custom keyboard (experimental)</span>
+          <span className={`settings__row-value${customKeyboard ? '' : ' settings__row-value--muted'}`}>
+            {customKeyboard ? 'On' : 'Off'}
+          </span>
         </button>
       </section>
     </div>

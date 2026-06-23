@@ -11,8 +11,9 @@ import { useNotebookStore } from '../lib/notebookStore.js';
  * Keep this list in sync as device-level (non-account) pointers are added.
  *   - 'appearance-theme' = the UI-refresh theme preference (lands when the ui-refresh branch
  *     integrates; harmless to preserve before then — it's just a no-op on a build without it).
+ *   - 'custom-keyboard' = the #69 custom-keyboard opt-in — a per-device preference, not account data.
  */
-const DEVICE_GLOBAL_DEVICE_KEYS: readonly string[] = ['appearance-theme'];
+const DEVICE_GLOBAL_DEVICE_KEYS: readonly string[] = ['appearance-theme', 'custom-keyboard'];
 
 /**
  * #52 client tenancy — OPTION B (clear-on-account-change). PROTOTYPE (secSys-review-pending, not shipped).

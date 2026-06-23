@@ -2202,11 +2202,17 @@ a.auth__link { display: inline; }
   --kb-side: 3px;       /* side margin — row 1 reaches near full width */
   --kb-fn-w: 50px;      /* shift / delete width (navSys overlay: native ~50pt) */
   --kb-r4-w: 99px;      /* 123 / return width (navSys overlay: native ~99pt; space flex-fills ~207pt) */
+  /* Fixed to the viewport bottom — it IS a keyboard. (inputmode=none means no native keyboard shrinks
+     the viewport, so we own the slot.) */
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
   background: var(--nav);
   padding: 10px var(--kb-side) max(8px, env(safe-area-inset-bottom));
   box-sizing: border-box; user-select: none; -webkit-user-select: none;
   touch-action: none;
 }
+/* Caret clearance: when the keyboard is up, give the editable bottom space so the last lines can scroll
+   clear of the keyboard (Phase-1 approximation of the ~226px keyboard height + safe-area; refined later). */
+.editor__pm--kb { padding-bottom: 264px; scroll-padding-bottom: 264px; }
 .kb__grid { display: flex; flex-direction: column; gap: var(--kb-row-gap); }
 .kb__row { display: flex; justify-content: center; align-items: center; gap: var(--kb-gap); }
 .kb__row--r3, .kb__row--r4 { justify-content: space-between; }
@@ -2215,7 +2221,11 @@ a.auth__link { display: inline; }
   width: var(--kb-key-w); height: var(--kb-key-h); flex-shrink: 0; box-sizing: border-box;
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--list); color: var(--ink); border: none; border-radius: var(--kb-radius);
-  font-family: var(--ff); font-size: 22px; font-weight: 400; line-height: 1;
+  /* Labels pinned to the system font — NOT var(--ff): the app has 4 selectable fonts whose glyph
+     metrics differ, which would disturb the pixel-matched key geometry (#69 §2.3a). Colour inherits the
+     theme (tokens below); font stays geometry-invariant across all app voices. Also the most native look. */
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 22px; font-weight: 400; line-height: 1;
   -webkit-tap-highlight-color: transparent; touch-action: none; cursor: pointer;
 }
 .kb__key:active { background: var(--sel); }

@@ -15,10 +15,13 @@ import { TodoItemView } from './nodeviews/TodoItem.js';
 import { sliceToPlainText } from './clipboard.js';
 import { EditorToolbar } from './EditorToolbar.js';
 import { MobileEditorBar } from './MobileEditorBar.js';
+import { KeyboardSurface, deriveKeyboardContext } from './KeyboardSurface.js';
+import type { KeyboardContext } from './KeyboardSurface.js';
 import { deriveActiveState, EMPTY_ACTIVE_STATE } from './editorState.js';
 import type { EditorActiveState } from './editorState.js';
 import type { ToolDescriptor } from './editorTools.js';
 import { useIsDesktop } from '../lib/useIsDesktop.js';
+import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
 
 interface ProseMirrorEditorProps {
   noteId: string;
@@ -80,8 +83,17 @@ export function ProseMirrorEditor({
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const isDesktop = useIsDesktop();
+  // #69: the custom keyboard is opt-in (Settings, default OFF) + mobile-only. When ON the editor
+  // suppresses the native keyboard (inputmode=none) and shows our context-driven KeyboardSurface.
+  const [customKbEnabled] = useCustomKeyboard();
+  const customKb = customKbEnabled && !isDesktop;
   // One selection-driven snapshot drives every toolbar button + undo/redo availability.
   const [active, setActive] = useState<EditorActiveState>(EMPTY_ACTIVE_STATE);
+  // Reactive view + keyboard state (the KeyboardSurface needs the live view + selection context, and
+  // appears only while the editor is focused — like a native keyboard).
+  const [view, setView] = useState<EditorView | null>(null);
+  const [kbContext, setKbContext] = useState<KeyboardContext>('text');
+  const [editorFocused, setEditorFocused] = useState(false);
 
   // Keep onChange and onLeave in refs so they're always current without re-running the effect.
   const onChangeRef = useRef(onChange);
@@ -141,6 +153,9 @@ export function ProseMirrorEditor({
 
     const view = new EditorView(containerRef.current, {
       state,
+      // #69: suppress the native keyboard when the custom keyboard is on (set at view-creation, before
+      // focus — dynamic toggling is unreliable on Safari, probe #68). Off → today's native behavior.
+      ...(customKb ? { attributes: { inputmode: 'none', autocorrect: 'off', autocapitalize: 'off' } } : {}),
       nodeViews: {
         ...buildPluginIslandNodeViews(deltoSchema),
         todo_item: (node, view, getPos) =>
@@ -170,6 +185,8 @@ export function ProseMirrorEditor({
         // Recompute the selection-driven active snapshot on EVERY transaction (selection moves are
         // transactions too) so toolbar marks/block + undo/redo availability stay reactive from one place.
         setActive(deriveActiveState(newState, undoDepth(newState) > 0, redoDepth(newState) > 0));
+        // #69: the keyboard footprint is a pure function of context — re-derive it from the selection.
+        setKbContext(deriveKeyboardContext(newState));
 
         if (!tr.docChanged) return;
 
@@ -185,7 +202,10 @@ export function ProseMirrorEditor({
       // change (iOS fires blur during the swipe-back gesture, ~300ms before navigation
       // completes — enough lead time for IndexedDB to finish before the list mounts).
       handleDOMEvents: {
+        // #69: the custom keyboard appears only while the editor is focused (like a native keyboard).
+        focus: () => { setEditorFocused(true); return false; },
         blur: () => {
+          setEditorFocused(false);
           if (saveTimerRef.current !== null) {
             clearTimeout(saveTimerRef.current);
             saveTimerRef.current = null;
@@ -199,9 +219,11 @@ export function ProseMirrorEditor({
     });
 
     viewRef.current = view;
+    setView(view);
     setActive(deriveActiveState(view.state, false, false));
+    setKbContext(deriveKeyboardContext(view.state));
     onViewInit?.(view);
-    if (autoFocus) view.focus();
+    if (autoFocus) { view.focus(); setEditorFocused(true); }
 
     return () => {
       // Cleanup flush: covers programmatic unmounts where blur may not have fired.
@@ -216,18 +238,23 @@ export function ProseMirrorEditor({
       onLeaveRef.current?.();
       view.destroy();
       viewRef.current = null;
+      setView(null);
+      setEditorFocused(false);
       onViewInit?.(null);
     };
+  // Recreate the view when the keyboard mode flips (customKb decides inputmode=none at creation).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [noteId]);
+  }, [noteId, customKb]);
 
   return (
     <>
       {/* Desktop: registry-driven formatting toolbar at the top (slice C). */}
       {isDesktop && <EditorToolbar active={active} run={runTool} />}
-      <div ref={containerRef} className="editor__pm" />
-      {/* Mobile: grouped contextual bar pinned to the bottom of the note sub-screen (slice D). */}
-      {!isDesktop && (
+      <div ref={containerRef} className={`editor__pm${customKb && editorFocused ? ' editor__pm--kb' : ''}`} />
+      {/* Mobile, custom keyboard ON: the context-driven keyboard footprint, shown while focused (#69). */}
+      {customKb && editorFocused && <KeyboardSurface view={view} context={kbContext} />}
+      {/* Mobile, custom keyboard OFF: today's grouped contextual bar + native keyboard (slice D). */}
+      {!isDesktop && !customKb && (
         <MobileEditorBar active={active} run={runTool} onUndo={handleUndo} onRedo={handleRedo} />
       )}
     </>

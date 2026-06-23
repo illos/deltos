@@ -184,7 +184,8 @@ describe('ST-R4 — 2FA off: shows Off status and Enable button', () => {
       expect(screen.queryByText('Two-factor authentication')).not.toBeNull();
     });
 
-    expect(screen.queryByText('Off')).not.toBeNull();
+    // At least one 'Off' status (the 2FA one; the #69 custom-keyboard toggle also renders 'Off').
+    expect(screen.getAllByText('Off').length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: /enable 2fa/i })).not.toBeNull();
   });
 });
