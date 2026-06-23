@@ -1,9 +1,17 @@
 /**
- * Worker bindings. D1 is the only binding in Phase 0 — Durable Objects (collab / E2EE relay)
- * and R2 (blob store) are reserved by the architecture and intentionally absent.
+ * Worker bindings. D1 + Workers AI (voice-to-text, §6). Durable Objects (collab / E2EE relay) and R2
+ * (blob store) remain reserved by the architecture and intentionally absent.
  */
 export interface Env {
   DB: D1Database;
+  /**
+   * Workers AI binding (custom-keyboard spec §6 — voice-to-text). Powers POST /api/transcribe (Whisper
+   * `@cf/openai/whisper-large-v3-turbo`); the same binding is reused by the later advanced-LLM spellcheck
+   * add-on. Optional in the type so unit tests can inject a stub / omit it; the transcribe route
+   * fail-closes (503) when it is unbound. Workers AI has NO local inference — exercise it via a deploy
+   * smoke or `wrangler dev --remote`, never plain `wrangler dev`.
+   */
+  AI?: Ai;
   /**
    * Deployment environment (F13 fail-CLOSED tripwire). The dev-only `unverified` principal is honored
    * ONLY when this is an exact member of the non-prod allowlist {development, test, local}; production,

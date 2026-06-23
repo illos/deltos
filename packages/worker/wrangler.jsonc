@@ -8,6 +8,13 @@
   "observability": {
     "enabled": true,
   },
+  // Workers AI (custom-keyboard spec §6 — voice-to-text). Binding `AI` powers POST /api/transcribe
+  // (Whisper @cf/openai/whisper-large-v3-turbo); reused later by the advanced-LLM spellcheck add-on.
+  // NOTE: Workers AI has no local inference — `wrangler dev` can't run it; use a deploy or
+  // `wrangler dev --remote`.
+  "ai": {
+    "binding": "AI",
+  },
   "d1_databases": [
     {
       "binding": "DB",

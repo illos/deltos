@@ -28,6 +28,7 @@ import {
 } from './db/accountScope.js';
 import { sync } from './routes/sync.js';
 import { passwordAuth } from './routes/passwordAuth.js';
+import { transcribe } from './routes/transcribe.js';
 
 const app = new Hono<AppEnv>();
 
@@ -77,6 +78,13 @@ app.route('/api/sync', sync);
 // ---------------------------------------------------------------------------
 
 app.route('/api/auth', passwordAuth);
+
+// ---------------------------------------------------------------------------
+// Voice-to-text TRANSCRIBE route (custom-keyboard spec §6, stage 2) — authenticated Workers AI Whisper.
+// Decoupled plumbing: returns the transcript as a first-class artifact (no insert-at-caret coupling).
+// ---------------------------------------------------------------------------
+
+app.route('/api/transcribe', transcribe);
 
 // ---------------------------------------------------------------------------
 // Helpers
