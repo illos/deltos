@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { KeyActions } from '../types.js';
 
 /**
@@ -49,12 +49,24 @@ const BKSP_ACCEL = 18;      // ms shaved per tick
 // The shift key shows all three states distinctly (see deck.css .is-oneshot / .is-locked).
 type ShiftState = 'lower' | 'oneshot' | 'locked';
 const SHIFT_DOUBLE_TAP_MS = 300; // two shift taps within this = caps lock
+const DOUBLE_SPACE_MS = 600;     // two spaces within this (no intervening key) = "→ . " (§7.1)
 
 export function Keypad({ actions }: KeypadProps) {
   const [layer, setLayer] = useState<Layer>('letters');
   const [shift, setShift] = useState<ShiftState>('lower');
   const bkspTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastShiftTapRef = useRef(0); // performance.now() of the previous shift tap (double-tap detection)
+  const lastSpaceAtRef = useRef(0);  // performance.now() of the previous space (0 = reset by any other key)
+
+  // §7.3 auto-capitalize: ask the host (PULL) whether the next letter should cap; arm the one-shot if so.
+  // Only arms from 'lower' — never overrides a manual one-shot/caps-lock. Called after edits that can open
+  // a sentence (space / sentence-space / enter) and once on mount (doc-start capitalization).
+  const maybeAutoCap = () => {
+    if (actions.shouldAutoCapitalize?.()) setShift((s) => (s === 'lower' ? 'oneshot' : s));
+  };
+  useEffect(() => {
+    if (actions.shouldAutoCapitalize?.()) setShift((s) => (s === 'lower' ? 'oneshot' : s));
+  }, [actions]);
 
   const startBackspace = () => {
     actions.backspace(); // immediate first delete on press
@@ -74,10 +86,27 @@ export function Keypad({ actions }: KeypadProps) {
   const press = (handler: () => void) => (e: React.PointerEvent) => { e.preventDefault(); handler(); };
 
   const insertLetter = (c: string) => {
+    lastSpaceAtRef.current = 0; // a letter breaks any pending double-space run
     const upper = shift === 'oneshot' || shift === 'locked';
     actions.insert(upper ? c : c.toLowerCase());
     if (shift === 'oneshot') setShift('lower'); // one-shot consumed; caps-lock persists
   };
+  // Literal char insert (number/symbol/punct keys) — also breaks the double-space run.
+  const insertText = (ch: string) => { lastSpaceAtRef.current = 0; actions.insert(ch); };
+  // §7.1 — space, with double-space → ". ". A rapid second space (no intervening key) calls the host's
+  // sentenceSpace intent; otherwise a plain space. Either way, re-check auto-cap (a new sentence may open).
+  const onSpace = () => {
+    const now = performance.now();
+    if (actions.sentenceSpace && lastSpaceAtRef.current !== 0 && now - lastSpaceAtRef.current < DOUBLE_SPACE_MS) {
+      actions.sentenceSpace();
+      lastSpaceAtRef.current = 0; // consumed — a third space starts a fresh run
+    } else {
+      actions.insert(' ');
+      lastSpaceAtRef.current = now;
+    }
+    maybeAutoCap();
+  };
+  const onEnter = () => { lastSpaceAtRef.current = 0; actions.enter(); maybeAutoCap(); };
   // Shift tap, native model: from caps-lock ANY tap → lower (checked first, so a quick unlock tap is never
   // mis-read as a double-tap). Otherwise two taps within the window = caps lock; a lone tap toggles
   // oneshot/lower. Mirrors native exactly.
@@ -108,14 +137,14 @@ export function Keypad({ actions }: KeypadProps) {
   );
   // A literal-insert key (number / symbol layers — no shift). keypad__key--char gets the press key-pop.
   const litKey = (ch: string) => (
-    <button key={ch} type="button" className="keypad__key keypad__key--char" aria-label={ch} onPointerDown={press(() => actions.insert(ch))}>
+    <button key={ch} type="button" className="keypad__key keypad__key--char" aria-label={ch} onPointerDown={press(() => insertText(ch))}>
       <span className="keypad__pop" aria-hidden="true">{ch}</span>
       <span className="keypad__face">{ch}</span>
     </button>
   );
   // Row-3 punctuation key — wider than a letter key (fills the span between the two fn keys).
   const punctKey = (ch: string) => (
-    <button key={ch} type="button" className="keypad__key keypad__key--char keypad__key--punct" aria-label={ch} onPointerDown={press(() => actions.insert(ch))}>
+    <button key={ch} type="button" className="keypad__key keypad__key--char keypad__key--punct" aria-label={ch} onPointerDown={press(() => insertText(ch))}>
       <span className="keypad__pop" aria-hidden="true">{ch}</span>
       <span className="keypad__face">{ch}</span>
     </button>
@@ -129,10 +158,10 @@ export function Keypad({ actions }: KeypadProps) {
     <button type="button" className="keypad__key keypad__key--fn keypad__key--mode" aria-label={aria} onPointerDown={press(() => goLayer(target))}><span className="keypad__face">{lbl}</span></button>
   );
   const spaceKey = (
-    <button type="button" className="keypad__key keypad__key--space" aria-label="Space" onPointerDown={press(() => actions.insert(' '))}><span className="keypad__face">space</span></button>
+    <button type="button" className="keypad__key keypad__key--space" aria-label="Space" onPointerDown={press(onSpace)}><span className="keypad__face">space</span></button>
   );
   const returnKey = (
-    <button type="button" className="keypad__key keypad__key--fn keypad__key--return" aria-label="Return" onPointerDown={press(() => actions.enter())}><span className="keypad__face">⏎</span></button>
+    <button type="button" className="keypad__key keypad__key--fn keypad__key--return" aria-label="Return" onPointerDown={press(onEnter)}><span className="keypad__face">⏎</span></button>
   );
 
   // ── letters (QWERTY) layer ──────────────────────────────────────────────────

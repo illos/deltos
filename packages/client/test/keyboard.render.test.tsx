@@ -256,3 +256,80 @@ describe('Keypad — key-pop on press (§7.2)', () => {
     expect(key('Symbols').className).not.toContain('keypad__key--char'); // #+= switch = fn, no pop
   });
 });
+
+// ── #69 §7 increment 2a — double-space→period + auto-capitalize ─────────────────────────────────────────
+// A host stub that implements the optional KeyActions intents the same way the deltos adapter does, so the
+// keypad's emit-side logic (double-space detection, auto-cap arming) is exercised end-to-end.
+function mountWithHost() {
+  let buffer = '';
+  const actions: KeyActions = {
+    insert: (t) => { buffer += t; },
+    backspace: () => { buffer = buffer.slice(0, -1); },
+    enter: () => { buffer += '\n'; },
+    // mimic the adapter: a letter/digit then the just-typed space → replace the space with ". "; else plain space.
+    sentenceSpace: () => {
+      if (/[\p{L}\p{N}] $/u.test(buffer)) buffer = buffer.slice(0, -1) + '. ';
+      else buffer += ' ';
+    },
+    // doc start / after newline / after sentence-terminator + space → capitalize next.
+    shouldAutoCapitalize: () => buffer.length === 0 || /\n$/.test(buffer) || /[.!?]\s$/.test(buffer),
+  };
+  render(<Keypad actions={actions} />);
+  return { text: () => buffer };
+}
+
+describe('Keypad — double-space → period (§7.1)', () => {
+  it('a rapid second space replaces the trailing space with ". " after a letter', () => {
+    const { text } = mountWithHost();
+    tap('A'); tap('B');         // 'Ab' (the doc-start auto-cap caps the A; B releases to lower)
+    tap('Space'); tap('Space'); // double-space → ". "
+    expect(text()).toBe('Ab. ');
+  });
+
+  it('skips (plain double space) when there is no letter before the first space', () => {
+    const { text } = mountWithHost();
+    tap('Space'); tap('Space'); // nothing before → two plain spaces, no period
+    expect(text()).toBe('  ');
+  });
+
+  it('a non-space key between the two spaces breaks the run (no period)', () => {
+    const { text } = mountWithHost();
+    tap('A'); tap('Space'); tap('B'); tap('Space');
+    expect(text()).toBe('A b '); // A capitalized (doc start); the run broke at B → both spaces stay plain
+  });
+});
+
+describe('Keypad — auto-capitalize (§7.3)', () => {
+  it('arms the one-shot at doc start (mount): the first letter capitalizes, then releases', () => {
+    const { text } = mountWithHost();
+    expect(qFace()).toBe('Q'); // armed on mount (empty doc)
+    tap('A');
+    expect(text()).toBe('A');
+    expect(qFace()).toBe('q'); // released
+  });
+
+  it('re-arms after a newline (Return)', () => {
+    const { text } = mountWithHost();
+    tap('A'); tap('B');  // 'Ab'
+    tap('Return');       // 'Ab\n' → host says auto-cap
+    expect(qFace()).toBe('Q');
+    tap('C');
+    expect(text()).toBe('Ab\nC');
+  });
+
+  it('re-arms after a double-space period (pairs with §7.1)', () => {
+    const { text } = mountWithHost();
+    tap('A'); tap('B');
+    tap('Space'); tap('Space'); // → 'Ab. ' → new sentence
+    expect(qFace()).toBe('Q');
+    tap('C');
+    expect(text()).toBe('Ab. C');
+  });
+
+  it('does not auto-cap mid-word (no boundary)', () => {
+    const { text } = mountWithHost();
+    tap('A');            // doc-start cap consumed → 'A', lower
+    tap('B'); tap('C');  // mid-word, no boundary
+    expect(text()).toBe('Abc');
+  });
+});

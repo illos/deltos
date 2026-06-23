@@ -1,5 +1,5 @@
 import type { Command, EditorState } from 'prosemirror-state';
-import { NodeSelection } from 'prosemirror-state';
+import { NodeSelection, TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { baseKeymap, deleteSelection, joinBackward } from 'prosemirror-commands';
 import type { DeckContext, KeyActions } from '../deck/index.js';
@@ -40,6 +40,57 @@ export function buildPmKeyActions(getView: () => EditorView | null): KeyActions 
       if (!selection.empty) { deleteSelection(v.state, v.dispatch); return; }
       if (selection.$from.parentOffset > 0) { v.dispatch(v.state.tr.delete(selection.from - 1, selection.from)); return; }
       joinBackward(v.state, v.dispatch, v);
+    }),
+
+    // §7.1 — double-space → ". ": when the caret sits right after "<letter|digit><space>", replace that
+    // trailing space with a period+space (a new sentence). Anything else (sentence already ends in
+    // punctuation, line start, a non-letter before the space) falls back to a plain space (the skip rule).
+    sentenceSpace: () => run((v) => {
+      const { selection } = v.state;
+      if (!selection.empty) { v.dispatch(v.state.tr.insertText(' ')); return; }
+      const $from = selection.$from;
+      const off = $from.parentOffset;
+      const prevTwo = $from.parent.textBetween(Math.max(0, off - 2), off);
+      if (prevTwo.length === 2 && prevTwo[1] === ' ' && /[\p{L}\p{N}]/u.test(prevTwo[0]!)) {
+        const from = selection.from;
+        v.dispatch(v.state.tr.delete(from - 1, from).insertText('. '));
+      } else {
+        v.dispatch(v.state.tr.insertText(' '));
+      }
+    }),
+
+    // §7.3 — should the NEXT letter auto-capitalize? True at a block start (doc start / after a newline)
+    // and after a sentence terminator + space (". " / "! " / "? "). A pure query (no focus side-effect).
+    shouldAutoCapitalize: () => {
+      const v = getView();
+      if (!v) return false;
+      const { selection } = v.state;
+      if (!selection.empty) return false;
+      const $from = selection.$from;
+      const off = $from.parentOffset;
+      if (off === 0) return true; // block start = new line/paragraph = new sentence
+      const before = $from.parent.textBetween(Math.max(0, off - 2), off);
+      return /[.!?]\s$/.test(before);
+    },
+
+    // §7.4 — relative caret move from the space-trackpad. dx = char steps (±), dy = visual-line steps (±).
+    // RELATIVE/delta-based (never an absolute posAtCoords jump): horizontal walks document positions;
+    // vertical re-aims at the same x one line-height up/down per step via the view's coordinate mapping.
+    moveCaret: (dx, dy) => run((v) => {
+      const size = v.state.doc.content.size;
+      let pos = Math.max(0, Math.min(size, v.state.selection.head + dx));
+      let sel = TextSelection.near(v.state.doc.resolve(pos), dx >= 0 ? 1 : -1);
+      if (dy !== 0) {
+        const coords = v.coordsAtPos(sel.head);
+        const lineH = Math.max(1, coords.bottom - coords.top);
+        const targetY = (coords.top + coords.bottom) / 2 + dy * lineH;
+        const found = v.posAtCoords({ left: coords.left, top: targetY });
+        if (found) {
+          pos = Math.max(0, Math.min(size, found.pos));
+          sel = TextSelection.near(v.state.doc.resolve(pos));
+        }
+      }
+      v.dispatch(v.state.tr.setSelection(sel).scrollIntoView());
     }),
   };
 }
