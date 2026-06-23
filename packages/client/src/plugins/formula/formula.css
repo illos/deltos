@@ -42,12 +42,13 @@
   opacity: 0.55;
 }
 
-/* hexcolor type — the VISUAL output kind: a small filled swatch in the color, inside the unified pill. */
+/* hexcolor type — the VISUAL output kind: a small round color DOT (perfect circle, Jim) in the color,
+   sized to sit cleanly inside the unified pill alongside the hex text. */
 .formula-swatch {
   display: inline-block;
   width: 0.9em;
   height: 0.9em;
-  border-radius: 3px;
+  border-radius: 50%; /* perfect circle (equal w/h) */
   border: 1px solid var(--border);
   vertical-align: -0.1em;
 }
