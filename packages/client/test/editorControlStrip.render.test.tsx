@@ -81,4 +81,39 @@ describe('EditorControlStrip — link form', () => {
     });
     expect(found).toBe(true);
   });
+
+  it('#73 seeds the Title from the highlighted selection, focuses URL, and REPLACES the selection on apply', async () => {
+    let view: EditorView | null = null;
+    mount((v) => { view = v; });
+    await waitFor(() => expect(view).not.toBeNull());
+    const v = view!;
+    act(() => { v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, 4, 9))); }); // select 'hello'
+
+    fireEvent.pointerDown(btn('Link')!);
+    // Title field is pre-filled with the highlighted text (both targets render from linkTitle).
+    const title = await waitFor(() => {
+      const el = document.querySelector('input[aria-label="Link title"]') as HTMLInputElement | null;
+      expect(el?.value).toBe('hello');
+      return el!;
+    });
+    expect(title.value).toBe('hello');
+
+    const url = document.querySelector('input[aria-label="Link URL"]') as HTMLInputElement;
+    act(() => { fireEvent.change(url, { target: { value: 'example.com' } }); });
+    fireEvent.mouseDown(document.querySelector('button[aria-label="Apply link"]')!);
+
+    // The selected 'hello' is REPLACED by the linked title — exactly ONE 'hello', now carrying the link mark
+    // (no duplicate-insert).
+    const linkType = deltoSchema.marks['link']!;
+    let helloCount = 0;
+    let helloLinked = false;
+    v.state.doc.descendants((node) => {
+      if (node.isText && node.text === 'hello') {
+        helloCount += 1;
+        if (linkType.isInSet(node.marks)) helloLinked = true;
+      }
+    });
+    expect(helloCount).toBe(1);
+    expect(helloLinked).toBe(true);
+  });
 });

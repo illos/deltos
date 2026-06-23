@@ -310,7 +310,14 @@ export function ProseMirrorEditor({
     // top slot; desktop = native-input DesktopLinkForm in the control strip). Replaces the old window.prompt
     // path entirely (unreliable in an installed PWA). Clean creation form → inserts the linked title at caret.
     if (tool.id === 'link') {
-      setLinkTitle(''); setLinkUrl(''); setActiveLinkField('title');
+      // Seed the Title from the highlighted selection (#73) → submitLink already REPLACES the selection
+      // range with the linked title (tr.insertText(text, from, to)), so no extra replace logic here. With a
+      // selection, start focus on URL (Title's pre-filled); empty selection → start on Title as before.
+      const sel = view.state.selection;
+      const selected = sel.empty ? '' : view.state.doc.textBetween(sel.from, sel.to, ' ');
+      setLinkTitle(selected);
+      setLinkUrl('');
+      setActiveLinkField(selected ? 'url' : 'title');
       setLinkOpen(true);
       return;
     }
