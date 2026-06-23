@@ -39,6 +39,13 @@ export interface FormulaType {
    */
   readonly autoTrigger?: {
     readonly char: string;
+    /**
+     * Does typing `char` CONSUME it (default true)? Math's '=' is consumed (it's the trigger, not content).
+     * A SELF-COMPLETING token (hexcolor's '#FF5733') is detected on a BOUNDARY char (a space) that is NOT
+     * the trigger intent — set false so the framework keeps it (re-inserts the boundary char after the wrap).
+     * Reusable: any future self-completing-token type uses consumesTrigger:false.
+     */
+    readonly consumesTrigger?: boolean;
     detect(textBeforeCaret: string): string | null;
   };
   /** EXPLICIT [...] path: given the bracketed content, return a normalized spec if it's this type, else null. */

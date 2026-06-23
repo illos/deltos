@@ -26,10 +26,22 @@ export function normalizeHex(raw: string): string | null {
   return null;
 }
 
+/** Trailing standalone 6-digit hex at a word boundary (start or whitespace before the '#'). 6-DIGIT ONLY:
+ *  bare 3-digit #RGB false-positives on real words (dad/bee/fed), so #RGB stays bracket-only. */
+const TRAILING_HEX6 = /(?:^|\s)(#[0-9a-fA-F]{6})$/;
+
 export const hexColorType: FormulaType = {
   id: 'hexcolor',
 
-  // No autoTrigger — entry is the explicit bracket path (see the module note).
+  // AUTO-DETECT on a BOUNDARY char (space) that is NOT consumed (a self-completing token) → bare
+  // '#FF5733' + space becomes a swatch, the space preserved. consumesTrigger:false drives the framework's
+  // re-insert. 6-digit only; the bracket path handles both #RRGGBB and #RGB.
+  autoTrigger: {
+    char: ' ',
+    consumesTrigger: false,
+    detect: (textBeforeCaret) => TRAILING_HEX6.exec(textBeforeCaret)?.[1] ?? null,
+  },
+
   recognize: (content) => {
     const t = content.trim();
     return HEX6.test(t) || HEX3.test(t) ? t : null; // store the spec as typed; normalize at render

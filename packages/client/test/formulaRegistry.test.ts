@@ -15,8 +15,8 @@ describe('formula registry', () => {
     expect(r.get('dice')).toBeUndefined(); // dice is design-only, not registered
   });
 
-  it('triggerChars lists the auto-trigger chars (math = "=")', () => {
-    expect(createDefaultFormulaRegistry().triggerChars()).toEqual(['=']);
+  it('triggerChars lists the auto-trigger chars (math "=" + hexcolor boundary " ")', () => {
+    expect(createDefaultFormulaRegistry().triggerChars().sort()).toEqual([' ', '='].sort());
   });
 
   it('detectAuto resolves math on "=" after a numeric tail, null otherwise', () => {

@@ -224,6 +224,36 @@ describe('formula framework — hexcolor type via the bracket path (proof of gen
   });
 });
 
+describe('formula framework — hexcolor BARE auto-detect (non-consuming boundary trigger)', () => {
+  it('bare 6-digit "#FF5733" + space → swatch, and the boundary space is PRESERVED', () => {
+    const v = mountWithText('pick #FF5733');
+    type(v, ' '); // the boundary trigger
+    expect(formulaType(v)).toBe('hexcolor');
+    expect(formulaSpec(v)).toBe('#FF5733');
+    expect(swatch(v)!.style.backgroundColor).toBe('rgb(255, 87, 51)');
+    expect(v.state.doc.textContent.endsWith(' ')).toBe(true); // space kept (re-inserted), not consumed
+  });
+
+  it('bare 3-digit "#abc" + space does NOT fire (stays plain text — #RGB is bracket-only)', () => {
+    const v = mountWithText('say #abc');
+    type(v, ' ');
+    expect(formulaSpec(v)).toBeNull();
+  });
+
+  it('fires on the custom-keyboard path too (deckAdapter dual-wire), space preserved', () => {
+    const v = mountWithText('bg #00ff00');
+    expect(formulaTriggerOnInsert(v.state, v.dispatch, registry, ' ')).toBe(true);
+    expect(formulaType(v)).toBe('hexcolor');
+    expect(swatch(v)!.style.backgroundColor).toBe('rgb(0, 255, 0)');
+    expect(v.state.doc.textContent.endsWith(' ')).toBe(true);
+  });
+
+  it('a normal space (no trailing hex) does not fire on the keypad path', () => {
+    const v = mountWithText('hello world');
+    expect(formulaTriggerOnInsert(v.state, v.dispatch, registry, ' ')).toBe(false);
+  });
+});
+
 describe('formula framework — spine round-trip + legacy upgrade', () => {
   it('a formula node survives pmDocToSpine → spineToPmDoc (spec + type; result never stored)', () => {
     const body: BlockBody = [{

@@ -49,6 +49,8 @@ function buildAutoFormulaTr(
   const match = registry.detectAuto(char, textBefore);
   if (!match) return null; // not a formula context → the char types normally (silent on prose)
 
+  // default true (math's '='): the trigger char is consumed. false (hexcolor's boundary space): keep it.
+  const consumesTrigger = match.type.autoTrigger?.consumesTrigger !== false;
   const trimmedEnd = textBefore.replace(/\s+$/, '');
   const runStartOffset = trimmedEnd.length - match.spec.length;
   if (runStartOffset < 0) return null; // safety: spec must be a suffix of the trimmed text-before
@@ -56,8 +58,11 @@ function buildAutoFormulaTr(
   const runTo = blockStart + trimmedEnd.length;
 
   const tr = state.tr;
-  if (deleteEnd > runTo) tr.delete(runTo, deleteEnd); // drop trailing space + the trigger char
+  if (consumesTrigger && deleteEnd > runTo) tr.delete(runTo, deleteEnd); // drop trailing space + the trigger char
   tr.replaceWith(runFrom, runTo, formulaNode(state.schema, match.type.id, match.spec));
+  // Non-consuming (boundary) trigger: the char isn't in the doc when the rule/keypad fires AND handling it
+  // suppresses the default insert — so re-insert it after the wrap (both paths) so the boundary char stays.
+  if (!consumesTrigger) tr.insertText(char);
   return tr;
 }
 
