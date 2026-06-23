@@ -4,7 +4,7 @@
  * never window.open an arbitrary-scheme href (javascript:/data: = XSS). Only http(s)/mailto open.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { safeLinkHref, openLinkInNewTab } from '../src/editor/openLink.js';
+import { safeLinkHref, openLinkInNewTab, normalizeLinkInput } from '../src/editor/openLink.js';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -28,6 +28,29 @@ describe('safeLinkHref — scheme allowlist', () => {
     expect(safeLinkHref('')).toBeNull();
     expect(safeLinkHref(null)).toBeNull();
     expect(safeLinkHref(undefined)).toBeNull();
+  });
+});
+
+describe('normalizeLinkInput — user-typed link entry (Deck)', () => {
+  it('prepends https:// to a bare host', () => {
+    expect(normalizeLinkInput('example.com')).toBe('https://example.com/');
+    expect(normalizeLinkInput('  example.com/path  ')).toBe('https://example.com/path');
+  });
+
+  it('keeps an explicit safe scheme', () => {
+    expect(normalizeLinkInput('http://example.com')).toBe('http://example.com/');
+    expect(normalizeLinkInput('https://example.com')).toBe('https://example.com/');
+    expect(normalizeLinkInput('mailto:a@b.com')).toBe('mailto:a@b.com');
+  });
+
+  it('rejects an explicit UNSAFE scheme (no https-prepend rescue)', () => {
+    expect(normalizeLinkInput('javascript:alert(1)')).toBeNull();
+    expect(normalizeLinkInput('data:text/html,x')).toBeNull();
+  });
+
+  it('rejects empty / whitespace', () => {
+    expect(normalizeLinkInput('')).toBeNull();
+    expect(normalizeLinkInput('   ')).toBeNull();
   });
 });
 

@@ -23,7 +23,7 @@ import { sliceToPlainText } from './clipboard.js';
 import { EditorToolbar } from './EditorToolbar.js';
 import { MobileEditorBar } from './MobileEditorBar.js';
 import { KeypadLoadout } from '../deck/index.js';
-import type { DeckContext, DeckLoadoutRegistry } from '../deck/index.js';
+import type { DeckContext, DeckLoadoutRegistry, KeyActions } from '../deck/index.js';
 import { deriveDeckContext, buildPmKeyActions } from './deckAdapter.js';
 import { useDeckHost } from '../components/DeckHost.js';
 import { useEditorLoadoutTools, EditorGroupSelector, EditorGroupSubmenu } from './editorLoadoutTools.js';
@@ -31,7 +31,8 @@ import { createSpellcheckPlugin, applySpellCorrection } from './spellcheckPlugin
 import type { SpellTap } from './spellcheckPlugin.js';
 import { SpellSuggestionPopover } from './SpellSuggestionPopover.js';
 import { SpellSuggestionBar } from './SpellSuggestionBar.js';
-import { openLinkInNewTab } from './openLink.js';
+import { openLinkInNewTab, normalizeLinkInput } from './openLink.js';
+import { LinkEntryBar } from './LinkEntryBar.js';
 import { useSpellcheckStore } from '../lib/useSpellcheck.js';
 import { observeWords, addWord } from '../lib/dictionaryStore.js';
 import { useVoiceMode, VoiceLoadout, isAudioCaptureSupported } from '../deck/index.js';
@@ -173,6 +174,64 @@ export function ProseMirrorEditor({
   // The keypad's abstract KeyActions, wired to PM via the adapter (closes over viewRef → stable across
   // view re-creation). The Deck loadout registry for this host: the 'text' context → the keypad.
   const deckActions = useRef(buildPmKeyActions(() => viewRef.current, formulaRegistry)).current;
+  // #69 Deck link fix: inline URL entry typed ON THE KEYPAD (window.prompt is unreliable in an installed
+  // PWA / inputmode=none). While linkEntry is open the keypad routes into linkUrl (see deckActionsForKeypad);
+  // the saved selection range is where the link applies on submit. linkEntryRef/linkUrlRef give the (stable)
+  // wrapped actions live access without rebuilding them.
+  const [linkEntry, setLinkEntry] = useState<{ from: number; to: number } | null>(null);
+  const [linkUrl, setLinkUrl] = useState('');
+  const linkEntryRef = useRef(linkEntry);
+  const linkUrlRef = useRef(linkUrl);
+  useLayoutEffect(() => { linkEntryRef.current = linkEntry; linkUrlRef.current = linkUrl; });
+  const cancelLink = useCallback(() => {
+    setLinkEntry(null);
+    setLinkUrl('');
+    viewRef.current?.focus();
+  }, []);
+  const submitLink = useCallback(() => {
+    const entry = linkEntryRef.current;
+    const view = viewRef.current;
+    setLinkEntry(null);
+    setLinkUrl('');
+    if (!entry || !view) return;
+    const href = normalizeLinkInput(linkUrlRef.current); // null = empty / unsafe scheme → drop
+    const linkType = deltoSchema.marks['link'];
+    if (href && linkType) {
+      const { from, to } = entry;
+      if (from < to) {
+        view.dispatch(view.state.tr.addMark(from, to, linkType.create({ href, title: null })));
+      } else {
+        // No selection → insert the typed URL as linked text at the caret.
+        const text = linkUrlRef.current.trim();
+        const tr = view.state.tr.insertText(text, from);
+        tr.addMark(from, from + text.length, linkType.create({ href, title: null }));
+        view.dispatch(tr);
+      }
+    }
+    view.focus();
+  }, []);
+  const submitLinkRef = useRef(submitLink);
+  useLayoutEffect(() => { submitLinkRef.current = submitLink; });
+  // Wrap the keypad actions so that WHILE link entry is open, keys route into the URL buffer (no native
+  // keyboard) instead of the document. Built once; preserves which OPTIONAL capabilities the base actions
+  // expose (so trackpad / auto-cap / double-space aren't spuriously enabled by the wrapper).
+  const deckActionsForKeypad = useRef<KeyActions>((() => {
+    const wrapped: KeyActions = {
+      insert: (t) => { if (linkEntryRef.current) setLinkUrl((u) => u + t); else deckActions.insert(t); },
+      backspace: () => { if (linkEntryRef.current) setLinkUrl((u) => u.slice(0, -1)); else deckActions.backspace(); },
+      enter: () => { if (linkEntryRef.current) submitLinkRef.current(); else deckActions.enter(); },
+    };
+    if (deckActions.sentenceSpace) {
+      wrapped.sentenceSpace = () => { if (linkEntryRef.current) setLinkUrl((u) => `${u} `); else deckActions.sentenceSpace!(); };
+    }
+    if (deckActions.shouldAutoCapitalize) {
+      wrapped.shouldAutoCapitalize = () => (linkEntryRef.current ? false : deckActions.shouldAutoCapitalize!());
+    }
+    if (deckActions.moveCaret) {
+      wrapped.moveCaret = (dx, dy) => { if (!linkEntryRef.current) deckActions.moveCaret!(dx, dy); };
+    }
+    return wrapped;
+  })()).current;
   // #69 C-manual: keypad show/hide. The keypad LAYER collapses (the note reclaims its height); a persistent
   // base region keeps the show/hide toggle. State lives HERE (not in the Deck) because auto-show keys off PM
   // focus and the caret clearance depends on it. Default shown (entering a note shows the keypad, as before).
@@ -228,9 +287,24 @@ export function ProseMirrorEditor({
   const runTool = useCallback((tool: ToolDescriptor) => {
     const view = viewRef.current;
     if (!view) return;
+    // Deck link: window.prompt (the default linkCommand path) is unreliable in an installed PWA → open the
+    // inline URL entry instead. (Desktop keeps the prompt path — customKb is false there.) If the selection
+    // already carries a link, toggle it off (no URL needed), matching linkCommand.
+    if (tool.id === 'link' && customKb) {
+      const { from, to, empty } = view.state.selection;
+      const linkType = deltoSchema.marks['link'];
+      if (!empty && linkType && view.state.doc.rangeHasMark(from, to, linkType)) {
+        view.dispatch(view.state.tr.removeMark(from, to, linkType));
+        view.focus();
+        return;
+      }
+      setLinkUrl('');
+      setLinkEntry({ from, to });
+      return;
+    }
     tool.command(deltoSchema)(view.state, view.dispatch);
     view.focus();
-  }, []);
+  }, [customKb]);
 
   // #69 §6.1 voice: the Deck's voice loadout (deck-core) wired to deltos's concrete Transcriber (single-
   // flight POST /api/transcribe) + commit-to-note. The mic control lives in the selector; while recording,
@@ -265,7 +339,7 @@ export function ProseMirrorEditor({
         <VoiceLoadout state={voiceState} stream={voiceStream} transcript={voiceDraft} onStop={() => void voiceStop()} />
       ) : (
         <KeypadLoadout
-          actions={deckActions}
+          actions={deckActionsForKeypad}
           keypadShown={keypadShown}
           locked={locked}
           onToggleKeypad={toggleKeypad}
@@ -286,10 +360,11 @@ export function ProseMirrorEditor({
             />
           }
           topSlot={
-            // ONE occupant of the top slot: the spell suggestion bar takes precedence over an open
-            // formatting submenu (the group stays open underneath; dismissing the bar recomputes → returns
-            // to the submenu if still open, else empty). §5.1.
-            spellSuggest ? (
+            // ONE occupant of the top slot, by precedence: link URL entry (an active modal interaction) >
+            // spell suggestion bar > open formatting submenu. §5.1.
+            linkEntry ? (
+              <LinkEntryBar url={linkUrl} onSubmit={submitLink} onCancel={cancelLink} />
+            ) : spellSuggest ? (
               <SpellSuggestionBar
                 word={spellSuggest.word}
                 suggestions={spellSuggest.suggestions}
@@ -303,7 +378,7 @@ export function ProseMirrorEditor({
         />
       ),
     }),
-    [deckActions, keypadShown, locked, toggleKeypad, toggleLock, activeGroup, toggleGroup, active, handleUndo, handleRedo, runTool, spellSuggest, handleSpellPick, handleAddToDictionary, voiceState, voiceStream, voiceDraft, voiceStart, voiceStop, micSupported],
+    [deckActionsForKeypad, keypadShown, locked, toggleKeypad, toggleLock, activeGroup, toggleGroup, active, handleUndo, handleRedo, runTool, linkEntry, linkUrl, submitLink, cancelLink, spellSuggest, handleSpellPick, handleAddToDictionary, voiceState, voiceStream, voiceDraft, voiceStart, voiceStop, micSupported],
   );
 
   // #69 slice B: the Deck mounts once at the app-shell level (DeckHostProvider) so it persists across

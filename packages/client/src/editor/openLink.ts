@@ -21,6 +21,19 @@ export function safeLinkHref(href: string | null | undefined): string | null {
   return SAFE_SCHEMES.has(url.protocol) ? url.href : null;
 }
 
+/**
+ * Normalize user-typed link input (#69 Deck link entry) into a safe href, or null to reject. A bare host
+ * like "example.com" gets an https:// scheme (what a user means); anything already carrying a scheme is kept
+ * and run through {@link safeLinkHref}, so unsafe schemes (javascript:, data:) are rejected. Empty → null.
+ */
+export function normalizeLinkInput(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // A leading "scheme:" (RFC-3986-ish) means keep it; otherwise assume https.
+  const hasScheme = /^[a-z][a-z0-9+.-]*:/i.test(trimmed);
+  return safeLinkHref(hasScheme ? trimmed : `https://${trimmed}`);
+}
+
 /** Open a safe-scheme href in a new, isolated tab. Returns true iff it opened (caller preventDefaults). */
 export function openLinkInNewTab(href: string | null | undefined): boolean {
   const safe = safeLinkHref(href);
