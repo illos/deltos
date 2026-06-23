@@ -1910,6 +1910,9 @@ a.auth__link { display: inline; }
   .shell__fab--desktop-only        { display: none; }
   .shell__search-btn--desktop-only { display: none; }
 
+  /* Mobile bar order: δ mark first, then notebook label (.shell__bar-end stays last). */
+  .shell__mark { order: -1; }
+
   /* Show the mobile notebook name label. */
   .shell__nb-label--mobile-only {
     display: block;
