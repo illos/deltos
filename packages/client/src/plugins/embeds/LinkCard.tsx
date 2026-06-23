@@ -34,6 +34,8 @@ export function LinkCard({ url, title, favicon, loading, error, onOpen, onDowngr
           aria-hidden="true"
           width={20}
           height={20}
+          // secSys: no Referer to the favicon host — don't leak the deltos URL / note context off-origin.
+          referrerPolicy="no-referrer"
         />
       ) : (
         <span className="link-card__favicon-placeholder" aria-hidden="true" />
