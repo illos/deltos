@@ -11,9 +11,8 @@ import { TrashRoute } from './routes/TrashRoute.js';
 import { SearchRoute } from './routes/SearchRoute.js';
 // LAZY: the note editor (ProseMirror + ALL its plugins: formula/math/hexcolor, embeds, voice, spellcheck
 // wiring) is the heaviest subtree — split it out of the entry bundle so the shell paints first; it loads
-// on note-open (precached after the first load → instant warm). The KbProbe dev route + Settings likewise.
+// on note-open (precached after the first load → instant warm). Settings likewise.
 const NoteRoute = lazy(() => import('./routes/NoteRoute.js').then((m) => ({ default: m.NoteRoute })));
-const KbProbe = lazy(() => import('./routes/KbProbe.js').then((m) => ({ default: m.KbProbe })));
 const SettingsRoute = lazy(() =>
   import('./routes/SettingsRoute.js').then((m) => ({ default: m.SettingsRoute })),
 );
@@ -77,10 +76,6 @@ function AppRoutes() {
   const isAuthing = useAuthStore((s) => s.isAuthing);
   // P0-belt: an explicit server false forces the phrase screen before shell entry (abandoned-signup).
   const recoveryEstablished = useAuthStore((s) => s.recoveryEstablished);
-  // #68 throwaway probe: an isolated, AUTH-BYPASSED test route so Jim can hit /kbprobe directly on the
-  // live site (no login friction) to feel-test inputmode=none. Hook called unconditionally above.
-  const kbProbe = useMatch('/kbprobe');
-  if (kbProbe) return <Suspense fallback={null}><KbProbe /></Suspense>;
 
   switch (selectBootView(isAuthed, isAuthing, recoveryEstablished)) {
     // Cold-boot /refresh still in flight — a brief neutral hold before the gate decision resolves.

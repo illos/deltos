@@ -449,16 +449,9 @@ export function SettingsRoute() {
       {/* Section — Custom dictionary (§5.2 manage-UI) */}
       <CustomDictSection />
 
-      {/* TEMPORARY (#68) — in-app entry to the inputmode=none keyboard probe. iOS can't deep-link a URL
-          into a standalone PWA, so this client-side route push keeps /kbprobe IN the installed PWA's
-          scope, letting Jim feel-test keyboard suppression in the real standalone runtime. Remove when
-          the probe is done. */}
+      {/* Developer / experimental toggles (the #68 keyboard-probe entry was removed with the probe). */}
       <section className="settings__section" aria-label="Developer">
         <h2 className="settings__section-title">Developer</h2>
-        <button className="settings__row settings__row--btn" onClick={() => navigate('/kbprobe')}>
-          <span className="settings__row-label">Keyboard probe (#68)</span>
-          <span className="settings__row-value settings__row-value--muted">inputmode=none ›</span>
-        </button>
         {/* #69 custom-keyboard opt-in — default OFF, device-local. ON = the real mobile editor uses our
             keyboard (no native, no numbers yet); OFF = native keyboard as today. Works in the PWA. */}
         <button
