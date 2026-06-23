@@ -2206,6 +2206,25 @@ a.auth__link { display: inline; }
    next slice. */
 body.deck-custom .bottom-nav { display: none; }
 
+/* The Deck's NAVIGATION loadout (slice B) — the lean New + Search row shown in the Deck footprint while
+   browsing (no note open). Host-side styling (the loadout is deltos-specific); mirrors the bottom-nav
+   action slots for visual continuity. The label font is the host's --mono (not a Deck geometry invariant
+   like the keypad — this is host chrome, not the pixel-matched keypad). */
+.deck-nav { display: flex; justify-content: center; gap: 36px; padding: 4px 0 8px; }
+.deck-nav__action {
+  display: inline-flex; flex-direction: column; align-items: center; gap: 4px;
+  background: none; border: none; color: var(--secondary); cursor: pointer;
+  padding: 8px 22px; border-radius: 12px; -webkit-tap-highlight-color: transparent;
+}
+.deck-nav__action--accent { color: var(--accent); }
+.deck-nav__action:active { background: var(--sel); }
+.deck-nav__label { font-family: var(--mono); font-size: 10px; }
+
+/* Browsing screens clear the Deck nav loadout in custom mode (the standalone bottom nav it replaces is
+   hidden above). The note editor reserves its own taller keypad clearance via .editor__pm--kb, so this
+   only needs to cover the shorter nav row. Approximate height — tune on-device like the 264px keypad. */
+body.deck-custom .shell__main { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+
 /* ── #68 inputmode=none keyboard probe (throwaway, /kbprobe) ──────────────────── */
 .kbprobe { max-width: 680px; margin: 0 auto; padding: 1.5rem 1.25rem; box-sizing: border-box; }
 .kbprobe__back {

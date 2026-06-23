@@ -17,6 +17,7 @@ const SettingsRoute = lazy(() =>
 import { DrawerNav } from './components/DrawerNav.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ThreeRegionShell } from './components/ThreeRegionShell.js';
+import { DeckHostProvider } from './components/DeckHost.js';
 import { useIsDesktop } from './lib/useIsDesktop.js';
 import { useCustomKeyboard } from './lib/useCustomKeyboard.js';
 import { startSyncTriggers, syncNow } from './lib/syncEngine.js';
@@ -223,14 +224,15 @@ function AuthedShell() {
   const isDesktop = useIsDesktop();
   // #69: in custom-keyboard mode (toggle ON, mobile) the standalone universal bottom nav is PERMANENTLY
   // gone — not hidden-while-typing (that flashed it back under Jim's thumb every time the keyboard
-  // dropped). Toggle-driven body class, independent of the keyboard being up/down. (Next slice absorbs
-  // search/new-note into the keyboard surface's 'navigation' context; until then they're intentionally
-  // stranded in custom mode — Jim's call.)
+  // dropped). Toggle-driven body class, independent of the keyboard being up/down. Slice B absorbs
+  // search/new-note into the Deck's 'navigation' loadout (DeckHostProvider, below) — shown while
+  // browsing, swapped for the keypad while editing.
   const [customKbEnabled] = useCustomKeyboard();
+  const customKb = customKbEnabled && !isDesktop;
   useEffect(() => {
-    document.body.classList.toggle('deck-custom', customKbEnabled && !isDesktop);
+    document.body.classList.toggle('deck-custom', customKb);
     return () => { document.body.classList.remove('deck-custom'); };
-  }, [customKbEnabled, isDesktop]);
+  }, [customKb]);
 
   // Load the device-local current notebook from IDB on first mount (with localStorage migration).
   useEffect(() => { void initNotebook(); }, [initNotebook]);
@@ -277,7 +279,10 @@ function AuthedShell() {
   }
 
   // MOBILE / tablet-portrait: single-column, route-driven (note pushes over the list) + bottom-sheet nav.
+  // The Deck (custom-keyboard mode) mounts ONCE here via DeckHostProvider — above <Routes> so it persists
+  // across route changes: the navigation loadout while browsing, the editor's keypad while a note is open.
   return (
+    <DeckHostProvider enabled={customKb}>
     <div className="shell">
       {/* Desktop: left-drawer nav (hidden on mobile via CSS). Mobile: BottomNav below. */}
       <DrawerNav open={navOpen} onClose={() => setNavOpen(false)} />
@@ -343,5 +348,6 @@ function AuthedShell() {
           Leave the slot; do not build the toast here. */}
       <ConflictToastHostSlot />
     </div>
+    </DeckHostProvider>
   );
 }

@@ -1,17 +1,26 @@
 /**
  * #69 Phase 1 slice 2 — the opt-in toggle + real-editor integration. Default OFF: the editor behaves
  * exactly as today (native keyboard, MobileEditorBar, no inputmode). ON: the editor suppresses the
- * native keyboard (inputmode=none) and shows the Deck — driven by the toggle (editor mounted),
- * NOT by editor focus, so incidental tap-blurs / the backplane can't tear it down.
+ * native keyboard (inputmode=none) and PUBLISHES its keypad to the shell-level Deck (slice B —
+ * DeckHostProvider), driven by the toggle (editor mounted), NOT by editor focus, so incidental
+ * tap-blurs / the backplane can't tear it down. (Deck mount + nav loadout: deckNav.render.test.)
  */
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, cleanup, waitFor, act, renderHook, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import type { ReactNode } from 'react';
 import type { BlockBody } from '@deltos/shared';
 import { db } from '../src/db/schema.js';
 import { readCustomKeyboard, writeCustomKeyboard } from '../src/db/kbPointer.js';
 import { useCustomKeyboard, useCustomKeyboardStore } from '../src/lib/useCustomKeyboard.js';
 import { ProseMirrorEditor } from '../src/editor/ProseMirrorEditor.js';
+import { DeckHostProvider } from '../src/components/DeckHost.js';
+
+// Slice B: the Deck mounts at the shell via DeckHostProvider (the editor PUBLISHES its keypad to it,
+// no longer renders it directly). The keypad therefore only appears when the editor is inside the host.
+const inShell = (ui: ReactNode) =>
+  render(<MemoryRouter><DeckHostProvider enabled>{ui}</DeckHostProvider></MemoryRouter>);
 
 beforeEach(async () => {
   await db.deviceState.clear();
@@ -52,7 +61,7 @@ describe('editor integration (mobile)', () => {
 
   it('ON: inputmode=none + Deck keypad (toggle-driven), MobileEditorBar gone', async () => {
     await writeCustomKeyboard(true);
-    render(<ProseMirrorEditor noteId="n2" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
+    inShell(<ProseMirrorEditor noteId="n2" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
     // async read → custom on → view recreated with inputmode=none + the keyboard shown
     await waitFor(() => expect(pmEl()?.getAttribute('inputmode')).toBe('none'));
     await waitFor(() => expect(document.querySelector('.keypad')).not.toBeNull());
@@ -62,7 +71,7 @@ describe('editor integration (mobile)', () => {
 
   it('the keyboard is NOT focus-gated: a blur does not tear it down (#69 drop fix)', async () => {
     await writeCustomKeyboard(true);
-    render(<ProseMirrorEditor noteId="n3" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
+    inShell(<ProseMirrorEditor noteId="n3" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
     await waitFor(() => expect(document.querySelector('.keypad')).not.toBeNull());
     fireEvent.blur(pmEl()!); // a backplane / near-miss tap blurs the editor — must NOT hide the keyboard
     expect(document.querySelector('.keypad')).not.toBeNull();
@@ -70,7 +79,7 @@ describe('editor integration (mobile)', () => {
 
   it('the inert 123 key is a real (non-disabled) button so it preserves focus, not a dismisser', async () => {
     await writeCustomKeyboard(true);
-    render(<ProseMirrorEditor noteId="n4" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
+    inShell(<ProseMirrorEditor noteId="n4" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
     await waitFor(() => expect(document.querySelector('.keypad__key--mode')).not.toBeNull());
     const mode = document.querySelector('.keypad__key--mode') as HTMLButtonElement;
     expect(mode.disabled).toBe(false);                 // NOT disabled (disabled buttons swallow no events)

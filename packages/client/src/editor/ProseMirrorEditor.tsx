@@ -15,9 +15,10 @@ import { TodoItemView } from './nodeviews/TodoItem.js';
 import { sliceToPlainText } from './clipboard.js';
 import { EditorToolbar } from './EditorToolbar.js';
 import { MobileEditorBar } from './MobileEditorBar.js';
-import { Deck, Keypad } from '../deck/index.js';
+import { Keypad } from '../deck/index.js';
 import type { DeckContext, DeckLoadoutRegistry } from '../deck/index.js';
 import { deriveDeckContext, buildPmKeyActions } from './deckAdapter.js';
+import { useDeckHost } from '../components/DeckHost.js';
 import { deriveActiveState, EMPTY_ACTIVE_STATE } from './editorState.js';
 import type { EditorActiveState } from './editorState.js';
 import type { ToolDescriptor } from './editorTools.js';
@@ -100,6 +101,17 @@ export function ProseMirrorEditor({
   // view re-creation). The Deck loadout registry for this host: the 'text' context → the keypad.
   const deckActions = useRef(buildPmKeyActions(() => viewRef.current)).current;
   const deckLoadouts = useMemo<DeckLoadoutRegistry>(() => ({ text: <Keypad actions={deckActions} /> }), [deckActions]);
+
+  // #69 slice B: the Deck no longer lives in the editor — it's mounted once at the app-shell level
+  // (DeckHostProvider) so it persists across routes (keypad while editing, nav loadout while browsing).
+  // The editor PUBLISHES its loadout + live context to the host while a note is open, and withdraws
+  // (null) on unmount → the host falls back to the navigation loadout.
+  const { publishEditor } = useDeckHost();
+  useEffect(() => {
+    if (!customKb) { publishEditor(null); return; }
+    publishEditor({ context: deckContext, loadouts: deckLoadouts });
+    return () => publishEditor(null);
+  }, [customKb, deckContext, deckLoadouts, publishEditor]);
 
   // Keep onChange and onLeave in refs so they're always current without re-running the effect.
   const onChangeRef = useRef(onChange);
@@ -251,10 +263,9 @@ export function ProseMirrorEditor({
       {/* Desktop: registry-driven formatting toolbar at the top (slice C). */}
       {isDesktop && <EditorToolbar active={active} run={runTool} />}
       <div ref={containerRef} className={`editor__pm${customKb ? ' editor__pm--kb' : ''}`} />
-      {/* Mobile, custom keyboard ON: the context-driven keyboard footprint owns the bottom while a note
-          is open (driven by the toggle, NOT editor focus — focus-gating let incidental tap-blurs + the
-          backplane tear it down). #69. */}
-      {customKb && <Deck context={deckContext} loadouts={deckLoadouts} />}
+      {/* Mobile, custom keyboard ON: the Deck (mounted at the shell via DeckHostProvider) owns the bottom
+          slot; the editor publishes its keypad loadout + live context to it (see the publishEditor effect
+          above), so it persists across routes and isn't torn down by incidental tap-blurs. #69 slice B. */}
       {/* Mobile, custom keyboard OFF: today's grouped contextual bar + native keyboard (slice D). */}
       {!isDesktop && !customKb && (
         <MobileEditorBar active={active} run={runTool} onUndo={handleUndo} onRedo={handleRedo} />
