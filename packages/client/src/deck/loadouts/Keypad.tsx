@@ -99,6 +99,12 @@ export function Keypad({ actions }: KeypadProps) {
         <button type="button" className="keypad__key keypad__key--space" aria-label="Space" onPointerDown={press(() => actions.insert(' '))}><span className="keypad__face">space</span></button>
         <button type="button" className="keypad__key keypad__key--fn keypad__key--return" aria-label="Return" onPointerDown={press(() => actions.enter())}><span className="keypad__face">⏎</span></button>
       </div>
+      {/* The keypad-positioning band (#369/#370 → #384): a constant-height layer BELOW the keys that
+          restores the ~47pt the native keyboard reserves for its emoji/mic utility row, anchoring the keys
+          at the native vertical position. It travels WITH the keypad (layer model §0.6) — a keypad-bearing
+          loadout carries it; loadouts without keys (nav) sit flush. Empty now; the editor loadout's group
+          selector fills this layer later, and its constant height means the keys never shift when filled. */}
+      <div className="keypad__slot" />
     </div>
   );
 }

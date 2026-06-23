@@ -84,6 +84,14 @@ describe('Keypad — structure + typing (editor loadout, abstract actions)', () 
     expect(mode.disabled).toBe(false);
     expect(mode.className).toContain('keypad__key--inert');
   });
+
+  it('carries its constant-height positioning band as the last layer (travels with the keypad — #369/#384)', () => {
+    mountKeypad();
+    const slot = document.querySelector('.keypad > .keypad__slot');
+    expect(slot).not.toBeNull();
+    // It's the LAST child of the keypad (below row 4) so the band sits beneath the keys.
+    expect(document.querySelector('.keypad')!.lastElementChild).toBe(slot);
+  });
 });
 
 describe('Deck — context-driven surface', () => {
@@ -100,12 +108,11 @@ describe('Deck — context-driven surface', () => {
     const { container } = render(<Deck context="node:widget" loadouts={{ text: <div /> }} />);
     expect(container.firstChild).toBeNull();
   });
-  it('reserves a constant-height bottom slot whenever a loadout is shown (keys never shift — #369/#370)', () => {
-    render(<Deck context="text" loadouts={{ text: <div data-testid="lo">keypad</div> }} />);
-    // The slot is a sibling of the loadout content, always present so the loadout sits at a fixed height.
-    const slot = document.querySelector('.deck > .deck__slot');
-    expect(slot).not.toBeNull();
+  it('adds NO positioning band of its own — a key-less loadout sits flush (#384)', () => {
+    // The band travels with the keypad, not the Deck surface: a non-keypad loadout has no .keypad__slot.
+    render(<Deck context="text" loadouts={{ text: <div data-testid="lo">flush</div> }} />);
     expect(document.querySelector('[data-testid="lo"]')).not.toBeNull();
+    expect(document.querySelector('.keypad__slot')).toBeNull();
   });
 });
 

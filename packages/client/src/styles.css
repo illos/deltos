@@ -2222,8 +2222,9 @@ body.deck-custom .bottom-nav { display: none; }
 
 /* Browsing screens clear the Deck nav loadout in custom mode (the standalone bottom nav it replaces is
    hidden above). The note editor reserves its own taller keypad clearance via .editor__pm--kb, so this
-   only needs to cover the shorter nav row + the 47px reserved slot. Approximate — tune on-device. */
-body.deck-custom .shell__main { padding-bottom: calc(131px + env(safe-area-inset-bottom)); }
+   only needs to cover the shorter nav row (the nav loadout has NO keypad band — it sits flush, #384).
+   Approximate — tune on-device. */
+body.deck-custom .shell__main { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 
 /* ── #68 inputmode=none keyboard probe (throwaway, /kbprobe) ──────────────────── */
 .kbprobe { max-width: 680px; margin: 0 auto; padding: 1.5rem 1.25rem; box-sizing: border-box; }

@@ -63,12 +63,13 @@
    events → can't preventDefault → blur the editor). Same element/handlers as live keys. */
 .keypad__key--inert .keypad__face { opacity: 0.5; }
 
-/* The reserved bottom SLOT (#369/#370) — a CONSTANT-height band below the loadout, above the Deck's
-   safe-area pad. Empty now (restores the ~47pt the native keyboard reserves for its emoji/mic utility
-   row, so the keypad's vertical position matches); a loadout fills it later (slice C group selector).
-   Height is FIXED regardless of fill → keys never shift. Pinned px = a Deck geometry invariant (like the
-   keypad), tunable in one place via the overlay diff. Centers any future content. */
-.deck__slot {
+/* The keypad-positioning band (#369/#370 → #384) — a CONSTANT-height layer below the keys (last child of
+   .keypad), above the Deck's safe-area pad. It travels WITH the keypad (layer model §0.6): keypad-bearing
+   loadouts carry it, key-less loadouts (nav) sit flush. Empty now (restores the ~47pt the native keyboard
+   reserves for its emoji/mic utility row, so the keys land at the native vertical position); the editor
+   loadout's group selector fills it later — FIXED height regardless of fill → keys never shift. Pinned px
+   = a geometry invariant (like the keypad), tunable in one place via the overlay diff. Centers content. */
+.keypad__slot {
   height: 47px; flex: 0 0 47px;
   display: flex; align-items: center; justify-content: center;
 }

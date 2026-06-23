@@ -47,6 +47,8 @@ describe('DeckHostProvider — shell-level Deck + navigation loadout', () => {
     expect(navAction('New note')).not.toBeNull();
     expect(navAction('Search')).not.toBeNull();
     expect(document.querySelector('.keypad')).toBeNull();
+    // The nav loadout has NO keypad → sits flush, no 47px positioning band (#384).
+    expect(document.querySelector('.keypad__slot')).toBeNull();
   });
 
   it('mounts NOTHING when disabled (non-custom mode)', () => {

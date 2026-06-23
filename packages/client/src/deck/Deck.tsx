@@ -27,13 +27,9 @@ export function Deck({ context, loadouts }: DeckProps) {
       aria-label="Controls"
       onPointerDown={(e) => e.preventDefault()}
     >
+      {/* The loadout places its own layers (layer model §0.6) — e.g. the keypad carries its positioning
+          band, the nav loadout sits flush. The Deck core just hosts whichever loadout the context selects. */}
       {loadout}
-      {/* The reserved bottom SLOT — a constant-height band below the loadout. ALWAYS present whenever the
-          Deck is shown, so the loadout's controls sit at a fixed vertical position: a loadout MAY fill the
-          slot (the editor loadout's group selector, slice C) or leave it empty, but the height never
-          changes → the keys NEVER shift between states. Empty, it restores the band the native iOS keyboard
-          reserves for its emoji/mic utility row, matching the keypad's vertical geometry (#369/#370). */}
-      <div className="deck__slot" />
     </div>
   );
 }
