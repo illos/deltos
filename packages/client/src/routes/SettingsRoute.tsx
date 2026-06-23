@@ -17,6 +17,7 @@ import type { TotpSetupResult, TotpVerifyResult, TotpDisableResult } from '../au
 import { PhraseStep } from '../components/PhraseStep.js';
 import { AppearanceSection } from '../components/AppearanceSection.js';
 import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
+import { useSpellcheck } from '../lib/useSpellcheck.js';
 import type { SessionState } from '../auth/store.js';
 
 function sessionLabel(s: SessionState): string {
@@ -52,6 +53,7 @@ export function SettingsRoute() {
 
   const navigate = useNavigate();
   const [customKeyboard, setCustomKeyboard] = useCustomKeyboard();
+  const [spellcheck, setSpellcheck] = useSpellcheck();
   const [view, setView] = useState<View>({ tag: 'list' });
 
   // ── Sign out ─────────────────────────────────────────────────────────────
@@ -464,6 +466,19 @@ export function SettingsRoute() {
           <span className="settings__row-label">Custom keyboard (experimental)</span>
           <span className={`settings__row-value${customKeyboard ? '' : ' settings__row-value--muted'}`}>
             {customKeyboard ? 'On' : 'Off'}
+          </span>
+        </button>
+        {/* #69 §5 local spellcheck — default ON, device-local. ON = live squiggles + tap-to-correct (engine
+            loads off-thread on demand); OFF = no squiggles, engine never loads. */}
+        <button
+          className="settings__row settings__row--btn"
+          role="switch"
+          aria-checked={spellcheck}
+          onClick={() => setSpellcheck(!spellcheck)}
+        >
+          <span className="settings__row-label">Spellcheck</span>
+          <span className={`settings__row-value${spellcheck ? '' : ' settings__row-value--muted'}`}>
+            {spellcheck ? 'On' : 'Off'}
           </span>
         </button>
       </section>

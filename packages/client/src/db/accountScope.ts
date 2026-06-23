@@ -12,8 +12,9 @@ import { useNotebookStore } from '../lib/notebookStore.js';
  *   - 'appearance-theme' = the UI-refresh theme preference (lands when the ui-refresh branch
  *     integrates; harmless to preserve before then — it's just a no-op on a build without it).
  *   - 'custom-keyboard' = the #69 custom-keyboard opt-in — a per-device preference, not account data.
+ *   - 'spellcheck' = the #69 §5 local-spellcheck toggle — a per-device preference, not account data.
  */
-const DEVICE_GLOBAL_DEVICE_KEYS: readonly string[] = ['appearance-theme', 'custom-keyboard'];
+const DEVICE_GLOBAL_DEVICE_KEYS: readonly string[] = ['appearance-theme', 'custom-keyboard', 'spellcheck'];
 
 /**
  * #52 client tenancy — OPTION B (clear-on-account-change). PROTOTYPE (secSys-review-pending, not shipped).

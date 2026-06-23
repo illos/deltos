@@ -239,7 +239,8 @@ describe('ST-R6 — 2FA on: Disable → code entry → disableTotp(code) → bac
     await mountSettings();
 
     await waitFor(() => {
-      expect(screen.queryByText('On')).not.toBeNull();
+      // At least one 'On' status (the 2FA one; the #69 §5 spellcheck toggle also defaults to 'On').
+      expect(screen.queryAllByText('On').length).toBeGreaterThan(0);
     });
 
     expect(screen.queryByRole('button', { name: /disable 2fa/i })).not.toBeNull();
