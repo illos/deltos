@@ -24,6 +24,7 @@ import { createSpellcheckPlugin, applySpellCorrection } from './spellcheckPlugin
 import type { SpellTap } from './spellcheckPlugin.js';
 import { SpellSuggestionPopover } from './SpellSuggestionPopover.js';
 import { SpellSuggestionBar } from './SpellSuggestionBar.js';
+import { openLinkInNewTab } from './openLink.js';
 import { useSpellcheckStore } from '../lib/useSpellcheck.js';
 import type { SpellEngine } from '../deck/index.js';
 import { deriveActiveState, EMPTY_ACTIVE_STATE } from './editorState.js';
@@ -324,6 +325,19 @@ export function ProseMirrorEditor({
       // change (iOS fires blur during the swipe-back gesture, ~300ms before navigation
       // completes — enough lead time for IndexedDB to finish before the list mounts).
       handleDOMEvents: {
+        // Links open in a NEW TAB on click (#69 links fix): the editable is always-on, so a plain <a>
+        // click just placed the caret. Open a safe-scheme href instead (preventDefault + handled = don't
+        // place the caret / navigate the app). Drag-select doesn't fire 'click', so editing a link still
+        // works (drag across it → Link toolbar toggles/removes). Works desktop + custom-keyboard mode.
+        click: (_view, event) => {
+          const a = (event.target as HTMLElement | null)?.closest('a[href]');
+          if (!a) return false;
+          if (openLinkInNewTab(a.getAttribute('href'))) {
+            event.preventDefault();
+            return true;
+          }
+          return false; // unsafe scheme (javascript:/data:/…) → ignore, don't open
+        },
         // #69 C-manual auto-show: returning focus to the note re-shows the keypad — UNLESS locked (lock
         // suspends auto). A manual hide stays hidden until the next focus-in or a manual show-tap.
         focus: () => {

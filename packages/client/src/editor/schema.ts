@@ -225,8 +225,15 @@ export const deltoSchema = new Schema({
           },
         },
       ],
+      // target/rel: links open in a new tab (deltos is a PWA — never navigate the app away); rel hardens
+      // the new context (no window.opener, no referrer). The click-to-open is wired in ProseMirrorEditor.
       toDOM: (node) =>
-        ['a', { href: node.attrs.href as string, title: node.attrs.title as string | null }, 0] as const,
+        ['a', {
+          href: node.attrs.href as string,
+          title: node.attrs.title as string | null,
+          target: '_blank',
+          rel: 'noopener noreferrer',
+        }, 0] as const,
     },
   },
 });
