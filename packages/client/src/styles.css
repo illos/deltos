@@ -2252,10 +2252,23 @@ a.auth__link { display: inline; }
 .elt-groups  { display: flex; align-items: center; gap: 20px; flex: 1 1 auto; min-width: 0; }
 .elt-history { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; }
 /* Per-group submenu — a layer ABOVE the keys (grows the Deck upward; keys never move). In restyle mode
-   (keypad hidden) it sits directly above the selector row. Matches the mbar sub-row look. */
+   (keypad hidden) it sits directly above the selector row. Matches the mbar sub-row look.
+   margin-top cancels the Deck's 10px top padding so the submenu sits FLUSH to the dock top (Jim feel-test):
+   scoped to the submenu only, so the keypad-only case keeps its top spacing. (Coupled to .deck padding-top.) */
 .elt-sub {
   display: flex; justify-content: space-around; align-items: center; gap: 4px;
   background: var(--sel); border-bottom: 1px solid var(--border); padding: 9px 14px;
+  margin-top: -10px;
+}
+/* Tap targets (Jim feel-test): the selector + submenu buttons reuse the small .editor__mgroup/.editor__mtool
+   sizing — too small to hit reliably in the Deck. Inside the Deck loadout layers ONLY (scoped by .elt-*
+   ancestors so MobileEditorBar's native-keyboard bar is untouched), enlarge the HIT AREA to a comfortable
+   ~44px thumb target with generous horizontal padding; the visible glyph keeps its size (hit-cell-bigger-
+   than-face, like the keypad). */
+.elt-groups .editor__mgroup,
+.elt-history .editor__mtool,
+.elt-sub .editor__mtool {
+  min-height: 44px; min-width: 44px; padding: 4px 14px;
 }
 /* In custom-keyboard mode (toggle ON, mobile) the standalone universal bottom nav is PERMANENTLY gone —
    AuthedShell toggles body.deck-custom from the opt-in flag, NOT the Deck's up/down (which flashed the nav
