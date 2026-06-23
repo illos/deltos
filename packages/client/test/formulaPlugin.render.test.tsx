@@ -184,6 +184,46 @@ describe('formula framework — custom-keyboard insert path (deckAdapter dual-wi
   });
 });
 
+// Formula type #2 (hexcolor) end-to-end — proves the framework dispatches to a SECOND type with a
+// different (visual) output kind, additively, via the same bracket path.
+const swatch = (v: EditorView) => (v.dom.parentElement ?? document).querySelector('.formula-swatch') as HTMLElement | null;
+
+describe('formula framework — hexcolor type via the bracket path (proof of generality)', () => {
+  it('[#FF5733] becomes a hexcolor formula rendering a colored swatch (not math)', () => {
+    const v = mountWithText('[#FF5733');
+    type(v, ']');
+    expect(formulaType(v)).toBe('hexcolor');
+    expect(formulaSpec(v)).toBe('#FF5733');
+    const s = swatch(v);
+    expect(s).not.toBeNull();
+    expect(s!.style.backgroundColor).toBe('rgb(255, 87, 51)'); // #ff5733
+  });
+
+  it('[#abc] (3-digit) also resolves to a swatch', () => {
+    const v = mountWithText('[#abc');
+    type(v, ']');
+    expect(formulaType(v)).toBe('hexcolor');
+    expect(swatch(v)!.style.backgroundColor).toBe('rgb(170, 187, 204)'); // #aabbcc
+  });
+
+  it('the swatch updates live as the hex spec is edited', () => {
+    const v = mountWithText('[#000000');
+    type(v, ']');
+    expect(swatch(v)!.style.backgroundColor).toBe('rgb(0, 0, 0)');
+    // edit the last two spec chars 00 → ff (replace inside the formula node's content)
+    let specEnd = 0;
+    v.state.doc.descendants((node, pos) => { if (node.type.name === 'formula') specEnd = pos + node.nodeSize - 1; });
+    v.dispatch(v.state.tr.insertText('ff', specEnd - 2, specEnd));
+    expect(swatch(v)!.style.backgroundColor).toBe('rgb(0, 0, 255)'); // #0000ff
+  });
+
+  it('a math expression still routes to math, not hexcolor (registry order)', () => {
+    const v = mountWithText('[1 + 1');
+    type(v, ']');
+    expect(formulaType(v)).toBe('math');
+  });
+});
+
 describe('formula framework — spine round-trip + legacy upgrade', () => {
   it('a formula node survives pmDocToSpine → spineToPmDoc (spec + type; result never stored)', () => {
     const body: BlockBody = [{

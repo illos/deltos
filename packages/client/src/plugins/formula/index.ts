@@ -5,15 +5,17 @@
  */
 import { createFormulaRegistry, type FormulaRegistry } from './formulaTypes.js';
 import { mathType } from '../math/mathType.js';
+import { hexColorType } from '../hexcolor/hexColorType.js';
 
 /**
- * The default formula registry — Phase 1 ships MATH as the only registered type. Loadout-AWARE by
- * construction: a future plugin loadout (e.g. a TTRPG loadout adding dice) builds its own registry with a
- * different type set; nothing here hardcodes a single global set.
+ * The default formula registry — MATH (text/number output) + HEXCOLOR (visual swatch output). Both are
+ * tiny (no dict/heavy deps), so static registration adds negligible bundle. Loadout-AWARE by construction:
+ * a future plugin loadout (e.g. a TTRPG loadout adding dice) builds its own registry with a different set.
  */
 export function createDefaultFormulaRegistry(): FormulaRegistry {
   const registry = createFormulaRegistry();
   registry.register(mathType);
+  registry.register(hexColorType);
   return registry;
 }
 

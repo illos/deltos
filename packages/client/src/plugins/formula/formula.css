@@ -36,8 +36,18 @@
   color: var(--accent, var(--ink));
 }
 
-/* Div-by-zero / malformed (math) → a SUBTLE error state (no crash, no loud styling). */
+/* Div-by-zero / malformed (math) / invalid hex → a SUBTLE error state (no crash, no loud styling). */
 .formula-output--error {
   color: var(--secondary);
   opacity: 0.55;
+}
+
+/* hexcolor type — the VISUAL output kind: a small filled swatch in the color, inside the unified pill. */
+.formula-swatch {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  vertical-align: -0.1em;
 }
