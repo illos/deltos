@@ -33,6 +33,7 @@ import { SpellSuggestionPopover } from './SpellSuggestionPopover.js';
 import { SpellSuggestionBar } from './SpellSuggestionBar.js';
 import { openLinkInNewTab, normalizeLinkInput } from './openLink.js';
 import { LinkEntryBar } from './LinkEntryBar.js';
+import type { LinkField } from './LinkEntryBar.js';
 import { useSpellcheckStore } from '../lib/useSpellcheck.js';
 import { observeWords, addWord } from '../lib/dictionaryStore.js';
 import { useVoiceMode, VoiceLoadout, isAudioCaptureSupported } from '../deck/index.js';
@@ -174,61 +175,77 @@ export function ProseMirrorEditor({
   // The keypad's abstract KeyActions, wired to PM via the adapter (closes over viewRef → stable across
   // view re-creation). The Deck loadout registry for this host: the 'text' context → the keypad.
   const deckActions = useRef(buildPmKeyActions(() => viewRef.current, formulaRegistry)).current;
-  // #69 Deck link fix: inline URL entry typed ON THE KEYPAD (window.prompt is unreliable in an installed
-  // PWA / inputmode=none). While linkEntry is open the keypad routes into linkUrl (see deckActionsForKeypad);
-  // the saved selection range is where the link applies on submit. linkEntryRef/linkUrlRef give the (stable)
-  // wrapped actions live access without rebuilding them.
-  const [linkEntry, setLinkEntry] = useState<{ from: number; to: number } | null>(null);
+  // #69 Deck link fix: inline URL+TITLE entry typed ON THE KEYPAD (window.prompt is unreliable in an
+  // installed PWA / inputmode=none). A clean two-field form (Title = the visible clickable text, URL = the
+  // href) — drops the old select-text model. While open, the keypad routes into whichever field is active
+  // (see deckActionsForKeypad); apply inserts the linked title text at the caret. The url+title GUI is the
+  // forward-compatible seed of the #62 params form (rep migrates mark → [url:title=…] node, form stays).
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkTitle, setLinkTitle] = useState('');
   const [linkUrl, setLinkUrl] = useState('');
-  const linkEntryRef = useRef(linkEntry);
+  const [activeLinkField, setActiveLinkField] = useState<LinkField>('title');
+  const linkOpenRef = useRef(linkOpen);
+  const linkTitleRef = useRef(linkTitle);
   const linkUrlRef = useRef(linkUrl);
-  useLayoutEffect(() => { linkEntryRef.current = linkEntry; linkUrlRef.current = linkUrl; });
-  const cancelLink = useCallback(() => {
-    setLinkEntry(null);
-    setLinkUrl('');
-    viewRef.current?.focus();
+  const activeLinkFieldRef = useRef(activeLinkField);
+  useLayoutEffect(() => {
+    linkOpenRef.current = linkOpen;
+    linkTitleRef.current = linkTitle;
+    linkUrlRef.current = linkUrl;
+    activeLinkFieldRef.current = activeLinkField;
+  });
+  const closeLink = useCallback(() => {
+    setLinkOpen(false); setLinkTitle(''); setLinkUrl(''); setActiveLinkField('title');
   }, []);
+  const cancelLink = useCallback(() => { closeLink(); viewRef.current?.focus(); }, [closeLink]);
   const submitLink = useCallback(() => {
-    const entry = linkEntryRef.current;
     const view = viewRef.current;
-    setLinkEntry(null);
-    setLinkUrl('');
-    if (!entry || !view) return;
+    const wasOpen = linkOpenRef.current;
     const href = normalizeLinkInput(linkUrlRef.current); // null = empty / unsafe scheme → drop
+    const text = (linkTitleRef.current.trim() || linkUrlRef.current.trim());
+    closeLink();
+    if (!wasOpen || !view) return;
     const linkType = deltoSchema.marks['link'];
-    if (href && linkType) {
-      const { from, to } = entry;
-      if (from < to) {
-        view.dispatch(view.state.tr.addMark(from, to, linkType.create({ href, title: null })));
-      } else {
-        // No selection → insert the typed URL as linked text at the caret.
-        const text = linkUrlRef.current.trim();
-        const tr = view.state.tr.insertText(text, from);
-        tr.addMark(from, from + text.length, linkType.create({ href, title: null }));
-        view.dispatch(tr);
-      }
+    if (href && text && linkType) {
+      // Insert the title as linked text at the caret (replacing any selection).
+      const { from, to } = view.state.selection;
+      const tr = view.state.tr.insertText(text, from, to);
+      tr.addMark(from, from + text.length, linkType.create({ href, title: null }));
+      view.dispatch(tr);
     }
     view.focus();
-  }, []);
+  }, [closeLink]);
   const submitLinkRef = useRef(submitLink);
   useLayoutEffect(() => { submitLinkRef.current = submitLink; });
-  // Wrap the keypad actions so that WHILE link entry is open, keys route into the URL buffer (no native
-  // keyboard) instead of the document. Built once; preserves which OPTIONAL capabilities the base actions
-  // expose (so trackpad / auto-cap / double-space aren't spuriously enabled by the wrapper).
+  // Wrap the keypad actions so that WHILE link entry is open, keys route into the ACTIVE field's buffer (no
+  // native keyboard) instead of the document; Enter advances Title→URL, then applies. Built once; preserves
+  // which OPTIONAL capabilities the base actions expose (so trackpad / auto-cap / double-space aren't
+  // spuriously enabled by the wrapper).
   const deckActionsForKeypad = useRef<KeyActions>((() => {
+    const editActive = (fn: (s: string) => string) => {
+      if (activeLinkFieldRef.current === 'url') setLinkUrl(fn); else setLinkTitle(fn);
+    };
     const wrapped: KeyActions = {
-      insert: (t) => { if (linkEntryRef.current) setLinkUrl((u) => u + t); else deckActions.insert(t); },
-      backspace: () => { if (linkEntryRef.current) setLinkUrl((u) => u.slice(0, -1)); else deckActions.backspace(); },
-      enter: () => { if (linkEntryRef.current) submitLinkRef.current(); else deckActions.enter(); },
+      insert: (t) => { if (linkOpenRef.current) editActive((s) => s + t); else deckActions.insert(t); },
+      backspace: () => { if (linkOpenRef.current) editActive((s) => s.slice(0, -1)); else deckActions.backspace(); },
+      enter: () => {
+        if (!linkOpenRef.current) { deckActions.enter(); return; }
+        if (activeLinkFieldRef.current === 'title') setActiveLinkField('url'); // advance Title → URL
+        else submitLinkRef.current();                                          // URL → apply
+      },
     };
     if (deckActions.sentenceSpace) {
-      wrapped.sentenceSpace = () => { if (linkEntryRef.current) setLinkUrl((u) => `${u} `); else deckActions.sentenceSpace!(); };
+      wrapped.sentenceSpace = () => { if (linkOpenRef.current) editActive((s) => `${s} `); else deckActions.sentenceSpace!(); };
     }
     if (deckActions.shouldAutoCapitalize) {
-      wrapped.shouldAutoCapitalize = () => (linkEntryRef.current ? false : deckActions.shouldAutoCapitalize!());
+      // Don't auto-capitalize the URL; the Title may capitalize normally.
+      wrapped.shouldAutoCapitalize = () => {
+        if (!linkOpenRef.current) return deckActions.shouldAutoCapitalize!();
+        return activeLinkFieldRef.current === 'title';
+      };
     }
     if (deckActions.moveCaret) {
-      wrapped.moveCaret = (dx, dy) => { if (!linkEntryRef.current) deckActions.moveCaret!(dx, dy); };
+      wrapped.moveCaret = (dx, dy) => { if (!linkOpenRef.current) deckActions.moveCaret!(dx, dy); };
     }
     return wrapped;
   })()).current;
@@ -288,18 +305,11 @@ export function ProseMirrorEditor({
     const view = viewRef.current;
     if (!view) return;
     // Deck link: window.prompt (the default linkCommand path) is unreliable in an installed PWA → open the
-    // inline URL entry instead. (Desktop keeps the prompt path — customKb is false there.) If the selection
-    // already carries a link, toggle it off (no URL needed), matching linkCommand.
+    // inline URL+Title form instead. (Desktop keeps the prompt path until the desktop-Deck migration —
+    // customKb is false there.) Clean creation form: type title + url → inserts the linked title at the caret.
     if (tool.id === 'link' && customKb) {
-      const { from, to, empty } = view.state.selection;
-      const linkType = deltoSchema.marks['link'];
-      if (!empty && linkType && view.state.doc.rangeHasMark(from, to, linkType)) {
-        view.dispatch(view.state.tr.removeMark(from, to, linkType));
-        view.focus();
-        return;
-      }
-      setLinkUrl('');
-      setLinkEntry({ from, to });
+      setLinkTitle(''); setLinkUrl(''); setActiveLinkField('title');
+      setLinkOpen(true);
       return;
     }
     tool.command(deltoSchema)(view.state, view.dispatch);
@@ -362,8 +372,15 @@ export function ProseMirrorEditor({
           topSlot={
             // ONE occupant of the top slot, by precedence: link URL entry (an active modal interaction) >
             // spell suggestion bar > open formatting submenu. §5.1.
-            linkEntry ? (
-              <LinkEntryBar url={linkUrl} onSubmit={submitLink} onCancel={cancelLink} />
+            linkOpen ? (
+              <LinkEntryBar
+                title={linkTitle}
+                url={linkUrl}
+                activeField={activeLinkField}
+                onFocusField={setActiveLinkField}
+                onSubmit={submitLink}
+                onCancel={cancelLink}
+              />
             ) : spellSuggest ? (
               <SpellSuggestionBar
                 word={spellSuggest.word}
@@ -378,7 +395,7 @@ export function ProseMirrorEditor({
         />
       ),
     }),
-    [deckActionsForKeypad, keypadShown, locked, toggleKeypad, toggleLock, activeGroup, toggleGroup, active, handleUndo, handleRedo, runTool, linkEntry, linkUrl, submitLink, cancelLink, spellSuggest, handleSpellPick, handleAddToDictionary, voiceState, voiceStream, voiceDraft, voiceStart, voiceStop, micSupported],
+    [deckActionsForKeypad, keypadShown, locked, toggleKeypad, toggleLock, activeGroup, toggleGroup, active, handleUndo, handleRedo, runTool, linkOpen, linkTitle, linkUrl, activeLinkField, submitLink, cancelLink, spellSuggest, handleSpellPick, handleAddToDictionary, voiceState, voiceStream, voiceDraft, voiceStart, voiceStop, micSupported],
   );
 
   // #69 slice B: the Deck mounts once at the app-shell level (DeckHostProvider) so it persists across

@@ -2359,9 +2359,9 @@ body.deck-custom .bottom-nav { display: none; }
 }
 .spell-bar__add:active { background: var(--accent); color: var(--paper); }
 
-/* #69 Deck link entry — the TOP-SLOT inline URL field (sibling occupant of the spell bar / submenu). The
-   URL is typed on the Deck keypad (no native keyboard); this row shows the buffer + apply/cancel. Matches
-   the spell-bar look. */
+/* #69 Deck link entry — the TOP-SLOT inline URL+Title form (sibling occupant of the spell bar / submenu).
+   Both fields are typed on the Deck keypad (no native keyboard); tap a field to focus it. Matches the
+   spell-bar look. The active field is accent-outlined + carries the blinking caret. */
 .link-entry-bar {
   display: flex; flex-direction: row; align-items: center; gap: 8px;
   padding: 8px 12px; background: var(--sel); border-bottom: 1px solid var(--border);
@@ -2376,17 +2376,21 @@ body.deck-custom .bottom-nav { display: none; }
 .link-entry-bar__apply { color: var(--accent); font-weight: 700; }
 .link-entry-bar__apply:disabled { color: var(--secondary); opacity: 0.5; cursor: default; }
 .link-entry-bar__btn:not(:disabled):active { background: var(--accent); color: var(--paper); }
-/* The field grows to fill; URL in mono, ellipsised; placeholder dimmed. */
+/* Each field grows to share the row; value ellipsised, placeholder dimmed; active = accent ring. */
 .link-entry-bar__field {
-  flex: 1 1 auto; min-width: 0; display: flex; align-items: center;
-  background: var(--list); border-radius: 10px; padding: 0 12px; min-height: 40px; overflow: hidden;
+  flex: 1 1 0; min-width: 0; display: flex; align-items: center;
+  background: var(--list); border: 1px solid transparent; border-radius: 10px;
+  padding: 0 10px; min-height: 40px; overflow: hidden; cursor: text;
+  -webkit-tap-highlight-color: transparent;
 }
-.link-entry-bar__url {
-  font-family: var(--mono); font-size: 16px; color: var(--ink); /* ≥16px = no iOS zoom (display only, but keep) */
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; /* keep the tail (path) visible */
+.link-entry-bar__field--active { border-color: var(--accent); }
+.link-entry-bar__value {
+  flex: 1 1 auto; min-width: 0;
+  font-family: var(--mono); font-size: 16px; color: var(--ink); /* ≥16px = no iOS zoom */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .link-entry-bar__placeholder { font-family: var(--ff); font-size: 15px; color: var(--secondary); }
-/* A blinking caret after the URL so it reads as a live input fed by the keypad. */
+/* A blinking caret in the active field so it reads as a live input fed by the keypad. */
 .link-entry-bar__caret {
   flex: 0 0 auto; width: 2px; height: 20px; margin-left: 2px; background: var(--accent);
   animation: link-entry-caret-blink 1s step-end infinite;
