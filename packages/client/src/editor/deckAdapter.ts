@@ -3,6 +3,7 @@ import { NodeSelection, TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { baseKeymap, deleteSelection, joinBackward } from 'prosemirror-commands';
 import type { DeckContext, KeyActions } from '../deck/index.js';
+import { unwrapMathBackspace } from '../plugins/math/mathPlugin.js';
 
 /**
  * The deltos↔Deck ADAPTER (#69 §0.5). ALL ProseMirror-specific code lives here, never in Deck core: the
@@ -36,6 +37,9 @@ export function buildPmKeyActions(getView: () => EditorView | null): KeyActions 
     // Own the char-delete: baseKeymap.Backspace only joins at block boundaries (the native keyboard did
     // mid-text delete), and inputmode=none suppressed the native keyboard — so the keypad owns it.
     backspace: () => run((v) => {
+      // Inline-math (§7-adjacent): a backspace at a math chip's right edge unwraps it to plain text first
+      // (the custom keyboard bypasses the keymap, so the unwrap command is shared here too).
+      if (unwrapMathBackspace(v.state, v.dispatch)) return;
       const { selection } = v.state;
       if (!selection.empty) { deleteSelection(v.state, v.dispatch); return; }
       if (selection.$from.parentOffset > 0) { v.dispatch(v.state.tr.delete(selection.from - 1, selection.from)); return; }

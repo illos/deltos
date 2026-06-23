@@ -1,0 +1,31 @@
+/* Inline-math chip (docs/specs/inline-math.md §1 — Jim's "<> code tags" = the mono look). The expression
+   is the `math`-marked text; the "= result" is a derived, non-editable decoration widget after it.
+   Consumes the host theme tokens (no hardcoded colour), same contract as the Deck / embeds styles. */
+
+/* The expression — inline mono, subtly chipped so it reads as "live math", distinct from plain code. */
+.math-expr {
+  font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+  background: var(--list);
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
+/* The derived result " = N" — mono, muted lead-in; the VALUE emphasized (bold + accent). Non-editable
+   widget (the engine recomputes it on every edit), so it never takes the caret or selection. */
+.math-result {
+  font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+  color: var(--secondary);
+  white-space: pre;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.math-result__value {
+  font-weight: 700;
+  color: var(--accent, var(--ink));
+}
+
+/* Div-by-zero / malformed → a SUBTLE error state (no crash, no loud styling). */
+.math-result--error {
+  color: var(--secondary);
+  opacity: 0.55;
+}

@@ -183,6 +183,15 @@ export const deltoSchema = new Schema({
       parseDOM: [{ tag: 'code' }],
       toDOM: () => ['code', 0] as const,
     },
+    // Inline-math expression (docs/specs/inline-math.md) — DISTINCT from `code` so ordinary inline code is
+    // never auto-evaluated; only the '=' trigger creates this mark. The marked text IS the expression (the
+    // persisted source of truth); the live "= result" is a derived DECORATION (mathPlugin), never stored.
+    // inclusive:false → typing past the chip's edge is plain text, not more math.
+    math: {
+      inclusive: false,
+      parseDOM: [{ tag: 'span[data-math]' }],
+      toDOM: () => ['span', { 'data-math': 'true', class: 'math-expr' }, 0] as const,
+    },
     // Mark order matters for serialization stability — these three append after `code`, before `link`
     // (link stays last with inclusive:false so it doesn't extend on typing). Schema key for strike is
     // `strikethrough`; the UI `data-cmd="strike"` is just an id that command code maps to this mark.

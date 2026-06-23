@@ -16,6 +16,7 @@ export interface TextSegment {
   underline?: true;   // NEW
   strike?: true;      // NEW — maps the schema mark 'strikethrough'
   highlight?: true;   // NEW
+  math?: true;        // NEW — inline-math expression (the marked text is the persisted source of truth)
   link?: string; // href
 }
 
@@ -49,6 +50,7 @@ export function isTextSegment(x: unknown): x is TextSegment {
   if ('underline' in o && o['underline'] !== true) return false;
   if ('strike' in o && o['strike'] !== true) return false;
   if ('highlight' in o && o['highlight'] !== true) return false;
+  if ('math' in o && o['math'] !== true) return false;
   if ('link' in o && !isString(o['link'])) return false;
   // Forward-compatible: unknown future flags are ignored, not rejected.
   return true;
@@ -133,6 +135,7 @@ function inlineToSegments(node: PmNode): TextSegment[] {
     if (child.marks.some((m) => m.type.name === 'underline'))     seg.underline = true;
     if (child.marks.some((m) => m.type.name === 'strikethrough')) seg.strike    = true;
     if (child.marks.some((m) => m.type.name === 'highlight'))     seg.highlight = true;
+    if (child.marks.some((m) => m.type.name === 'math'))          seg.math      = true;
     const linkMark = child.marks.find((m) => m.type.name === 'link');
     if (linkMark) seg.link = linkMark.attrs.href as string;
     segments.push(seg);
@@ -292,6 +295,7 @@ function segmentsToPmInline(schema: Schema, segments: TextSegment[]): PmNode[] {
       ...(seg.underline ? [schema.marks['underline']!.create()]     : []),
       ...(seg.strike    ? [schema.marks['strikethrough']!.create()] : []),
       ...(seg.highlight ? [schema.marks['highlight']!.create()]     : []),
+      ...(seg.math      ? [schema.marks['math']!.create()]          : []),
       ...(seg.link      ? [schema.marks['link']!.create({ href: seg.link, title: null })] : []),
     ];
     if (seg.text === '\n') return schema.nodes['hard_break']!.create();

@@ -11,6 +11,13 @@ import { buildKeymapPlugin } from './keymap.js';
 import { buildInputRulesPlugin } from './inputRules.js';
 import { spineToPmDoc, pmDocToSpine, extractTitleFromDoc } from './serializer.js';
 import { buildPluginIslandNodeViews } from './nodeviews/PluginIsland.js';
+// Importing the embeds plugin registers the link_card NodeView (side-effect) + provides the paste-to-card
+// handler (#69 E2b). Editor core never imports plugins; this host wiring is the single allowed touch-point.
+import { linkCardPastePlugin } from '../plugins/embeds/index.js';
+// Inline-math plugin (docs/specs/inline-math.md) — self-contained: brings its OWN '=' input rule, the
+// live-result decoration, and the backspace-unwrap keymap. Editor core never imports plugins; this is the
+// single host wiring touch-point (same pattern as the embeds plugin above).
+import { buildMathPlugins } from '../plugins/math/mathPlugin.js';
 import { TodoItemView } from './nodeviews/TodoItem.js';
 import { sliceToPlainText } from './clipboard.js';
 import { EditorToolbar } from './EditorToolbar.js';
@@ -303,6 +310,10 @@ export function ProseMirrorEditor({
     const doc = spineToPmDoc(deltoSchema, initialBody, initialTitle);
 
     const basePlugins: Plugin[] = [
+      // Inline-math FIRST: its Backspace-unwrap keymap must intercept before the base keymap (a chip-edge
+      // backspace unwraps; everything else falls through). Its '=' input rule + result decoration are
+      // order-independent. Self-contained — does not touch core inputRules.ts.
+      ...buildMathPlugins(deltoSchema),
       buildKeymapPlugin(deltoSchema),
       // Input rules MUST precede uniqueBlockIdPlugin so its appendTransaction runs AFTER the rule's
       // transaction and mints ids for any nodes the rule created (divider, list wrappers).
@@ -312,6 +323,7 @@ export function ProseMirrorEditor({
       gapCursor(),
       uniqueBlockIdPlugin,
       titlePlaceholderPlugin,
+      linkCardPastePlugin(deltoSchema), // #69 E2b: bare-URL paste → link_card
     ];
     basePluginsRef.current = basePlugins; // #69 §5: the spellcheck plugin is added on top via reconfigure
     const state = EditorState.create({ doc, plugins: basePlugins });
