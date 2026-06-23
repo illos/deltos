@@ -4,7 +4,6 @@ import type { ComponentType } from 'react';
 import type { NotebookId } from '@deltos/shared';
 import type { CollectionViewProps } from '../lib/collectionViews.js';
 import { NavContent } from '../views/NavContent.js';
-import { NoteRoute } from '../routes/NoteRoute.js';
 import { NewNote } from '../routes/NewNote.js';
 import { TrashRoute } from '../routes/TrashRoute.js';
 import { SearchRoute } from '../routes/SearchRoute.js';
@@ -13,6 +12,10 @@ import { EmptyNoteState } from './EmptyNoteState.js';
 import { useResizableListPane } from '../lib/useResizableListPane.js';
 import './ThreeRegionShell.css';
 
+// LAZY: the note editor is the heaviest subtree (PM + all plugins) — split out of the entry so the
+// desktop shell paints first; loads on note-open (precached → instant warm). The OTHER static entry-point
+// (App.tsx mobile route) must lazy it too, else Rollup keeps it in the entry.
+const NoteRoute = lazy(() => import('../routes/NoteRoute.js').then((m) => ({ default: m.NoteRoute })));
 const SettingsRoute = lazy(() =>
   import('../routes/SettingsRoute.js').then((m) => ({ default: m.SettingsRoute })),
 );
@@ -53,7 +56,14 @@ export function ThreeRegionShell({ notebookId, CollectionView }: ThreeRegionShel
 
       <main className="shell-3region__note">
         <Routes>
-          <Route path="/note/:id" element={<NoteRoute />} />
+          <Route
+            path="/note/:id"
+            element={
+              <Suspense fallback={<div className="editor__pm" aria-busy="true" />}>
+                <NoteRoute />
+              </Suspense>
+            }
+          />
           <Route path="/new" element={<NewNote />} />
           {/* Decision (a): these replace the note in region 3; nav + list stay visible. */}
           <Route path="/trash" element={<TrashRoute />} />

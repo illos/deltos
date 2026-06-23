@@ -3,14 +3,17 @@ import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate, useMatch } f
 import type { Note } from '@deltos/shared';
 import type { NotebookId } from '@deltos/shared';
 import { NewNote } from './routes/NewNote.js';
-import { NoteRoute } from './routes/NoteRoute.js';
 import { RegisterRoute } from './routes/RegisterRoute.js';
 import { LoginRoute } from './routes/LoginRoute.js';
 import { ResetRoute } from './routes/ResetRoute.js';
 import { ForcedPhraseRoute } from './routes/ForcedPhraseRoute.js';
 import { TrashRoute } from './routes/TrashRoute.js';
 import { SearchRoute } from './routes/SearchRoute.js';
-import { KbProbe } from './routes/KbProbe.js';
+// LAZY: the note editor (ProseMirror + ALL its plugins: formula/math/hexcolor, embeds, voice, spellcheck
+// wiring) is the heaviest subtree — split it out of the entry bundle so the shell paints first; it loads
+// on note-open (precached after the first load → instant warm). The KbProbe dev route + Settings likewise.
+const NoteRoute = lazy(() => import('./routes/NoteRoute.js').then((m) => ({ default: m.NoteRoute })));
+const KbProbe = lazy(() => import('./routes/KbProbe.js').then((m) => ({ default: m.KbProbe })));
 const SettingsRoute = lazy(() =>
   import('./routes/SettingsRoute.js').then((m) => ({ default: m.SettingsRoute })),
 );
@@ -77,7 +80,7 @@ function AppRoutes() {
   // #68 throwaway probe: an isolated, AUTH-BYPASSED test route so Jim can hit /kbprobe directly on the
   // live site (no login friction) to feel-test inputmode=none. Hook called unconditionally above.
   const kbProbe = useMatch('/kbprobe');
-  if (kbProbe) return <KbProbe />;
+  if (kbProbe) return <Suspense fallback={null}><KbProbe /></Suspense>;
 
   switch (selectBootView(isAuthed, isAuthing, recoveryEstablished)) {
     // Cold-boot /refresh still in flight — a brief neutral hold before the gate decision resolves.
@@ -332,7 +335,16 @@ function AuthedShell() {
       <main className="shell__main">
         <Routes>
           <Route path="/new" element={<NewNote />} />
-          <Route path="/note/:id" element={<NoteRoute />} />
+          <Route
+            path="/note/:id"
+            element={
+              // Skeleton (not a spinner-flash): an empty editor surface so layout doesn't jump; the editor
+              // chunk loads near-instantly from SW precache on warm/offline loads.
+              <Suspense fallback={<div className="editor__pm" aria-busy="true" />}>
+                <NoteRoute />
+              </Suspense>
+            }
+          />
           <Route path="/trash" element={<TrashRoute />} />
           <Route path="/search" element={<SearchRoute />} />
           <Route
