@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, lazy, Suspense } from 'react';
+import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate, useMatch } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
 import type { NotebookId } from '@deltos/shared';
@@ -37,7 +37,7 @@ import { ConflictBadgeSlot } from './components/ConflictBadgeSlot.js';
 import { SwipeRow } from './components/SwipeRow.js';
 import { useAuthStore } from './auth/store.js';
 import { selectBootView } from './auth/shellGate.js';
-import { useNotes, useCurrentNotebook } from './db/storeHooks.js';
+import { useNotes, useCurrentNotebook, useNotebooks } from './db/storeHooks.js';
 import { mutateNotes } from './db/mutate.js';
 import { showToast, showActionToast } from './lib/toastEvents.js';
 
@@ -129,6 +129,15 @@ export function HomeView({ notebookId }: CollectionViewProps) {
   // List header name: the current notebook, or "All Notes" for the null aggregate (#59).
   const notebook = useCurrentNotebook();
   const listName = notebookId === null ? 'All Notes' : (notebook?.name ?? '…');
+  // #75: in the All-Notes aggregate, each categorized row shows its notebook-name pill. id→name map for the
+  // lookup (only consulted in the notebookId===null branch). A note whose id isn't here (shouldn't happen)
+  // simply gets no pill (treated as uncategorized).
+  const notebooks = useNotebooks();
+  const notebookNameById = useMemo(() => {
+    const m = new Map<NotebookId, string>();
+    for (const nb of notebooks) m.set(nb.id, nb.name);
+    return m;
+  }, [notebooks]);
   // Selected-row (master-detail): the note open in the right region, from the URL — works even though
   // HomeView renders OUTSIDE the note Route (useMatch reads the current location anywhere).
   const noteMatch = useMatch('/note/:id');
@@ -178,6 +187,11 @@ export function HomeView({ notebookId }: CollectionViewProps) {
             const { displayTitle, previewLine } = notePreview(note);
             const smartDate = formatSmartDate(note.updatedAt);
             const selected = note.id === openNoteId;
+            // Notebook pill: ONLY in the All-Notes aggregate, ONLY for a categorized note whose notebook is
+            // known. Uncategorized (notebookId null) or a specific-notebook view → no pill.
+            const nbName = notebookId === null && note.notebookId !== null
+              ? notebookNameById.get(note.notebookId)
+              : undefined;
             return (
               <li key={note.id}>
                 <SwipeRow
@@ -196,6 +210,7 @@ export function HomeView({ notebookId }: CollectionViewProps) {
                     <span className="home__note-meta">
                       <span className="home__note-date">{smartDate}</span>
                       {previewLine && <span className="home__note-preview">{previewLine}</span>}
+                      {nbName && <span className="home__note-nb-pill">{nbName}</span>}
                     </span>
                   </Link>
                   <ConflictBadgeSlot note={note} />
