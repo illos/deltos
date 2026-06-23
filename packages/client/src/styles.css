@@ -2198,8 +2198,8 @@ a.auth__link { display: inline; }
 
 /* ── #69 Deck — HOST-side rules only (the Deck surface + keypad CSS lives in src/deck/deck.css) ──
    Caret clearance: when the Deck is up, give the editable bottom space so the last lines scroll clear of
-   it (Phase-1 approximation of the ~226px Deck height + safe-area; refined later). */
-.editor__pm--kb { padding-bottom: 264px; scroll-padding-bottom: 264px; }
+   it (approximation of keypad + the 47px reserved slot + safe-area; tune on-device with the overlay). */
+.editor__pm--kb { padding-bottom: 311px; scroll-padding-bottom: 311px; }
 /* In custom-keyboard mode (toggle ON, mobile) the standalone universal bottom nav is PERMANENTLY gone —
    AuthedShell toggles body.deck-custom from the opt-in flag, NOT the Deck's up/down (which flashed the nav
    back under the user's thumb). The Deck owns the bottom; nav controls return via its 'navigation' loadout
@@ -2222,8 +2222,8 @@ body.deck-custom .bottom-nav { display: none; }
 
 /* Browsing screens clear the Deck nav loadout in custom mode (the standalone bottom nav it replaces is
    hidden above). The note editor reserves its own taller keypad clearance via .editor__pm--kb, so this
-   only needs to cover the shorter nav row. Approximate height — tune on-device like the 264px keypad. */
-body.deck-custom .shell__main { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+   only needs to cover the shorter nav row + the 47px reserved slot. Approximate — tune on-device. */
+body.deck-custom .shell__main { padding-bottom: calc(131px + env(safe-area-inset-bottom)); }
 
 /* ── #68 inputmode=none keyboard probe (throwaway, /kbprobe) ──────────────────── */
 .kbprobe { max-width: 680px; margin: 0 auto; padding: 1.5rem 1.25rem; box-sizing: border-box; }

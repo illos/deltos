@@ -100,6 +100,13 @@ describe('Deck — context-driven surface', () => {
     const { container } = render(<Deck context="node:widget" loadouts={{ text: <div /> }} />);
     expect(container.firstChild).toBeNull();
   });
+  it('reserves a constant-height bottom slot whenever a loadout is shown (keys never shift — #369/#370)', () => {
+    render(<Deck context="text" loadouts={{ text: <div data-testid="lo">keypad</div> }} />);
+    // The slot is a sibling of the loadout content, always present so the loadout sits at a fixed height.
+    const slot = document.querySelector('.deck > .deck__slot');
+    expect(slot).not.toBeNull();
+    expect(document.querySelector('[data-testid="lo"]')).not.toBeNull();
+  });
 });
 
 describe('deriveDeckContext (deltos adapter)', () => {
