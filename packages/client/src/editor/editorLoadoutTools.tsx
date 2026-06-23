@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Undo, Redo, Plus, Mic } from '../icons/index.js';
+import { Undo, Redo, Mic } from '../icons/index.js';
 import { toolsFor } from './editorTools.js';
 import type { ToolDescriptor, ToolGroup } from './editorTools.js';
 import type { EditorActiveState } from './editorState.js';
@@ -16,11 +16,11 @@ import type { EditorActiveState } from './editorState.js';
 
 /** The Deck selector's composed groups → which registry ToolGroups each presents. */
 type DeckGroup = 'style' | 'format' | 'plus';
-interface DeckGroupDef { group: DeckGroup; label: string; glyph?: string; icon?: typeof Plus; tools: ToolGroup[] }
+interface DeckGroupDef { group: DeckGroup; label: string; glyph: string; tools: ToolGroup[] }
 const DECK_GROUPS: readonly DeckGroupDef[] = [
   { group: 'style',  label: 'Style',  glyph: 'Aa', tools: ['style'] },
   { group: 'format', label: 'Format', glyph: 'B',  tools: ['format'] },
-  { group: 'plus',   label: 'Insert', icon: Plus,  tools: ['lists', 'insert'] }, // Lists merged into "+"
+  { group: 'plus',   label: 'Insert', glyph: '+',  tools: ['lists', 'insert'] }, // Lists merged into "+" — text glyph (matches Aa/B metrics)
 ];
 const toolsForDeckGroup = (g: DeckGroup): ToolDescriptor[] =>
   (DECK_GROUPS.find((d) => d.group === g)?.tools ?? []).flatMap((tg) => toolsFor('mobile', tg));
@@ -97,7 +97,6 @@ export function EditorGroupSelector({ activeGroup, toggleGroup, active, onUndo, 
       <div className="elt-groups" role="toolbar" aria-label="Formatting groups">
         {DECK_GROUPS.map((gt) => {
           const on = activeGroup === gt.group;
-          const Icon = gt.icon;
           return (
             <button
               key={gt.group}
@@ -107,9 +106,7 @@ export function EditorGroupSelector({ activeGroup, toggleGroup, active, onUndo, 
               aria-pressed={on}
               onPointerDown={(e) => { e.preventDefault(); toggleGroup(gt.group); }}
             >
-              {Icon
-                ? <Icon size={22} />
-                : <span className={`editor__mgroup-glyph editor__mgroup-glyph--${gt.group}`}>{gt.glyph}</span>}
+              <span className={`editor__mgroup-glyph editor__mgroup-glyph--${gt.group}`}>{gt.glyph}</span>
             </button>
           );
         })}

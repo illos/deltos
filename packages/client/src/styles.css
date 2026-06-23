@@ -790,6 +790,9 @@
 .editor__mgroup-glyph { font-size: 19px; font-weight: 600; line-height: 1; }
 .editor__mgroup-glyph--style  { font-family: Georgia, 'Newsreader', serif; }
 .editor__mgroup-glyph--format { font-weight: 700; }
+/* "+" (Insert group) is a single thin char — size it up + lighter weight so its visual mass matches the
+   dense 'Aa'/'B' glyphs beside it (Jim feel-test: the + read too small as a 22px stroke icon). */
+.editor__mgroup-glyph--plus   { font-size: 27px; font-weight: 400; }
 
 /* ProseMirror host div */
 .editor__pm {
@@ -2266,8 +2269,10 @@ a.auth__link { display: inline; }
    these Deck-specific layer CONTAINERS are new. */
 /* Selector row (in the base region, below the keys): groups flex-fill the left, Undo/Redo + the show/hide
    toggle sit at the right. */
-.elt-groups  { display: flex; align-items: center; gap: 20px; flex: 1 1 auto; min-width: 0; }
-.elt-history { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; }
+/* Both clusters share ONE gap so the inter-icon rhythm is even across the row (Jim feel-test: 20 vs 14 read
+   as uneven once the mic joined history). Groups flex-fill the left; history (mic · undo · redo) sits right. */
+.elt-groups  { display: flex; align-items: center; gap: 16px; flex: 1 1 auto; min-width: 0; }
+.elt-history { display: flex; align-items: center; gap: 16px; flex: 0 0 auto; }
 /* The selector mic (§6.1) = a first-class control — accent-tinted so it reads as primary, not just a tool. */
 .elt-mic { color: var(--accent); }
 /* Per-group submenu — a layer ABOVE the keys (grows the Deck upward; keys never move). In restyle mode
