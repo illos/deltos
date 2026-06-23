@@ -22,6 +22,7 @@ import { createDefaultFormulaRegistry, buildFormulaPlugins, buildFormulaNodeView
 import { TodoItemView } from './nodeviews/TodoItem.js';
 import { sliceToPlainText } from './clipboard.js';
 import { EditorControlStrip } from './EditorControlStrip.js';
+import { DesktopContextSlot } from './DesktopContextSlot.js';
 import { MobileEditorBar } from './MobileEditorBar.js';
 import { KeypadLoadout } from '../deck/index.js';
 import type { DeckContext, DeckLoadoutRegistry, KeyActions } from '../deck/index.js';
@@ -587,31 +588,33 @@ export function ProseMirrorEditor({
     };
   }, [spellOn, noteId, customKb, handleSpellTap, handleSpellDismiss]);
 
+  // The link form's desktop home is SWITCHABLE (Jim's call): true = the unified bottom context slot (with
+  // spell suggestions, mirroring mobile's above-keypad slot); false = a transient row under the toolbar by
+  // its trigger button. Shipping unified-bottom; flip this one line if the top-click→bottom-form distance
+  // bugs Jim on-device. (Watch-item.)
+  const LINK_FORM_AT_BOTTOM = true;
+  const linkSlot = {
+    open: linkOpen,
+    title: linkTitle,
+    url: linkUrl,
+    onChangeTitle: setLinkTitle,
+    onChangeUrl: setLinkUrl,
+    onSubmit: submitLink,
+    onCancel: cancelLink,
+  };
+
   return (
     <>
-      {/* Desktop: the Deck editor loadout AS the toolbar — selector + submenu (same registry as mobile),
-          a top-anchored sticky strip, no keypad/mic/toggle. Replaces the old flat EditorToolbar. */}
+      {/* Desktop: the Deck editor loadout AS the toolbar — the converged registry rendered flat, a top-
+          anchored sticky strip, no keypad/mic/toggle. Replaces the old flat EditorToolbar. Context tooling
+          (spell suggestions + link form) lives in the bottom slot below (unified). */}
       {isDesktop && (
         <EditorControlStrip
           active={active}
           onUndo={handleUndo}
           onRedo={handleRedo}
           runTool={runTool}
-          link={{
-            open: linkOpen,
-            title: linkTitle,
-            url: linkUrl,
-            onChangeTitle: setLinkTitle,
-            onChangeUrl: setLinkUrl,
-            onSubmit: submitLink,
-            onCancel: cancelLink,
-          }}
-          spell={spellSuggest ? {
-            word: spellSuggest.word,
-            suggestions: spellSuggest.suggestions,
-            onPick: (w) => handleSpellPick(spellSuggest.from, spellSuggest.to, w),
-            onAddToDictionary: () => handleAddToDictionary(spellSuggest.word),
-          } : null}
+          link={LINK_FORM_AT_BOTTOM ? undefined : linkSlot}
         />
       )}
       <div
@@ -626,9 +629,23 @@ export function ProseMirrorEditor({
       {!isDesktop && !customKb && (
         <MobileEditorBar active={active} run={runTool} onUndo={handleUndo} onRedo={handleRedo} />
       )}
+      {/* Desktop: the optional bottom-mounted context slot — link form (when adding a link) | spell
+          suggestions (when on a misspelling). position:fixed (out of flow) → zero space + no page jump when
+          it appears/clears. One slot for all desktop context tooling. */}
+      {isDesktop && (
+        <DesktopContextSlot
+          link={LINK_FORM_AT_BOTTOM ? linkSlot : undefined}
+          spell={spellSuggest ? {
+            word: spellSuggest.word,
+            suggestions: spellSuggest.suggestions,
+            onPick: (w) => handleSpellPick(spellSuggest.from, spellSuggest.to, w),
+            onAddToDictionary: () => handleAddToDictionary(spellSuggest.word),
+          } : null}
+        />
+      )}
       {/* #69 §5.1: suggestion presentation is platform-adaptive. Custom-keyboard mode → the Deck TOP-SLOT
-          bar (deckLoadouts topSlot above). Desktop → the control strip's context row (passed as `spell`
-          above). Only the mobile NATIVE-keyboard case (no Deck, no strip) falls back to the anchored popover. */}
+          bar (deckLoadouts topSlot above). Desktop → the bottom context slot above. Only the mobile
+          NATIVE-keyboard case (no Deck, no slot) falls back to the anchored popover. */}
       {spellSuggest && !customKb && !isDesktop && (
         <SpellSuggestionPopover
           x={spellSuggest.x}

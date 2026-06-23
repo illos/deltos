@@ -753,7 +753,7 @@
 /* Inner rows re-center to the SAME centered 680px column as the note title/body (matching .editor's
    max-width + 1.25rem horizontal padding) — so the full-bleed breakout doesn't shift/clip the tools. */
 .editor__deck-strip-row,
-.editor__deck-strip-context {
+.editor__deck-strip-linkrow {
   max-width: 680px; width: 100%; margin: 0 auto; box-sizing: border-box; padding-left: 1.25rem; padding-right: 1.25rem;
 }
 .editor__deck-strip-row { display: flex; align-items: center; padding-top: 6px; padding-bottom: 6px; }
@@ -764,21 +764,36 @@
   width: 1px; height: 18px; background: var(--border); margin: 0 6px; flex-shrink: 0;
 }
 .editor__deck-strip-history { display: flex; align-items: center; gap: 2px; margin-left: auto; }
-/* Context row — ALWAYS reserved at a constant height (no page jump), filled with the link form / the spell
-   suggestion bar / nothing. Tall enough for the bar so an occupant never grows the row. */
-.editor__deck-strip-context { display: flex; align-items: center; min-height: 48px; }
-.editor__deck-strip-context > * { flex: 1 1 auto; min-width: 0; }
-/* The reused spell bar sits flush in the desktop context row (drop its mobile-Deck band bg/border). */
-.editor__deck-strip-context .spell-bar { padding: 4px 0; background: transparent; border-bottom: none; }
-/* Desktop pills are mouse targets, not thumbs — trim the font + padding (the mobile ≥16px/40px touch sizing
-   is NOT needed here). Scoped to the desktop context row, so the mobile Deck pills are untouched. */
-.editor__deck-strip-context .spell-bar__pill,
-.editor__deck-strip-context .spell-bar__add {
-  font-size: 13px; padding: 0 10px; min-height: 28px; border-radius: 14px;
+/* Transient link-entry row under the toolbar — rendered only WHILE adding a link (not reserved). Used when
+   the link form is mounted top (LINK_FORM_AT_BOTTOM=false); dormant in the default unified-bottom mode. */
+.editor__deck-strip-linkrow {
+  display: flex; align-items: center; min-height: 48px; border-top: 1px solid var(--border);
+  padding-top: 4px; padding-bottom: 4px;
 }
+.editor__deck-strip-linkrow > * { flex: 1 1 auto; min-width: 0; }
 /* Desktop affordance on the reused mobile tool buttons inside the strip (mobile has no hover). */
 .editor__deck-strip .editor__mtool:hover:not(:disabled) { background: var(--sel); }
 .editor__deck-strip .editor__mtool:disabled { opacity: 0.4; cursor: default; }
+
+/* OPTIONAL BOTTOM CONTEXT SLOT (#69 desktop Deck) — the desktop counterpart of the mobile above-keypad
+   slot. position:FIXED + rendered only when populated → zero idle space, can't jump the page. Floats near
+   the bottom, centered to the content column. Hosts spell suggestions + the link form (+ future tools). */
+.editor__context-slot {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 24px; z-index: 50;
+  max-width: 680px; width: calc(100% - 48px); box-sizing: border-box;
+  display: flex; align-items: center;
+  background: var(--paper); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); padding: 6px 12px;
+}
+.editor__context-slot > * { flex: 1 1 auto; min-width: 0; }
+/* The reused spell bar sits flush in the slot (drop its mobile-Deck band bg/border). */
+.editor__context-slot .spell-bar { padding: 0; background: transparent; border-bottom: none; }
+/* Desktop pills are mouse targets, not thumbs — trim font + padding (mobile ≥16px/40px touch sizing not
+   needed). Scoped to the slot, so the mobile Deck pills are untouched. */
+.editor__context-slot .spell-bar__pill,
+.editor__context-slot .spell-bar__add {
+  font-size: 13px; padding: 0 10px; min-height: 28px; border-radius: 14px;
+}
 /* Desktop link form (native inputs) in the sub row. */
 .editor__link-form { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; }
 .editor__link-input {

@@ -2,47 +2,29 @@ import { Fragment } from 'react';
 import { DECK_GROUPS, toolsForDeckGroup } from './editorLoadoutTools.js';
 import { Undo, Redo } from '../icons/index.js';
 import { DesktopLinkForm } from './DesktopLinkForm.js';
-import { SpellSuggestionBar } from './SpellSuggestionBar.js';
+import type { ContextSlotLink } from './DesktopContextSlot.js';
 import type { EditorActiveState } from './editorState.js';
 import type { ToolDescriptor } from './editorTools.js';
 
 /**
- * EditorControlStrip (#69 desktop Deck) — the DESKTOP render target of the editor loadout: the SAME
- * converged tool registry as the mobile Deck (DECK_GROUPS / toolsForDeckGroup), rendered for desktop's
- * width — FLAT and EXPANDED (all tools visible inline; Jim's pick) — MINUS the keypad / mic / show-hide
- * toggle. Replaces the old flat EditorToolbar: one registry, two render targets.
+ * EditorControlStrip (#69 desktop Deck) — the desktop Deck's sticky TOP control strip: the SAME converged
+ * tool registry as the mobile Deck (DECK_GROUPS / toolsForDeckGroup), rendered for desktop's width — FLAT
+ * and EXPANDED (all tools visible inline; Jim's pick) — MINUS the keypad / mic / show-hide toggle. Replaces
+ * the old flat EditorToolbar: one registry, two render targets (mobile = keypad loadout in the shell Deck).
  *
- * Top-anchored orientation (reversed vs the bottom-anchored mobile Deck): the primary controls are the TOP
- * row; a CONTEXT sub-row sits BELOW (grows down into the note). The context row is the desktop render of the
- * mobile Deck's top-slot-occupant model — link form (when adding a link) | spell suggestion bar (when on a
- * misspelling) | empty — and is ALWAYS RESERVED at a constant height so appearing/clearing an occupant never
- * reflows the page (same no-jump invariant as the mobile Deck's reserved band).
+ * Full-bleed band (CSS); inner rows re-center to the note content column. Spell suggestions live in the
+ * separate bottom context slot (DesktopContextSlot). The LINK FORM mounts HERE by default — a transient row
+ * under the toolbar, right by its trigger button, rendered ONLY while adding a link (not reserved, so no
+ * idle space; the brief push-down is user-triggered). It's switchable to the bottom slot via the host's
+ * LINK_FORM_AT_BOTTOM flag (then `link` is omitted here).
  */
-export interface ControlStripLink {
-  open: boolean;
-  title: string;
-  url: string;
-  onChangeTitle: (v: string) => void;
-  onChangeUrl: (v: string) => void;
-  onSubmit: () => void;
-  onCancel: () => void;
-}
-
-export interface ControlStripSpell {
-  word: string;
-  suggestions: string[];
-  onPick: (word: string) => void;
-  onAddToDictionary: () => void;
-}
-
 interface EditorControlStripProps {
   active: EditorActiveState;
   onUndo: () => void;
   onRedo: () => void;
   runTool: (tool: ToolDescriptor) => void;
-  link: ControlStripLink;
-  /** Active misspelling suggestions → rendered in the context row (desktop's bar, not a popover). */
-  spell: ControlStripSpell | null;
+  /** The link form, when mounted under the toolbar. Omitted when the host mounts it in the bottom slot. */
+  link?: ContextSlotLink | undefined;
 }
 
 function StripTool({ tool, active, run }: { tool: ToolDescriptor; active: EditorActiveState; run: (t: ToolDescriptor) => void }) {
@@ -64,10 +46,9 @@ function StripTool({ tool, active, run }: { tool: ToolDescriptor; active: Editor
   );
 }
 
-export function EditorControlStrip({ active, onUndo, onRedo, runTool, link, spell }: EditorControlStripProps) {
+export function EditorControlStrip({ active, onUndo, onRedo, runTool, link }: EditorControlStripProps) {
   return (
     <div className="editor__deck-strip">
-      {/* Primary controls (top row): every group's tools expanded inline, hairline-divided, Undo/Redo right. */}
       <div className="editor__deck-strip-row editor__deck-strip-row--flat" role="toolbar" aria-label="Formatting">
         {DECK_GROUPS.map((group, gi) => (
           <Fragment key={group.group}>
@@ -88,9 +69,9 @@ export function EditorControlStrip({ active, onUndo, onRedo, runTool, link, spel
           </button>
         </div>
       </div>
-      {/* Context row — ALWAYS reserved (constant height → no page jump), filled conditionally. */}
-      <div className="editor__deck-strip-context">
-        {link.open ? (
+      {/* Transient link-entry row, right under the toolbar by its button — only while adding a link. */}
+      {link?.open && (
+        <div className="editor__deck-strip-linkrow">
           <DesktopLinkForm
             title={link.title}
             url={link.url}
@@ -99,15 +80,8 @@ export function EditorControlStrip({ active, onUndo, onRedo, runTool, link, spel
             onSubmit={link.onSubmit}
             onCancel={link.onCancel}
           />
-        ) : spell ? (
-          <SpellSuggestionBar
-            word={spell.word}
-            suggestions={spell.suggestions}
-            onPick={spell.onPick}
-            onAddToDictionary={spell.onAddToDictionary}
-          />
-        ) : null}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
