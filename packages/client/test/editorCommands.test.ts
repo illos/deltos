@@ -9,7 +9,7 @@ import type { Command } from 'prosemirror-state';
 import type { Node as PmNode } from 'prosemirror-model';
 import { deltoSchema } from '../src/editor/schema.js';
 import {
-  toggleMarkCmd, setBlock, toggleWrap, toggleList, toggleTodo, commandFor,
+  toggleMarkCmd, setBlock, toggleWrap, toggleList, commandFor,
 } from '../src/editor/commands.js';
 import { deriveActiveState, isToolActive } from '../src/editor/editorState.js';
 
@@ -110,15 +110,6 @@ describe('commands — shared builders', () => {
     expect(out.doc.child(1).type.name).toBe('bullet_list');
   });
 
-  it('toggleTodo converts a paragraph to a todo_item and back', () => {
-    const on = run(stateWith(S.node('paragraph', { id: 'b' }, [S.text('t')])), toggleTodo(S));
-    expect(on.doc.child(1).type.name).toBe('todo_item');
-    expect(on.doc.child(1).attrs.id).toBe('b');
-    // back: cursor still in the (now) todo block
-    const off = run(on.apply(on.tr.setSelection(TextSelection.create(on.doc, 4))), toggleTodo(S));
-    expect(off.doc.child(1).type.name).toBe('paragraph');
-  });
-
   it('toggleWrap(blockquote) wraps then lifts on a second toggle', () => {
     const wrapped = run(stateWith(S.node('paragraph', { id: 'b' }, [S.text('q')])), toggleWrap(S, 'blockquote'));
     expect(wrapped.doc.child(1).type.name).toBe('blockquote');
@@ -128,5 +119,64 @@ describe('commands — shared builders', () => {
     const out = run(stateWith(S.node('paragraph', { id: 'b' }, [S.text('x')])), commandFor(S, 'h2'));
     expect(out.doc.child(1).type.name).toBe('heading');
     expect(out.doc.child(1).attrs.level).toBe(2);
+  });
+});
+
+describe('applyListType — mutually-exclusive list switching (#69 conversion matrix)', () => {
+  // Compose starting states + transitions through the REAL UI wiring (commandFor 'ul'/'ol'/'check'),
+  // so the matrix exercises exactly what the selector dispatches. bodyType = the single body block.
+  const bodyType = (st: EditorState) => st.doc.child(1).type.name;
+  const apply = (st: EditorState, id: string) => run(st, commandFor(S, id));
+  const P = () => stateWith(S.node('paragraph', { id: 'b' }, [S.text('item')]));
+  const UL = () => apply(P(), 'ul');
+  const OL = () => apply(P(), 'ol');
+  const CHECK = () => apply(P(), 'check');
+
+  it('paragraph → bullet / ordered / checklist', () => {
+    expect(bodyType(UL())).toBe('bullet_list');
+    expect(bodyType(OL())).toBe('ordered_list');
+    expect(bodyType(CHECK())).toBe('todo_item');
+  });
+
+  it('same type again toggles OFF to paragraph', () => {
+    expect(bodyType(apply(UL(), 'ul'))).toBe('paragraph');
+    expect(bodyType(apply(OL(), 'ol'))).toBe('paragraph');
+    expect(bodyType(apply(CHECK(), 'check'))).toBe('paragraph');
+  });
+
+  it('bullet ↔ ordered converts the list in place (items + text preserved)', () => {
+    const toOrdered = apply(UL(), 'ol');
+    expect(bodyType(toOrdered)).toBe('ordered_list');
+    expect(toOrdered.doc.child(1).textContent).toContain('item');
+    const toBullet = apply(OL(), 'ul');
+    expect(bodyType(toBullet)).toBe('bullet_list');
+    expect(toBullet.doc.child(1).textContent).toContain('item');
+  });
+
+  it('bullet / ordered → checklist (lifts out of the list, becomes a todo)', () => {
+    expect(bodyType(apply(UL(), 'check'))).toBe('todo_item');
+    expect(bodyType(apply(OL(), 'check'))).toBe('todo_item');
+  });
+
+  it('checklist → bullet / ordered (becomes a list)', () => {
+    expect(bodyType(apply(CHECK(), 'ul'))).toBe('bullet_list');
+    expect(bodyType(apply(CHECK(), 'ol'))).toBe('ordered_list');
+  });
+
+  it('never stacks/nests: switching any type yields exactly ONE body block', () => {
+    // title + one body block, regardless of the transition path.
+    expect(apply(UL(), 'check').doc.childCount).toBe(2);
+    expect(apply(CHECK(), 'ol').doc.childCount).toBe(2);
+    expect(apply(UL(), 'ol').doc.childCount).toBe(2);
+  });
+
+  it('the active snapshot is mutually exclusive (selector reflects exactly one of ul/ol/check)', () => {
+    const active = (st: EditorState) => deriveActiveState(st);
+    expect(isToolActive(active(UL()), 'ul')).toBe(true);
+    expect(isToolActive(active(UL()), 'ol')).toBe(false);
+    expect(isToolActive(active(UL()), 'check')).toBe(false);
+    expect(isToolActive(active(CHECK()), 'check')).toBe(true);
+    expect(isToolActive(active(CHECK()), 'ul')).toBe(false);
+    expect(isToolActive(active(OL()), 'ol')).toBe(true);
   });
 });

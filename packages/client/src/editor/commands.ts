@@ -1,6 +1,6 @@
 import { toggleMark, wrapIn, lift } from 'prosemirror-commands';
 import { wrapInList, liftListItem } from 'prosemirror-schema-list';
-import type { Command } from 'prosemirror-state';
+import type { Command, Transaction } from 'prosemirror-state';
 import type { DeltoSchema } from './schema.js';
 
 /**
@@ -100,12 +100,91 @@ export function toggleList(schema: DeltoSchema, listNodeName: string): Command {
   };
 }
 
-/** Toggle the current textblock between paragraph and todo_item (checklist), id-preserving. */
-export function toggleTodo(schema: DeltoSchema): Command {
+/**
+ * Run commands in order as ONE transaction (a single undo step). Each command's tr is captured (not
+ * dispatched) and applied to thread the state forward; the collected steps are then replayed onto one tr
+ * from the original state. If any step fails to apply, the whole sequence is a no-op.
+ */
+function sequence(...cmds: Command[]): Command {
   return (state, dispatch, view) => {
-    const isTodo = state.selection.$from.parent.type === schema.nodes['todo_item'];
-    return isTodo
-      ? setBlock(schema, 'paragraph')(state, dispatch, view)
+    let cur = state;
+    const trs: Transaction[] = [];
+    for (const cmd of cmds) {
+      const caps: Transaction[] = [];
+      const ok = cmd(cur, (tr) => caps.push(tr), view);
+      if (!ok || caps.length === 0) return false;
+      const tr = caps[0]!;
+      trs.push(tr);
+      cur = cur.apply(tr);
+    }
+    if (dispatch) {
+      const out = state.tr;
+      for (const tr of trs) for (const step of tr.steps) out.step(step);
+      dispatch(out.scrollIntoView());
+    }
+    return true;
+  };
+}
+
+type ListKind = 'bullet' | 'ordered' | 'checklist';
+
+/**
+ * Apply a list type, making bullet / ordered / checklist MUTUALLY EXCLUSIVE + converting (Jim feel-test).
+ * A block is ever exactly one of {paragraph, bullet, ordered, checklist}; applying a type REPLACES the
+ * current one — never stacks, nests, or no-ops. Matrix:
+ *   same type        → toggle off to paragraph
+ *   paragraph → list → wrapInList;  paragraph → checklist → setBlock todo_item
+ *   bullet ↔ ordered → convert the list wrapper in place (preserve id + items)
+ *   list → checklist → lift out to paragraph, then setBlock todo_item   (one undo step)
+ *   checklist → list → setBlock paragraph, then wrapInList               (one undo step)
+ */
+export function applyListType(schema: DeltoSchema, kind: ListKind): Command {
+  const bullet = schema.nodes['bullet_list'];
+  const ordered = schema.nodes['ordered_list'];
+  const item = schema.nodes['list_item'];
+  const todo = schema.nodes['todo_item'];
+  return (state, dispatch, view) => {
+    if (!bullet || !ordered || !item || !todo) return false;
+    const { $from } = state.selection;
+
+    // Detect the current block kind (innermost list ancestor wins; a todo_item parent = checklist).
+    let listDepth = -1;
+    for (let d = $from.depth; d > 0; d--) {
+      const t = $from.node(d).type;
+      if (t === bullet || t === ordered) { listDepth = d; break; }
+    }
+    const current: ListKind | 'paragraph' =
+      $from.parent.type === todo ? 'checklist'
+      : listDepth >= 0 ? ($from.node(listDepth).type === bullet ? 'bullet' : 'ordered')
+      : 'paragraph';
+
+    // Same type again → toggle OFF to paragraph.
+    if (current === kind) {
+      return kind === 'checklist'
+        ? setBlock(schema, 'paragraph')(state, dispatch, view)
+        : liftListItem(item)(state, dispatch, view);
+    }
+
+    if (kind === 'bullet' || kind === 'ordered') {
+      const target = kind === 'bullet' ? bullet : ordered;
+      // bullet ↔ ordered: retype the list wrapper in place (list_item children + id preserved).
+      if (current === 'bullet' || current === 'ordered') {
+        if (dispatch) {
+          const pos = $from.before(listDepth);
+          const node = state.doc.nodeAt(pos)!;
+          dispatch(state.tr.setNodeMarkup(pos, target, node.attrs).scrollIntoView());
+        }
+        return true;
+      }
+      // checklist → list: todo→paragraph, then wrap. paragraph → list: just wrap.
+      return current === 'checklist'
+        ? sequence(setBlock(schema, 'paragraph'), wrapInList(target))(state, dispatch, view)
+        : wrapInList(target)(state, dispatch, view);
+    }
+
+    // kind === 'checklist'.  list → checklist: lift out to paragraph, then setBlock. paragraph → checklist: setBlock.
+    return current === 'bullet' || current === 'ordered'
+      ? sequence(liftListItem(item), setBlock(schema, 'todo_item', { checked: false }))(state, dispatch, view)
       : setBlock(schema, 'todo_item', { checked: false })(state, dispatch, view);
   };
 }
@@ -166,9 +245,9 @@ export function commandFor(schema: DeltoSchema, cmdId: string): Command {
   if (cmdId in MARK_FOR) return toggleMarkCmd(schema, MARK_FOR[cmdId]!);
   if (cmdId in BLOCK_FOR) { const b = BLOCK_FOR[cmdId]!; return setBlock(schema, b.node, b.attrs ?? {}); }
   switch (cmdId) {
-    case 'ul':      return toggleList(schema, 'bullet_list');
-    case 'ol':      return toggleList(schema, 'ordered_list');
-    case 'check':   return toggleTodo(schema);
+    case 'ul':      return applyListType(schema, 'bullet');
+    case 'ol':      return applyListType(schema, 'ordered');
+    case 'check':   return applyListType(schema, 'checklist');
     case 'quote':   return toggleWrap(schema, 'blockquote');
     case 'divider': return insertHorizontalRule(schema);
     case 'link':    return linkCommand(schema);
