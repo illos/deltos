@@ -2205,7 +2205,9 @@ a.auth__link { display: inline; }
   --kb-gap: 6px;        /* horizontal gap */
   --kb-row-gap: 12px;   /* vertical gap (row pitch 55 = key-h 43 + 12) */
   --kb-radius: 8px;
-  --kb-side: 3px;       /* side margin — row 1 reaches near full width */
+  --kb-side: 0px;       /* cells fill the full viewport width (row 1 = 10 cells × pitch = 100vw exactly,
+                           so it no longer overflows); the visual ~3px side margin comes from the faces
+                           being centered in their cells. */
   --kb-fn-w: 50px;      /* shift / delete width (navSys overlay: native ~50pt) */
   --kb-r4-w: 99px;      /* 123 / return width (navSys overlay: native ~99pt; space flex-fills ~207pt) */
   /* Fixed to the viewport bottom — it IS a keyboard. (inputmode=none means no native keyboard shrinks
@@ -2228,7 +2230,6 @@ body.kb-custom .bottom-nav { display: none; }
    = key size + the old gap), with the visible .kb__face centered inside at the unchanged geometry. */
 .kb__grid { display: flex; flex-direction: column; gap: 0; }
 .kb__row { display: flex; justify-content: center; align-items: center; gap: 0; }
-.kb__row-mid { display: flex; gap: 0; } /* the 7 ZXCVBNM cells tile between shift/delete */
 
 /* The CELL = the invisible hit target: full pitch, transparent, tiles edge-to-edge so a tap that lands
    in a former gap hits the nearest key. No visible style here. */

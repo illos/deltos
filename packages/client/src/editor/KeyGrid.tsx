@@ -72,6 +72,10 @@ export function KeyGrid({ view }: KeyGridProps) {
   // pointerdown + preventDefault on every key so focus (and the caret) never leaves the editor.
   const press = (handler: () => void) => (e: React.PointerEvent) => { e.preventDefault(); handler(); };
 
+  // Visible key case is reactive to shift (matches native + is the shift feedback): UPPERCASE when the
+  // one-shot is armed, lowercase otherwise. Insert uses the same rule (insertChar), so label ≡ output.
+  const label = (c: string) => (shifted ? c : c.toLowerCase());
+
   return (
     // Zero dead zones (#349): every key BUTTON is a hit CELL that tiles edge-to-edge (no inter-key gap),
     // and the visible key is a smaller .kb__face centered inside at the overlay-matched geometry. A tap
@@ -80,14 +84,16 @@ export function KeyGrid({ view }: KeyGridProps) {
     <div className="kb__grid" role="group" aria-label="Keyboard">
       <div className="kb__row">
         {ROW1.map((c) => (
-          <button key={c} type="button" className="kb__key" aria-label={c} onPointerDown={press(() => insertChar(c))}><span className="kb__face">{c}</span></button>
+          <button key={c} type="button" className="kb__key" aria-label={c} onPointerDown={press(() => insertChar(c))}><span className="kb__face">{label(c)}</span></button>
         ))}
       </div>
       <div className="kb__row kb__row--r2">
         {ROW2.map((c) => (
-          <button key={c} type="button" className="kb__key" aria-label={c} onPointerDown={press(() => insertChar(c))}><span className="kb__face">{c}</span></button>
+          <button key={c} type="button" className="kb__key" aria-label={c} onPointerDown={press(() => insertChar(c))}><span className="kb__face">{label(c)}</span></button>
         ))}
       </div>
+      {/* Row 3 is flat — shift, the 7 letters, delete all tile edge-to-edge directly (no inner wrapper;
+          the wrapper dropped 'M' after the hit-cell refactor and isn't needed now that cells tile). */}
       <div className="kb__row kb__row--r3">
         <button
           type="button"
@@ -95,12 +101,9 @@ export function KeyGrid({ view }: KeyGridProps) {
           aria-label="Shift" aria-pressed={shifted}
           onPointerDown={press(() => setShifted((s) => !s))}
         ><span className="kb__face">⇧</span></button>
-        {/* The 7 letters stay centered between the wider shift/delete (aligned under row 2). */}
-        <div className="kb__row-mid">
-          {ROW3.map((c) => (
-            <button key={c} type="button" className="kb__key" aria-label={c} onPointerDown={press(() => insertChar(c))}><span className="kb__face">{c}</span></button>
-          ))}
-        </div>
+        {ROW3.map((c) => (
+          <button key={c} type="button" className="kb__key" aria-label={c} onPointerDown={press(() => insertChar(c))}><span className="kb__face">{label(c)}</span></button>
+        ))}
         <button
           type="button"
           className="kb__key kb__key--fn kb__key--delete"

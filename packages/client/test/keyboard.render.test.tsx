@@ -55,7 +55,21 @@ describe('KeyGrid — structure + typing', () => {
     // The hit target (button) wraps a single visible face — the cell tiles, the face stays at geometry.
     for (const k of keys) expect(k.querySelector('.kb__face'), k.getAttribute('aria-label') ?? '').not.toBeNull();
   });
+  it('row 3 renders all 7 letters including M (regression: the wrapper dropped M)', () => {
+    mountGrid();
+    for (const l of ['Z', 'X', 'C', 'V', 'B', 'N', 'M']) expect(key(l), l).not.toBeNull();
+  });
+
   it('letters insert lowercase by default', () => { mountGrid(); tap('Q'); tap('A'); tap('Z'); expect(text()).toBe('qaz'); });
+
+  it('key labels are reactive to shift case (lowercase default, UPPERCASE when shift armed)', () => {
+    mountGrid();
+    expect(key('Q').querySelector('.kb__face')!.textContent).toBe('q'); // unshifted → lowercase
+    tap('Shift');
+    expect(key('Q').querySelector('.kb__face')!.textContent).toBe('Q'); // armed → uppercase
+    tap('Q'); // one-shot consumed → back to lowercase
+    expect(key('A').querySelector('.kb__face')!.textContent).toBe('a');
+  });
   it('shift one-shot: capitalizes the next letter then auto-releases', () => {
     mountGrid();
     tap('Shift');
