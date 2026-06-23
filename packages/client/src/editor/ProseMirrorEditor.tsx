@@ -42,6 +42,7 @@ import type { EditorActiveState } from './editorState.js';
 import type { ToolDescriptor } from './editorTools.js';
 import { useIsDesktop } from '../lib/useIsDesktop.js';
 import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
+import { useKeypadSwipe } from '../lib/useKeypadSwipe.js';
 
 interface ProseMirrorEditorProps {
   noteId: string;
@@ -183,6 +184,15 @@ export function ProseMirrorEditor({
   useLayoutEffect(() => { lockedRef.current = locked; });
   const toggleKeypad = useCallback(() => setKeypadShown((s) => !s), []);
   const toggleLock = useCallback(() => setLocked((l) => !l), []);
+  // #69 §7 keypad show/hide gestures on the note body (custom-keyboard only). A caret-placing TAP re-shows
+  // the keypad (the PM focus event only fires on focus-IN, so a tap within an already-focused editor — after
+  // a manual or swipe hide — wouldn't otherwise re-show it); a fast+large upward FLICK hides it. PASSIVE
+  // (never captures/preventDefaults) so note scrolling is untouched. Both respect the manual lock (frozen).
+  const keypadSwipe = useKeypadSwipe({
+    enabled: customKb,
+    onTap: () => { if (!lockedRef.current) setKeypadShown(true); },
+    onSwipeUp: () => { if (!lockedRef.current) setKeypadShown(false); },
+  });
   // #69 editor-loadout v1: the group selector (below keys) + per-group submenu (above keys) share one
   // open-group state. They're host-injected into the generic KeypadLoadout; the loadout itself is
   // assembled below, once the tool runners (runTool / handleUndo / handleRedo) are defined.
@@ -485,7 +495,11 @@ export function ProseMirrorEditor({
     <>
       {/* Desktop: registry-driven formatting toolbar at the top (slice C). */}
       {isDesktop && <EditorToolbar active={active} run={runTool} />}
-      <div ref={containerRef} className={`editor__pm${customKb ? ' editor__pm--kb' : ''}${customKb && !keypadShown ? ' editor__pm--kb-collapsed' : ''}`} />
+      <div
+        ref={containerRef}
+        {...keypadSwipe}
+        className={`editor__pm${customKb ? ' editor__pm--kb' : ''}${customKb && !keypadShown ? ' editor__pm--kb-collapsed' : ''}`}
+      />
       {/* Mobile, custom keyboard ON: the Deck (mounted at the shell via DeckHostProvider) owns the bottom
           slot; the editor publishes its keypad loadout + live context to it (see the publishEditor effect
           above), so it persists across routes and isn't torn down by incidental tap-blurs. #69 slice B. */}
