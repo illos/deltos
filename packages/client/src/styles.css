@@ -2268,6 +2268,8 @@ a.auth__link { display: inline; }
    toggle sit at the right. */
 .elt-groups  { display: flex; align-items: center; gap: 20px; flex: 1 1 auto; min-width: 0; }
 .elt-history { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; }
+/* The selector mic (§6.1) = a first-class control — accent-tinted so it reads as primary, not just a tool. */
+.elt-mic { color: var(--accent); }
 /* Per-group submenu — a layer ABOVE the keys (grows the Deck upward; keys never move). In restyle mode
    (keypad hidden) it sits directly above the selector row. Matches the mbar sub-row look.
    margin-top cancels the Deck's 10px top padding so the submenu sits FLUSH to the dock top (Jim feel-test):

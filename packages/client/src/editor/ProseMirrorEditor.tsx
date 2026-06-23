@@ -27,6 +27,8 @@ import { SpellSuggestionBar } from './SpellSuggestionBar.js';
 import { openLinkInNewTab } from './openLink.js';
 import { useSpellcheckStore } from '../lib/useSpellcheck.js';
 import { observeWords, addWord } from '../lib/dictionaryStore.js';
+import { useVoiceMode, VoiceLoadout, isAudioCaptureSupported } from '../deck/index.js';
+import { createDeltosTranscriber } from './voiceTranscriber.js';
 import type { SpellEngine } from '../deck/index.js';
 import { deriveActiveState, EMPTY_ACTIVE_STATE } from './editorState.js';
 import type { EditorActiveState } from './editorState.js';
@@ -209,12 +211,32 @@ export function ProseMirrorEditor({
     view.focus();
   }, []);
 
+  // #69 §6.1 voice: the Deck's voice loadout (deck-core) wired to deltos's concrete Transcriber (single-
+  // flight POST /api/transcribe) + commit-to-note. The mic control lives in the selector; while recording,
+  // the VoiceLoadout replaces the keypad. transcriber is stable; commit inserts the final transcript at caret.
+  const transcriber = useRef(createDeltosTranscriber()).current;
+  const micSupported = isAudioCaptureSupported();
+  const commitTranscript = useCallback((transcript: string) => {
+    const v = viewRef.current;
+    if (!v) return;
+    v.dispatch(v.state.tr.insertText(transcript).scrollIntoView());
+    v.focus();
+  }, []);
+  const voice = useVoiceMode(transcriber, commitTranscript);
+  // Destructure so the deckLoadouts memo deps are the specific values (start/stop are stable useCallbacks;
+  // state/stream change) rather than the always-new `voice` object.
+  const { state: voiceState, stream: voiceStream, start: voiceStart, stop: voiceStop } = voice;
+
   // The editor loadout published to the Deck: the collapsible keypad + the persistent base region (group
   // selector + Undo/Redo + show/hide toggle) + the active group's submenu above the keys. The tool UI is
   // host-injected (deltos Deploy-3 registry) into the generic core KeypadLoadout via baseExtra + submenu.
   const deckLoadouts = useMemo<DeckLoadoutRegistry>(
     () => ({
-      text: (
+      // §6.1: while recording/transcribing, the VoiceLoadout REPLACES the keypad loadout (waveform top +
+      // transcript pane + Stop). Otherwise the keypad loadout, whose selector carries the mic control.
+      text: voiceState !== 'idle' ? (
+        <VoiceLoadout state={voiceState} stream={voiceStream} onStop={() => void voiceStop()} />
+      ) : (
         <KeypadLoadout
           actions={deckActions}
           keypadShown={keypadShown}
@@ -228,6 +250,12 @@ export function ProseMirrorEditor({
               active={active}
               onUndo={handleUndo}
               onRedo={handleRedo}
+              mic={micSupported ? {
+                recording: false, // the selector mic only shows when idle (VoiceLoadout takes over otherwise)
+                onTap: () => void voiceStart(),       // TAP = start (stop via the VoiceLoadout's Stop)
+                onHoldStart: () => void voiceStart(),  // LONG-PRESS = hold-to-talk
+                onHoldEnd: () => void voiceStop(),     // release → stop
+              } : undefined}
             />
           }
           topSlot={
@@ -248,7 +276,7 @@ export function ProseMirrorEditor({
         />
       ),
     }),
-    [deckActions, keypadShown, locked, toggleKeypad, toggleLock, activeGroup, toggleGroup, active, handleUndo, handleRedo, runTool, spellSuggest, handleSpellPick, handleAddToDictionary],
+    [deckActions, keypadShown, locked, toggleKeypad, toggleLock, activeGroup, toggleGroup, active, handleUndo, handleRedo, runTool, spellSuggest, handleSpellPick, handleAddToDictionary, voiceState, voiceStream, voiceStart, voiceStop, micSupported],
   );
 
   // #69 slice B: the Deck mounts once at the app-shell level (DeckHostProvider) so it persists across

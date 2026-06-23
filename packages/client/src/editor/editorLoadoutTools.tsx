@@ -1,52 +1,101 @@
-import { useState } from 'react';
-import { Undo, Redo } from '../icons/index.js';
-import { toolsFor, GROUP_TOGGLES } from './editorTools.js';
+import { useRef, useState } from 'react';
+import { Undo, Redo, Plus, Mic } from '../icons/index.js';
+import { toolsFor } from './editorTools.js';
 import type { ToolDescriptor, ToolGroup } from './editorTools.js';
 import type { EditorActiveState } from './editorState.js';
 
 /**
- * The editor loadout's TOOL UI (#69 editor-loadout v1, commit 2) — the Deploy-3 tool registry, ASSEMBLED
- * (not redesigned) into the Deck's layers. It is host-side (deltos-specific editor tools) and injected
- * into the generic core KeypadLoadout via its `baseExtra` (selector, below the keys) + `submenu` (the
- * active group's controls, above the keys) seams. Deck core stays editor-agnostic.
+ * The editor loadout's TOOL UI (#69 editor-loadout v1) — the Deploy-3 tool registry, ASSEMBLED (not
+ * redesigned) into the Deck's layers, host-injected into the generic core KeypadLoadout (selector in the
+ * base region; per-group submenu in the topSlot). Deck core stays editor-agnostic.
  *
- * Spatial layout intentionally diverges from the static mock (which stacked both above the keyboard,
- * because it couldn't touch the native keyboard): we own the stack now → selector BELOW the keys, submenu
- * ABOVE. Same TOOLS, our placement.
- *
- * The same group affordances + registry as MobileEditorBar (native-keyboard mode), so formatting behaves
- * identically in both modes — only the container differs.
+ * §6.1 Option B — the DECK selector COMPOSES a 3-toggle row over the SHARED registry (no registry mutation;
+ * desktop keeps its 4 groups): Style · Format · "+" (Plus = lists + the other inserts, merged) — freeing a
+ * slot for the first-class MIC control. The submenu for "+" flat-maps toolsFor('lists') + toolsFor('insert').
  */
 
-/** Owns the shared selection-of-group state. Sticky: tap a group to open it, the same to close, another
- *  to switch (Jim's call). Used by BOTH the selector and the submenu so they agree on the open group. */
+/** The Deck selector's composed groups → which registry ToolGroups each presents. */
+type DeckGroup = 'style' | 'format' | 'plus';
+interface DeckGroupDef { group: DeckGroup; label: string; glyph?: string; icon?: typeof Plus; tools: ToolGroup[] }
+const DECK_GROUPS: readonly DeckGroupDef[] = [
+  { group: 'style',  label: 'Style',  glyph: 'Aa', tools: ['style'] },
+  { group: 'format', label: 'Format', glyph: 'B',  tools: ['format'] },
+  { group: 'plus',   label: 'Insert', icon: Plus,  tools: ['lists', 'insert'] }, // Lists merged into "+"
+];
+const toolsForDeckGroup = (g: DeckGroup): ToolDescriptor[] =>
+  (DECK_GROUPS.find((d) => d.group === g)?.tools ?? []).flatMap((tg) => toolsFor('mobile', tg));
+
+/** Owns the open-group state. Sticky: tap to open, same to close, another to switch. */
 export function useEditorLoadoutTools() {
-  const [activeGroup, setActiveGroup] = useState<ToolGroup | null>(null);
-  const toggleGroup = (g: ToolGroup) => setActiveGroup((cur) => (cur === g ? null : g));
+  const [activeGroup, setActiveGroup] = useState<DeckGroup | null>(null);
+  const toggleGroup = (g: DeckGroup) => setActiveGroup((cur) => (cur === g ? null : g));
   return { activeGroup, toggleGroup };
 }
 
+const MIC_LONG_PRESS_MS = 350;
+
+/** Mic control (§6.1) — mirrors the show/hide grammar: TAP = toggle voice mode; LONG-PRESS = hold-to-talk
+ *  (record while held, release anywhere → stop; the release is on window since the mic unmounts when the
+ *  voice loadout swaps in). */
+function MicButton({ recording, onTap, onHoldStart, onHoldEnd }: {
+  recording: boolean;
+  onTap: () => void;
+  onHoldStart: () => void;
+  onHoldEnd: () => void;
+}) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const held = useRef(false);
+  const clear = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
+  return (
+    <button
+      type="button"
+      className={`editor__mtool elt-mic${recording ? ' is-active' : ''}`}
+      aria-label={recording ? 'Recording — tap Stop in the panel' : 'Voice dictation'}
+      aria-pressed={recording}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        held.current = false;
+        timer.current = setTimeout(() => {
+          held.current = true;
+          onHoldStart();
+          const end = () => {
+            window.removeEventListener('pointerup', end);
+            window.removeEventListener('pointercancel', end);
+            onHoldEnd();
+          };
+          window.addEventListener('pointerup', end);
+          window.addEventListener('pointercancel', end);
+        }, MIC_LONG_PRESS_MS);
+      }}
+      onPointerUp={(e) => { e.preventDefault(); clear(); if (!held.current) onTap(); }}
+      onPointerLeave={() => { if (!held.current) clear(); }}
+    >
+      <Mic size={22} />
+    </button>
+  );
+}
+
+interface MicProps { recording: boolean; onTap: () => void; onHoldStart: () => void; onHoldEnd: () => void }
+
 interface SelectorProps {
-  activeGroup: ToolGroup | null;
-  toggleGroup: (g: ToolGroup) => void;
+  activeGroup: DeckGroup | null;
+  toggleGroup: (g: DeckGroup) => void;
   active: EditorActiveState;
   onUndo: () => void;
   onRedo: () => void;
+  /** When voice is available, the mic control (§6.1). undefined = no mic (e.g. capture unsupported). */
+  mic?: MicProps | undefined;
 }
 
 /**
- * The group-selector row — lives in the base region BELOW the keys, ALWAYS present (persists as the slim
- * bar when the keypad is collapsed = restyle mode). Groups left (flex-fill), Undo/Redo right; the
- * show/hide toggle (Deck core chrome) is appended after this by KeypadLoadout.
- *
- * pointerdown + preventDefault keeps the host editor focused (same model as the keypad keys), so a tap
- * never blurs the note / closes the Deck.
+ * The selector row — base region BELOW the keys, always present. Groups left, then the Mic, then Undo/Redo.
+ * pointerdown + preventDefault keeps the editor focused (the Deck also swallows at the container).
  */
-export function EditorGroupSelector({ activeGroup, toggleGroup, active, onUndo, onRedo }: SelectorProps) {
+export function EditorGroupSelector({ activeGroup, toggleGroup, active, onUndo, onRedo, mic }: SelectorProps) {
   return (
     <>
       <div className="elt-groups" role="toolbar" aria-label="Formatting groups">
-        {GROUP_TOGGLES.map((gt) => {
+        {DECK_GROUPS.map((gt) => {
           const on = activeGroup === gt.group;
           const Icon = gt.icon;
           return (
@@ -66,6 +115,7 @@ export function EditorGroupSelector({ activeGroup, toggleGroup, active, onUndo, 
         })}
       </div>
       <div className="elt-history">
+        {mic && <MicButton {...mic} />}
         <button type="button" className="editor__mtool" aria-label="Undo" disabled={!active.canUndo}
           onPointerDown={(e) => { e.preventDefault(); onUndo(); }}>
           <Undo size={22} />
@@ -80,20 +130,19 @@ export function EditorGroupSelector({ activeGroup, toggleGroup, active, onUndo, 
 }
 
 interface SubmenuProps {
-  activeGroup: ToolGroup | null;
+  activeGroup: DeckGroup | null;
   active: EditorActiveState;
   run: (tool: ToolDescriptor) => void;
 }
 
 /**
- * The per-group submenu — the active group's controls, rendered ABOVE the keys (it grows the Deck upward
- * into the note; the keys never move). Null when no group is open (keys + selector at rest). Tools render
- * FROM the registry (toolsFor('mobile', group)) — the 'mobile' surface so Link rides the Insert tray,
- * matching MobileEditorBar; isActive reflects the live selection.
+ * The per-group submenu — the active group's controls ABOVE the keys. Null when no group is open. For "+"
+ * it presents lists + inserts together (Option B composition over the shared registry); isActive reflects
+ * the live selection.
  */
 export function EditorGroupSubmenu({ activeGroup, active, run }: SubmenuProps) {
   if (!activeGroup) return null;
-  const tools = toolsFor('mobile', activeGroup);
+  const tools = toolsForDeckGroup(activeGroup);
   return (
     <div className="elt-sub" role="toolbar" aria-label={`${activeGroup} tools`}>
       {tools.map((tool) => {
@@ -117,3 +166,7 @@ export function EditorGroupSubmenu({ activeGroup, active, run }: SubmenuProps) {
     </div>
   );
 }
+
+/** Exposed for tests: the composed group set + their registry tools. */
+export { DECK_GROUPS, toolsForDeckGroup };
+export type { DeckGroup };

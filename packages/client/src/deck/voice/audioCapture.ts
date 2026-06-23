@@ -1,13 +1,10 @@
 /**
- * Voice CAPTURE stage (custom-keyboard spec §6, stage 1) — a note-agnostic microphone recorder.
+ * Audio CAPTURE (#69 §6 stage 1, relocated into Deck-core per §6.1b) — a note-agnostic microphone recorder.
  *
- * This module knows NOTHING about notes, the editor, the Deck, or transcription. It wraps the browser
- * MediaRecorder into a tiny start/stop API that yields an audio Blob — the raw first-class artifact. The
- * transcribe service (stage 3) consumes the blob; a future VOICE MEMO note type consumes the same blob to
- * persist audio. Keeping capture decoupled is what lets both consumers reuse it without a rewrite.
- *
- * No mic-key UI lives here — that interaction (tap-toggle vs hold-to-talk, placement in the Deck) is an
- * OPEN design question (navSys + Jim). This is the plumbing a future trigger calls.
+ * Generic browser MediaRecorder wrapper with ZERO deltos/editor coupling, so it belongs in the extractable
+ * Deck (the voice loadout's capture half). It wraps MediaRecorder into a tiny start/stop API that yields an
+ * audio Blob — the raw first-class artifact. The Deck's voice loadout records with it and hands the blob to
+ * the injected Transcriber; a future voice-memo consumer keeps the same blob to persist audio.
  */
 
 /** The recorded audio + the metadata a consumer needs to persist or transcribe it. */
@@ -29,6 +26,8 @@ export interface AudioRecorder {
   stop(): Promise<AudioRecording>;
   /** Abort recording and release the mic without producing a recording (e.g. user cancels). */
   cancel(): void;
+  /** The live MediaStream while recording (for a Web Audio AnalyserNode → waveform), else null. */
+  readonly stream: MediaStream | null;
   /** Current lifecycle state. */
   readonly state: RecorderState;
 }
@@ -87,6 +86,9 @@ export function createAudioRecorder(): AudioRecorder {
   return {
     get state() {
       return state;
+    },
+    get stream() {
+      return stream;
     },
 
     async start(): Promise<void> {

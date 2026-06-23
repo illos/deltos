@@ -25,15 +25,28 @@ const tap = (el: Element | null) => fireEvent.pointerDown(el!);
 const groupBtn = (label: string) =>
   document.querySelector(`.elt-groups button[aria-label="${label}"]`) as HTMLButtonElement | null;
 
-describe('EditorGroupSelector — group toggles + Undo/Redo (the row below the keys)', () => {
-  it('renders the 4 groups + Undo/Redo; tapping a group calls toggleGroup with its id', () => {
+describe('EditorGroupSelector — 3 composed groups + mic + Undo/Redo (§6.1 Option B)', () => {
+  it('renders Style/Format/Insert (Lists merged into "+"), NOT a separate Lists; tap calls toggleGroup', () => {
     const toggleGroup = vi.fn();
     render(<EditorGroupSelector activeGroup={null} toggleGroup={toggleGroup} active={EMPTY_ACTIVE_STATE} onUndo={() => {}} onRedo={() => {}} />);
-    for (const g of ['Style', 'Format', 'Lists', 'Insert']) expect(groupBtn(g), g).not.toBeNull();
+    for (const g of ['Style', 'Format', 'Insert']) expect(groupBtn(g), g).not.toBeNull();
+    expect(groupBtn('Lists')).toBeNull(); // merged into the "+" group
     expect(document.querySelector('.elt-history button[aria-label="Undo"]')).not.toBeNull();
-    expect(document.querySelector('.elt-history button[aria-label="Redo"]')).not.toBeNull();
-    tap(groupBtn('Format'));
-    expect(toggleGroup).toHaveBeenCalledWith('format');
+    tap(groupBtn('Insert'));
+    expect(toggleGroup).toHaveBeenCalledWith('plus');
+  });
+
+  it('renders the mic control only when the mic prop is provided; tap fires onTap', () => {
+    const onTap = vi.fn();
+    const { rerender } = render(<EditorGroupSelector activeGroup={null} toggleGroup={() => {}} active={EMPTY_ACTIVE_STATE} onUndo={() => {}} onRedo={() => {}} />);
+    expect(document.querySelector('.elt-mic')).toBeNull(); // no mic without the prop
+    rerender(<EditorGroupSelector activeGroup={null} toggleGroup={() => {}} active={EMPTY_ACTIVE_STATE} onUndo={() => {}} onRedo={() => {}}
+      mic={{ recording: false, onTap, onHoldStart: () => {}, onHoldEnd: () => {} }} />);
+    const mic = document.querySelector('.elt-mic') as HTMLElement;
+    expect(mic).not.toBeNull();
+    fireEvent.pointerDown(mic);
+    fireEvent.pointerUp(mic); // a quick tap (no long-press) → onTap
+    expect(onTap).toHaveBeenCalledTimes(1);
   });
 
   it('highlights the open group (.is-active); Undo/Redo disabled per the active snapshot', () => {
@@ -61,6 +74,15 @@ describe('EditorGroupSubmenu — the active group\'s tools (the layer above the 
     tap(bold);
     expect(run).toHaveBeenCalledTimes(1);
     expect(run.mock.calls[0][0].id).toBe('bold');
+  });
+
+  it('the "+" group composes LISTS + INSERTS together (Option B — over the shared registry)', () => {
+    render(<EditorGroupSubmenu activeGroup="plus" active={EMPTY_ACTIVE_STATE} run={() => {}} />);
+    const labels = [...document.querySelectorAll('.elt-sub button')].map((b) => b.getAttribute('aria-label'));
+    // lists (ul/ol/check) AND inserts (quote/divider, + mobile link) under one "+" submenu
+    for (const l of ['Bullet list', 'Numbered list', 'Checklist', 'Quote', 'Divider']) {
+      expect(labels, l).toContain(l);
+    }
   });
 });
 

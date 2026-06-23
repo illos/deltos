@@ -137,3 +137,26 @@
 .keypad--trackpad .keypad__face { color: transparent; }
 .keypad--trackpad .keypad__pop { display: none !important; }
 .keypad--trackpad { touch-action: none; }
+
+/* ── Voice loadout (#69 §6.1/§6.1b) — replaces the keypad while recording. Waveform (top) + transcript
+   pane (keypad footprint) + Stop (base). Consumes host theme tokens; canvas stroke inherits `color`. ── */
+.voice-loadout { display: flex; flex-direction: column; }
+.voice-loadout__wave { padding: 8px 14px 0; }
+.voice-waveform { display: block; width: 100%; height: 44px; color: var(--accent); } /* canvas stroke = color */
+.voice-loadout__pane {
+  flex: 1 1 auto; min-height: 96px; display: flex; align-items: center; justify-content: center;
+  padding: 16px; text-align: center;
+}
+.voice-loadout__status { color: var(--secondary); font-family: var(--ff); font-size: 15px; }
+.voice-loadout__text { color: var(--ink); font-family: var(--ff); font-size: 16px; }
+.voice-loadout__base {
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 12px max(8px, env(safe-area-inset-bottom)); min-height: 47px;
+}
+.voice-loadout__stop {
+  appearance: none; -webkit-appearance: none; border: none;
+  background: var(--accent); color: var(--paper); font-family: var(--ff); font-size: 16px; line-height: 1;
+  padding: 0 28px; min-height: 40px; border-radius: 20px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.voice-loadout__stop:disabled { opacity: 0.6; cursor: default; }

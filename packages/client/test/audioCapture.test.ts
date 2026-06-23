@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createAudioRecorder, isAudioCaptureSupported } from '../src/lib/audioCapture.js';
+import { createAudioRecorder, isAudioCaptureSupported } from '../src/deck/voice/audioCapture.js';
 
 /**
  * Voice CAPTURE stage tests (custom-keyboard spec §6, stage 1). The recorder is note-agnostic plumbing

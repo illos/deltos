@@ -20,3 +20,11 @@ export type { DeckContext, KeyActions, DeckLoadoutRegistry } from './types.js';
 export { createSpellEngine } from './spellcheck/spellEngine.js';
 export type { SpellEngine } from './spellcheck/spellEngine.js';
 export type { MisspelledRange, SpellSuggestion } from './spellcheck/symspell.js';
+
+// Voice loadout (#69 §6.1b) — Deck-core capability + UI; deltos injects the concrete Transcriber (Whisper)
+// and the commit-to-note action. The Deck never knows the transcription backend.
+export { useVoiceMode } from './voice/useVoiceMode.js';
+export type { VoiceMode, VoiceState } from './voice/useVoiceMode.js';
+export { VoiceLoadout } from './voice/VoiceLoadout.js';
+export { isAudioCaptureSupported } from './voice/audioCapture.js';
+export type { Transcriber } from './voice/transcriber.js';
