@@ -6,6 +6,7 @@ import type { MisspelledRange, SpellSuggestion } from './symspell.js';
 
 export type SpellRequest =
   | { type: 'init'; dict: string }
+  | { type: 'setAllowList'; words: string[] } // user custom dictionary (fire-and-forget, no response)
   | { type: 'check'; id: number; text: string }
   | { type: 'lookup'; id: number; word: string; limit: number };
 

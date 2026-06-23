@@ -26,6 +26,7 @@ import { SpellSuggestionPopover } from './SpellSuggestionPopover.js';
 import { SpellSuggestionBar } from './SpellSuggestionBar.js';
 import { openLinkInNewTab } from './openLink.js';
 import { useSpellcheckStore } from '../lib/useSpellcheck.js';
+import { observeWords, addWord } from '../lib/dictionaryStore.js';
 import type { SpellEngine } from '../deck/index.js';
 import { deriveActiveState, EMPTY_ACTIVE_STATE } from './editorState.js';
 import type { EditorActiveState } from './editorState.js';
@@ -96,6 +97,10 @@ export function ProseMirrorEditor({
   // when the toggle flips) + the lazily-created off-thread engine.
   const basePluginsRef = useRef<Plugin[]>([]);
   const spellEngineRef = useRef<SpellEngine | null>(null);
+  // §5.2 custom dictionary: the live allow-list (account-synced) fed to the engine; recheckSpellRef lets
+  // an allow-list change force a re-check (no doc edit). dictWordsRef mirrors the state for engine-create.
+  const recheckSpellRef = useRef<(() => void) | null>(null);
+  const dictWordsRef = useRef<string[]>([]);
   const isDesktop = useIsDesktop();
   // #69: the custom keyboard is opt-in (Settings, default OFF) + mobile-only. When ON the editor
   // suppresses the native keyboard (inputmode=none) and shows our context-driven Deck.
@@ -131,6 +136,20 @@ export function ProseMirrorEditor({
     if (v) applySpellCorrection(v, from, to, replacement);
     setSpellSuggest(null);
   }, []);
+  // [+ Add to dictionary] → add the flagged word (optimistic+synced); the observeWords subscription below
+  // pushes the new allow-list to the engine + re-checks, so the squiggle clears. Dismiss the bar.
+  const handleAddToDictionary = useCallback((word: string) => {
+    void addWord(word);
+    setSpellSuggest(null);
+  }, []);
+  // §5.2: the account-synced custom dictionary (allow-list). Subscribe once; feed every change to the
+  // engine + force a re-check (no doc edit) so newly-added/removed words (re)flag immediately.
+  const [dictWords, setDictWords] = useState<string[]>([]);
+  useEffect(() => observeWords((words) => { dictWordsRef.current = words; setDictWords(words); }), []);
+  useEffect(() => {
+    spellEngineRef.current?.setAllowList(dictWords);
+    recheckSpellRef.current?.();
+  }, [dictWords]);
   // Reactive view + selection context for the Deck. The keyboard's visibility is driven by
   // customKb (editor mounted = a note open + the toggle on), NOT by editor focus — a focus-gated
   // keyboard was being torn down by incidental tap-blurs (#69 single-tap) and by sync-driven re-renders
@@ -220,6 +239,7 @@ export function ProseMirrorEditor({
                 word={spellSuggest.word}
                 suggestions={spellSuggest.suggestions}
                 onPick={(w) => handleSpellPick(spellSuggest.from, spellSuggest.to, w)}
+                onAddToDictionary={() => handleAddToDictionary(spellSuggest.word)}
               />
             ) : activeGroup ? (
               <EditorGroupSubmenu activeGroup={activeGroup} active={active} run={runTool} />
@@ -228,7 +248,7 @@ export function ProseMirrorEditor({
         />
       ),
     }),
-    [deckActions, keypadShown, locked, toggleKeypad, toggleLock, activeGroup, toggleGroup, active, handleUndo, handleRedo, runTool, spellSuggest, handleSpellPick],
+    [deckActions, keypadShown, locked, toggleKeypad, toggleLock, activeGroup, toggleGroup, active, handleUndo, handleRedo, runTool, spellSuggest, handleSpellPick, handleAddToDictionary],
   );
 
   // #69 slice B: the Deck mounts once at the app-shell level (DeckHostProvider) so it persists across
@@ -395,8 +415,9 @@ export function ProseMirrorEditor({
       if (cancelled || view.isDestroyed) return;
       const engine = createSpellEngine();
       spellEngineRef.current = engine;
+      engine.setAllowList(dictWordsRef.current); // seed the custom-dictionary allow-list (§5.2)
       view.updateState(view.state.reconfigure({
-        plugins: [...basePluginsRef.current, createSpellcheckPlugin(engine, handleSpellTap, handleSpellDismiss)],
+        plugins: [...basePluginsRef.current, createSpellcheckPlugin(engine, handleSpellTap, handleSpellDismiss, recheckSpellRef)],
       }));
     });
     return () => {

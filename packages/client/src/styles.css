@@ -2339,8 +2339,16 @@ body.deck-custom .bottom-nav { display: none; }
 }
 .spell-bar__pill:active { background: var(--accent); color: var(--paper); }
 .spell-bar__empty { color: var(--secondary); font-size: 14px; padding: 0 6px; }
-/* §5.2 [+ Add to dictionary] trailing action lands here — visually distinct, end of the bar. */
-.spell-bar__trailing { flex: 0 0 auto; }
+/* §5.2 [+ Add to dictionary] trailing action — visually distinct from the suggestion pills (accent-outlined,
+   not filled) so it reads as an action, not another suggestion. */
+.spell-bar__add {
+  flex: 0 0 auto; appearance: none; -webkit-appearance: none; background: none;
+  border: 1px solid var(--accent); color: var(--accent); font-family: var(--ff);
+  font-size: 15px; line-height: 1; white-space: nowrap;
+  padding: 0 14px; min-height: 40px; border-radius: 20px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.spell-bar__add:active { background: var(--accent); color: var(--paper); }
 
 /* The Deck's NAVIGATION loadout (slice B) — the lean New + Search row shown in the Deck footprint while
    browsing (no note open). Host-side styling (the loadout is deltos-specific); mirrors the bottom-nav

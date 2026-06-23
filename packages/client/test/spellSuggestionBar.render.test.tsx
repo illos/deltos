@@ -38,17 +38,27 @@ describe('SpellSuggestionBar', () => {
     expect(document.querySelector('.spell-bar__empty')).not.toBeNull();
   });
 
-  it('renders a trailing action when provided (the §5.2 [+ Add to dictionary] slot)', () => {
-    render(
-      <SpellSuggestionBar
-        word="quokka"
-        suggestions={['quota']}
-        onPick={() => {}}
-        trailing={<button type="button" data-testid="add">+ Add</button>}
-      />,
-    );
-    const trailing = document.querySelector('.spell-bar__trailing');
-    expect(trailing).not.toBeNull();
-    expect(trailing!.querySelector('[data-testid="add"]')).not.toBeNull();
+  it('renders the [+ Add to dictionary] action when onAddToDictionary is given; a tap calls it (§5.2)', () => {
+    const onAdd = vi.fn();
+    render(<SpellSuggestionBar word="quokka" suggestions={['quota']} onPick={() => {}} onAddToDictionary={onAdd} />);
+    const add = document.querySelector('.spell-bar__add') as HTMLElement;
+    expect(add).not.toBeNull();
+    fireEvent.pointerDown(add, { clientX: 200, clientY: 8 });
+    fireEvent.pointerUp(add, { clientX: 201, clientY: 9 }); // tap, not scroll
+    expect(onAdd).toHaveBeenCalledTimes(1);
+  });
+
+  it('the [+ Add] action also respects tap-not-scroll (a drag across it does not fire)', () => {
+    const onAdd = vi.fn();
+    render(<SpellSuggestionBar word="quokka" suggestions={['quota']} onPick={() => {}} onAddToDictionary={onAdd} />);
+    const add = document.querySelector('.spell-bar__add') as HTMLElement;
+    fireEvent.pointerDown(add, { clientX: 20, clientY: 8 });
+    fireEvent.pointerUp(add, { clientX: 120, clientY: 8 }); // scrolled
+    expect(onAdd).not.toHaveBeenCalled();
+  });
+
+  it('does NOT render the [+ Add] action when onAddToDictionary is omitted', () => {
+    render(<SpellSuggestionBar word="x" suggestions={['y']} onPick={() => {}} />);
+    expect(document.querySelector('.spell-bar__add')).toBeNull();
   });
 });

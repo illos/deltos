@@ -18,6 +18,8 @@ export interface SpellEngine {
   check(text: string): Promise<MisspelledRange[]>;
   /** Ranked suggestions for a word (nearest + most-frequent first). */
   lookup(word: string, limit?: number): Promise<SpellSuggestion[]>;
+  /** Replace the user custom-dictionary allow-list — allow-listed words are never flagged (§5.2). */
+  setAllowList(words: string[]): void;
   /** Terminate the worker and free the engine ("unload" — when spellcheck is turned off). */
   dispose(): void;
 }
@@ -25,7 +27,7 @@ export interface SpellEngine {
 export function createSpellEngine(): SpellEngine {
   // Defensive: no Worker (SSR / test env) → an inert engine (spellcheck simply produces nothing).
   if (typeof Worker === 'undefined') {
-    return { check: async () => [], lookup: async () => [], dispose: () => {} };
+    return { check: async () => [], lookup: async () => [], setAllowList: () => {}, dispose: () => {} };
   }
   const worker = new Worker(new URL('./spellWorker.js', import.meta.url), { type: 'module' });
   worker.postMessage({ type: 'init', dict: dictRaw } satisfies SpellRequest);
@@ -49,6 +51,7 @@ export function createSpellEngine(): SpellEngine {
       request<Extract<SpellResponse, { type: 'check' }>>((id) => ({ type: 'check', id, text })).then((r) => r.ranges),
     lookup: (word, limit = 6) =>
       request<Extract<SpellResponse, { type: 'lookup' }>>((id) => ({ type: 'lookup', id, word, limit })).then((r) => r.suggestions),
+    setAllowList: (words) => worker.postMessage({ type: 'setAllowList', words } satisfies SpellRequest),
     dispose: () => { worker.terminate(); pending.clear(); },
   };
 }

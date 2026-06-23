@@ -55,6 +55,9 @@ export function createSpellcheckPlugin(
   engine: SpellEngine,
   onTap: (t: SpellTap) => void,
   onDismiss: () => void,
+  /** The plugin assigns a force-recheck fn here on mount (cleared on destroy) so the host can re-run the
+   *  check after a non-doc change — e.g. the custom-dictionary allow-list updating (§5.2). */
+  recheckRef: { current: (() => void) | null },
 ): Plugin<DecorationSet> {
   return new Plugin<DecorationSet>({
     key: spellcheckKey,
@@ -98,9 +101,10 @@ export function createSpellcheckPlugin(
       };
       const schedule = () => { if (timer) clearTimeout(timer); timer = setTimeout(run, DEBOUNCE_MS); };
       schedule(); // initial pass on mount
+      recheckRef.current = schedule; // host can force a re-check (e.g. allow-list changed) without a doc edit
       return {
         update(v, prev) { if (v.state.doc !== prev.doc) schedule(); },
-        destroy() { if (timer) clearTimeout(timer); },
+        destroy() { if (timer) clearTimeout(timer); recheckRef.current = null; },
       };
     },
   });

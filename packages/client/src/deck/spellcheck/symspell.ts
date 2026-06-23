@@ -31,6 +31,7 @@ export class SymSpell {
   private readonly prefixLength: number;
   private readonly words = new Map<string, number>(); // word → frequency (rank-derived)
   private readonly deletes = new Map<string, string[]>(); // delete-variant → source dict words
+  private allowList = new Set<string>(); // user custom-dictionary words (host-fed, lowercased) — never flagged
 
   constructor(opts: SymSpellOptions = {}) {
     this.maxEdit = opts.maxEditDistance ?? 2;
@@ -52,9 +53,16 @@ export class SymSpell {
     }
   }
 
-  /** Is the word in the dictionary (case-insensitive)? */
+  /** Is the word known — in the frequency dictionary OR the user allow-list (case-insensitive)? */
   has(word: string): boolean {
-    return this.words.has(word.toLowerCase());
+    const w = word.toLowerCase();
+    return this.words.has(w) || this.allowList.has(w);
+  }
+
+  /** Replace the user custom-dictionary allow-list (host-fed, account-synced). Allow-listed words are
+   *  treated as correctly spelled → never flagged by checkText. */
+  setAllowList(words: readonly string[]): void {
+    this.allowList = new Set(words.map((w) => w.toLowerCase()));
   }
 
   /** Ranked suggestions for a (presumed-misspelled) term, nearest + most-frequent first. */

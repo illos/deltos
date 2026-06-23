@@ -41,6 +41,16 @@ describe('SymSpell — membership + lookup', () => {
     const s = build(['receive']);
     expect(s.lookup('xyzzy')).toEqual([]);
   });
+
+  it('setAllowList: allow-listed words count as known (has) + are not flagged (§5.2 custom dictionary)', () => {
+    const s = build(['the', 'cat']);
+    expect(s.has('quokka')).toBe(false);
+    expect(checkText(s, 'the quokka').map((r) => r.word)).toEqual(['quokka']); // flagged before
+    s.setAllowList(['quokka', 'deltos']);
+    expect(s.has('quokka')).toBe(true);
+    expect(s.has('Deltos')).toBe(true); // case-insensitive
+    expect(checkText(s, 'the quokka')).toEqual([]); // allow-listed → no longer flagged
+  });
 });
 
 describe('damerauOSA', () => {

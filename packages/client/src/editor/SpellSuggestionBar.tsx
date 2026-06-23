@@ -19,12 +19,12 @@ interface SpellSuggestionBarProps {
   word: string;
   suggestions: string[];
   onPick: (word: string) => void;
-  /** A trailing, visually-distinct action pill at the END of the bar (§5.2 "+ Add to dictionary"). The
-   *  bar is intentionally NOT suggestions-only so that action lands with zero rework. Optional/unused now. */
-  trailing?: React.ReactNode;
+  /** §5.2: when provided, render a trailing, visually-distinct [+ Add to dictionary] action at the end of
+   *  the bar. It goes through the SAME tap-not-scroll detection as the pills. */
+  onAddToDictionary?: () => void;
 }
 
-export function SpellSuggestionBar({ word, suggestions, onPick, trailing }: SpellSuggestionBarProps) {
+export function SpellSuggestionBar({ word, suggestions, onPick, onAddToDictionary }: SpellSuggestionBarProps) {
   const downAt = useRef<{ x: number; y: number } | null>(null);
   const onPointerDown = (e: React.PointerEvent) => { downAt.current = { x: e.clientX, y: e.clientY }; };
   const onPointerUp = (e: React.PointerEvent) => {
@@ -32,7 +32,9 @@ export function SpellSuggestionBar({ word, suggestions, onPick, trailing }: Spel
     downAt.current = null;
     if (!start) return;
     if (Math.hypot(e.clientX - start.x, e.clientY - start.y) >= TAP_MOVE_PX) return; // a scroll, not a tap
-    const w = (e.target as HTMLElement | null)?.closest('.spell-bar__pill')?.getAttribute('data-word');
+    const el = e.target as HTMLElement | null;
+    if (el?.closest('.spell-bar__add')) { onAddToDictionary?.(); return; }
+    const w = el?.closest('.spell-bar__pill')?.getAttribute('data-word');
     if (w) onPick(w);
   };
 
@@ -53,7 +55,11 @@ export function SpellSuggestionBar({ word, suggestions, onPick, trailing }: Spel
           </button>
         ))
       )}
-      {trailing != null && <span className="spell-bar__trailing">{trailing}</span>}
+      {onAddToDictionary && (
+        <button type="button" className="spell-bar__add" aria-label={`Add "${word}" to dictionary`}>
+          + Add to dictionary
+        </button>
+      )}
     </div>
   );
 }

@@ -23,6 +23,10 @@ self.onmessage = (e: MessageEvent<SpellRequest>) => {
     ready = true;
     return;
   }
+  if (msg.type === 'setAllowList') {
+    spell.setAllowList(msg.words); // user custom dictionary — these words are never flagged
+    return;
+  }
   if (!ready) return; // requests can't arrive before 'init' (messages are ordered), but guard anyway.
   if (msg.type === 'check') {
     const res: SpellResponse = { type: 'check', id: msg.id, ranges: checkText(spell, msg.text) };
