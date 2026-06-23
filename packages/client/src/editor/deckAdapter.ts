@@ -5,6 +5,7 @@ import { baseKeymap, deleteSelection, joinBackward } from 'prosemirror-commands'
 import type { DeckContext, KeyActions } from '../deck/index.js';
 import { unwrapFormulaBackspace, formulaTriggerOnInsert, maybeWrapBoundaryFormula } from '../plugins/formula/index.js';
 import type { FormulaRegistry } from '../plugins/formula/index.js';
+import { linkifyTrailingUrl } from './autolink.js';
 
 /**
  * The deltos↔Deck ADAPTER (#69 §0.5). ALL ProseMirror-specific code lives here, never in Deck core: the
@@ -42,9 +43,10 @@ export function buildPmKeyActions(getView: () => EditorView | null, formulaRegis
       v.dispatch(v.state.tr.insertText(text));
     }),
     enter: () => run((v) => {
-      // Inline-formula: ENTER is a boundary too — wrap a trailing bare token (e.g. hex) FIRST, then do the
-      // normal enter on the updated state (the keypad bypasses the keymap, so the wrap is shared here).
-      maybeWrapBoundaryFormula(v.state, v.dispatch, formulaRegistry);
+      // ENTER boundary on the keypad path (bypasses the keymap): a trailing token is either a FORMULA
+      // (wrap → node) or a URL/bare-domain (linkify → link mark), not both — try formula first, else
+      // autolink — THEN do the normal enter on the updated state.
+      if (!maybeWrapBoundaryFormula(v.state, v.dispatch, formulaRegistry)) linkifyTrailingUrl(v.state, v.dispatch);
       (baseKeymap['Enter'] as Command)(v.state, v.dispatch, v);
     }),
     // Own the char-delete: baseKeymap.Backspace only joins at block boundaries (the native keyboard did

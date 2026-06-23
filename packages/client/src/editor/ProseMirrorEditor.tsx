@@ -9,6 +9,7 @@ import { deltoSchema } from './schema.js';
 import { uniqueBlockIdPlugin } from './plugins/blockId.js';
 import { buildKeymapPlugin } from './keymap.js';
 import { buildInputRulesPlugin } from './inputRules.js';
+import { buildAutolinkKeymap } from './autolink.js';
 import { spineToPmDoc, pmDocToSpine, extractTitleFromDoc } from './serializer.js';
 import { buildPluginIslandNodeViews } from './nodeviews/PluginIsland.js';
 // Importing the embeds plugin registers the link_card NodeView (side-effect) + provides the paste-to-card
@@ -426,6 +427,9 @@ export function ProseMirrorEditor({
       // backspace unwraps; everything else falls through). Its '=' auto + '[...]' bracket input rules are
       // order-independent. Self-contained — does not touch core inputRules.ts.
       ...buildFormulaPlugins(formulaRegistry),
+      // Autolink ENTER boundary: linkify a trailing URL/bare-domain on Enter (the space boundary is an
+      // inputRules.ts rule). Before the base keymap so it intercepts Enter; returns false when no trailing URL.
+      buildAutolinkKeymap(),
       buildKeymapPlugin(deltoSchema),
       // Input rules MUST precede uniqueBlockIdPlugin so its appendTransaction runs AFTER the rule's
       // transaction and mints ids for any nodes the rule created (divider, list wrappers).
