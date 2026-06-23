@@ -744,15 +744,16 @@
 }
 .editor__deck-strip-row { display: flex; align-items: center; padding: 4px 14px; }
 .editor__deck-strip-row--sub { border-top: 1px solid var(--border); }
-/* Inside the strip, undo display:contents (the mobile equidistant hack) → real flex clusters: groups left,
-   history (Undo/Redo) pushed right. */
-.editor__deck-strip .elt-groups  { display: flex; align-items: center; gap: 6px; }
-.editor__deck-strip .elt-history { display: flex; align-items: center; gap: 6px; margin-left: auto; }
-/* The submenu inside the strip: left-aligned, no negative top margin (that was for the mobile Deck slot). */
-.editor__deck-strip .elt-sub {
-  margin-top: 0; justify-content: flex-start; gap: 8px; flex: 1 1 auto;
-  background: transparent; border-bottom: none;
+/* Flat primary row: all tools expanded inline (wraps if narrow), hairline dividers between groups, with
+   Undo/Redo pushed to the right. */
+.editor__deck-strip-row--flat { flex-wrap: wrap; gap: 2px; }
+.editor__deck-strip-divider {
+  width: 1px; height: 18px; background: var(--border); margin: 0 6px; flex-shrink: 0;
 }
+.editor__deck-strip-history { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+/* Desktop affordance on the reused mobile tool buttons inside the strip (mobile has no hover). */
+.editor__deck-strip .editor__mtool:hover:not(:disabled) { background: var(--sel); }
+.editor__deck-strip .editor__mtool:disabled { opacity: 0.4; cursor: default; }
 /* Desktop link form (native inputs) in the sub row. */
 .editor__link-form { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; }
 .editor__link-input {

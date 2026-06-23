@@ -1,8 +1,8 @@
 /**
- * #69 desktop Deck — EditorControlStrip render gate. The desktop editor toolbar is now the Deck editor
- * loadout (selector → submenu), not a flat row: mounts ProseMirrorEditor at a desktop viewport and asserts
- * the strip's real DOM — group buttons + Undo/Redo, tools hidden until a group opens, a tool acts on the
- * selection, and the link tool opens the native URL+Title form and inserts a linked title.
+ * #69 desktop Deck — EditorControlStrip render gate. The desktop editor toolbar is the Deck editor loadout's
+ * converged registry rendered FLAT (all tools expanded inline; Jim's pick), not a click-to-expand collapse.
+ * Mounts ProseMirrorEditor at a desktop viewport and asserts the strip's real DOM — all tools visible up
+ * front + Undo/Redo, a tool acts on the selection, and the link tool opens the native URL+Title form.
  */
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -30,28 +30,24 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-describe('EditorControlStrip — desktop selector', () => {
-  it('renders the group selector + Undo/Redo; tools are hidden until a group opens', async () => {
+describe('EditorControlStrip — desktop flat (expanded)', () => {
+  it('renders ALL tools inline up front (no click-to-expand) + Undo/Redo', async () => {
     mount();
     await waitFor(() => expect(strip()).not.toBeNull());
-    expect(btn('Style')).not.toBeNull();
-    expect(btn('Format')).not.toBeNull();
-    expect(btn('Insert')).not.toBeNull();
-    expect(btn('Undo')).not.toBeNull();
-    expect(btn('Redo')).not.toBeNull();
-    // No keypad show/hide toggle on desktop, and tools collapse until a group is chosen.
-    expect(btn('Bold')).toBeNull();
+    // Tools from every group are visible immediately — no group-toggle step.
+    for (const label of ['Heading', 'Bold', 'Italic', 'Bullet list', 'Link', 'Undo', 'Redo']) {
+      expect(btn(label), `${label} button`).not.toBeNull();
+    }
+    // No group-SELECTOR toggle buttons (that was the collapsed model); divider(s) separate groups instead.
+    expect(btn('Style')).toBeNull();
+    expect(document.querySelectorAll('.editor__deck-strip-divider').length).toBeGreaterThan(0);
   });
 
-  it('opening Format reveals its tools; Bold toggles the selection', async () => {
+  it('Bold toggles the selection directly (no group to open first)', async () => {
     let view: EditorView | null = null;
     mount((v) => { view = v; });
     await waitFor(() => expect(view).not.toBeNull());
     const v = view!;
-
-    fireEvent.pointerDown(btn('Format')!);
-    await waitFor(() => expect(btn('Bold')).not.toBeNull());
-
     act(() => { v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, 4, 9))); });
     fireEvent.pointerDown(btn('Bold')!);
     expect(v.state.doc.rangeHasMark(4, 9, deltoSchema.marks['bold']!)).toBe(true);
@@ -66,18 +62,13 @@ describe('EditorControlStrip — link form', () => {
     const v = view!;
     act(() => { v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, 9))); }); // caret at end of 'hello'
 
-    // Link lives in the Insert ("+") group on the mobile/Deck tool set.
-    fireEvent.pointerDown(btn('Insert')!);
-    await waitFor(() => expect(btn('Link')).not.toBeNull());
     fireEvent.pointerDown(btn('Link')!);
-
     const title = await waitFor(() => document.querySelector('input[aria-label="Link title"]') as HTMLInputElement);
     const url = document.querySelector('input[aria-label="Link URL"]') as HTMLInputElement;
     act(() => { fireEvent.change(title, { target: { value: 'My Site' } }); });
     act(() => { fireEvent.change(url, { target: { value: 'example.com' } }); });
     fireEvent.mouseDown(document.querySelector('button[aria-label="Apply link"]')!);
 
-    // The linked title text is inserted, carrying a link mark with the normalized href.
     const linkType = deltoSchema.marks['link']!;
     let found = false;
     v.state.doc.descendants((node) => {

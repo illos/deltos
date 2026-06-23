@@ -589,8 +589,6 @@ export function ProseMirrorEditor({
           a top-anchored sticky strip, no keypad/mic/toggle. Replaces the old flat EditorToolbar. */}
       {isDesktop && (
         <EditorControlStrip
-          activeGroup={activeGroup}
-          toggleGroup={toggleGroup}
           active={active}
           onUndo={handleUndo}
           onRedo={handleRedo}
