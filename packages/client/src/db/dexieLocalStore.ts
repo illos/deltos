@@ -3,7 +3,7 @@ import type { Note, NoteId, NotebookId, SyncStatus } from '@deltos/shared';
 import { isTrashed, trashedAt, setTrashedAt } from '@deltos/shared';
 import { noteHasContent } from '../lib/noteContent.js';
 import { db } from './schema.js';
-import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry, NotebookQueueEntry } from './schema.js';
+import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry, NotebookQueueEntry, DictionaryWordRow, DictionaryQueueEntry } from './schema.js';
 import type { ConflictResolution, LocalStore, Unsubscribe } from './localStore.js';
 
 /**
@@ -352,5 +352,43 @@ export const dexieLocalStore: LocalStore = {
       await db.notes.delete(id);
       await db.syncQueue.where('recordId').equals(id).delete();
     });
+  },
+
+  // --- custom dictionary mirror (§5.2) ---
+  observeDictionaryWords(cb: (words: string[]) => void): Unsubscribe {
+    const sub = liveQuery(async () => {
+      const all = await db.dictionaryWords.toArray();
+      return all
+        .filter((w) => w.deletedAt === null)
+        .map((w) => w.word)
+        .sort((a, b) => a.localeCompare(b));
+    }).subscribe({ next: cb });
+    return () => sub.unsubscribe();
+  },
+
+  async listDictionaryWords(): Promise<string[]> {
+    const all = await db.dictionaryWords.toArray();
+    return all.filter((w) => w.deletedAt === null).map((w) => w.word).sort((a, b) => a.localeCompare(b));
+  },
+
+  async putDictionaryWordAndEnqueue(row: DictionaryWordRow, entry: DictionaryQueueEntry): Promise<void> {
+    await db.transaction('rw', db.dictionaryWords, db.dictionaryQueue, async () => {
+      await db.dictionaryWords.put(row);
+      await db.dictionaryQueue.add(entry);
+    });
+  },
+
+  async mergeDictionaryWord(row: DictionaryWordRow): Promise<void> {
+    // Apply server state verbatim — live OR tombstone (kept so observeDictionaryWords filters it and a
+    // later re-add un-tombstones cleanly). The word is the PK, so put() converges multi-device adds.
+    await db.dictionaryWords.put(row);
+  },
+
+  dictionaryQueueEntries(): Promise<DictionaryQueueEntry[]> {
+    return db.dictionaryQueue.toArray();
+  },
+
+  async drainDictionaryQueueEntry(id: string): Promise<void> {
+    await db.dictionaryQueue.delete(id);
   },
 };

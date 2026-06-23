@@ -62,7 +62,7 @@ const ALL_MIGRATIONS = [
   '0008_notebooks.sql', '0009_backfill-default-notebooks.sql',
   '0010_nullable-notebookid-all-notes.sql',
   '0011_drop-isdefault-notebooksyncseg-notes_pull.sql',
-].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
+  '0012_custom-dictionary.sql',].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 const DG_AUD = 'deltos.v1.donegate';
 
 function d1Over(raw: Database.Database): D1Database {

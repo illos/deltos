@@ -1,7 +1,7 @@
 import { getStore } from '../db/store.js';
 import { useAuthStore } from '../auth/store.js';
 import { showConflictToast } from './toastEvents.js';
-import type { SyncQueueEntry, NotebookQueueEntry, NotebookRow } from '../db/schema.js';
+import type { SyncQueueEntry, NotebookQueueEntry, NotebookRow, DictionaryQueueEntry, DictionaryWordRow } from '../db/schema.js';
 import type { Note, NoteId, NotebookId } from '@deltos/shared';
 import { NoteResponseSchema } from '@deltos/shared';
 import type {
@@ -10,6 +10,7 @@ import type {
   SyncPullResponse,
   SyncNote,
   SyncNotebook,
+  SyncDictionaryWord,
   NotebookPushResult,
 } from '@deltos/shared';
 import { useNotebookStore } from './notebookStore.js';
@@ -130,6 +131,7 @@ async function runSync(notebookId: NotebookId, apiBase: string): Promise<void> {
     setState('syncing');
     await pushQueued(notebookId, apiBase);
     await pushNotebooks(apiBase);
+    await pushDictionary(apiBase);
     if (_suspended) return; // suspended mid-cycle (e.g. logout): the push flushed; SKIP the re-populating pull
     await pullUpdates(notebookId, apiBase);
     const remaining = await getStore().queueCount(); // any queue left?
@@ -204,6 +206,7 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
         baseVersion: baseFor.get(e.id) ?? e.baseVersion,
       })),
       notebookEntries: [],
+      dictionaryEntries: [],
     };
 
     const res = await fetch(`${apiBase}/sync/push`, {
@@ -316,6 +319,7 @@ async function pullUpdates(notebookId: NotebookId, apiBase: string): Promise<voi
 
     await mergePull(json.notes);
     await mergeNotebooks(json.notebooks);
+    await mergeDictionary(json.dictionaryWords);
 
     next = json.nextCursor;
     hasMore = json.hasMore;
@@ -411,6 +415,7 @@ async function pushNotebooks(apiBase: string): Promise<void> {
   const body: SyncPushRequest = {
     entries: [],
     notebookEntries: entries.map((e) => e.payload),
+    dictionaryEntries: [],
   };
 
   const res = await fetch(`${apiBase}/sync/push`, {
@@ -449,6 +454,63 @@ async function pushNotebooks(apiBase: string): Promise<void> {
       }
     }
     await getStore().drainNotebookQueueEntry(pushed.id);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Custom-dictionary sync helpers (§5.2) — set semantics, conflict-free
+// ---------------------------------------------------------------------------
+
+/** Apply incoming server dictionary words (live or tombstoned) to the local mirror. */
+export async function mergeDictionary(words: SyncDictionaryWord[]): Promise<void> {
+  if (words.length === 0) return;
+  for (const w of words) {
+    const row: DictionaryWordRow = {
+      word: w.word,
+      createdAt: w.createdAt,
+      updatedAt: w.updatedAt,
+      deletedAt: w.deletedAt,
+      syncSeq: w.syncSeq,
+    };
+    await getStore().mergeDictionaryWord(row);
+  }
+}
+
+/** Collapse the dictionary queue to the latest entry per word (latest-wins within the client's queue). */
+async function dedupeDictionaryQueue(): Promise<DictionaryQueueEntry[]> {
+  const all = await getStore().dictionaryQueueEntries();
+  const byWord = new Map<string, DictionaryQueueEntry>();
+  for (const e of all) {
+    const existing = byWord.get(e.recordId);
+    if (!existing || e.createdAt > existing.createdAt) byWord.set(e.recordId, e);
+  }
+  return [...byWord.values()];
+}
+
+async function pushDictionary(apiBase: string): Promise<void> {
+  const entries = await dedupeDictionaryQueue();
+  if (entries.length === 0) return;
+
+  const body: SyncPushRequest = {
+    entries: [],
+    notebookEntries: [],
+    dictionaryEntries: entries.map((e) => e.payload),
+  };
+
+  const res = await fetch(`${apiBase}/sync/push`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`push dictionary ${res.status}`);
+
+  const json: SyncPushResponse = await res.json();
+
+  // Set semantics → always accepted; confirm the local row's syncSeq + drain the queue entry.
+  for (const result of json.dictionaryResults) {
+    const pushed = entries.find((e) => e.payload.word === result.word);
+    if (!pushed) continue;
+    await getStore().drainDictionaryQueueEntry(pushed.id);
   }
 }
 

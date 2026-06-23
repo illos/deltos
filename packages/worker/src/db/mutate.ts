@@ -1,4 +1,4 @@
-import type { NoteRow, NotebookRow, DbAdapter } from './schema.js';
+import type { NoteRow, NotebookRow, DictionaryWordRow, DbAdapter } from './schema.js';
 import type { SyncPushEntry } from '@deltos/shared';
 import { FIRST_SERVER_VERSION, UNSYNCED_VERSION, isTrashed } from '@deltos/shared';
 
@@ -401,6 +401,7 @@ export async function pullNotes(
 export interface PullSinceResult {
   notes: NoteRow[];
   notebooks: NotebookRow[];
+  dictionaryWords: DictionaryWordRow[];
   nextCursor: number;
   hasMore: boolean;
 }
@@ -416,19 +417,24 @@ export async function pullSince(
   accountId: string,
   cursor: number,
 ): Promise<PullSinceResult> {
+  // The window UNIONs all three entity kinds on the shared syncSeq. For dictionary words the "id" column
+  // is the WORD (its account-scoped identity has no surrogate id) — hydrated by word below.
   const window = await db.all<{ id: string; syncSeq: number; kind: string }>(
     `SELECT id, syncSeq, 'note' AS kind FROM notes WHERE accountId = ? AND syncSeq > ?
      UNION ALL
      SELECT id, syncSeq, 'notebook' AS kind FROM notebooks WHERE accountId = ? AND syncSeq > ?
+     UNION ALL
+     SELECT word AS id, syncSeq, 'dictionary' AS kind FROM dictionaryWords WHERE accountId = ? AND syncSeq > ?
      ORDER BY syncSeq ASC, kind ASC, id ASC
      LIMIT ?`,
-    [accountId, cursor, accountId, cursor, PULL_PAGE + 1],
+    [accountId, cursor, accountId, cursor, accountId, cursor, PULL_PAGE + 1],
   );
 
   const hasMore = window.length > PULL_PAGE;
   const page = hasMore ? window.slice(0, PULL_PAGE) : window;
   const noteIds = page.filter((w) => w.kind === 'note').map((w) => w.id);
   const nbIds = page.filter((w) => w.kind === 'notebook').map((w) => w.id);
+  const dictKeys = page.filter((w) => w.kind === 'dictionary').map((w) => w.id);
 
   const notes = noteIds.length
     ? await db.all<NoteRow>(
@@ -442,9 +448,15 @@ export async function pullSince(
         [accountId, ...nbIds],
       )
     : [];
+  const dictionaryWords = dictKeys.length
+    ? await db.all<DictionaryWordRow>(
+        `SELECT * FROM dictionaryWords WHERE accountId = ? AND word IN (${dictKeys.map(() => '?').join(',')}) ORDER BY syncSeq ASC`,
+        [accountId, ...dictKeys],
+      )
+    : [];
   const nextCursor = page.length > 0 ? page[page.length - 1]!.syncSeq : cursor;
 
-  return { notes, notebooks, nextCursor, hasMore };
+  return { notes, notebooks, dictionaryWords, nextCursor, hasMore };
 }
 
 // ---------------------------------------------------------------------------

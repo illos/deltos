@@ -1,5 +1,5 @@
 import type { Note, NoteId, NotebookId } from '@deltos/shared';
-import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry, NotebookQueueEntry } from './schema.js';
+import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry, NotebookQueueEntry, DictionaryWordRow, DictionaryQueueEntry } from './schema.js';
 
 /** Conflict resolution actions (UX-called) — values match the spec + UX button labels. */
 export type ConflictResolution = 'keep-mine' | 'keep-theirs' | 'keep-both';
@@ -162,4 +162,22 @@ export interface LocalStore {
    * blank note and may resurrect it on next pull. Server-side delete is a follow-up (#30 note).
    */
   discardBlankNote(id: NoteId): Promise<void>;
+
+  // --- custom dictionary mirror (§5.2) ---
+  /** Reactive list of all live (non-tombstoned) custom words, sorted asc. */
+  observeDictionaryWords(cb: (words: string[]) => void): Unsubscribe;
+  /** All live custom words (one-shot). */
+  listDictionaryWords(): Promise<string[]>;
+  /**
+   * Atomic dictionary write + queue entry: the word row + its queue entry land in one transaction.
+   * Only writer for dictionary add/remove (via the dictionary store). Set semantics — add upserts a live
+   * row, remove tombstones it.
+   */
+  putDictionaryWordAndEnqueue(row: DictionaryWordRow, entry: DictionaryQueueEntry): Promise<void>;
+  /** Apply a server dictionary word from the pull stream (live → upsert, tombstone → mark deleted). */
+  mergeDictionaryWord(row: DictionaryWordRow): Promise<void>;
+  /** All dictionary queue entries (the sync engine dedupes before pushing). */
+  dictionaryQueueEntries(): Promise<DictionaryQueueEntry[]>;
+  /** Remove a single dictionary queue entry after it has been pushed. */
+  drainDictionaryQueueEntry(id: string): Promise<void>;
 }

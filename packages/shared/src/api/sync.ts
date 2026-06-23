@@ -69,18 +69,34 @@ export const NotebookPushEntrySchema = z
 export type NotebookPushEntry = z.infer<typeof NotebookPushEntrySchema>;
 
 /**
- * Push request — notes and/or notebooks in one batch. `notebookId` is the OPTIONAL batch-level default
- * notebook for note INSERTS that omit their own `entry.notebookId` (the "current notebook"); it is never
- * applied to updates. At least one entry across the two arrays is required.
+ * One queued CUSTOM-DICTIONARY write to push (§5.2). The dictionary is a per-account SET of words with
+ * SET SEMANTICS → conflict-free: there is no CAS/version (unlike notes/notebooks). Identity is the word
+ * itself (scoped to the account server-side); `delete` distinguishes add from remove:
+ *   - `delete` absent → ADD the word (server upserts; re-adding is idempotent + un-tombstones).
+ *   - `delete: true`  → REMOVE the word (server tombstones so the removal syncs to other devices).
+ * The word is the normalized form the client stores (trim + lowercase); the server treats it opaquely.
+ */
+export const DictionaryWordValueSchema = z.string().trim().min(1).max(100);
+export const DictionaryPushEntrySchema = z.object({
+  word: DictionaryWordValueSchema,
+  delete: z.literal(true).optional(),
+});
+export type DictionaryPushEntry = z.infer<typeof DictionaryPushEntrySchema>;
+
+/**
+ * Push request — notes, notebooks, and/or dictionary words in one batch. `notebookId` is the OPTIONAL
+ * batch-level default notebook for note INSERTS that omit their own `entry.notebookId` (the "current
+ * notebook"); it is never applied to updates. At least one entry across the three arrays is required.
  */
 export const SyncPushRequestSchema = z
   .object({
     notebookId: NotebookIdSchema.optional(),
     entries: z.array(SyncPushEntrySchema).max(100).default([]),
     notebookEntries: z.array(NotebookPushEntrySchema).max(100).default([]),
+    dictionaryEntries: z.array(DictionaryPushEntrySchema).max(100).default([]),
   })
-  .refine((r) => r.entries.length + r.notebookEntries.length >= 1, {
-    message: 'push must carry at least one note or notebook entry',
+  .refine((r) => r.entries.length + r.notebookEntries.length + r.dictionaryEntries.length >= 1, {
+    message: 'push must carry at least one note, notebook, or dictionary entry',
   });
 export type SyncPushRequest = z.infer<typeof SyncPushRequestSchema>;
 
@@ -123,9 +139,22 @@ export const NotebookPushResultSchema = z.discriminatedUnion('outcome', [
 ]);
 export type NotebookPushResult = z.infer<typeof NotebookPushResultSchema>;
 
+/**
+ * Per-DICTIONARY-WORD result (§5.2). Set semantics are conflict-free, so the only outcome is `accepted`
+ * — there is no conflict variant. `syncSeq` is the word's new stream position (the client confirms its
+ * queue entry against it). Keyed by `word` (the account-scoped identity).
+ */
+export const DictionaryPushResultSchema = z.object({
+  word: DictionaryWordValueSchema,
+  outcome: z.literal('accepted'),
+  syncSeq: z.number().int().positive(),
+});
+export type DictionaryPushResult = z.infer<typeof DictionaryPushResultSchema>;
+
 export const SyncPushResponseSchema = z.object({
   results: z.array(SyncPushResultSchema),
   notebookResults: z.array(NotebookPushResultSchema).default([]),
+  dictionaryResults: z.array(DictionaryPushResultSchema).default([]),
 });
 export type SyncPushResponse = z.infer<typeof SyncPushResponseSchema>;
 
@@ -169,10 +198,24 @@ export const SyncPullRequestSchema = z.object({
 });
 export type SyncPullRequest = z.infer<typeof SyncPullRequestSchema>;
 
+/**
+ * A server custom-dictionary word in the pull stream (§5.2). `deletedAt` is the tombstone (a removed
+ * word is streamed so the client drops it locally). Rides the same per-account syncSeq stream.
+ */
+export const SyncDictionaryWordSchema = z.object({
+  word: DictionaryWordValueSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+  deletedAt: TimestampSchema.nullable(),
+  syncSeq: z.number().int().nonnegative(),
+});
+export type SyncDictionaryWord = z.infer<typeof SyncDictionaryWordSchema>;
+
 export const SyncPullResponseSchema = z.object({
   notes: z.array(SyncNoteSchema),
   notebooks: z.array(SyncNotebookSchema).default([]),
-  /** The highest syncSeq in this batch (across notes AND notebooks); use as the next pull cursor. */
+  dictionaryWords: z.array(SyncDictionaryWordSchema).default([]),
+  /** The highest syncSeq in this batch (across notes, notebooks AND dictionary); use as the next cursor. */
   nextCursor: z.number().int().nonnegative(),
   hasMore: z.boolean(),
 });

@@ -31,6 +31,19 @@ export interface NotebookRow {
 }
 
 /**
+ * A custom-dictionary word row (§5.2). Account-scoped, synced, SET semantics — identity is
+ * (accountId, word), no version/CAS. `deletedAt` is the tombstone (remove); rides the same syncSeq stream.
+ */
+export interface DictionaryWordRow {
+  accountId: string;
+  word: string;
+  createdAt: string; // ISO-8601
+  updatedAt: string; // ISO-8601
+  deletedAt: string | null; // ISO-8601 tombstone; null = live
+  syncSeq: number; // shared per-account pull-stream position (same counter as notes)
+}
+
+/**
  * Thin abstraction over D1 and the better-sqlite3 test double. Production code calls
  * `d1Adapter(env.DB)`; tests call `sqliteAdapter(db)`. The SQL is identical — D1 is SQLite.
  *

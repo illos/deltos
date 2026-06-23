@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { Note, NoteId, NotebookId } from '@deltos/shared';
-import type { NotebookPushEntry } from '@deltos/shared';
+import type { NotebookPushEntry, DictionaryPushEntry } from '@deltos/shared';
 
 /**
  * The client's stored note shape: the spine {@link Note} plus client-only state. `syncStatus` is
@@ -92,6 +92,30 @@ export interface NotebookQueueEntry {
   createdAt: string;
 }
 
+/**
+ * A locally-mirrored custom-dictionary word (§5.2). Account-synced, SET semantics. The local store only
+ * ever holds the resident account's words (wiped on account switch — see db/accountScope.ts); `word` is
+ * the identity (PK). `deletedAt` is the tombstone (kept so observeWords filters it + a re-add un-tombstones).
+ */
+export interface DictionaryWordRow {
+  word: string;           // the normalized custom word (trim + lowercase) — primary key
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  syncSeq: number;
+}
+
+/**
+ * One entry in the outbound dictionary sync queue. The sync engine dedupes by recordId (the word) before
+ * pushing. Only writer is the dictionary store (add/remove).
+ */
+export interface DictionaryQueueEntry {
+  id: string;            // queue-scoped UUID
+  recordId: string;      // word — dedup key
+  payload: DictionaryPushEntry;
+  createdAt: string;
+}
+
 class DeltosDB extends Dexie {
   notes!: EntityTable<ClientNote, 'id'>;
   syncQueue!: EntityTable<SyncQueueEntry, 'id'>;
@@ -99,6 +123,8 @@ class DeltosDB extends Dexie {
   noteVersions!: EntityTable<NoteVersion, 'id'>;
   deviceState!: EntityTable<DeviceStateRow, 'key'>;
   notebookQueue!: EntityTable<NotebookQueueEntry, 'id'>;
+  dictionaryWords!: EntityTable<DictionaryWordRow, 'word'>;
+  dictionaryQueue!: EntityTable<DictionaryQueueEntry, 'id'>;
 
   constructor() {
     super('deltos');
@@ -129,6 +155,11 @@ class DeltosDB extends Dexie {
     });
     this.version(6).stores({
       notebookQueue: 'id, recordId, createdAt',
+    });
+    this.version(7).stores({
+      // Custom dictionary (§5.2): the word set (PK = word) + its outbound queue (dedup by recordId=word).
+      dictionaryWords: 'word, syncSeq',
+      dictionaryQueue: 'id, recordId, createdAt',
     });
   }
 }

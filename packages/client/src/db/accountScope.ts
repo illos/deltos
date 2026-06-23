@@ -62,7 +62,7 @@ export async function readAccountMarker(): Promise<string | null> {
 async function wipeLocalState(): Promise<void> {
   await db.transaction(
     'rw',
-    [db.notes, db.notebooks, db.noteVersions, db.syncQueue, db.notebookQueue, db.deviceState],
+    [db.notes, db.notebooks, db.noteVersions, db.syncQueue, db.notebookQueue, db.dictionaryWords, db.dictionaryQueue, db.deviceState],
     async () => {
       await Promise.all([
         db.notes.clear(),
@@ -70,6 +70,8 @@ async function wipeLocalState(): Promise<void> {
         db.noteVersions.clear(),
         db.syncQueue.clear(), // W8: drop un-pushed entries — never drain under another bearer
         db.notebookQueue.clear(),
+        db.dictionaryWords.clear(), // §5.2 ISOLATION: the custom dictionary is account-scoped — never inherit across accounts
+        db.dictionaryQueue.clear(), // W8: drop un-pushed dictionary entries — never drain under another bearer
       ]);
       // DENY-BY-DEFAULT deviceState wipe (#57): delete EVERY key except the device-global allowlist
       // (the notebook pointer + the resident-account marker + any future per-account pointer all go).

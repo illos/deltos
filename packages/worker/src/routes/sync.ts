@@ -3,14 +3,15 @@ import {
   SyncPushRequestSchema,
   SyncPullRequestSchema,
 } from '@deltos/shared';
-import type { SyncPushResult, NotebookPushResult, SyncNote, SyncNotebook, NoteResponse } from '@deltos/shared';
+import type { SyncPushResult, NotebookPushResult, DictionaryPushResult, SyncNote, SyncNotebook, SyncDictionaryWord, NoteResponse } from '@deltos/shared';
 import type { Resource } from '@deltos/shared';
 import type { AppEnv } from '../context.js';
 import { guard, apiError } from '../http.js';
 import { d1Adapter } from '../db/schema.js';
-import type { NoteRow, NotebookRow } from '../db/schema.js';
+import type { NoteRow, NotebookRow, DictionaryWordRow } from '../db/schema.js';
 import { insertNote, updateNote, pullSince } from '../db/mutate.js';
 import { insertNotebook, renameNotebook, deleteNotebook } from '../db/notebooks.js';
+import { addWord, removeWord } from '../db/dictionary.js';
 import { requireAccountId } from '../db/accountScope.js';
 
 // Sync is scoped to the ACCOUNT, not a notebook (Option B, 2026-06-18): the boundary is the caller's
@@ -62,6 +63,17 @@ function notebookRowToSync(row: NotebookRow): SyncNotebook {
   };
 }
 
+/** DictionaryWordRow (DB) → SyncDictionaryWord (wire). */
+function dictionaryRowToSync(row: DictionaryWordRow): SyncDictionaryWord {
+  return {
+    word: row.word,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    deletedAt: row.deletedAt ?? null,
+    syncSeq: row.syncSeq,
+  };
+}
+
 /** NotebookRow → the conflict-result serverNotebook shape (notebook + version, no sync fields). */
 function notebookConflictRow(row: NotebookRow): NonNullable<Extract<NotebookPushResult, { outcome: 'conflict' }>['serverNotebook']> {
   return {
@@ -95,6 +107,7 @@ sync.post(
       const now = new Date().toISOString();
       const results: SyncPushResult[] = [];
       const notebookResults: NotebookPushResult[] = [];
+      const dictionaryResults: DictionaryPushResult[] = [];
 
       // NOTEBOOKS FIRST (secSys gate #19 / #23 ordering): a same-batch "create notebook then move a note
       // into it" must see the notebook already exist when the note move's target-ownership check runs.
@@ -143,7 +156,16 @@ sync.post(
         }
       }
 
-      return c.json({ results, notebookResults });
+      // CUSTOM DICTIONARY (§5.2) — set semantics, conflict-free: add (upsert, clears tombstone) or remove
+      // (tombstone). accountId scopes every write; the word is the account-scoped identity. Always accepted.
+      for (const dict of req.dictionaryEntries) {
+        const outcome = dict.delete === true
+          ? await removeWord(db, accountId, dict.word, now)
+          : await addWord(db, accountId, dict.word, now);
+        dictionaryResults.push({ word: outcome.word, outcome: 'accepted', syncSeq: outcome.syncSeq });
+      }
+
+      return c.json({ results, notebookResults, dictionaryResults });
     },
   }),
 );
@@ -169,10 +191,11 @@ sync.get(
       // off the principal, never the body), across every notebookId the account owns. Fail-closed if
       // absent.
       const accountId = requireAccountId(c);
-      const { notes, notebooks, nextCursor, hasMore } = await pullSince(db, accountId, req.cursor);
+      const { notes, notebooks, dictionaryWords, nextCursor, hasMore } = await pullSince(db, accountId, req.cursor);
       return c.json({
         notes: notes.map(rowToSyncNote),
         notebooks: notebooks.map(notebookRowToSync),
+        dictionaryWords: dictionaryWords.map(dictionaryRowToSync),
         nextCursor,
         hasMore,
       });
