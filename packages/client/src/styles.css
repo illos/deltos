@@ -286,6 +286,7 @@
   border: none;
   outline: none;
   font-size: 1rem;
+  caret-color: var(--accent);
   color: inherit;
   font-family: inherit;
   /* Remove browser-native 'search' chrome */
@@ -801,6 +802,7 @@
      preserves trailing spaces at wrap points. Fixes BOTH native + custom-keyboard input (pure render). */
   white-space: pre-wrap;
   white-space: break-spaces;
+  caret-color: var(--accent);
 }
 
 .editor__pm .ProseMirror p { margin: 0 0 0.55em; }
@@ -1105,6 +1107,7 @@ a.auth__link { display: inline; }
   padding: 0.85rem 1rem;
   resize: vertical;
   line-height: 1.5;
+  caret-color: var(--accent);
 }
 .auth__input:focus {
   outline: 2px solid #4e7dff;
@@ -1684,6 +1687,7 @@ a.auth__link { display: inline; }
   padding: 7px 11px;
   width: 100%;
   box-sizing: border-box;
+  caret-color: var(--accent);
 }
 .nav-content__new-actions { display: flex; gap: 0.5rem; }
 .nav-content__new-confirm,
