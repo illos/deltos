@@ -46,7 +46,17 @@ export function KeyboardSurface({ view, context }: KeyboardSurfaceProps) {
   const Layout = KEYBOARD_LAYOUTS[context];
   if (!Layout) return null; // no layout for this context → footprint hidden
   return (
-    <div className="kb" data-kb-context={context} role="group" aria-label="Keyboard">
+    <div
+      className="kb"
+      data-kb-context={context}
+      role="group"
+      aria-label="Keyboard"
+      // Backplane swallow (#69): preventDefault on the WHOLE surface so a tap that misses a key and
+      // lands in a gap / on the backplane / padding never blurs the editor (only the key buttons
+      // preventDefault'd before, so a near-miss closed the keyboard). Keys keep their own handlers; this
+      // is the belt that guarantees no in-keyboard tap ever steals focus from the contenteditable.
+      onPointerDown={(e) => e.preventDefault()}
+    >
       <Layout view={view} />
     </div>
   );

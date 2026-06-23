@@ -11,7 +11,8 @@ import type { KeyboardContext } from '../editor/KeyboardSurface.js';
  * now hosts the #69 custom-keyboard Phase-1 KEY-GRID so navSys can overlay-diff its geometry against
  * the reference screenshot and Jim can type-test the real grid before it's wired into the live editor.
  * A minimal inline-schema ProseMirror editor with inputmode=none (set at view-creation, before focus);
- * white-space:pre-wrap so multiple/trailing spaces render correctly (the real editor has this too).
+ * white-space:pre-wrap so multiple/trailing spaces render correctly (the real editor now matches — #329
+ * fixed the missing pre-wrap on .editor__pm .ProseMirror; PM requires it).
  */
 
 const schema = new Schema({

@@ -108,8 +108,13 @@ export function KeyGrid({ view }: KeyGridProps) {
         >⌫</button>
       </div>
       <div className="kb__row kb__row--r4">
-        {/* 123 is an inert placeholder in Phase 1 (number/symbol layer = Phase 2). */}
-        <button type="button" className="kb__key kb__key--fn kb__key--mode" aria-label="Numbers and symbols" disabled>123</button>
+        {/* 123 is inert in Phase 1 (number/symbol layer = Phase 2). NOT a disabled <button>: a disabled
+            button doesn't fire/bubble pointerdown in some browsers, so it wouldn't preventDefault and a
+            tap on it blurred the editor → closed the keyboard (Jim's repro). Render it like a live key —
+            same pointerdown+preventDefault — just greyed + no-op, so it preserves focus exactly like the
+            others. */}
+        <button type="button" className="kb__key kb__key--fn kb__key--mode kb__key--inert"
+          aria-label="Numbers and symbols (Phase 2)" onPointerDown={press(() => { /* Phase 2 */ })}>123</button>
         <button type="button" className="kb__key kb__key--space" aria-label="Space" onPointerDown={press(insertSpace)}>space</button>
         <button type="button" className="kb__key kb__key--fn kb__key--return" aria-label="Return" onPointerDown={press(runReturn)}>⏎</button>
       </div>

@@ -93,6 +93,18 @@ describe('KeyboardSurface — context-driven footprint', () => {
     const { container } = render(<KeyboardSurface view={null} context="node:widget" />);
     expect(container.firstChild).toBeNull();
   });
+
+  it('the surface swallows pointerdown on the backplane/gaps (preventDefault → editor never blurs)', () => {
+    render(<KeyboardSurface view={null} context="text" />);
+    // A tap on the container/gap (not a key) must be preventDefaulted so focus stays on the editor.
+    const surface = document.querySelector('.kb') as HTMLElement;
+    const ev = new Event('pointerdown', { bubbles: true, cancelable: true });
+    surface.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    // And the inert 123 key is a real (non-disabled) focus-preserving button, not a dismisser.
+    const mode = document.querySelector('.kb__key--mode') as HTMLButtonElement;
+    expect(mode.disabled).toBe(false);
+  });
   it('deriveKeyboardContext: TextSelection → text, NodeSelection → node:<type>', () => {
     // Lead with a paragraph so the default selection is a text caret; the widget follows for the node case.
     const base = EditorState.create({ doc: schema.node('doc', null, [schema.node('paragraph'), schema.node('widget')]), schema });

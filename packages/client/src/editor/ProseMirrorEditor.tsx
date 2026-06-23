@@ -89,16 +89,13 @@ export function ProseMirrorEditor({
   const customKb = customKbEnabled && !isDesktop;
   // One selection-driven snapshot drives every toolbar button + undo/redo availability.
   const [active, setActive] = useState<EditorActiveState>(EMPTY_ACTIVE_STATE);
-  // Reactive view + keyboard state (the KeyboardSurface needs the live view + selection context, and
-  // appears only while the editor is focused — like a native keyboard).
+  // Reactive view + selection context for the KeyboardSurface. The keyboard's visibility is driven by
+  // customKb (editor mounted = a note open + the toggle on), NOT by editor focus — a focus-gated
+  // keyboard was being torn down by incidental tap-blurs (#69 single-tap) and by sync-driven re-renders
+  // that drop focus (#328 irregular hide). Owning the bottom slot whenever a note is open is robust to
+  // both and matches the north-star (the footprint is always the surface while editing).
   const [view, setView] = useState<EditorView | null>(null);
   const [kbContext, setKbContext] = useState<KeyboardContext>('text');
-  const [editorFocused, setEditorFocused] = useState(false);
-  // Debounce the focus-LOSS so an incidental tap that immediately refocuses (e.g. tapping the note text
-  // to reposition the caret — iOS blurs then refocuses) does NOT tear the keyboard down. Only a focus
-  // loss that STAYS lost past the window hides it. (#69 regression: with the bottom-nav now suppressed,
-  // taps reach the editor and the raw blur was killing the keyboard on a single tap.)
-  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep onChange and onLeave in refs so they're always current without re-running the effect.
   const onChangeRef = useRef(onChange);
@@ -122,16 +119,6 @@ export function ProseMirrorEditor({
     redo(view.state, (tr) => view.dispatch(tr));
     view.focus();
   }, []);
-
-  // #69: while the custom keyboard owns the bottom slot, suppress the universal bottom nav (both are
-  // fixed-bottom and would overlap). Nav + keyboard can't both own the bottom — the keyboard wins while
-  // a field is focused. (Next slice absorbs the nav controls into the surface as the 'navigation'
-  // context; this is the tight unblock so the feel-test keeps moving.)
-  useEffect(() => {
-    const active = customKb && editorFocused;
-    document.body.classList.toggle('kb-active', active);
-    return () => { document.body.classList.remove('kb-active'); };
-  }, [customKb, editorFocused]);
 
   // Run a registry tool's command against the live view, then refocus (the button used
   // mouseDown+preventDefault to preserve the selection). The shared commands.ts layer means a toolbar
@@ -217,17 +204,7 @@ export function ProseMirrorEditor({
       // change (iOS fires blur during the swipe-back gesture, ~300ms before navigation
       // completes — enough lead time for IndexedDB to finish before the list mounts).
       handleDOMEvents: {
-        // #69: the custom keyboard appears while the editor is focused. A focus cancels any pending
-        // hide (so a tap-to-reposition blur→refocus never tears the keyboard down).
-        focus: () => {
-          if (blurTimer.current) { clearTimeout(blurTimer.current); blurTimer.current = null; }
-          setEditorFocused(true);
-          return false;
-        },
         blur: () => {
-          // Hide is DEBOUNCED — only if focus stays lost past the window (genuine leave, not a tap).
-          if (blurTimer.current) clearTimeout(blurTimer.current);
-          blurTimer.current = setTimeout(() => { setEditorFocused(false); blurTimer.current = null; }, 300);
           if (saveTimerRef.current !== null) {
             clearTimeout(saveTimerRef.current);
             saveTimerRef.current = null;
@@ -245,7 +222,7 @@ export function ProseMirrorEditor({
     setActive(deriveActiveState(view.state, false, false));
     setKbContext(deriveKeyboardContext(view.state));
     onViewInit?.(view);
-    if (autoFocus) { view.focus(); setEditorFocused(true); }
+    if (autoFocus) view.focus();
 
     return () => {
       // Cleanup flush: covers programmatic unmounts where blur may not have fired.
@@ -258,11 +235,9 @@ export function ProseMirrorEditor({
       }
       // Signal the note is being left (after the final save so Dexie has latest content).
       onLeaveRef.current?.();
-      if (blurTimer.current) { clearTimeout(blurTimer.current); blurTimer.current = null; }
       view.destroy();
       viewRef.current = null;
       setView(null);
-      setEditorFocused(false);
       onViewInit?.(null);
     };
   // Recreate the view when the keyboard mode flips (customKb decides inputmode=none at creation).
@@ -273,9 +248,11 @@ export function ProseMirrorEditor({
     <>
       {/* Desktop: registry-driven formatting toolbar at the top (slice C). */}
       {isDesktop && <EditorToolbar active={active} run={runTool} />}
-      <div ref={containerRef} className={`editor__pm${customKb && editorFocused ? ' editor__pm--kb' : ''}`} />
-      {/* Mobile, custom keyboard ON: the context-driven keyboard footprint, shown while focused (#69). */}
-      {customKb && editorFocused && <KeyboardSurface view={view} context={kbContext} />}
+      <div ref={containerRef} className={`editor__pm${customKb ? ' editor__pm--kb' : ''}`} />
+      {/* Mobile, custom keyboard ON: the context-driven keyboard footprint owns the bottom while a note
+          is open (driven by the toggle, NOT editor focus — focus-gating let incidental tap-blurs + the
+          backplane tear it down). #69. */}
+      {customKb && <KeyboardSurface view={view} context={kbContext} />}
       {/* Mobile, custom keyboard OFF: today's grouped contextual bar + native keyboard (slice D). */}
       {!isDesktop && !customKb && (
         <MobileEditorBar active={active} run={runTool} onUndo={handleUndo} onRedo={handleRedo} />

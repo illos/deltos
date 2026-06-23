@@ -19,6 +19,12 @@ describe('editor element styles — theme-var driven (spec §6)', () => {
     expect(editorBlock).toMatch(/\.editor__pm \.ProseMirror\s*\{[^}]*font-family:\s*var\(--ff\)/);
   });
 
+  it('the editable declares white-space: pre-wrap (PM requires it; #329 — multi/trailing spaces)', () => {
+    // jsdom can't compute white-space, so assert the rule exists; the live render is on-device.
+    expect(editorBlock).toMatch(/\.editor__pm \.ProseMirror\s*\{[^}]*white-space:\s*pre-wrap/);
+    expect(editorBlock).toMatch(/\.editor__pm \.ProseMirror\s*\{[^}]*white-space:\s*break-spaces/);
+  });
+
   it('headings/quote/lists read the type-scale + colour tokens', () => {
     expect(editorBlock).toMatch(/h1\s*\{[^}]*font-size:\s*var\(--h1\)/);
     expect(editorBlock).toMatch(/h2\s*\{[^}]*font-size:\s*var\(--h2\)/);

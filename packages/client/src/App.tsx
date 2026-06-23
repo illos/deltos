@@ -18,6 +18,7 @@ import { DrawerNav } from './components/DrawerNav.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ThreeRegionShell } from './components/ThreeRegionShell.js';
 import { useIsDesktop } from './lib/useIsDesktop.js';
+import { useCustomKeyboard } from './lib/useCustomKeyboard.js';
 import { startSyncTriggers, syncNow } from './lib/syncEngine.js';
 import { resolveCollectionView } from './lib/collectionViews.js';
 import type { CollectionViewProps } from './lib/collectionViews.js';
@@ -220,6 +221,16 @@ function AuthedShell() {
   // Device class drives the structural fork: desktop = persistent 3-region master-detail; mobile =
   // single-column push + bottom-sheet nav. Called before the early returns (rules-of-hooks).
   const isDesktop = useIsDesktop();
+  // #69: in custom-keyboard mode (toggle ON, mobile) the standalone universal bottom nav is PERMANENTLY
+  // gone — not hidden-while-typing (that flashed it back under Jim's thumb every time the keyboard
+  // dropped). Toggle-driven body class, independent of the keyboard being up/down. (Next slice absorbs
+  // search/new-note into the keyboard surface's 'navigation' context; until then they're intentionally
+  // stranded in custom mode — Jim's call.)
+  const [customKbEnabled] = useCustomKeyboard();
+  useEffect(() => {
+    document.body.classList.toggle('kb-custom', customKbEnabled && !isDesktop);
+    return () => { document.body.classList.remove('kb-custom'); };
+  }, [customKbEnabled, isDesktop]);
 
   // Load the device-local current notebook from IDB on first mount (with localStorage migration).
   useEffect(() => { void initNotebook(); }, [initNotebook]);

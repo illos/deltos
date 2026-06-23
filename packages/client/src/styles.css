@@ -795,6 +795,12 @@
   font-size: var(--note);
   line-height: var(--line);
   color: var(--body);
+  /* prosemirror-view REQUIRES pre-wrap (it warns when missing, and prosemirror.css is not imported) —
+     without it the editable renders white-space:normal, collapsing runs of spaces + dropping a trailing
+     space's caret advance (#329; single spaces looked fine, which is why it slipped). break-spaces also
+     preserves trailing spaces at wrap points. Fixes BOTH native + custom-keyboard input (pure render). */
+  white-space: pre-wrap;
+  white-space: break-spaces;
 }
 
 .editor__pm .ProseMirror p { margin: 0 0 0.55em; }
@@ -2213,9 +2219,11 @@ a.auth__link { display: inline; }
 /* Caret clearance: when the keyboard is up, give the editable bottom space so the last lines can scroll
    clear of the keyboard (Phase-1 approximation of the ~226px keyboard height + safe-area; refined later). */
 .editor__pm--kb { padding-bottom: 264px; scroll-padding-bottom: 264px; }
-/* While the custom keyboard owns the bottom slot, suppress the universal bottom nav (both fixed-bottom →
-   would overlap). ProseMirrorEditor toggles body.kb-active while the keyboard is showing. */
-body.kb-active .bottom-nav { display: none; }
+/* In custom-keyboard mode (toggle ON, mobile) the standalone universal bottom nav is PERMANENTLY gone —
+   AuthedShell toggles body.kb-custom from the opt-in flag, NOT the keyboard's up/down (which flashed the
+   nav back under the user's thumb). The keyboard owns the bottom; nav controls return via the surface's
+   'navigation' context next slice. */
+body.kb-custom .bottom-nav { display: none; }
 .kb__grid { display: flex; flex-direction: column; gap: var(--kb-row-gap); }
 .kb__row { display: flex; justify-content: center; align-items: center; gap: var(--kb-gap); }
 .kb__row--r3, .kb__row--r4 { justify-content: space-between; }
@@ -2236,7 +2244,9 @@ body.kb-active .bottom-nav { display: none; }
 .kb__key--shift.is-active { background: var(--paper); color: var(--ink); } /* one-shot armed */
 .kb__key--mode, .kb__key--return { width: var(--kb-r4-w); font-size: 16px; }
 .kb__key--space { flex: 1; min-width: 0; font-size: 15px; color: var(--secondary); }
-.kb__key:disabled { opacity: 0.55; cursor: default; }
+/* Phase-1-inert keys (e.g. 123) — greyed but NOT a disabled <button> (disabled buttons swallow no
+   pointer events → can't preventDefault → blur the editor). Same element/handlers as live keys. */
+.kb__key--inert { opacity: 0.5; }
 
 /* ── #68 inputmode=none keyboard probe (throwaway, /kbprobe) ──────────────────── */
 .kbprobe { max-width: 680px; margin: 0 auto; padding: 1.5rem 1.25rem; box-sizing: border-box; }
