@@ -219,17 +219,49 @@ describe('ssrfGuard — private hostnames', () => {
     expect(ssrfGuard(new URL('http://example.com/'))).toBeNull());
 });
 
-describe('ssrfGuard — IPv6', () => {
-  it('blocks ::1 (loopback)', () =>
+describe('ssrfGuard — IPv6 (driven through new URL() per secSys #71 regression methodology)', () => {
+  // METHODOLOGY: drive inputs through new URL() first — the WHATWG URL parser canonicalizes
+  // IPv4-mapped IPv6 to HEX form (::ffff:7f00:1), NOT dotted form (::ffff:127.0.0.1).
+  // Tests that use idealized dotted strings pass even when the fix is broken; these don't.
+
+  it('blocks ::1 (loopback) — via new URL', () =>
     expect(ssrfGuard(new URL('http://[::1]/'))).not.toBeNull());
-  it('blocks fc00:: (ULA)', () => {
-    const testUrl = { hostname: '[fc00::1]', protocol: 'http:' } as URL;
-    expect(ssrfGuard(testUrl)).not.toBeNull();
+
+  it('blocks ::ffff:127.0.0.1 as HEX (::ffff:7f00:1) — the #71 bypass class', () => {
+    // new URL serializes to hex; the old dotted regex was dead code against this form
+    const url = new URL('http://[::ffff:7f00:1]/');
+    expect(ssrfGuard(url)).not.toBeNull();
   });
-  it('blocks fe80::1 (link-local)', () => {
-    const testUrl = { hostname: '[fe80::1]', protocol: 'http:' } as URL;
-    expect(ssrfGuard(testUrl)).not.toBeNull();
+
+  it('blocks ::ffff:169.254.169.254 (cloud metadata) as HEX (::ffff:a9fe:a9fe)', () => {
+    // This was the concrete bypass: cloud metadata reachable via hex v4-mapped IPv6
+    const url = new URL('http://[::ffff:a9fe:a9fe]/');
+    expect(ssrfGuard(url)).not.toBeNull();
   });
+
+  it('blocks ::ffff:10.0.0.1 (RFC-1918 via v4-mapped hex)', () => {
+    const url = new URL('http://[::ffff:a00:1]/');  // 10.0.0.1 = 0x0a000001 = a00:1
+    expect(ssrfGuard(url)).not.toBeNull();
+  });
+
+  it('blocks ::ffff:192.168.1.1 (RFC-1918 via v4-mapped hex)', () => {
+    const url = new URL('http://[::ffff:c0a8:101]/');  // 192.168.1.1 = c0a8:0101
+    expect(ssrfGuard(url)).not.toBeNull();
+  });
+
+  it('blocks fully-expanded form [0:0:0:0:0:ffff:7f00:1] (= 127.0.0.1)', () => {
+    const url = new URL('http://[0:0:0:0:0:ffff:7f00:1]/');
+    expect(ssrfGuard(url)).not.toBeNull();
+  });
+
+  it('blocks fc00::1 (ULA) — via new URL', () =>
+    expect(ssrfGuard(new URL('http://[fc00::1]/'))).not.toBeNull());
+
+  it('blocks fe80::1 (link-local) — via new URL', () =>
+    expect(ssrfGuard(new URL('http://[fe80::1]/'))).not.toBeNull());
+
+  it('allows a public IPv6 address — via new URL', () =>
+    expect(ssrfGuard(new URL('http://[2001:db8::1]/'))).toBeNull());
 });
 
 // ===========================================================================

@@ -239,15 +239,104 @@ function isPrivateIpv4(dotted: string): boolean {
   );
 }
 
+/**
+ * Check whether a compressed IPv6 address string is in a private/reserved range.
+ *
+ * FIX #71: the previous version used a dotted-quad regex for IPv4-mapped detection
+ * (::ffff:\d+\.\d+\.\d+\.\d+), but new URL() serializes IPv4-mapped IPv6 to HEX
+ * (e.g. ::ffff:7f00:1 for 127.0.0.1, ::ffff:a9fe:a9fe for 169.254.169.254). The
+ * dotted regex therefore NEVER matched real URL-parser output — the check was dead
+ * code, leaving all v4-mapped addresses (including cloud metadata) passable.
+ *
+ * Fix: fully expand the address to 8 uint16 hextets via expandIpv6, then do numeric
+ * range checks. This handles both compressed (::ffff:7f00:1) and full forms, catches
+ * NAT64 (64:ff9b::/96), and is immune to formatting variations.
+ *
+ * REGRESSION TEST METHODOLOGY (secSys #71): always drive SSRF test inputs through
+ * new URL('http://[<addr>]/') first, then pass .hostname to ssrfGuard — the URL
+ * parser canonicalizes to hex, so idealized dotted strings false-pass tests.
+ */
 function isPrivateIpv6(raw: string): boolean {
-  const n = raw.toLowerCase();
-  if (n === '::1' || n === '::') return true; // loopback
-  if (/^f[cd][0-9a-f]{0,2}:/.test(n)) return true; // fc00::/7 ULA
-  if (/^fe[89ab][0-9a-f]:/.test(n)) return true; // fe80::/10 link-local
-  // IPv4-mapped IPv6 ::ffff:a.b.c.d
-  const v4m = n.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (v4m) return isPrivateIpv4(v4m[1]!); // non-null: group 1 always captured when regex matches
+  const groups = expandIpv6(raw.toLowerCase());
+  if (groups === null) return false; // not parseable — let network layer handle
+
+  const g0 = groups[0]!;
+  const g1 = groups[1]!;
+  const g2 = groups[2]!;
+  const g3 = groups[3]!;
+  const g4 = groups[4]!;
+  const g5 = groups[5]!;
+  const g6 = groups[6]!;
+  const g7 = groups[7]!;
+
+  // Loopback ::1 and unspecified ::
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
+    if (g6 === 0 && (g7 === 0 || g7 === 1)) return true;
+  }
+  // fc00::/7 unique-local (ULA)
+  if ((g0 & 0xfe00) === 0xfc00) return true;
+  // fe80::/10 link-local
+  if ((g0 & 0xffc0) === 0xfe80) return true;
+
+  // ::ffff:0:0/96 IPv4-mapped — last two hextets encode the IPv4 address.
+  // new URL() produces the hex form (::ffff:7f00:1), not the dotted form
+  // (::ffff:127.0.0.1) — the old dotted regex was dead code against real URL output.
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0xffff) {
+    const a = (g6 >> 8) & 0xff;
+    const b = g6 & 0xff;
+    const c = (g7 >> 8) & 0xff;
+    const d = g7 & 0xff;
+    return isPrivateIpv4(`${a}.${b}.${c}.${d}`);
+  }
+
+  // 64:ff9b::/96 NAT64 — translates IPv6 requests to IPv4 behind a NAT64 gateway;
+  // the embedded IPv4 is in the last two hextets.
+  if (g0 === 0x0064 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
+    const a = (g6 >> 8) & 0xff;
+    const b = g6 & 0xff;
+    const c = (g7 >> 8) & 0xff;
+    const d = g7 & 0xff;
+    return isPrivateIpv4(`${a}.${b}.${c}.${d}`);
+  }
+
   return false;
+}
+
+/**
+ * Expand a compressed IPv6 address to exactly 8 uint16 groups.
+ * Handles :: compression. Returns null for invalid input.
+ * Does NOT handle IPv4-in-IPv6 dotted notation (the WHATWG URL parser never emits it).
+ */
+function expandIpv6(addr: string): number[] | null {
+  const halves = addr.split('::');
+  if (halves.length > 2) return null; // more than one :: is invalid IPv6
+
+  const parseGroups = (s: string): number[] | null => {
+    if (!s) return [];
+    const parts = s.split(':');
+    const parsed = parts.map((h) => parseInt(h, 16));
+    if (parsed.some((v) => !Number.isFinite(v) || v < 0 || v > 0xffff)) return null;
+    return parsed;
+  };
+
+  if (halves.length === 2) {
+    const leftStr = halves[0] ?? '';
+    const rightStr = halves[1] ?? '';
+    const left = parseGroups(leftStr);
+    const right = parseGroups(rightStr);
+    if (left === null || right === null) return null;
+    const fill = 8 - left.length - right.length;
+    if (fill < 0) return null;
+    const expanded = [...left, ...Array.from<number>({ length: fill }).fill(0), ...right];
+    return expanded.length === 8 ? expanded : null;
+  } else {
+    // No :: — must be exactly 8 colon-separated groups
+    const parts = addr.split(':');
+    if (parts.length !== 8) return null;
+    const parsed = parts.map((h) => parseInt(h, 16));
+    if (parsed.some((v) => !Number.isFinite(v) || v < 0 || v > 0xffff)) return null;
+    return parsed;
+  }
 }
 
 function isPrivateHostname(host: string): boolean {
