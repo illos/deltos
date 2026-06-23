@@ -91,5 +91,17 @@ export function buildInputRulesPlugin(schema: DeltoSchema): Plugin {
   if (marks['highlight'])     rules.push(markInputRule(/(?<!=)==([^=]+)==$/, marks['highlight']));
   if (marks['code'])          rules.push(markInputRule(/`([^`]+)`$/, marks['code']));
 
+  // Autolink (rung-1, #69 E2b): typing a URL then a space links the URL inline (link mark). A bare-URL
+  // PASTE alone becomes a rich card instead (embeds plugin); this is the inline/typed path. link is
+  // inclusive:false so the mark doesn't extend onto the trailing space or subsequent typing.
+  if (marks['link']) {
+    const link = marks['link'];
+    rules.push(new InputRule(/(https?:\/\/[^\s]+)\s$/, (state, match, start) => {
+      const url = match[1];
+      if (!url) return null;
+      return state.tr.addMark(start, start + url.length, link.create({ href: url, title: null }));
+    }));
+  }
+
   return inputRules({ rules });
 }

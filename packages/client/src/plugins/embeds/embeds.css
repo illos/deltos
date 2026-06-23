@@ -112,3 +112,7 @@
   line-height: 1;
 }
 .link-card__downgrade:active { background: var(--border); }
+
+/* The plugin_block atom wrapper the NodeView mounts the card into (#69 E2b) — block-level with a little
+   breathing room so the card isn't flush against surrounding paragraphs. */
+.link-card-island { display: block; margin: 6px 0; }
