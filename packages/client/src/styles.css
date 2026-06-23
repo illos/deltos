@@ -2304,6 +2304,27 @@ body.deck-custom .bottom-nav { display: none; }
 .spell-popover__item:active { background: var(--sel); }
 .spell-popover__empty { color: var(--secondary); font-size: 14px; padding: 11px 14px; }
 
+/* #69 §5.1 spellcheck suggestion BAR — the Deck TOP-SLOT presentation (custom-keyboard mode). A
+   horizontally scrollable row of pills, like the native iOS predictive bar. Sits in the top-slot layer
+   (same look as the formatting submenu .elt-sub — a sibling occupant). */
+.spell-bar {
+  display: flex; flex-direction: row; align-items: center; gap: 8px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  padding: 8px 12px; background: var(--sel); border-bottom: 1px solid var(--border);
+}
+.spell-bar::-webkit-scrollbar { display: none; }
+.spell-bar__pill {
+  flex: 0 0 auto; appearance: none; -webkit-appearance: none; border: none;
+  background: var(--list); color: var(--ink); font-family: var(--ff);
+  font-size: 16px; line-height: 1; white-space: nowrap; /* ≥16px = no iOS zoom */
+  padding: 0 16px; min-height: 40px; border-radius: 20px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.spell-bar__pill:active { background: var(--accent); color: var(--paper); }
+.spell-bar__empty { color: var(--secondary); font-size: 14px; padding: 0 6px; }
+/* §5.2 [+ Add to dictionary] trailing action lands here — visually distinct, end of the bar. */
+.spell-bar__trailing { flex: 0 0 auto; }
+
 /* The Deck's NAVIGATION loadout (slice B) — the lean New + Search row shown in the Deck footprint while
    browsing (no note open). Host-side styling (the loadout is deltos-specific); mirrors the bottom-nav
    action slots for visual continuity. The label font is the host's --mono (not a Deck geometry invariant

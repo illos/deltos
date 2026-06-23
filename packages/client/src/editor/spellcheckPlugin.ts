@@ -51,7 +51,11 @@ async function computeSpans(engine: SpellEngine, doc: PmNode): Promise<{ from: n
   return spans;
 }
 
-export function createSpellcheckPlugin(engine: SpellEngine, onTap: (t: SpellTap) => void): Plugin<DecorationSet> {
+export function createSpellcheckPlugin(
+  engine: SpellEngine,
+  onTap: (t: SpellTap) => void,
+  onDismiss: () => void,
+): Plugin<DecorationSet> {
   return new Plugin<DecorationSet>({
     key: spellcheckKey,
     state: {
@@ -76,7 +80,7 @@ export function createSpellcheckPlugin(engine: SpellEngine, onTap: (t: SpellTap)
         const clickPos = view.posAtCoords({ left: (event as MouseEvent).clientX, top: (event as MouseEvent).clientY });
         if (!clickPos) return false;
         const here = spellcheckKey.getState(view.state)?.find(clickPos.pos, clickPos.pos) ?? [];
-        if (here.length === 0) return false;
+        if (here.length === 0) { onDismiss(); return false; } // tap-elsewhere → dismiss the suggestion bar
         const d = here[0]!;
         onTap({ from: d.from, to: d.to, word: view.state.doc.textBetween(d.from, d.to), view });
         return false;

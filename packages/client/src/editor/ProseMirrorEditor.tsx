@@ -23,6 +23,7 @@ import { useEditorLoadoutTools, EditorGroupSelector, EditorGroupSubmenu } from '
 import { createSpellcheckPlugin, applySpellCorrection } from './spellcheckPlugin.js';
 import type { SpellTap } from './spellcheckPlugin.js';
 import { SpellSuggestionPopover } from './SpellSuggestionPopover.js';
+import { SpellSuggestionBar } from './SpellSuggestionBar.js';
 import { useSpellcheckStore } from '../lib/useSpellcheck.js';
 import type { SpellEngine } from '../deck/index.js';
 import { deriveActiveState, EMPTY_ACTIVE_STATE } from './editorState.js';
@@ -105,9 +106,30 @@ export function ProseMirrorEditor({
   // user who disabled it never spins up the worker during the brief IDB read). The popover anchors a
   // tapped misspelling's suggestions.
   const spellOn = useSpellcheckStore((s) => s.enabled && s._loaded);
-  const [spellPopover, setSpellPopover] = useState<
+  // The active spell suggestion (one state, two presentations): the Deck TOP-SLOT bar in custom-keyboard
+  // mode (§5.1), else the anchored popover (non-Deck fallback). x/y are only used by the popover.
+  const [spellSuggest, setSpellSuggest] = useState<
     { x: number; y: number; from: number; to: number; word: string; suggestions: string[] } | null
   >(null);
+  // A squiggle was tapped → look up suggestions (off-thread) + surface them (top-slot bar in custom mode,
+  // popover otherwise — the render branches on customKb). Declared before deckLoadouts (which renders the bar).
+  const handleSpellTap = useCallback((t: SpellTap) => {
+    const engine = spellEngineRef.current;
+    if (!engine) return;
+    void engine.lookup(t.word, 6).then((sugs) => {
+      if (t.view.isDestroyed) return;
+      const coords = t.view.coordsAtPos(t.from);
+      setSpellSuggest({ x: coords.left, y: coords.bottom + 4, from: t.from, to: t.to, word: t.word, suggestions: sugs.map((s) => s.word) });
+    });
+  }, []);
+  // Tap-elsewhere (non-squiggle) → dismiss the suggestion bar/popover.
+  const handleSpellDismiss = useCallback(() => setSpellSuggest(null), []);
+  // Pick a suggestion → replace the word in one txn (slice-3 seam), then clear.
+  const handleSpellPick = useCallback((from: number, to: number, replacement: string) => {
+    const v = viewRef.current;
+    if (v) applySpellCorrection(v, from, to, replacement);
+    setSpellSuggest(null);
+  }, []);
   // Reactive view + selection context for the Deck. The keyboard's visibility is driven by
   // customKb (editor mounted = a note open + the toggle on), NOT by editor focus — a focus-gated
   // keyboard was being torn down by incidental tap-blurs (#69 single-tap) and by sync-driven re-renders
@@ -188,11 +210,24 @@ export function ProseMirrorEditor({
               onRedo={handleRedo}
             />
           }
-          submenu={<EditorGroupSubmenu activeGroup={activeGroup} active={active} run={runTool} />}
+          topSlot={
+            // ONE occupant of the top slot: the spell suggestion bar takes precedence over an open
+            // formatting submenu (the group stays open underneath; dismissing the bar recomputes → returns
+            // to the submenu if still open, else empty). §5.1.
+            spellSuggest ? (
+              <SpellSuggestionBar
+                word={spellSuggest.word}
+                suggestions={spellSuggest.suggestions}
+                onPick={(w) => handleSpellPick(spellSuggest.from, spellSuggest.to, w)}
+              />
+            ) : activeGroup ? (
+              <EditorGroupSubmenu activeGroup={activeGroup} active={active} run={runTool} />
+            ) : null
+          }
         />
       ),
     }),
-    [deckActions, keypadShown, locked, toggleKeypad, toggleLock, activeGroup, toggleGroup, active, handleUndo, handleRedo, runTool],
+    [deckActions, keypadShown, locked, toggleKeypad, toggleLock, activeGroup, toggleGroup, active, handleUndo, handleRedo, runTool, spellSuggest, handleSpellPick],
   );
 
   // #69 slice B: the Deck mounts once at the app-shell level (DeckHostProvider) so it persists across
@@ -209,16 +244,6 @@ export function ProseMirrorEditor({
     if (!useSpellcheckStore.getState()._loaded) void useSpellcheckStore.getState().init();
   }, []);
 
-  // A squiggle was tapped → look up suggestions (off-thread) + open the popover anchored at the word.
-  const handleSpellTap = useCallback((t: SpellTap) => {
-    const engine = spellEngineRef.current;
-    if (!engine) return;
-    void engine.lookup(t.word, 6).then((sugs) => {
-      if (t.view.isDestroyed) return;
-      const coords = t.view.coordsAtPos(t.from);
-      setSpellPopover({ x: coords.left, y: coords.bottom + 4, from: t.from, to: t.to, word: t.word, suggestions: sugs.map((s) => s.word) });
-    });
-  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -244,9 +269,15 @@ export function ProseMirrorEditor({
 
     const view = new EditorView(containerRef.current, {
       state,
-      // #69: suppress the native keyboard when the custom keyboard is on (set at view-creation, before
-      // focus — dynamic toggling is unreliable on Safari, probe #68). Off → today's native behavior.
-      ...(customKb ? { attributes: { inputmode: 'none', autocorrect: 'off', autocapitalize: 'off' } } : {}),
+      // #69 §5: ALWAYS suppress the NATIVE browser spellcheck (spellcheck="false") — deltos spellcheck is
+      // one unified app-wide system, so native must never compete (double squiggles on desktop). It stays
+      // off even when our toggle is off (ours-or-nothing). Plus #69: when the custom keyboard is on,
+      // suppress the native keyboard (inputmode=none, set at view-creation before focus — dynamic toggling
+      // is unreliable on Safari, probe #68).
+      attributes: {
+        spellcheck: 'false',
+        ...(customKb ? { inputmode: 'none', autocorrect: 'off', autocapitalize: 'off' } : {}),
+      },
       nodeViews: {
         ...buildPluginIslandNodeViews(deltoSchema),
         todo_item: (node, view, getPos) =>
@@ -351,17 +382,17 @@ export function ProseMirrorEditor({
       const engine = createSpellEngine();
       spellEngineRef.current = engine;
       view.updateState(view.state.reconfigure({
-        plugins: [...basePluginsRef.current, createSpellcheckPlugin(engine, handleSpellTap)],
+        plugins: [...basePluginsRef.current, createSpellcheckPlugin(engine, handleSpellTap, handleSpellDismiss)],
       }));
     });
     return () => {
       cancelled = true;
-      setSpellPopover(null);
+      setSpellSuggest(null);
       if (!view.isDestroyed) view.updateState(view.state.reconfigure({ plugins: basePluginsRef.current }));
       spellEngineRef.current?.dispose();
       spellEngineRef.current = null;
     };
-  }, [spellOn, noteId, customKb, handleSpellTap]);
+  }, [spellOn, noteId, customKb, handleSpellTap, handleSpellDismiss]);
 
   return (
     <>
@@ -375,19 +406,17 @@ export function ProseMirrorEditor({
       {!isDesktop && !customKb && (
         <MobileEditorBar active={active} run={runTool} onUndo={handleUndo} onRedo={handleRedo} />
       )}
-      {/* #69 §5: suggestion popover for a tapped misspelling — replace in one txn, then close. */}
-      {spellPopover && (
+      {/* #69 §5.1: suggestion presentation is platform-adaptive. Custom-keyboard mode → the Deck TOP-SLOT
+          bar (rendered via deckLoadouts topSlot above). Non-Deck (desktop / native-kbd) → the anchored
+          popover fallback (no Deck top slot there). */}
+      {spellSuggest && !customKb && (
         <SpellSuggestionPopover
-          x={spellPopover.x}
-          y={spellPopover.y}
-          word={spellPopover.word}
-          suggestions={spellPopover.suggestions}
-          onPick={(w) => {
-            const v = viewRef.current;
-            if (v) applySpellCorrection(v, spellPopover.from, spellPopover.to, w);
-            setSpellPopover(null);
-          }}
-          onClose={() => setSpellPopover(null)}
+          x={spellSuggest.x}
+          y={spellSuggest.y}
+          word={spellSuggest.word}
+          suggestions={spellSuggest.suggestions}
+          onPick={(w) => handleSpellPick(spellSuggest.from, spellSuggest.to, w)}
+          onClose={() => setSpellSuggest(null)}
         />
       )}
     </>
