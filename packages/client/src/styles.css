@@ -2200,8 +2200,8 @@ a.auth__link { display: inline; }
   --kb-row-gap: 12px;   /* vertical gap (row pitch 55 = key-h 43 + 12) */
   --kb-radius: 8px;
   --kb-side: 3px;       /* side margin — row 1 reaches near full width */
-  --kb-fn-w: 46px;      /* shift / delete width */
-  --kb-r4-w: 92px;      /* 123 / return width (eyeball; overlay refines) */
+  --kb-fn-w: 50px;      /* shift / delete width (navSys overlay: native ~50pt) */
+  --kb-r4-w: 99px;      /* 123 / return width (navSys overlay: native ~99pt; space flex-fills ~207pt) */
   background: var(--nav);
   padding: 10px var(--kb-side) max(8px, env(safe-area-inset-bottom));
   box-sizing: border-box; user-select: none; -webkit-user-select: none;
