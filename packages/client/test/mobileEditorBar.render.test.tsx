@@ -43,9 +43,10 @@ describe('MobileEditorBar — sub-row open/close/swap', () => {
     mountBar();
     tap('Style');
     expect(sub()).not.toBeNull();
-    for (const label of ['Title', 'Heading', 'Subhead', 'Body', 'Mono']) {
+    for (const label of ['Title', 'Heading', 'Subhead', 'Mono']) { // Body removed — implicit default (#69)
       expect(within(sub()!).getByLabelText(label), label).toBeTruthy();
     }
+    expect(within(sub()!).queryByLabelText('Body')).toBeNull();
     expect(screen.getByLabelText('Style').className).toContain('is-active');
   });
 

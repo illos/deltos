@@ -41,18 +41,19 @@ describe('EditorToolbar — desktop structure', () => {
 
     expect(document.querySelectorAll('.editor__fmtbar-divider').length).toBe(3);
     for (const label of [
-      'Title', 'Heading', 'Subhead', 'Body', 'Mono',         // style
+      'Title', 'Heading', 'Subhead', 'Mono',                 // style (Body removed — toggles to/from body)
       'Bold', 'Italic', 'Underline', 'Strikethrough', 'Highlight', 'Code', 'Link', // format (link desktop)
       'Bullet list', 'Numbered list', 'Checklist',           // lists
       'Quote', 'Divider',                                    // insert (image omitted)
     ]) {
       expect(btn(label), `${label} button`).not.toBeNull();
     }
-    // Image is intentionally absent.
+    // Image is intentionally absent; Body is no longer a button (it's the implicit default — #69).
     expect(btn('Image')).toBeNull();
-    // First 5 buttons are the style group in order.
-    const labels = [...document.querySelectorAll('.editor__fmtbar button')].slice(0, 5).map((b) => b.getAttribute('aria-label'));
-    expect(labels).toEqual(['Title', 'Heading', 'Subhead', 'Body', 'Mono']);
+    expect(btn('Body')).toBeNull();
+    // First 4 buttons are the style group in order (Mono moved up after Body's removal).
+    const labels = [...document.querySelectorAll('.editor__fmtbar button')].slice(0, 4).map((b) => b.getAttribute('aria-label'));
+    expect(labels).toEqual(['Title', 'Heading', 'Subhead', 'Mono']);
   });
 });
 
@@ -86,8 +87,8 @@ describe('EditorToolbar — commands act on the selection', () => {
     // Active treatment reflects the selection now sitting in an h2.
     await waitFor(() => expect(btn('Heading')!.getAttribute('aria-pressed')).toBe('true'));
 
-    // Body reverts to paragraph.
-    fireEvent.mouseDown(btn('Body')!);
+    // Tapping Heading AGAIN toggles it off to body (paragraph) — no Body button now (#69).
+    fireEvent.mouseDown(btn('Heading')!);
     expect(v.state.doc.child(1).type.name).toBe('paragraph');
   });
 });

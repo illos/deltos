@@ -76,6 +76,25 @@ export function setBlock(schema: DeltoSchema, nodeName: string, attrs: Record<st
   };
 }
 
+/**
+ * Toggle a block type (Style group, Jim feel-test). If the selection's ANCHOR block is ALREADY this type
+ * (+attrs), set the whole selection back to paragraph (= Body); otherwise switch the whole selection to
+ * the type. Body is the implicit default — there is no Body button; "nothing active" = body. Multi-row:
+ * setBlock applies across the selection (skipping already-matching blocks), so the rows clear/switch
+ * together. (hasMarkup merges the node's own attrs so the id never causes a false mismatch — like setBlock.)
+ */
+export function toggleBlock(schema: DeltoSchema, nodeName: string, attrs: Record<string, unknown> = {}): Command {
+  const type = schema.nodes[nodeName];
+  return (state, dispatch, view) => {
+    if (!type) return false;
+    const parent = state.selection.$from.parent;
+    const isAlready = parent.hasMarkup(type, { ...parent.attrs, ...attrs });
+    return isAlready
+      ? setBlock(schema, 'paragraph')(state, dispatch, view)
+      : setBlock(schema, nodeName, attrs)(state, dispatch, view);
+  };
+}
+
 /** Toggle a wrapping block (quote): if already inside one, lift out; else wrap. */
 export function toggleWrap(schema: DeltoSchema, nodeName: string): Command {
   const type = schema.nodes[nodeName];
@@ -330,7 +349,14 @@ export function linkCommand(schema: DeltoSchema): Command {
 /** By-id dispatcher: maps a UI `data-cmd` to its shared command. Used by both bars + the registry. */
 export function commandFor(schema: DeltoSchema, cmdId: string): Command {
   if (cmdId in MARK_FOR) return toggleMarkCmd(schema, MARK_FOR[cmdId]!);
-  if (cmdId in BLOCK_FOR) { const b = BLOCK_FOR[cmdId]!; return setBlock(schema, b.node, b.attrs ?? {}); }
+  // Style-group block types TOGGLE (tap-again → Body); 'p' (Body) stays a one-way set for the markdown
+  // input rules / keymap that dispatch it directly (no Body button in the UI). #69 Jim feel-test.
+  if (cmdId in BLOCK_FOR) {
+    const b = BLOCK_FOR[cmdId]!;
+    return cmdId === 'p'
+      ? setBlock(schema, b.node, b.attrs ?? {})
+      : toggleBlock(schema, b.node, b.attrs ?? {});
+  }
   switch (cmdId) {
     case 'ul':      return applyListType(schema, 'bullet');
     case 'ol':      return applyListType(schema, 'ordered');

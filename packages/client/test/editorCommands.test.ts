@@ -234,3 +234,53 @@ describe('applyListType — multi-row (selection spans N paragraphs → N items,
     expect(listItemCount(out)).toBe(3);
   });
 });
+
+describe('Style group — block-type toggles (Title/Heading/Subhead/Mono ↔ Body; #69 Jim)', () => {
+  const bodyType = (st: EditorState) => st.doc.child(1).type.name;
+  const apply = (st: EditorState, id: string) => run(st, commandFor(S, id));
+  const P = () => stateWith(S.node('paragraph', { id: 'b' }, [S.text('hi')]));
+
+  it('paragraph → Heading (h2) sets a level-2 heading, id preserved', () => {
+    const out = apply(P(), 'h2');
+    expect(bodyType(out)).toBe('heading');
+    expect(out.doc.child(1).attrs.level).toBe(2);
+    expect(out.doc.child(1).attrs.id).toBe('b');
+  });
+
+  it('tap the SAME type again toggles OFF to Body (paragraph)', () => {
+    expect(bodyType(apply(apply(P(), 'h2'), 'h2'))).toBe('paragraph');
+    expect(bodyType(apply(apply(P(), 'h1'), 'h1'))).toBe('paragraph');
+  });
+
+  it('tap a DIFFERENT type switches (Heading L2 → Title L1)', () => {
+    const h1 = apply(apply(P(), 'h2'), 'h1');
+    expect(bodyType(h1)).toBe('heading');
+    expect(h1.doc.child(1).attrs.level).toBe(1);
+  });
+
+  it('Mono (pre) toggles to code_block and back to Body', () => {
+    const pre = apply(P(), 'pre');
+    expect(bodyType(pre)).toBe('code_block');
+    expect(bodyType(apply(pre, 'pre'))).toBe('paragraph');
+  });
+
+  it('Body = off-state: in a paragraph none of Title/Heading/Subhead/Mono is active; the set type highlights', () => {
+    const a = deriveActiveState(P());
+    for (const id of ['h1', 'h2', 'h3', 'pre']) expect(isToolActive(a, id), id).toBe(false);
+    expect(isToolActive(deriveActiveState(apply(P(), 'h2')), 'h2')).toBe(true);
+    expect(isToolActive(deriveActiveState(apply(P(), 'h2')), 'h1')).toBe(false); // mutually exclusive
+  });
+
+  it('multi-row: 2 paragraphs → Heading sets BOTH; tap again clears BOTH to Body', () => {
+    const blocks = [S.node('paragraph', { id: 'b0' }, [S.text('one')]), S.node('paragraph', { id: 'b1' }, [S.text('two')])];
+    const doc = S.node('doc', null, [S.node('title', { id: 't' }, [S.text('T')]), ...blocks]);
+    let st = EditorState.create({ doc, schema: S });
+    st = st.apply(st.tr.setSelection(TextSelection.create(st.doc, 4, doc.content.size - 1)));
+    const headings = apply(st, 'h2');
+    expect(headings.doc.child(1).type.name).toBe('heading');
+    expect(headings.doc.child(2).type.name).toBe('heading');
+    const cleared = apply(headings, 'h2'); // anchor is a heading → toggle whole selection OFF
+    expect(cleared.doc.child(1).type.name).toBe('paragraph');
+    expect(cleared.doc.child(2).type.name).toBe('paragraph');
+  });
+});

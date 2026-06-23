@@ -51,11 +51,12 @@ const act = (id: string) => (a: EditorActiveState): boolean => isToolActive(a, i
 
 export const EDITOR_TOOLS: readonly ToolDescriptor[] = [
   // ── Style: block types as text labels (no glyph — they show their words) ────────────────────────
+  // Title/Heading/Subhead/Mono are TOGGLES (tap-again → Body); there is NO 'Body' button — Body is the
+  // implicit default (nothing active = body text). #69 Jim feel-test.
   { id: 'h1', group: 'style', surface: 'both', render: 'text', label: 'Title',   order: 1, command: cmd('h1'), isActive: act('h1') },
   { id: 'h2', group: 'style', surface: 'both', render: 'text', label: 'Heading', order: 2, command: cmd('h2'), isActive: act('h2') },
   { id: 'h3', group: 'style', surface: 'both', render: 'text', label: 'Subhead', order: 3, command: cmd('h3'), isActive: act('h3') },
-  { id: 'p',  group: 'style', surface: 'both', render: 'text', label: 'Body',    order: 4, command: cmd('p'),  isActive: act('p')  },
-  { id: 'pre', group: 'style', surface: 'both', render: 'text', label: 'Mono',   order: 5, command: cmd('pre'), isActive: act('pre') },
+  { id: 'pre', group: 'style', surface: 'both', render: 'text', label: 'Mono',   order: 4, command: cmd('pre'), isActive: act('pre') },
 
   // ── Format: B/I/U/S as styled glyphs, then highlight/code/(desktop)link as icons ────────────────
   { id: 'bold',      group: 'format', surface: 'both', render: 'text', label: 'Bold',          glyph: 'B', order: 1, command: cmd('bold'),      isActive: act('bold') },
