@@ -691,9 +691,10 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  max-width: 680px;
   width: 100%;
-  margin: 0 auto;
+  /* Fills the note pane (desktop: the .shell-3region__note region right of the nav/list; mobile: the
+     screen). The TEXT centers to its column via .editor__pm (below); the deck strip spans the full pane.
+     (Was max-width:680 centered, which constrained the strip to the text column — moved to .editor__pm.) */
   padding: 1.5rem 1.25rem 3rem;
   box-sizing: border-box;
 }
@@ -740,21 +741,18 @@
    the link form. */
 .editor__deck-strip {
   position: sticky; top: 0; z-index: 20; flex-shrink: 0;
-  /* FULL-BLEED BAND: span the whole window width even though we sit inside .editor's centered 680px column —
-     the note title/body stay centered below, the deck is a full-width band above (like the meta row). The
-     band's bg + bottom border are full-width; the inner ROWS re-center to the content column (below) so the
-     tools line up above the title/body and aren't clipped at the viewport edge.
-     margin-top counters .editor's 1.5rem top padding so the band abuts the meta; margin-bottom is the
-     breathing room before the title. (Coupled to .editor's top padding.) */
-  width: 100vw; margin-left: calc(50% - 50vw);
-  margin-top: -1.5rem; margin-bottom: 0.75rem;
+  /* Spans the NOTE PANE width (not 100vw — that overshot the left nav/list in the 3-region shell, and not
+     the narrow text column). .editor fills the pane, so the band reaches the pane edges by countering
+     .editor's padding (NOT the viewport): -1.25rem horizontal + -1.5rem top (abut the meta). margin-bottom
+     is breathing room before the title. Sticks to the top of the note-pane scroll container (.shell-3region__note). */
+  margin: -1.5rem -1.25rem 0.75rem;
   background: var(--paper); border-bottom: 1px solid var(--border);
 }
-/* Inner rows re-center to the SAME centered 680px column as the note title/body (matching .editor's
-   max-width + 1.25rem horizontal padding) — so the full-bleed breakout doesn't shift/clip the tools. */
+/* Inner rows span the pane (tools laid across it per the wireframe); padding insets the tools from the band
+   edges (matching .editor's 1.25rem). Not centered to the text column. */
 .editor__deck-strip-row,
 .editor__deck-strip-linkrow {
-  max-width: 680px; width: 100%; margin: 0 auto; box-sizing: border-box; padding-left: 1.25rem; padding-right: 1.25rem;
+  box-sizing: border-box; padding-left: 1.25rem; padding-right: 1.25rem;
 }
 .editor__deck-strip-row { display: flex; align-items: center; padding-top: 6px; padding-bottom: 6px; }
 /* Flat primary row: all tools expanded inline (wraps if narrow), hairline dividers between groups, with
@@ -779,8 +777,11 @@
    slot. position:FIXED + rendered only when populated → zero idle space, can't jump the page. Floats near
    the bottom, centered to the content column. Hosts spell suggestions + the link form (+ future tools). */
 .editor__context-slot {
-  position: fixed; left: 50%; transform: translateX(-50%); bottom: 24px; z-index: 50;
-  max-width: 680px; width: calc(100% - 48px); box-sizing: border-box;
+  /* Anchored bottom-RIGHT of the viewport, which sits inside the note pane (the rightmost region) — so it
+     never overshoots the left nav/list. (A full-pane-width fixed bar would need the dynamic list width via
+     JS/container-query; bottom-right is the safe non-overshoot default — see the watch-item flagged.) */
+  position: fixed; right: 24px; bottom: 24px; z-index: 50;
+  max-width: min(460px, calc(100vw - 48px)); box-sizing: border-box;
   display: flex; align-items: center;
   background: var(--paper); border: 1px solid var(--border); border-radius: 12px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); padding: 6px 12px;
@@ -859,6 +860,11 @@
   flex: 1;
   outline: none;
   min-height: 200px;
+  /* The note TEXT centers to its reading column (the deck strip spans the full pane around it). align-self
+     centres it on .editor's cross axis; min() keeps it full-width on a narrow (mobile) viewport. */
+  align-self: center;
+  width: 100%;
+  max-width: 680px;
   /* touch-action is not inherited — applied here so the editing surface gets it directly. */
   touch-action: manipulation;
 }
