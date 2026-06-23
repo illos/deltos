@@ -15,6 +15,14 @@ export interface AudioRecording {
   mimeType: string;
   /** Wall-clock recording duration in milliseconds (best-effort, from start→stop). */
   durationMs: number;
+  /**
+   * Peak per-frame RMS amplitude (0..1) observed over the recording, via a Web Audio AnalyserNode on the
+   * live stream. Lets a consumer detect an effectively-silent clip and SKIP transcription — Whisper
+   * hallucinates filler ("Thank you", "Thanks for watching") on no-speech input (#69 voice). Fails OPEN:
+   * if energy monitoring is unavailable (no AudioContext / non-browser env) this is 1 (= "assume speech",
+   * never suppress). This is the silence-detection primitive the §6.2 VAD chunker also builds on.
+   */
+  peakLevel: number;
 }
 
 export type RecorderState = 'idle' | 'recording' | 'stopped';
@@ -55,6 +63,62 @@ export function isAudioCaptureSupported(): boolean {
   );
 }
 
+/** How often to sample the analyser for peak-energy tracking (ms). Coarse — we only need peak, not shape. */
+const ENERGY_SAMPLE_INTERVAL_MS = 50;
+
+/** A running peak-RMS meter over a live stream; `peak()` is fail-open (1) when Web Audio is unavailable. */
+interface EnergyMonitor {
+  peak(): number;
+  stop(): void;
+}
+
+/**
+ * Tap a live mic stream with a Web Audio AnalyserNode and track the PEAK per-frame RMS amplitude (0..1)
+ * until stopped. Used to detect an effectively-silent recording so the caller can skip transcription
+ * (Whisper hallucinates filler on no-speech audio). Degrades fail-open: if AudioContext is missing or
+ * setup throws (non-browser/test env), peak() returns 1 so a clip is NEVER wrongly suppressed.
+ */
+function startEnergyMonitor(stream: MediaStream): EnergyMonitor {
+  const Ctor: typeof AudioContext | undefined =
+    typeof window !== 'undefined'
+      ? window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      : undefined;
+  if (!Ctor) return { peak: () => 1, stop: () => {} };
+
+  let peak = 0;
+  let measured = false;
+  try {
+    const audio = new Ctor();
+    const source = audio.createMediaStreamSource(stream);
+    const analyser = audio.createAnalyser();
+    analyser.fftSize = 2048;
+    source.connect(analyser);
+    const buf = new Uint8Array(analyser.fftSize);
+    const timer = setInterval(() => {
+      analyser.getByteTimeDomainData(buf);
+      let sumSq = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const dev = (buf[i]! - 128) / 128; // byte time-domain is centred at 128 → -1..1
+        sumSq += dev * dev;
+      }
+      const rms = Math.sqrt(sumSq / buf.length);
+      if (rms > peak) peak = rms;
+      measured = true;
+    }, ENERGY_SAMPLE_INTERVAL_MS);
+    return {
+      // If the timer never fired (recording shorter than one sample tick), fail open rather than report 0.
+      peak: () => (measured ? peak : 1),
+      stop: () => {
+        clearInterval(timer);
+        source.disconnect();
+        void audio.close().catch(() => {});
+      },
+    };
+  } catch {
+    return { peak: () => 1, stop: () => {} };
+  }
+}
+
 /** Pick the first preferred MIME type the platform's MediaRecorder can actually produce. */
 function chooseMimeType(): string {
   if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
@@ -74,6 +138,7 @@ export function createAudioRecorder(): AudioRecorder {
   let chunks: Blob[] = [];
   let state: RecorderState = 'idle';
   let startedAt = 0;
+  let energyMon: EnergyMonitor | null = null;
 
   /** Stop all mic tracks so the OS releases the microphone (and clears the recording indicator). */
   function releaseStream(): void {
@@ -104,6 +169,7 @@ export function createAudioRecorder(): AudioRecorder {
       };
       recorder.start();
       startedAt = performance.now();
+      energyMon = startEnergyMonitor(stream); // peak-RMS meter → silence detection at stop
       state = 'recording';
     },
 
@@ -120,17 +186,22 @@ export function createAudioRecorder(): AudioRecorder {
           // first chunk's type if the platform left it blank.
           const mimeType = rec.mimeType || chunks[0]?.type || 'audio/webm';
           const blob = new Blob(chunks, { type: mimeType });
+          const peakLevel = energyMon?.peak() ?? 1;
+          energyMon?.stop();
+          energyMon = null;
           releaseStream();
           recorder = null;
           chunks = [];
           state = 'stopped';
-          resolve({ blob, mimeType, durationMs });
+          resolve({ blob, mimeType, durationMs, peakLevel });
         };
         rec.stop();
       });
     },
 
     cancel(): void {
+      energyMon?.stop();
+      energyMon = null;
       if (recorder && state === 'recording') {
         // Drop the onstop handler so no recording is produced, then stop the recorder + release the mic.
         recorder.onstop = null;
