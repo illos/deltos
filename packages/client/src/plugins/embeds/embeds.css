@@ -1,0 +1,114 @@
+/* embeds — link card + rich-embed plugin styles (§5 E2a).
+   Co-located with the module; imported by LinkCard.tsx.
+   Theming: consumes host CSS custom properties — never hardcodes colour. */
+
+/* ── Link card ───────────────────────────────────────────────────────────────── */
+
+.link-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--list);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  box-sizing: border-box;
+  color: inherit;
+  font-family: inherit;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  /* leave room on the right for the downgrade × button */
+  padding-right: 40px;
+}
+.link-card:active { background: var(--sel); }
+
+/* ── Favicon ─────────────────────────────────────────────────────────────────── */
+
+.link-card__favicon {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  object-fit: contain;
+  /* shown only when not loading/error and favicon prop is set */
+}
+
+.link-card__favicon-placeholder {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  background: var(--border);
+  /* skeleton shimmer for loading state */
+  animation: link-card-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes link-card-shimmer {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
+/* ── Body (title + url) ──────────────────────────────────────────────────────── */
+
+.link-card__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.link-card__title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.link-card__title--placeholder {
+  height: 0.9rem;
+  background: var(--border);
+  border-radius: 4px;
+  width: 60%;
+  animation: link-card-shimmer 1.4s ease-in-out infinite;
+}
+
+.link-card__url {
+  font-size: 0.75rem;
+  color: var(--secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+}
+
+/* ── Downgrade button (× in corner) ─────────────────────────────────────────── */
+
+.link-card__downgrade {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  /* comfortable touch target: 36×36px minimum */
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--secondary);
+  border-radius: 6px;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  font-size: 1rem;
+  line-height: 1;
+}
+.link-card__downgrade:active { background: var(--border); }
