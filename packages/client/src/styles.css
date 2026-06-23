@@ -626,6 +626,20 @@
   margin: 0.5rem 0 0;
 }
 
+/* ── Custom dictionary (§5.2 manage-UI) ─────────────────────────────────────── */
+.settings__dict-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  font-size: 1rem; /* ≥16px: avoids iOS focus-zoom */
+  font-family: inherit;
+  color: inherit;
+  caret-color: var(--accent);
+  min-width: 0;
+}
+.settings__dict-input::placeholder { color: var(--secondary); }
+
 /* ── Note editor ──────────────────────────────────────────────────────────────── */
 
 /* §3 note meta toolbar — edited-time (left) · Synced + version-history + ⋯ (right). padding 15px 26px. */

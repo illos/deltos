@@ -16,6 +16,7 @@ import { useAuthStore } from '../auth/store.js';
 import type { TotpSetupResult, TotpVerifyResult, TotpDisableResult } from '../auth/store.js';
 import { PhraseStep } from '../components/PhraseStep.js';
 import { AppearanceSection } from '../components/AppearanceSection.js';
+import { CustomDictSection } from '../components/CustomDictSection.js';
 import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
 import { useSpellcheck } from '../lib/useSpellcheck.js';
 import type { SessionState } from '../auth/store.js';
@@ -444,6 +445,9 @@ export function SettingsRoute() {
           </span>
         </div>
       </section>
+
+      {/* Section — Custom dictionary (§5.2 manage-UI) */}
+      <CustomDictSection />
 
       {/* TEMPORARY (#68) — in-app entry to the inputmode=none keyboard probe. iOS can't deep-link a URL
           into a standalone PWA, so this client-side route push keeps /kbprobe IN the installed PWA's
