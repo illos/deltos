@@ -8,7 +8,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
 import { deltoSchema } from '../src/editor/schema.js';
-import { buildMathPlugins, unwrapMathBackspace } from '../src/plugins/math/mathPlugin.js';
+import { buildMathPlugins, unwrapMathBackspace, mathTriggerOnInsert } from '../src/plugins/math/mathPlugin.js';
 import { spineToPmDoc, pmDocToSpine, type TextSegment } from '../src/editor/serializer.js';
 import type { BlockBody } from '@deltos/shared';
 
@@ -123,6 +123,32 @@ describe('inline-math plugin — backspace-unwrap', () => {
   it('is a no-op (returns false) when the caret is not at a math chip', () => {
     const v = mountWithText('hello');
     expect(unwrapMathBackspace(v.state, v.dispatch)).toBe(false);
+  });
+});
+
+// REGRESSION (navSys-2 bug): the custom keyboard inserts via deckAdapter, BYPASSING the input rule — so
+// the '=' trigger must ALSO fire on the deckAdapter insert path. mathTriggerOnInsert is what deckAdapter
+// calls before inserting a typed '='. (The input-rule path is covered by the trigger tests above.)
+describe('inline-math plugin — custom-keyboard insert path (deckAdapter dual-wiring)', () => {
+  it('fires the trigger when the keypad inserts "=" (no input rule involved); "=" is not inserted', () => {
+    const v = mountWithText('10 + 5');
+    const fired = mathTriggerOnInsert(v.state, v.dispatch); // what deckAdapter.insert calls on '='
+    expect(fired).toBe(true);
+    expect(mathText(v)).toBe('10 + 5');
+    expect(resultValue(v)).toBe('15');
+    expect(v.state.doc.textContent).toBe('10 + 5'); // the '=' was consumed, not inserted
+  });
+
+  it('fires with no spaces ("10+5") too', () => {
+    const v = mountWithText('10+5');
+    expect(mathTriggerOnInsert(v.state, v.dispatch)).toBe(true);
+    expect(resultValue(v)).toBe('15');
+  });
+
+  it('does NOT fire on prose (returns false → the keypad inserts "=" normally)', () => {
+    const v = mountWithText('name ');
+    expect(mathTriggerOnInsert(v.state, v.dispatch)).toBe(false);
+    expect(mathText(v)).toBeNull();
   });
 });
 

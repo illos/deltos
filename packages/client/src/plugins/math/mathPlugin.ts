@@ -74,31 +74,60 @@ function buildDecorations(doc: PmNode, mathType: MarkType): DecorationSet {
   return DecorationSet.create(doc, decos);
 }
 
+/**
+ * THE shared "=" trigger logic — one source of truth for BOTH the input rule (native/hardware text input)
+ * AND the custom-keyboard insert path (deckAdapter), which bypasses ProseMirror's input-rule/keymap layer.
+ * If the text before `boundary` ends in a trailing arithmetic expression, returns a transaction that wraps
+ * that run in the `math` mark and deletes `[runEnd, deleteEnd)` (the typed '=' + any space before it); else
+ * null. `boundary` = where text-before is read; `deleteEnd` = how far to clear after the expression.
+ *
+ * ⚠ DUAL-WIRING (lesson): the custom keypad inserts via deckAdapter, NOT through input rules / the keymap —
+ * so any input-rule/keymap-triggered editor feature MUST also be wired into deckAdapter (cf. backspace-
+ * unwrap). The math trigger lives in both: the input rule (boundary=the '=' pos, deleteEnd=after it) and
+ * {@link mathTriggerOnInsert} (the keypad path; boundary=deleteEnd=caret, no '=' in the doc yet).
+ */
+export function buildMathWrapTr(state: EditorState, boundary: number, deleteEnd: number): Transaction | null {
+  const mathType = state.schema.marks['math'];
+  if (!mathType) return null;
+  const $b = state.doc.resolve(boundary);
+  if ($b.parent.type.name === 'title') return null; // never auto-math in the note title
+  const blockStart = $b.start();
+  const textBefore = state.doc.textBetween(blockStart, boundary);
+  const run = detectTrailingExpression(textBefore);
+  if (!run) return null; // not a math context → caller inserts the '=' normally (silent on prose)
+
+  // Locate the run in the doc: it is the trailing substring of the right-trimmed text-before-boundary.
+  const trimmedEnd = textBefore.replace(/\s+$/, '');
+  const runStartOffset = trimmedEnd.length - run.length;
+  if (runStartOffset < 0) return null; // safety: run must be a suffix
+  const runFrom = blockStart + runStartOffset;
+  const runTo = blockStart + trimmedEnd.length;
+
+  const tr = state.tr;
+  if (deleteEnd > runTo) tr.delete(runTo, deleteEnd); // drop trailing space + the typed '=' (decoration shows "= result")
+  tr.addMark(runFrom, runTo, mathType.create());
+  tr.removeStoredMark(mathType);                      // typing past the chip is plain text, not more math
+  return tr;
+}
+
+/**
+ * The "=" trigger for the CUSTOM-KEYBOARD insert path (deckAdapter). The keypad calls this BEFORE inserting
+ * a typed '=' — there is no '=' in the doc yet, so boundary = deleteEnd = the caret. Returns true (and
+ * dispatches the wrap) when it fires, so the caller skips inserting the '='; false → insert '=' normally.
+ */
+export function mathTriggerOnInsert(state: EditorState, dispatch?: (tr: Transaction) => void): boolean {
+  if (!state.selection.empty) return false;
+  const pos = state.selection.from;
+  const tr = buildMathWrapTr(state, pos, pos);
+  if (!tr) return false;
+  if (dispatch) dispatch(tr);
+  return true;
+}
+
 /** The "=" trigger as the plugin's OWN inputRules plugin (never the shared core inputRules.ts). */
-function mathInputRulesPlugin(schema: Schema): Plugin {
-  const mathType = schema.marks['math'];
-  const rule = new InputRule(/=$/, (state, _match, start, end) => {
-    if (!mathType) return null;
-    const $start = state.doc.resolve(start);
-    if ($start.parent.type.name === 'title') return null; // never auto-math in the note title
-    const blockStart = $start.start();
-    const textBefore = state.doc.textBetween(blockStart, start);
-    const run = detectTrailingExpression(textBefore);
-    if (!run) return null; // not a math context → the '=' types normally (silent on prose)
-
-    // Locate the run in the doc: it is the trailing substring of the right-trimmed text-before-'='.
-    const trimmedEnd = textBefore.replace(/\s+$/, '');
-    const runStartOffset = trimmedEnd.length - run.length;
-    if (runStartOffset < 0) return null; // safety: run must be a suffix
-    const runFrom = blockStart + runStartOffset;
-    const runTo = blockStart + trimmedEnd.length;
-
-    const tr = state.tr;
-    tr.delete(runTo, end);                       // drop the typed '=' + any space before it (decoration shows "= result")
-    tr.addMark(runFrom, runTo, mathType.create());
-    tr.removeStoredMark(mathType);               // typing past the chip is plain text, not more math
-    return tr;
-  });
+function mathInputRulesPlugin(_schema: Schema): Plugin {
+  // The input rule fires AFTER '=' is inserted: boundary = the '=' position (start), deleteEnd = after it.
+  const rule = new InputRule(/=$/, (state, _match, start, end) => buildMathWrapTr(state, start, end));
   return inputRules({ rules: [rule] });
 }
 

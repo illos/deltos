@@ -3,7 +3,7 @@ import { NodeSelection, TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { baseKeymap, deleteSelection, joinBackward } from 'prosemirror-commands';
 import type { DeckContext, KeyActions } from '../deck/index.js';
-import { unwrapMathBackspace } from '../plugins/math/mathPlugin.js';
+import { unwrapMathBackspace, mathTriggerOnInsert } from '../plugins/math/mathPlugin.js';
 
 /**
  * The deltos↔Deck ADAPTER (#69 §0.5). ALL ProseMirror-specific code lives here, never in Deck core: the
@@ -32,7 +32,13 @@ export function buildPmKeyActions(getView: () => EditorView | null): KeyActions 
     v.focus();
   };
   return {
-    insert: (text) => run((v) => v.dispatch(v.state.tr.insertText(text))),
+    insert: (text) => run((v) => {
+      // Inline-math '=' trigger on the CUSTOM-KEYBOARD path: the keypad bypasses the input rule, so the
+      // trigger must run here too (same dual-wiring as backspace-unwrap). On '=', if the text before the
+      // caret is a trailing arithmetic run, wrap it as math instead of inserting the '='.
+      if (text === '=' && mathTriggerOnInsert(v.state, v.dispatch)) return;
+      v.dispatch(v.state.tr.insertText(text));
+    }),
     enter: () => run((v) => { (baseKeymap['Enter'] as Command)(v.state, v.dispatch, v); }),
     // Own the char-delete: baseKeymap.Backspace only joins at block boundaries (the native keyboard did
     // mid-text delete), and inputmode=none suppressed the native keyboard — so the keypad owns it.
