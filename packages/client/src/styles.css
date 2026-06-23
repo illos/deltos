@@ -770,6 +770,12 @@
 .editor__deck-strip-context > * { flex: 1 1 auto; min-width: 0; }
 /* The reused spell bar sits flush in the desktop context row (drop its mobile-Deck band bg/border). */
 .editor__deck-strip-context .spell-bar { padding: 4px 0; background: transparent; border-bottom: none; }
+/* Desktop pills are mouse targets, not thumbs — trim the font + padding (the mobile ≥16px/40px touch sizing
+   is NOT needed here). Scoped to the desktop context row, so the mobile Deck pills are untouched. */
+.editor__deck-strip-context .spell-bar__pill,
+.editor__deck-strip-context .spell-bar__add {
+  font-size: 13px; padding: 0 10px; min-height: 28px; border-radius: 14px;
+}
 /* Desktop affordance on the reused mobile tool buttons inside the strip (mobile has no hover). */
 .editor__deck-strip .editor__mtool:hover:not(:disabled) { background: var(--sel); }
 .editor__deck-strip .editor__mtool:disabled { opacity: 0.4; cursor: default; }
