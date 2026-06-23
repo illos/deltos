@@ -1,5 +1,8 @@
 import { toggleMark, wrapIn, lift } from 'prosemirror-commands';
 import { wrapInList, liftListItem } from 'prosemirror-schema-list';
+import { Fragment } from 'prosemirror-model';
+import type { NodeType, Node as PmNode } from 'prosemirror-model';
+import { TextSelection } from 'prosemirror-state';
 import type { Command, Transaction } from 'prosemirror-state';
 import type { DeltoSchema } from './schema.js';
 
@@ -126,6 +129,88 @@ function sequence(...cmds: Command[]): Command {
   };
 }
 
+/**
+ * Wrap EACH top-level block in the selection range into its OWN list_item → one list, N items. Our
+ * list_item allows only a single leading paragraph (schema), so the stock wrapInList — which crams the
+ * whole selected range into ONE item — fails on a multi-block selection. This builds one item per block,
+ * matching the per-block behavior the checklist (setBlock) already has. Single-block selections produce a
+ * one-item list (same as wrapInList).
+ */
+function wrapEachInList(schema: DeltoSchema, listType: NodeType): Command {
+  const itemType = schema.nodes['list_item'];
+  return (state, dispatch) => {
+    if (!itemType) return false;
+    const { $from, $to } = state.selection;
+    const range = $from.blockRange($to);
+    if (!range) return false;
+    const parent = range.parent;
+    const items = [];
+    for (let i = range.startIndex; i < range.endIndex; i++) {
+      const block = parent.child(i);
+      if (!itemType.validContent(Fragment.from(block))) return false; // not list-item-able → abort
+      items.push(itemType.create(null, block));
+    }
+    if (items.length === 0) return false;
+    if (dispatch) {
+      const listNode = listType.create(null, items);
+      const tr = state.tr.replaceWith(range.start, range.end, listNode);
+      // Keep the selection spanning the new list's rows, so a follow-up multi-row command (e.g. switching
+      // bullet→checklist on the same selection) still covers every item.
+      tr.setSelection(TextSelection.between(tr.doc.resolve(range.start), tr.doc.resolve(range.start + listNode.nodeSize)));
+      dispatch(tr.scrollIntoView());
+    }
+    return true;
+  };
+}
+
+/**
+ * Lift each SELECTED list item out of its list to a top-level block (one block per item), transforming
+ * each item's leading block via `makeBlock`. The inverse of wrapEachInList; robust for multi-item
+ * selections — the stock liftListItem narrows the selection, so a follow-up per-block command only hits
+ * one row. Items outside the selection stay in their (split) list. One transaction.
+ */
+function unwrapSelectedItems(schema: DeltoSchema, makeBlock: (leading: PmNode) => PmNode): Command {
+  const bullet = schema.nodes['bullet_list'];
+  const ordered = schema.nodes['ordered_list'];
+  return (state, dispatch) => {
+    const { $from, $to } = state.selection;
+    let listDepth = -1;
+    for (let d = $from.depth; d > 0; d--) {
+      const t = $from.node(d).type;
+      if (t === bullet || t === ordered) { listDepth = d; break; }
+    }
+    if (listDepth < 0) return false;
+    const list = $from.node(listDepth);
+    const listStart = $from.before(listDepth);
+    const fromIndex = $from.index(listDepth);
+    const toIndex = $to.index(listDepth);
+    const before: PmNode[] = [];
+    const lifted: PmNode[] = [];
+    const after: PmNode[] = [];
+    list.forEach((listItem, _off, i) => {
+      if (i < fromIndex) before.push(listItem);
+      else if (i > toIndex) after.push(listItem);
+      else {
+        lifted.push(makeBlock(listItem.child(0)));                       // leading block → top level
+        for (let k = 1; k < listItem.childCount; k++) lifted.push(listItem.child(k)); // keep nested content
+      }
+    });
+    if (lifted.length === 0) return false;
+    const out: PmNode[] = [];
+    if (before.length) out.push(list.type.create(list.attrs, before));
+    out.push(...lifted);
+    if (after.length) out.push(list.type.create(list.attrs, after));
+    if (dispatch) {
+      const tr = state.tr.replaceWith(listStart, listStart + list.nodeSize, out);
+      const outSize = out.reduce((sum, n) => sum + n.nodeSize, 0);
+      // Span the lifted rows so a follow-up multi-row command still covers every block.
+      tr.setSelection(TextSelection.between(tr.doc.resolve(listStart), tr.doc.resolve(listStart + outSize)));
+      dispatch(tr.scrollIntoView());
+    }
+    return true;
+  };
+}
+
 type ListKind = 'bullet' | 'ordered' | 'checklist';
 
 /**
@@ -158,11 +243,11 @@ export function applyListType(schema: DeltoSchema, kind: ListKind): Command {
       : listDepth >= 0 ? ($from.node(listDepth).type === bullet ? 'bullet' : 'ordered')
       : 'paragraph';
 
-    // Same type again → toggle OFF to paragraph.
+    // Same type again → toggle OFF to paragraph (each selected row → a top-level paragraph; multi-row safe).
     if (current === kind) {
       return kind === 'checklist'
         ? setBlock(schema, 'paragraph')(state, dispatch, view)
-        : liftListItem(item)(state, dispatch, view);
+        : unwrapSelectedItems(schema, (b) => b)(state, dispatch, view);
     }
 
     if (kind === 'bullet' || kind === 'ordered') {
@@ -176,15 +261,17 @@ export function applyListType(schema: DeltoSchema, kind: ListKind): Command {
         }
         return true;
       }
-      // checklist → list: todo→paragraph, then wrap. paragraph → list: just wrap.
+      // checklist → list: todo→paragraph, then wrap. paragraph → list: just wrap. wrapEachInList makes
+      // EACH selected row its own item (multi-row), since our list_item can't hold multiple paragraphs.
       return current === 'checklist'
-        ? sequence(setBlock(schema, 'paragraph'), wrapInList(target))(state, dispatch, view)
-        : wrapInList(target)(state, dispatch, view);
+        ? sequence(setBlock(schema, 'paragraph'), wrapEachInList(schema, target))(state, dispatch, view)
+        : wrapEachInList(schema, target)(state, dispatch, view);
     }
 
-    // kind === 'checklist'.  list → checklist: lift out to paragraph, then setBlock. paragraph → checklist: setBlock.
+    // kind === 'checklist'. list → checklist: lift EACH selected item out as a todo_item (multi-row safe,
+    // one tx). paragraph → checklist: setBlock per selected block (already multi-row via nodesBetween).
     return current === 'bullet' || current === 'ordered'
-      ? sequence(liftListItem(item), setBlock(schema, 'todo_item', { checked: false }))(state, dispatch, view)
+      ? unwrapSelectedItems(schema, (b) => todo.create({ id: b.attrs.id, checked: false }, b.content))(state, dispatch, view)
       : setBlock(schema, 'todo_item', { checked: false })(state, dispatch, view);
   };
 }

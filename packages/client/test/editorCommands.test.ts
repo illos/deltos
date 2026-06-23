@@ -180,3 +180,57 @@ describe('applyListType — mutually-exclusive list switching (#69 conversion ma
     expect(isToolActive(active(OL()), 'ol')).toBe(true);
   });
 });
+
+describe('applyListType — multi-row (selection spans N paragraphs → N items, all types; #69 Jim)', () => {
+  // Build doc = title + N body paragraphs, selection spanning ALL of them (first body content → last).
+  function multiState(texts: string[]): EditorState {
+    const blocks = texts.map((t, i) => S.node('paragraph', { id: `b${i}` }, [S.text(t)]));
+    const doc = S.node('doc', null, [S.node('title', { id: 't' }, [S.text('T')]), ...blocks]);
+    let state = EditorState.create({ doc, schema: S });
+    state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 4, doc.content.size - 1)));
+    return state;
+  }
+  const apply = (st: EditorState, id: string) => run(st, commandFor(S, id));
+  // Count list items / todo blocks in the result.
+  const listItemCount = (st: EditorState) => {
+    let n = 0;
+    st.doc.descendants((node) => { if (node.type.name === 'list_item') n++; });
+    return n;
+  };
+  const todoCount = (st: EditorState) => {
+    let n = 0;
+    st.doc.descendants((node) => { if (node.type.name === 'todo_item') n++; });
+    return n;
+  };
+  const THREE = () => multiState(['one', 'two', 'three']);
+
+  it('3 paragraphs → bullet = ONE list with 3 items', () => {
+    const out = apply(THREE(), 'ul');
+    expect(out.doc.child(1).type.name).toBe('bullet_list');
+    expect(listItemCount(out)).toBe(3);
+  });
+  it('3 paragraphs → ordered = ONE list with 3 items', () => {
+    const out = apply(THREE(), 'ol');
+    expect(out.doc.child(1).type.name).toBe('ordered_list');
+    expect(listItemCount(out)).toBe(3);
+  });
+  it('3 paragraphs → checklist = 3 todo items', () => {
+    expect(todoCount(apply(THREE(), 'check'))).toBe(3);
+  });
+  it('3 checklist rows → ordered = ONE 3-item ordered list', () => {
+    const checks = apply(THREE(), 'check'); // → 3 todos
+    const out = apply(checks, 'ol');
+    expect(out.doc.child(1).type.name).toBe('ordered_list');
+    expect(listItemCount(out)).toBe(3);
+  });
+  it('3 bullet rows → checklist = 3 checkboxes', () => {
+    const bullets = apply(THREE(), 'ul'); // → 3-item bullet list
+    expect(todoCount(apply(bullets, 'check'))).toBe(3);
+  });
+  it('3 bullet rows → ordered = 3-item ordered list (convert in place)', () => {
+    const bullets = apply(THREE(), 'ul');
+    const out = apply(bullets, 'ol');
+    expect(out.doc.child(1).type.name).toBe('ordered_list');
+    expect(listItemCount(out)).toBe(3);
+  });
+});
