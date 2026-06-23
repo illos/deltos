@@ -10,6 +10,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
+import { keymap } from 'prosemirror-keymap';
+import { baseKeymap } from 'prosemirror-commands';
 import { deltoSchema } from '../src/editor/schema.js';
 import {
   createDefaultFormulaRegistry,
@@ -18,6 +20,7 @@ import {
   formulaTriggerOnInsert,
   unwrapFormulaBackspace,
 } from '../src/plugins/formula/index.js';
+import { buildPmKeyActions } from '../src/editor/deckAdapter.js';
 import { spineToPmDoc, pmDocToSpine, type TextSegment } from '../src/editor/serializer.js';
 import type { BlockBody } from '@deltos/shared';
 
@@ -33,7 +36,7 @@ function mountWithText(text: string): EditorView {
   const para = deltoSchema.nodes['paragraph']!.create({ id: null }, text ? deltoSchema.text(text) : []);
   const title = deltoSchema.nodes['title']!.create({ id: null });
   const doc = deltoSchema.nodes['doc']!.create(null, [title, para]);
-  let state = EditorState.create({ doc, plugins: buildFormulaPlugins(registry) });
+  let state = EditorState.create({ doc, plugins: [...buildFormulaPlugins(registry), keymap(baseKeymap)] });
   state = state.apply(state.tr.setSelection(TextSelection.atEnd(state.doc)));
   view = new EditorView(container, { state, nodeViews: { formula: buildFormulaNodeView(registry) } });
   return view;
@@ -45,7 +48,7 @@ function mountFromBody(body: BlockBody): EditorView {
   document.body.appendChild(container);
   const doc = spineToPmDoc(deltoSchema, body, '');
   view = new EditorView(container, {
-    state: EditorState.create({ doc, plugins: buildFormulaPlugins(registry) }),
+    state: EditorState.create({ doc, plugins: [...buildFormulaPlugins(registry), keymap(baseKeymap)] }),
     nodeViews: { formula: buildFormulaNodeView(registry) },
   });
   return view;
@@ -251,6 +254,41 @@ describe('formula framework — hexcolor BARE auto-detect (non-consuming boundar
   it('a normal space (no trailing hex) does not fire on the keypad path', () => {
     const v = mountWithText('hello world');
     expect(formulaTriggerOnInsert(v.state, v.dispatch, registry, ' ')).toBe(false);
+  });
+});
+
+// ENTER is a boundary too (Jim): bare hex + Enter → swatch AND the newline still happens — on both the
+// hardware keymap Enter and the keypad (deckAdapter.enter) path.
+const paragraphCount = (v: EditorView) => {
+  let n = 0;
+  v.state.doc.descendants((node) => { if (node.type.name === 'paragraph') n++; });
+  return n;
+};
+
+describe('formula framework — ENTER as a boundary trigger', () => {
+  it('hardware Enter: bare hex wraps to a swatch AND the newline still happens', () => {
+    const v = mountWithText('pick #FF5733');
+    expect(paragraphCount(v)).toBe(1);
+    v.someProp('handleKeyDown', (f) => f(v, new KeyboardEvent('keydown', { key: 'Enter' })));
+    expect(formulaType(v)).toBe('hexcolor');
+    expect(swatch(v)!.style.backgroundColor).toBe('rgb(255, 87, 51)');
+    expect(paragraphCount(v)).toBe(2); // block split → newline happened
+  });
+
+  it('keypad Enter (deckAdapter.enter): bare hex wraps to a swatch AND the newline still happens', () => {
+    const v = mountWithText('bg #00ff00');
+    const actions = buildPmKeyActions(() => v, registry);
+    actions.enter();
+    expect(formulaType(v)).toBe('hexcolor');
+    expect(swatch(v)!.style.backgroundColor).toBe('rgb(0, 255, 0)');
+    expect(paragraphCount(v)).toBe(2);
+  });
+
+  it('plain Enter with no trailing boundary token just splits the block (no formula)', () => {
+    const v = mountWithText('hello');
+    v.someProp('handleKeyDown', (f) => f(v, new KeyboardEvent('keydown', { key: 'Enter' })));
+    expect(formulaSpec(v)).toBeNull();
+    expect(paragraphCount(v)).toBe(2);
   });
 });
 

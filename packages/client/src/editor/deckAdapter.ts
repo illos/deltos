@@ -3,7 +3,7 @@ import { NodeSelection, TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { baseKeymap, deleteSelection, joinBackward } from 'prosemirror-commands';
 import type { DeckContext, KeyActions } from '../deck/index.js';
-import { unwrapFormulaBackspace, formulaTriggerOnInsert } from '../plugins/formula/index.js';
+import { unwrapFormulaBackspace, formulaTriggerOnInsert, maybeWrapBoundaryFormula } from '../plugins/formula/index.js';
 import type { FormulaRegistry } from '../plugins/formula/index.js';
 
 /**
@@ -41,7 +41,12 @@ export function buildPmKeyActions(getView: () => EditorView | null, formulaRegis
       if (formulaTriggerOnInsert(v.state, v.dispatch, formulaRegistry, text)) return;
       v.dispatch(v.state.tr.insertText(text));
     }),
-    enter: () => run((v) => { (baseKeymap['Enter'] as Command)(v.state, v.dispatch, v); }),
+    enter: () => run((v) => {
+      // Inline-formula: ENTER is a boundary too — wrap a trailing bare token (e.g. hex) FIRST, then do the
+      // normal enter on the updated state (the keypad bypasses the keymap, so the wrap is shared here).
+      maybeWrapBoundaryFormula(v.state, v.dispatch, formulaRegistry);
+      (baseKeymap['Enter'] as Command)(v.state, v.dispatch, v);
+    }),
     // Own the char-delete: baseKeymap.Backspace only joins at block boundaries (the native keyboard did
     // mid-text delete), and inputmode=none suppressed the native keyboard — so the keypad owns it.
     backspace: () => run((v) => {

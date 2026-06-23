@@ -2,6 +2,7 @@ import type { Plugin, Command, EditorState, Transaction } from 'prosemirror-stat
 import type { Node as PmNode, Schema } from 'prosemirror-model';
 import { InputRule, inputRules } from 'prosemirror-inputrules';
 import { keymap } from 'prosemirror-keymap';
+import { baseKeymap } from 'prosemirror-commands';
 import type { FormulaRegistry } from './formulaTypes.js';
 import './formula.css';
 
@@ -112,6 +113,33 @@ export function formulaTriggerOnInsert(
   return false;
 }
 
+/**
+ * BOUNDARY-on-ENTER (and reusable for any non-char boundary): wrap a trailing boundary-detected token (e.g.
+ * a bare 6-digit hex) into a formula node, NO char inserted — the caller then performs the normal Enter.
+ * Returns true if it wrapped. Shared by the keymap Enter (hardware) + deckAdapter.enter (keypad).
+ */
+export function maybeWrapBoundaryFormula(
+  state: EditorState,
+  dispatch: ((tr: Transaction) => void) | undefined,
+  registry: FormulaRegistry,
+): boolean {
+  if (!hasFormulaNode(state.schema) || !state.selection.empty) return false;
+  const pos = state.selection.from;
+  const $b = state.doc.resolve(pos);
+  if ($b.parent.type.name === 'title') return false;
+  const blockStart = $b.start();
+  const textBefore = state.doc.textBetween(blockStart, pos);
+  const match = registry.detectBoundary(textBefore);
+  if (!match) return false;
+  const trimmedEnd = textBefore.replace(/\s+$/, '');
+  const runStartOffset = trimmedEnd.length - match.spec.length;
+  if (runStartOffset < 0) return false;
+  const runFrom = blockStart + runStartOffset;
+  const runTo = blockStart + trimmedEnd.length;
+  if (dispatch) dispatch(state.tr.replaceWith(runFrom, runTo, formulaNode(state.schema, match.type.id, match.spec)));
+  return true;
+}
+
 /** Backspace at the RIGHT EDGE of a formula chip → unwrap it to plain editable text (the spec). Inside the
  *  spec, backspace edits normally (live recompute). Shared by the keymap + the deckAdapter backspace. */
 export const unwrapFormulaBackspace: Command = (state, dispatch): boolean => {
@@ -151,7 +179,18 @@ export function buildFormulaPlugins(registry: FormulaRegistry): Plugin[] {
     return state.tr.replaceWith(start, end, formulaNode(state.schema, match.type.id, match.spec));
   });
   return [
-    keymap({ Backspace: unwrapFormulaBackspace }),
+    keymap({
+      Backspace: unwrapFormulaBackspace,
+      // ENTER is a boundary too (Jim): wrap a trailing boundary token (bare hex), THEN do the normal Enter
+      // on the updated state. Returns false when there's no boundary formula, so the editor's normal Enter
+      // chain (lists/todos) is untouched in the common case.
+      Enter: (state, dispatch, view) => {
+        if (!dispatch || !view) return false;
+        if (!maybeWrapBoundaryFormula(state, dispatch, registry)) return false;
+        baseKeymap['Enter']!(view.state, view.dispatch, view); // normal Enter on the post-wrap state
+        return true;
+      },
+    }),
     inputRules({ rules: [...autoRules, bracketRule] }),
   ];
 }

@@ -80,6 +80,9 @@ export interface FormulaRegistry {
   detectAuto(char: string, textBeforeCaret: string): FormulaMatch | null;
   /** [...] path: the bracket content → the first type that recognizes it. */
   resolveBracket(content: string): FormulaMatch | null;
+  /** BOUNDARY path (space OR enter): the first NON-consuming (consumesTrigger:false) type whose detect
+   *  matches the trailing text — char-agnostic, so the same self-completing tokens fire on space and enter. */
+  detectBoundary(textBeforeCaret: string): FormulaMatch | null;
   /** The distinct auto-trigger characters (to build input rules + the deckAdapter dual-wire). */
   triggerChars(): string[];
 }
@@ -108,6 +111,15 @@ export function createFormulaRegistry(): FormulaRegistry {
       for (const type of types) {
         const spec = type.recognize(content);
         if (spec !== null) return { type, spec };
+      }
+      return null;
+    },
+    detectBoundary(textBeforeCaret) {
+      for (const type of types) {
+        const at = type.autoTrigger;
+        if (!at || at.consumesTrigger !== false) continue; // only non-consuming (boundary) triggers
+        const spec = at.detect(textBeforeCaret);
+        if (spec) return { type, spec };
       }
       return null;
     },
