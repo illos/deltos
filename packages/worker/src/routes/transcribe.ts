@@ -28,17 +28,20 @@ import { resolvePrincipal } from '../auth.js';
  *  legacy `@cf/openai/whisper` takes); its output `.text` is the full transcript. */
 const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo';
 
+/** §6.1 dictation + every §6.2 per-phrase chunk call (no ?final). */
+const MAX_AUDIO_DICTATION = 5 * 1024 * 1024;
+
 /**
- * Cap for the DICTATION path. 120s of opus/aac at 256 kbps ≈ 3.7 MB; 5 MB gives comfortable headroom
- * while bounding both the paid Whisper inference cost and Worker memory (base64 inflates ~33% and inference
- * loads the full audio). A future chunked VOICE-MEMO path will carry its own larger cap — that path does
- * not exist yet, so 5 MB is effectively THE cap.
+ * §6.2 full-audio final pass (?final=1, sent on recording stop). 5-min auto-stop at 256 kbps ≈ 9.6 MB
+ * worst-case; 25 MB gives ample headroom and matches the original plumbing cap. Do NOT raise without a
+ * secSys ruling. The ?final param only selects between these two SERVER-DEFINED bounded caps — it does NOT
+ * let the caller set an arbitrary size.
  *
  * ⚠️ DEFERRED — PER-ACCOUNT RATE-LIMIT: a durable per-account throttle (e.g. requests/min + cumulative
  * audio-seconds/day) is HARD-REQUIRED before this endpoint is exposed to more than one user. secSys ruling
  * @c1210fc deferred it pre-real-users but explicitly did NOT waive it. Add it here before multi-user launch.
  */
-const MAX_AUDIO_BYTES = 5 * 1024 * 1024;
+const MAX_AUDIO_FINAL = 25 * 1024 * 1024;
 
 export const transcribe = new Hono<AppEnv>();
 
@@ -58,27 +61,29 @@ transcribe.post('/', async (c: AppContext) => {
     return apiError(c, 503, 'ai_not_configured', 'transcription is unavailable (AI binding unbound)');
   }
 
-  // 3. Read the raw audio bytes from the request body. The client POSTs the captured blob directly as the
-  //    body (audio/* content type); the transcript, not the audio, is the artifact we return.
-  //
-  //    Content-Length precheck: if the declared size already exceeds the cap, reject NOW before buffering.
+  // 3. Select the cap: ?final=1 = §6.2 full-audio final pass (25 MB); everything else = 5 MB.
+  //    Exact '1' match only — any other value falls back to the dictation cap.
+  const cap = c.req.query('final') === '1' ? MAX_AUDIO_FINAL : MAX_AUDIO_DICTATION;
+
+  // 4. Content-Length precheck: reject before buffering if the declared size already exceeds the cap.
   //    Without this, arrayBuffer() pulls up to the platform's ~100MB body limit into Worker memory before
   //    we can reject — a memory-pressure amplifier on a 128MB budget. If the client lies low (declares
   //    small, sends large), the post-buffer check below still catches it.
   const declaredLen = parseInt(c.req.header('content-length') ?? '', 10);
-  if (!Number.isNaN(declaredLen) && declaredLen > MAX_AUDIO_BYTES) {
+  if (!Number.isNaN(declaredLen) && declaredLen > cap) {
     return apiError(c, 413, 'payload_too_large', 'audio exceeds the maximum size for a single transcription');
   }
 
+  // 5–7. Buffer, validate, run.
   const buf = await c.req.arrayBuffer();
   if (buf.byteLength === 0) {
     return apiError(c, 400, 'invalid_request', 'empty audio body');
   }
-  if (buf.byteLength > MAX_AUDIO_BYTES) {
+  if (buf.byteLength > cap) {
     return apiError(c, 413, 'payload_too_large', 'audio exceeds the maximum size for a single transcription');
   }
 
-  // 4. Run Whisper. v3-turbo wants base64 audio; it auto-detects the container (webm/opus from Chromium
+  // 8. Run Whisper. v3-turbo wants base64 audio; it auto-detects the container (webm/opus from Chromium
   //    MediaRecorder, mp4/aac from Safari — both fine).
   const audioBase64 = bytesToBase64(new Uint8Array(buf));
   let text: string;
@@ -90,7 +95,7 @@ transcribe.post('/', async (c: AppContext) => {
     return apiError(c, 502, 'transcription_failed', 'the transcription model could not process this audio');
   }
 
-  // 5. Return the transcript as the first-class artifact. The audio stays client-side (the caller already
+  // 9. Return the transcript as the first-class artifact. The audio stays client-side (the caller already
   //    holds the blob) — a future VOICE MEMO consumer keeps it; dictation discards it.
   return c.json({ transcript: text });
 });

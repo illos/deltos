@@ -95,9 +95,9 @@ const makeEnv = (over: Partial<Env> = {}, raw?: Database.Database): Env =>
     ...over,
   }) as unknown as Env;
 
-/** POST raw bytes (audio body) to /api/transcribe. */
-const postAudio = (env: Env, body: BodyInit, headers: Record<string, string> = {}) =>
-  app.request('/api/transcribe', { method: 'POST', headers: { 'content-type': 'audio/webm', ...headers }, body }, env);
+/** POST raw bytes (audio body) to /api/transcribe (or a variant with query params). */
+const postAudio = (env: Env, body: BodyInit, headers: Record<string, string> = {}, path = '/api/transcribe') =>
+  app.request(path, { method: 'POST', headers: { 'content-type': 'audio/webm', ...headers }, body }, env);
 
 /** A non-trivial fake audio payload. */
 const fakeAudio = (bytes = 2048) => new Uint8Array(bytes).fill(7);
@@ -176,6 +176,33 @@ describe('POST /api/transcribe — voice-to-text (spec §6)', () => {
     const res = await postAudio(makeEnv({ AI: ai as unknown as Ai }), new Uint8Array(6 * 1024 * 1024));
     expect(res.status).toBe(413);
     expect(ai.run).not.toHaveBeenCalled();
+  });
+
+  it('?final=1 Content-Length precheck: 413 when declared size > 25MB final cap', async () => {
+    const { ai } = stubAI();
+    // Body is tiny (1 KB) but Content-Length declares 26 MB > the 25 MB final cap.
+    const res = await postAudio(
+      makeEnv({ AI: ai as unknown as Ai }),
+      new Uint8Array(1024),
+      { 'content-length': String(26 * 1024 * 1024) },
+      '/api/transcribe?final=1',
+    );
+    expect(res.status).toBe(413);
+    expect(ai.run).not.toHaveBeenCalled();
+  });
+
+  it('?final=1 body 6MB: accepted (final cap = 25MB; proves two-cap select — default cap = 5MB would reject this)', async () => {
+    const { ai } = stubAI({ text: 'long recording transcript' });
+    // 6 MB < the 25 MB final cap but > the 5 MB default cap — the two-cap select is the only reason this passes.
+    const res = await postAudio(
+      makeEnv({ AI: ai as unknown as Ai }),
+      new Uint8Array(6 * 1024 * 1024).fill(7),
+      {},
+      '/api/transcribe?final=1',
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ transcript: 'long recording transcript' });
+    expect(ai.run).toHaveBeenCalledOnce();
   });
 
   it('model failure: surfaces a clean 502, not a 500 stack', async () => {
