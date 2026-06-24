@@ -63,6 +63,23 @@ export function SyncIndicator() {
 
   const blip = BLIP[effectiveState];
 
+  // #105 sonar-ping ring: the core dot stays SOLID green (no dimming pulse — that read as a glitch at ~1s
+  // sync cycles). Syncing/pending emit a slow expanding ring instead. Keep the ring MOUNTED while syncing;
+  // when syncing ends, let the in-flight ping FINISH its current expansion (graceful, no abrupt cut) then
+  // unmount on the next animation iteration. stopAfterIterationRef carries the "stop at the next boundary"
+  // intent without re-rendering.
+  const isSyncing = blip === 'syncing';
+  const [ringMounted, setRingMounted] = useState(false);
+  const stopAfterIterationRef = useRef(false);
+  useEffect(() => {
+    if (isSyncing) {
+      stopAfterIterationRef.current = false;
+      setRingMounted(true);
+    } else if (ringMounted) {
+      stopAfterIterationRef.current = true; // finish the current ping, then stop (handled on iteration)
+    }
+  }, [isSyncing, ringMounted]);
+
   // Keep the pending count in the tooltip (cheap) even though the visible N-count is gone.
   const baseTitle =
     effectiveState === 'pending' && queueCount > 0
@@ -99,6 +116,17 @@ export function SyncIndicator() {
       onClick={handleReload}
     >
       <span className="sync-indicator__dot" aria-hidden="true" />
+      {ringMounted && (
+        <span
+          className="sync-indicator__ring"
+          aria-hidden="true"
+          // Each iteration = one completed ping. If syncing has ended, unmount HERE so the just-finished
+          // ping was shown in full (graceful) rather than cut mid-expansion.
+          onAnimationIteration={() => {
+            if (stopAfterIterationRef.current) setRingMounted(false);
+          }}
+        />
+      )}
     </button>
   );
 }

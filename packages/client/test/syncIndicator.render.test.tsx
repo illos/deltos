@@ -82,6 +82,35 @@ describe('SyncIndicator — state → blip mapping', () => {
   });
 });
 
+describe('SyncIndicator — #105 sonar ring (core dot stays solid, no dim pulse)', () => {
+  const ring = (c: HTMLElement) => c.querySelector('.sync-indicator__ring');
+
+  it('syncing → a ring is mounted (the expanding ping)', () => {
+    const { container } = setup('syncing', true);
+    expect(ring(container)).not.toBeNull();
+  });
+
+  it('pending → a ring is mounted (same heartbeat as syncing)', () => {
+    const { container } = setup('pending', true);
+    expect(ring(container)).not.toBeNull();
+  });
+
+  it('synced (idle) → NO ring (solid green only)', () => {
+    const { container } = setup('idle', true);
+    expect(ring(container)).toBeNull();
+  });
+
+  it('error → NO ring', () => {
+    const { container } = setup('error', true);
+    expect(ring(container)).toBeNull();
+  });
+
+  it('offline → NO ring', () => {
+    const { container } = setup('offline', true);
+    expect(ring(container)).toBeNull();
+  });
+});
+
 describe('SyncIndicator — blip only, tooltip retained', () => {
   it('renders NO visible text label (only the dot)', () => {
     const { container } = setup('idle', true);
