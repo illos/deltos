@@ -1,5 +1,7 @@
 # v1 Course-Correction Spec — Local-First Shell + Conflict-as-Version
 
+> **Historical — v1 shipped 2026-06-24. This spec was satisfied on ship; preserved as build record.**
+
 **Status:** SPEC-READY (planSys, 2026-06-16). Handoff target = pilot. Supersedes the in-flight
 "E4 = make re-auth work on reload" framing and reframes the PRF / disclosure / Option-A-B / autoUnlock
 work under the corrected shell. **Reuse-discipline gate applies** (rewrite-to-native; KICKOFF §Reuse).

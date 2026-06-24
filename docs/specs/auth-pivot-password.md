@@ -1,6 +1,6 @@
 # Auth Pivot — Username + Password (+ optional 2FA), Recovery Phrase as Reset
 
-**Status:** SPEC-READY (planSys, 2026-06-17). Handoff = pilot → routes the build. **Supersedes the passkey
+**Status:** SHIPPED — v1 live 2026-06-24. **Supersedes the passkey
 auth model** ([[stream-a-identity-plan]], Option-A custody, PRF, QR-join). Authoritative design detail lives
 in **`docs/design/auth-pivot-scope-map.md`** (devSys, reused-vs-rewritten map) + the **`auth-pivot-security-model`**
 memory (secSys); this spec is the shaping layer — the decision, the rulings planSys owns, acceptance, and

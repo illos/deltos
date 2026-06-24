@@ -1,6 +1,6 @@
 # Spec — Settings & Account screen v1
 
-**Status:** SPEC-READY (planner, 2026-06-20). Handoff target = pilot.
+**Status:** SHIPPED — v1 live 2026-06-24.
 **Design basis:** the "basic notes, day-to-day usable" milestone (user, 2026-06-17 — settings named as
 *account/username + sign-out + appearance + app-info, minimal*). Governs: `[[auth-friction-philosophy]]`,
 `[[performance-is-a-standing-value]]`.
@@ -68,9 +68,9 @@ These two additions are required for the **2FA** section; everything else uses e
 ## Explicitly OUT of scope (v1) — deferred, tracked
 - **Change password (logged-in)** — needs a *new* backend endpoint; recovery-phrase reset covers
   forgot-password for now. Its own small slice later. (User-confirmed defer, 2026-06-20.)
-- **Appearance / theme toggle** — there is no theming system yet; building one belongs to the parked
-  **visual UI-refresh** thread (design-with-user pending), not this functional screen. Keep settings on the
-  existing visual language.
+- **Appearance / theme toggle** — ~~there is no theming system yet~~ SHIPPED: the Appearance picker
+  (theme palette, font, dark/light/system mode) lives in Settings and was delivered in Deploy 2 of
+  the UI visual refresh. This "out of scope" note is no longer accurate.
 - **Session/device management** (list/revoke individual sessions), **account deletion / data export** —
   later surfaces.
 

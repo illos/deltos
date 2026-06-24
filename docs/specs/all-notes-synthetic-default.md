@@ -1,6 +1,6 @@
 # Spec — "All Notes" synthetic default (notebook-model refinement)
 
-**Status:** SPEC-READY (planner, 2026-06-20). Handoff target = pilot-2.
+**Status:** SHIPPED — v1 live 2026-06-24.
 **Design basis:** decided with Jim 2026-06-20 → [[all-notes-synthetic-default]]. Governs:
 [[performance-is-a-standing-value]], [[ui-view-driven-architecture]] (supersedes its "all-notes ≠ v1 /
 notebooks as low-overlap silos" lean), [[reuse-discipline]].
@@ -37,7 +37,9 @@ there's nothing to duplicate.
 - **New-note notebook assignment:** a note created while viewing **All Notes** is **uncategorized**
   (`notebookId = null`); created while viewing a **specific notebook**, it gets that `notebookId`.
 - **Move-note:** the move target list includes **All Notes** = "remove from notebook / uncategorize"
-  (`notebookId = null`), alongside the real notebooks.
+  (`notebookId = null`), alongside the real notebooks. *(As shipped: move is triggered via LEFT swipe →
+  notebook-picker sheet; desktop drag-and-drop note→notebook also wired. The old spec described an inline
+  picker — that was not what shipped.)*
 - Search / Trash / other collection-views: unaffected (they already span the account).
 
 ## Migration

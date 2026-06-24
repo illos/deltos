@@ -1,5 +1,7 @@
 # Stream A auth — implementation contracts (authStore + per-route)
 
+> **Historical — pre-pivot passkey/signed-challenge design, abandoned 2026-06-17, superseded by username+password (see auth-pivot-scope-map.md).**
+
 **Author:** devSys (chokepoint owner) · **For:** devSys2 (authStore + D1 migrations), scopeSys
 (routes/auth.ts) · **Status:** STABLE — secSys Rev-3 cleared the approach; R3-1..R3-4 folded; the 3
 open reconcile points are RULED below. Field-level wire encodings live in `canonical.ts`/`requests.ts`

@@ -1,5 +1,7 @@
 # Stream A auth — secSys early-read review
 
+> **Historical — pre-pivot passkey/signed-challenge design, abandoned 2026-06-17, superseded by username+password (see auth-pivot-scope-map.md).**
+
 **Reviewer:** secSys · **Target:** `docs/design/stream-a-auth-strawman.md` @ 678eac4 (STRAWMAN, nothing locked)
 **Verdict:** Strong construction — the replay / freshness / pubkey-binding / intent / downgrade
 spine is mostly right and devSys clearly internalized the audit checklist. **One CRITICAL must-fix

@@ -1,7 +1,9 @@
 # Spec — UI / Visual Refresh (v1 "final UI")
 
-**Status:** ACTIVE — all open decisions resolved (see §0). Building Deploy-1 (Lane 2). Author: navSys
-(navSys-2 drove the build; handed to navSys-3 on 2026-06-20 — see §0 HANDOFF).
+**Status:** SHIPPED — all three deploys live 2026-06-24. Historical build-log. Deploy 1 (new look),
+Deploy 2 (appearance picker + brand + lazy voices), Deploy 3 (editor toolbars/EditorControlStrip +
+markdown-light + Undo/Redo) all LIVE. navSys-2→navSys-3 handoff block in §0 is obsolete — preserved
+as a build record only. Author: navSys (navSys-2 drove the build).
 **Canonical design reference:** `docs/design/ui-refresh/` (the Claude-Design handoff packet —
 README = the hi-fi spec; `screenshots/` = intended look; `Deltos Rich Text.dc.html` = primary
 interactive reference; `icons/` = brand assets). The `.dc.html` / `support.js` / `ios-frame.jsx`
@@ -39,8 +41,33 @@ tiny critical bundle, no heavy deps — `[[performance-is-a-standing-value]]`).
 > to complete Deploy-1. devSys-2 reports to you now.
 
 > **DEPLOY GATE (Deploy-1):** ✅ the P0 data-loss blocker is **CLEARED** — **#52 is DONE, secSys-PASSED
-> (@e4bae75) and USER-VERIFIED live** (pilot-2 closed the incident). The remaining gate is **Jim's design
-> pass on the new look** (he wants to feel/approve it) + Lane 2 actually being complete. Live deploy still
+> (@e4bae75) and USER-VERIFIED live** (pilot-2 closed the incident).
+> **🔑 GATE REFRAME (Jim, 2026-06-21): the design is LOCKED — the packet (`docs/design/ui-refresh/`) is
+> Jim's Claude-Design output, exactly as he wants it. There is NO design-direction question; the ONLY risk
+> on this whole workstream is BUILD FIDELITY (does our recreation in the real stack land 1:1 on the packet).**
+> So the gate is NOT "does Jim like the look" — he already does. The gate = **(a) built 1:1 to the packet's
+> LITERAL spec** (exact hex/12 tokens/per-voice type scales/spacing from the README + the `.dc.html`
+> interactive reference + icon geometry — NOT eyeballed from screenshots; forced divergences get flagged to
+> navSys-3, never silently resolved) + **(b) Lane 2 complete** + **(c) Jim's live confirm-pass** (the real
+> feel happens on the live site post-deploy). **Fidelity de-risk loop (navSys-3, team-side, allowed — not
+> Jim's review):** as each visual Lane 2 unit lands on `ui-refresh`, navSys-3 drives a headless browser,
+> screenshots the built UI, and diffs side-by-side vs. the packet mockup → routes precise drift corrections
+> (spacing/weight/color/row-treatment) to devSys-2 while it's cheap. Turns "can't tell until built" into a
+> continuous build→diff→correct loop, so Jim's live pass confirms rather than discovers.
+> **🔑 PROTOTYPE IS STATIC (Jim, 2026-06-21) → TWO PHASES.** The Claude-Design prototype is almost
+> entirely STATIC, so the packet pins down the LOOK (color/type/spacing/layout/iconography) but NOT
+> interaction: hover/focus/active/selected STATES, MOTION/timing, and the desktop placement of
+> Trash/Search/Settings are NOT in the packet and must NOT be reverse-engineered or asked of the design
+> agent. **Phase 1 = STATIC-VIBE FIDELITY** (build the look 1:1 to the packet — this is the current Lane 2
+> work + my fidelity diffs). **Phase 2 = AFFORDANCES, built COLLABORATIVELY** (Jim + navSys-3 + devSys-2
+> design the states/motion/route-placement together once the static vibe is right on live). Until then,
+> interactive surfaces keep today's behavior. The design-agent channel is reserved ONLY for ambiguities in
+> the STATIC visual spec (a missing hex / type weight), not for interaction questions.
+> **DECIDED (Jim, 2026-06-21) — desktop Trash/Search/Settings = OPTION (a):** they render in REGION 3
+> (the active-note pane = a master-detail outlet showing note OR search OR trash OR settings); nav + list
+> stay visible, 3-region frame stays stable. devSys-2 builds the shell with (a) routing from the start
+> (no full-screen-route deferral). Mobile keeps pushed sub-screens.
+> Live deploy still
 > follows the integration steps below (the `ui-refresh` restyle must be brought onto clean mainline).
 > eslint config fixed @5360d6e (rules-of-hooks gate live). Team: devSys (data/#52, done) · devSys-2
 > (UI/Lane 2, on `ui-refresh` worktree) · gruntSys + navSys-1 (settings/auth/All-Notes lane — NOT ours) ·
@@ -71,13 +98,99 @@ tiny critical bundle, no heavy deps — `[[performance-is-a-standing-value]]`).
     integration: either **(a) revert-the-reverts on mainline** (re-introduce the 4) then merge Pass B–E,
     or **(b) cherry-pick / rebase the complete restyle fresh** onto then-current mainline-HEAD. devSys-2
     owns this. Ships only after #52 verified live + the design pass with Jim.
+  - **⚠️ NEW collision (pilot-2, 2026-06-20):** the **All-Notes synthetic-default refactor (#58 server +
+    #59 client)** is building on **mainline** and **WILL touch the client notebook-switcher + styles
+    rendering** — the SAME surface Lane 2 restyles (NavContent switcher, note-list query, styles.css).
+    So by the time we integrate Deploy-1, mainline-HEAD will have moved under us on overlapping files.
+    **Implication:** prefer **(b) cherry-pick/rebase fresh onto then-current mainline-HEAD** over a blanket
+    revert-the-reverts, and re-reconcile Lane 2's switcher/list/styles against the landed All-Notes shape
+    (nullable `notebookId`, "All Notes" as a first-class undeletable switcher entry) — don't restyle the
+    OLD default-'Notes' switcher. Sequence ui-refresh integration AFTER All-Notes lands on mainline so we
+    rebase once onto the final model, not twice. devSys-2 owns the reconcile; flag me if the overlap bites.
+  - **✅ INTEGRATION DECISION — EARLY REBASE (navSys-3, 2026-06-21):** the ui-refresh branch branched from
+    1d76c3d (PRE-#59), so its NavContent/HomeView are the OLD default-'Notes' structure; #59 All-Notes
+    (@24d7f59, now LIVE on mainline) rewrote both (nullable notebookId + "All Notes" first-class switcher).
+    Rather than restyle soon-dead structure (rejected option a) or defer the nav/list content treatment to a
+    late all-at-once integration (rejected option c), we **pull integration FORWARD now that All-Notes is
+    live**: devSys-2 replays the COMPLETE restyle FRESH onto current post-All-Notes mainline-HEAD (spec
+    option (b) above — cherry-pick fresh, NOT merge-mainline-in / revert-the-revert trap), absorbing the
+    whole #59 structure. Then Pass C/D style the FINAL structure and my fidelity diffs judge the real thing.
+    ui-refresh STAYS isolated (mainline untouched, stays pilot's clean deploy line); we re-sync cheaply on
+    future mainline churn; Deploy-1 integration becomes a near fast-forward. **Base commit + timing being
+    confirmed with pilot (mainline owner) before devSys-2 starts the rebase** — don't rebase onto a moving HEAD.
+  - **🚢 SHIP DECISION (Jim, 2026-06-21): JUST SHIP THE NEW UI — affordance placement is POST-SHIP.** Jim
+    lifted the affordance ship-gate below: ship Deploy-1 WITHOUT re-housing notebook-delete or wiring
+    Undo/Redo; he'll direct where those affordances go on the LIVE site after ship (live=dev, pre-real-users
+    → low risk). Notebook-delete CAPABILITY stays intact (`mutateNotebooks` create/rename/delete; All-Notes
+    delete=uncategorize) — only the UI trigger is absent. Undo/Redo: DISABLED/greyed for ship (not inert-but-
+    active-looking). Remaining to ship = finish the static-vibe fold (mobile-home drifts + note-region meta)
+    → navSys-3 fidelity re-diff clean → integrate ui-refresh→mainline (near fast-forward, early-rebased) →
+    pilot deploys to live. The fidelity gate still holds (ship the LOOK 1:1); only the AFFORDANCE gate is lifted.
+  - **🚨 Deploy-1 SHIP-GATE — no functional regression from the static restyle (navSys-3, 2026-06-21):**
+    matching the STATIC packet sometimes means dropping an affordance the packet didn't draw — but we must
+    NOT ship Deploy-1 with working functionality removed. **Known instance:** Pass C dropped the nav ⋮ kebab
+    to match packet §1 (which has no kebab) → that removed the ONLY delete-notebook path (gruntSys's B1
+    delete tests are `describe.skip`'d on the branch, preserved for un-skip). **delete-notebook (and any
+    other action removed to match the static look) MUST be re-housed in the new design before Deploy-1
+    ships** — that's a phase-2 AFFORDANCE to design with Jim (where do notebook actions live in the new
+    nav?). On the branch, kebab-less is fine for the static-vibe phase; the feature is PARKED + GATED, not
+    gone. Audit for other dropped affordances before ship. This is a hard ship-gate, distinct from the
+    fidelity gate.
+    **Second instance:** the mobile bottom-nav action row renders Undo/Redo (per the mockup) but they are
+    INERT this phase (editor-undo wiring is Deploy-3). Do NOT ship Deploy-1 with inert Undo/Redo (broken-
+    feeling buttons) — at ship they must be wired OR disabled/omitted. Fine to render inert for the static
+    fidelity diff only.
+  - **📋 Deploy-1 integration checklist (accrue items here as they surface):**
+    - **`panePointer` → device-global allowlist:** the new `db/panePointer.ts` (list-pane width, device-local
+      deviceState row, @400ef58) must have its key ADDED to #57's `DEVICE_GLOBAL_DEVICE_KEYS` allowlist when
+      we cherry-pick to mainline — else the deny-by-default device-state wipe drops it. In-file TODO flagged
+      by devSys-2. (Same allowlist pattern as themePointer/notebookPointer.)
 - **Lane 2 — Shell + nav + note list restyle:** 🔨 IN FLIGHT on the `ui-refresh` worktree (completes
-  Deploy 1). **Pass A ✅ DONE** (@f9aed1d mode-aware critical-CSS flash fix + @1d76c3d full styles.css
-  retokenize sweep — whole client on the 12-token model, zero legacy vars, 311/311 green). **Pass B ⏳
-  SCOPED + worktree-ready but NOT YET CODED** (3-region desktop shell: nav ~222 | list ~300 resizable |
-  note + the `--handle` drag pill; mobile push-subscreen + bottom-sheet restyle; routed-tree render
-  tests). Then C (NavContent×3 containers) → D (note list: full-bleed rows, selected-row, compose-in-
-  header, search) → E (icon swap-in) → F (≥16px inputs). eslint step-0 fix already landed @5360d6e.
+  Deploy 1). DESKTOP STATIC FRAME ✅ COMPLETE + FIDELITY-CLEAN (navSys-3 headless diffs vs the packet
+  mockup, all PASS):
+  - **Pass A ✅ DONE** (@f9aed1d mode-aware critical-CSS flash + @1d76c3d styles.css retokenize, 12-token).
+  - **Pass B ✅ DONE** — resize foundation (@400ef58, 38px `--handle`) + 3-region shell frame (@21a3240,
+    nav ~222 | list 300 resizable | region-3 master-detail outlet per decision (a)). Frame fidelity PASS.
+  - **EARLY REBASE ✅** onto post-All-Notes mainline (da73e94→#50 5a202c7), restyle replayed fresh, now
+    @c352ee6→@1419601 on the #59 structure. (See the integration-decision note above.)
+  - **Pass C ✅ DONE** (nav content @c352ee6) — δ wordmark + NOTEBOOKS label + row icons + All Notes pinned
+    top + active = accent left-bar + accent icon + `--sel` fill; kebab dropped (→ ship-gate: re-house
+    delete-notebook). Nav fidelity PASS.
+  - **Pass D ✅ DONE** (list content @1419601) — header (name + "N notes" + compose icon) + search field +
+    full-bleed rows + selected-row (`--sel` + 2px accent border). List fidelity PASS.
+  - **Mobile shell ✅ BUILT** (@b8a54fe — §6 bottom-nav sheet + §4 action row + mobile home overrides).
+    Mobile fidelity diff (Graphite×light vs mobile mockups): NAV SHEET **PASS**; HOME has 3 drifts FOLDING:
+    (1) remove the leftover top app-bar ("All Notes δ deltos" + SYNCED pill — not in packet; sync relocates
+    to note-meta), (2) hide header compose on mobile (New = bottom-nav), (3) hide search field on mobile
+    (Search = bottom-nav). iOS search-input resolved SAFE (tap-to-navigate `<button>`, 13px OK).
+  - **🚀 DEPLOY-1 IS LIVE (2026-06-21) — the UI visual refresh ships on https://deltos.blackgate.studio.**
+    Worker version **3d6ffbce**; mainline `phase-0-foundation` fast-forwarded 5a202c7→**4117d77** (13 restyle
+    commits, clean ff, local+origin); migration **0011 applied --remote** to prod D1 (unattended); worker+PWA
+    deployed + verified serving the new fonts/restyle bundle. Mainline UN-FROZEN (devSys/gruntSys backlog
+    resumed). **Rollback target = prior worker `781d72bf`** (`wrangler rollback`) if Jim's feel-pass finds a
+    blocker. navSys-3 fidelity re-diff was CLEAN across all surfaces before GO (desktop frame/nav/list, mobile
+    home, note meta incl. the sync-dot fix). **NOW: Jim's feel-pass on the live site** — route any finding to
+    pilot.
+    - **POST-SHIP affordances (Jim directs on live):**
+      - ✅ **Desktop NOTE-delete trashcan — SHIPPED LIVE (2026-06-21, worker 34cc79f5, mainline @7ef9e56,
+        ff'd clean from 4117d77).** Jim-directed: trashcan in the note §3 meta row next to the history icon,
+        DESKTOP-ONLY (DOM-absent <769px); soft-deletes the open note to Trash via the existing SwipeRow path
+        (recoverable + Undo toast); mobile keeps swipe. Not a packet element (no mockup) — built on the
+        existing meta-icon styling; test-gated (NDT-1/NDT-2), no headless re-render (proven styling).
+      - ⏳ **Notebook-delete affordance — PARKED** (Jim's call when he wants it; lean = swipe-to-delete on
+        notebook rows reusing `SwipeRow`). Kebab dropped to match packet; capability intact in mutateNotebooks.
+      - ⏳ **Wire Undo/Redo** (currently greyed/disabled in the mobile bottom-nav).
+    - **Deploy 2 = appearance picker + brand + lazy voices (Lane 5) — 🚀 LIVE (2026-06-21, worker c22db7b1,
+      mainline @06c39ed).** Picker in Settings (Palette × Type × Mode chips, live repaint, per-device persist,
+      all 32 combos); fidelity-checked vs the `Deltos Mixer.dc.html` prototype (active-chip = monochrome ink
+      pill, corrected from a spec bug). Lazy voices (Serif/Grotesk fetch-on-first-select, SW-permanent;
+      default load +5.5KB δ-subset only). δ wordmark = Newsreader; gold-δ brand PWA icons. δ-subset is a
+      greek-named-subset (no fonttools on box, [[font-subsetting-no-fonttools-on-box]]) scoped unicode-range
+      U+03B4 — secSys non-blocking OK. Jim's live feel-pass = the §4.5 smoke.
+    - **Deploy 3 = editor formatting toolbars + mobile grouped bar + markdown-light (Lanes 3+4)** — turnkey
+      spec `ui-lanes34-editor-toolbars-markdown.md`; the last UI-refresh deploy, NOT yet started.
+  - **DEFERRED to Deploy 3 (NOT Deploy-1):** the formatting TOOLBARS — desktop §3 toolbar + mobile §5
+    grouped editor bar + markdown-light (Lanes 3+4). eslint step-0 fix landed @5360d6e.
 - **Lane 5 (appearance picker + brand + lazy voices) → Deploy 2:** 📋 SPEC-READY, turnkey →
   `docs/specs/ui-lane5-appearance-and-brand.md`. Builds on `ui-refresh`. Key gotchas it flags: δ-subset
   must come from upstream full Newsreader (fontsource latin lacks Greek); vite precache glob omits woff2;

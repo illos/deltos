@@ -1,6 +1,6 @@
 # Sub-spec — Appearance picker, lazy voices & brand assets (Lane 5, turnkey)
 
-**Status:** READY TO BUILD. Turnkey implementation sub-spec for **Lane 5** of the UI visual refresh
+**Status:** SHIPPED — v1 live 2026-06-24. Historical sub-spec for **Lane 5** of the UI visual refresh
 (`docs/specs/ui-visual-refresh.md` §3). This lane is **Deploy 2 — "Appearance + brand"** (per the
 resolved cadence, decision A): the user-facing theme picker in Settings, the completion of the lazy
 font voices, and the gold-δ brand assets. It sits **on top of Lane 0** (token system + themeStore +
@@ -199,9 +199,12 @@ export function AppearanceSection() {
   `<input>/<textarea>/<select>`, so the iOS ≥16px auto-zoom rule does not apply here. (Chip font-size
   may stay at the prototype's compact ~12.5–13px without zoom risk.) Use `role="radiogroup"` +
   `role="radio"` + `aria-checked` for the segmented semantics.
-- **Active state** mirrors the prototype's `syncControls()`: the active chip gets `is-active`
-  (filled bg = `--ink`/`--sel`, label = `--paper`/`--ink`, border = `--accent`, weight 600). Inactive =
-  transparent/`--paper` bg, `--secondary` label, `--border` hairline.
+- **Active state** mirrors the prototype's `btn()`/`syncControls()` (Deltos Mixer.dc.html ~L398-417,
+  the GROUND TRUTH): active chip = **ink-filled pill, MONOCHROME** — `background:--ink`, `color:--paper`,
+  `border-color:--ink`, weight 600 (proto: `#2a2620`/`#f3f1ea`/`#2a2620`). **No `--accent`** on the chips.
+  Inactive = `--paper` bg, `--secondary` label, `--border` hairline (proto `#fdfcf9`/`#6c685e`/`#d8d3c8`).
+  (navSys-3 2026-06-21: corrected from an earlier draft that wrongly used `--sel` fill + `--accent` border —
+  the prototype controls carry no accent.)
 - The **Type** chips set `fontFamily` inline so each chip is a live specimen of its voice (Serif chip in
   Newsreader, Mono chip in Plex Mono, etc.). For a voice whose woff2 hasn't loaded yet, the chip shows
   the system fallback in the family stack until `setVoice` triggers the lazy fetch — acceptable
@@ -236,8 +239,8 @@ an `.appearance` block. The swatch colors are the **light** accent + paper of ea
   white-space: nowrap; cursor: pointer; transition: all 0.12s ease;
   min-height: 36px;            /* comfortable tap target */
 }
-.appearance__chip.is-active {
-  background: var(--sel); color: var(--ink); border-color: var(--accent); font-weight: 600;
+.appearance__chip.is-active {     /* prototype btn() active: ink-filled pill, MONOCHROME (no accent) */
+  background: var(--ink); color: var(--paper); border-color: var(--ink); font-weight: 600;
 }
 .appearance__chip:active { background: var(--sel); }
 /* Palette swatch dot = that palette's own light accent ring over its own surface */

@@ -1,5 +1,7 @@
 # deltos — Build Kickoff
 
+> **Note (v1 shipped 2026-06-24):** Two superseded items: (1) Identity = passkey/signed-challenge was abandoned 2026-06-17 in favour of username+password (see `auth-pivot-scope-map.md`). (2) Editor engine resolved = ProseMirror. Stack, architecture, and process sections otherwise accurate.
+
 **Status:** design phase complete (2026-06-15). This document is the **build plan** —
 what deltos is, the locked architecture, the reuse rules, and the ordered roadmap. The
 next session starts with a **composer (orchestrator) + a full team** to begin building.

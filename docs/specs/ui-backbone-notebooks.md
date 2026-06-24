@@ -1,6 +1,13 @@
 # Spec — UI Backbone + Notebooks (view-driven shell, v1)
 
-**Status:** SPEC-READY (planner, 2026-06-18). Handoff target = pilot.
+> **Historical — v1 shipped 2026-06-24. This is the spec as of 2026-06-18; preserved as record, not
+> current status.** Key reversals since this was written: (1) there is NO stored default notebook —
+> "All Notes" is a synthetic aggregate (no row, no flag); see `docs/specs/all-notes-synthetic-default.md`.
+> (2) delete-notebook → **uncategorizes** its notes (not Trash). (3) notes have an OPTIONAL `notebookId`
+> (nullable); a note with no `notebookId` is uncategorized and lives in All Notes. (4) "note belongs
+> to exactly one notebook" is no longer true — uncategorized notes belong to All Notes implicitly.
+
+**Status:** SHIPPED — v1 live 2026-06-24. See archive-note above for reversals.
 **Design basis:** `[[ui-view-driven-architecture]]`, `[[notebooks-and-search-plan]]`. Sketched + locked with the user 2026-06-18.
 **Sequencing:** the first build of the new view-driven UI. Comes after the reactivity fix (#15) lands; **Search** is the next spec on top of this; the pure-visual **UI refresh** (restyle) is a later, separate item. Heavy client lane — coordinate with #15 (also client) to avoid contention.
 

@@ -1,6 +1,6 @@
 # Swipe Actions on the Note List (mobile)
 
-**Status:** SPEC-READY (planSys, 2026-06-17). Handoff target = pilot. Part of the **"basic notes,
+**Status:** SHIPPED — v1 live 2026-06-24. Part of the **"basic notes,
 day-to-day usable"** milestone — this is the **delete affordance** that milestone was missing, plus a
 duplicate. **Reuse-discipline gate applies** (KICKOFF §Reuse): the source packet
 (`_inbox/SWIPE_ACTIONS_EXPORT.md`, from TRKR — React 18 + framer-motion + Tailwind) is a **behavioral
@@ -21,9 +21,9 @@ Delete buttons revealed on a soft swipe, note deleted on a hard swipe."*
   - Soft swipe → snap **open-right**, revealing **Copy** + **Delete** buttons (tappable, stay open).
   - Hard fling right (past the far threshold) → **commit Delete** directly, with the **stretchy-delete**
     treatment (Copy shrinks to zero + fades, Delete grows to fill the gutter) and the row animates off.
-- **Swipe LEFT = RESERVED, not wired in v1.** The user is undecided (future **Pin**, or other controls).
-  Build the state machine so a left panel/action can drop in later, but ship **no left action now** — a
-  left drag simply rubber-bands back to closed. Keeps the surface lean (perf standing-value).
+- **Swipe LEFT = Move → notebook picker sheet (SHIPPED).** *(This spec originally reserved left-swipe
+  for a future Pin action. As shipped: LEFT swipe reveals a notebook-picker sheet to move the note to
+  another notebook or uncategorize it via "All Notes". The Pin/other-controls idea remains deferred.)*
 - **No framer-motion / no new animation or gesture dependency** (perf standing-value — see Implementation).
 
 ---
@@ -52,7 +52,10 @@ be undoable**, sync-correct against the worker's `deletedAt` CAS path. Required:
    `!n.deletedAt` filter but the row survives for undo + sync) **and** enqueue a sync entry so the server
    soft-deletes too (worker already supports the `deletedAt` UPDATE with CAS). `baseVersion` = current
    persisted version (CAS precondition; respect the **rows_written>0** CAS semantics —
-   `[[d1-rowswritten-index-inflation]]`).
+   `[[d1-rowswritten-index-inflation]]`). *(Archive note: as shipped, delete uses the **Fork P
+   `sys:trashedAt` property** pattern, not a `deletedAt` field. The spec's `deletedAt` approach
+   describes the intended design; the live implementation uses `sys:trashedAt` in the note's
+   properties bag as the soft-delete marker.)*
 2. **Undo = resurrect**, same shape as `resolveConflict` keep-mine resurrection
    (`dexieLocalStore.ts`): drop `deletedAt` (omit, not set-`undefined` — `exactOptionalPropertyTypes`),
    re-put, enqueue at the current version. The note returns to the list.

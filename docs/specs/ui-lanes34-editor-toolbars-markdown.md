@@ -1,6 +1,6 @@
 # Sub-spec — Deploy 3: Editor Formatting Toolbars + Markdown-Light + New Marks (Lanes 3 + 4)
 
-**Status:** IMPLEMENTATION-READY. Turnkey sub-spec — a developer builds directly from this.
+**Status:** SHIPPED — v1 live 2026-06-24. Historical build sub-spec. **As-built note:** the shipped component is `EditorControlStrip.tsx`, not the spec's `EditorToolbar.tsx`.
 **Parent spec:** `docs/specs/ui-visual-refresh.md` (§3 Lanes 3+4, §4-A Deploy 3).
 **Design source of truth:**
 - `docs/design/ui-refresh/README.md` — §"Active note (editor)" (desktop + mobile), §"Rich text — features, triggers & Markdown export" (the feature→trigger→export→control TABLE = WHAT exists), §"Rich-text element styles".

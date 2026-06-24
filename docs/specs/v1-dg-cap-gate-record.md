@@ -1,5 +1,7 @@
 # DG-CAP gate-record — Tier-B iPhone dogfood capture template
 
+> **Historical — v1 shipped 2026-06-24. This is the gate record as of 2026-06-16; preserved as record, not current status.**
+
 **Owner:** scopeSys (scaffold). **Run owner:** planSys + the user. **Status:** SCAFFOLD — formal Run
 held; exploratory dogfooding in progress.
 

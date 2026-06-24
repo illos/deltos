@@ -1,5 +1,7 @@
 # v1 Course-Correction — executable acceptance matrix (Part 1 shell + Part 2 conflict-as-version)
 
+> **Historical — v1 shipped 2026-06-24. This acceptance matrix was satisfied on ship; preserved as build record.**
+
 **Owner:** scopeSys (analyst). **Status:** DRAFT — 2026-06-16. The spec-level **v1 gate** for
 `docs/specs/v1-shell-and-conflict-versions.md`. Each row is an individually-verifiable acceptance
 criterion drawn verbatim-in-intent from that spec's **Behavior** + **Acceptance** sections.

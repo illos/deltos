@@ -1,5 +1,7 @@
 # Spec — Phase 1 vertical slice (the thesis-prover)
 
+> **Historical — v1 shipped 2026-06-24. This is the spec as of 2026-06-16; preserved as record, not current status. The PIN-SYNC-3/4 fork-to-new-ID model is superseded by conflict-as-version (authoritative: `v1-shell-and-conflict-versions.md`).**
+
 **Phase:** 1 · **Status:** SPEC-READY (drafted at STAGE A off S1+S2) · **Handoff gate (STAGE B):**
 P0 DONE + secSys-cleared · **Audit:** secSys on each chunk, hardest on the conflict engine + auth.
 

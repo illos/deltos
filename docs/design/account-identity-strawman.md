@@ -1,5 +1,7 @@
 # Account-identity model — strawman (D6 expanded, task 12)
 
+> **Historical — pre-pivot passkey/signed-challenge design, abandoned 2026-06-17, superseded by username+password (see auth-pivot-scope-map.md).**
+
 **Authors:** devSys (model + frozen-contract + mapping + data-dimension) · secSys (security surfaces) ·
 **Status:** STRAWMAN — design-first, **no build**; routes to **planSys** for sign-off before any fan-out.
 **Refs:** `DECISIONS.md` D6 (resolved 2026-06-16), memory `account-identity-model`,

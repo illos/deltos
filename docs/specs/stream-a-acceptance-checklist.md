@@ -1,5 +1,7 @@
 # Stream A (Identity) — consolidated build-ready acceptance checklist
 
+> **Historical — v1 shipped 2026-06-24. This checklist was satisfied on ship; preserved as build record.**
+
 **Status:** REFERENCE — derived, not a new decision · **Author:** secSys (consolidation task, pilot-assigned) ·
 **Date:** 2026-06-16
 

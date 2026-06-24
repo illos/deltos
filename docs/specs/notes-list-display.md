@@ -1,6 +1,6 @@
 # Notes List Display — full-bleed rows + title fallback + date & preview
 
-**Status:** SPEC-READY (planSys, 2026-06-17, from on-device glass-test feedback). Handoff = pilot. Surface =
+**Status:** SHIPPED — v1 live 2026-06-24. Surface =
 `HomeView` in `App.tsx` + the `SwipeRow` component. Client-only (gruntSys2 lane); can run **parallel to the
 auth pivot** (different surface). Part of the "basic notes, day-to-day usable" milestone (view-notes polish).
 Hold the **performance standing-value** ([[performance-is-a-standing-value]]) — the list is the hot load path.

@@ -1,6 +1,6 @@
 # Spec — Shared drag-gesture hook + native bottom-sheet drag
 
-**Status:** SPEC-READY (planner, 2026-06-19). Handoff target = pilot.
+**Status:** SHIPPED — v1 live 2026-06-24.
 **Origin:** glass-test — the bottom-nav "drag" feels like a tap (jerky, no drag-down). Investigation found it's fake (30px threshold flipping a boolean + a CSS `max-height` transition). The note-list **SwipeRow** gesture, by contrast, feels polished and is the reuse target ([[swipe-actions-spec]] / [[swipe-trash-feature-shipped]] — user-validated "feels great"). User: "let's do it and see how it feels."
 
 ## Goal

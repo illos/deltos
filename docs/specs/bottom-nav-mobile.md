@@ -1,9 +1,12 @@
 # Spec — Bottom Nav Bar (mobile) v1
 
-**Status:** SPEC-READY (planner, 2026-06-18). Handoff target = pilot.
+**Status:** SHIPPED — v1 live 2026-06-24.
 **Supersedes:** the mobile/tablet-portrait LEFT-DRAWER container from #21 (NavContent is reused — only the container changes).
 **Design basis:** `[[ui-view-driven-architecture]]`. Locked with the user 2026-06-18 (glass-test #2).
-**Sequence:** AHEAD of Search (#20) — Search's entry point IS the bottom bar's Search action. Desktop is unaffected.
+
+**Update (2026-06-24):** Mobile nav as shipped = top-bar (notebook name / context) + **BottomNav** in
+default mode. BottomNav is **SUPPRESSED in deck-custom keyboard mode** — when the Deck custom keyboard
+is active, it occupies the bottom footprint and BottomNav is hidden. Cross-ref: `docs/specs/custom-keyboard.md §4`.
 
 ## Why
 On iOS, **left/right EDGE-SWIPE = Safari/PWA back/forward**, both owned by the platform. A side slide-out drawer can never own its open gesture, so the left-drawer's "slide-out" was dead — only the hamburger tap worked. Moving mobile nav to the **bottom** sidesteps edge gestures entirely and is more thumb-reachable.

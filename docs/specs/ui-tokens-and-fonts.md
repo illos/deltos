@@ -1,6 +1,6 @@
 # Sub-spec — UI Tokens, Fonts & themeStore (Lane 0, turnkey)
 
-**Status:** READY TO BUILD. This is the turnkey implementation sub-spec for **Lane 0** of the
+**Status:** SHIPPED — v1 live 2026-06-24. Historical sub-spec for **Lane 0** of the
 UI visual refresh (`docs/specs/ui-visual-refresh.md` §3). It carries the **exact** values from the
 hi-fi packet (`docs/design/ui-refresh/README.md`) so the developer can implement without
 re-deriving anything from the packet.

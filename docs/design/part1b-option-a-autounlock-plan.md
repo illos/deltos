@@ -1,5 +1,7 @@
 # Part 1b — Option-A silent auto-unlock: EXECUTION PLAN (non-committal)
 
+> **Historical — pre-pivot passkey/signed-challenge design, abandoned 2026-06-17, superseded by username+password (see auth-pivot-scope-map.md).**
+
 **Status:** PLAN ONLY — **no code until the user's Option-A "yes" lands** (pilot relay).
 **Author:** devSys2 (shell lane). **Date:** 2026-06-16. **Routed for pre-review:** pilot + secSys.
 **Spec:** `docs/specs/v1-shell-and-conflict-versions.md` §At-rest custody; builds on Part 1a (shell

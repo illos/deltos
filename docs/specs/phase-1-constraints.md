@@ -1,5 +1,7 @@
 # Phase 1 — accumulating spec constraints (pin-list)
 
+> **Historical — v1 shipped 2026-06-24. This is the spec as of 2026-06-16; preserved as record, not current status. The PIN-SYNC-3/4 fork-to-new-ID model is superseded by conflict-as-version (authoritative: `v1-shell-and-conflict-versions.md`).**
+
 Running capture of decisions/requirements the **Phase-1 vertical-slice spec** must absorb, as
 spike findings + audits land. I draft the full Phase-1 spec at STAGE A (S1+S2 reported+audited);
 this file ensures nothing load-bearing slips between now and then. Source tags in brackets.

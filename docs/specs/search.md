@@ -1,6 +1,6 @@
 # Spec — Search (notebook-aware, fuzzy, local) v1
 
-**Status:** SPEC-READY (planner, 2026-06-18). Handoff target = pilot.
+**Status:** SHIPPED — v1 live 2026-06-24.
 **Design basis:** `[[notebooks-and-search-plan]]`, `[[ui-view-driven-architecture]]`. Locked with the user 2026-06-18.
 **Depends on:** `docs/specs/ui-backbone-notebooks.md` — needs real notebooks + the **collection-view seam** (search results = a collection-view). **Sequence AFTER backbone+notebooks lands.**
 

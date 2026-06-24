@@ -191,3 +191,5 @@ identity layer. Flag if you'd want it on the roadmap; otherwise we proceed accou
 **full-beans** development (our custody-extraction source), so it's familiar, known, and an accepted
 tradeoff for recovery-phrase identity. No upgrade roadmap requested now; keep the pre-shaped
 device-registry seam so per-device lockout stays a non-breaking add if ever wanted. (via scopeSys)
+
+> ⚠️ **Superseded by the 2026-06-17 pivot:** recovery phrase is now a reset token, not the crypto root; passkey/signed-challenge auth was abandoned. Per-device revocation applies in a different form under the password auth model.

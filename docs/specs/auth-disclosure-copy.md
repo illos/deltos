@@ -6,10 +6,6 @@ warm, plain-language, lock-screen-grade — never overclaim security** (no "encr
 device/OS-level only; no biometric framing). Pairs with the security model (`auth-pivot-security-model`) +
 spec `docs/specs/auth-pivot-password.md`.
 
-> **DEPENDENCY FLAG:** blocks B + C assume the confirmed default **phrase-clears/re-enrolls-2FA** (pending an
-> explicit user nod, built as default). If the user flips 2FA to unbypassable, **drop the "turns off
-> two-factor" clauses** from B and C. The username public/private nod does not affect this copy.
-
 ---
 
 ## A. At-rest residual-risk — at sign-up (brief reaffirm OK on the login/unlock screen)

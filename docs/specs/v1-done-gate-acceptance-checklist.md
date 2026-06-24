@@ -1,5 +1,7 @@
 # V1 done-gate — acceptance checklist (the "simple v1 done" definition)
 
+> **Historical — v1 shipped 2026-06-24. This is the gate checklist as of 2026-06-16; preserved as record, not current status.**
+
 **Owner:** scopeSys (planSys-assigned). **Status:** LOCKED — 2026-06-16. Pairs 1:1 with gruntSys's
 e2e/integration harness `packages/worker/test/v1.donegate.test.ts` — **one shared definition of
 done.** Scenario ids below are LOCKED to gruntSys's confirmed list (`DGT-1`..`DGT-5`); the SRV/CLI

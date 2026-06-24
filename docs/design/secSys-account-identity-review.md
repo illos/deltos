@@ -1,5 +1,7 @@
 # secSys pressure-test — account-identity model (D6 expanded: accountId + usernames)
 
+> **Historical — pre-pivot passkey/signed-challenge design, abandoned 2026-06-17, superseded by username+password (see auth-pivot-scope-map.md).**
+
 **Author:** secSys · **Sibling of:** `account-identity-strawman.md` (devSys leads the model) · **Carries
 forward:** `secSys-cross-account-sweep.md` (the data-layer cross-account finding + load-bearing-control
 call this model fixes). · **Status:** PRE-SIGN-OFF pressure-test for planSys. **Build-audit (two-account

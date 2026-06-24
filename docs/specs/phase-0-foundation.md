@@ -1,5 +1,7 @@
 # Spec P0 — Foundation skeleton
 
+> **Historical — v1 shipped 2026-06-24. This is the spec as of 2026-06-15; preserved as record, not current status.**
+
 **Phase:** 0 · **Proposed owner:** devSys (spine types + API contract are load-bearing) ·
 **Runs parallel with:** S1/S2/S3 spikes · **Audit:** secSys on landing.
 

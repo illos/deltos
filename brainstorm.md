@@ -306,6 +306,8 @@ decoupled from E2EE. All access-granting is capability-based; a guest brings the
 or uses a capability URL. (Dropping email removes Resend/magic-links/verification — cleaner,
 more private, less infra.)
 
+> ⚠️ **Superseded 2026-06-17:** passkey/signed-challenge auth was abandoned; identity is now username + password + optional 2FA + recovery-phrase reset. See `auth-pivot-scope-map.md`.
+
 ### Privacy — encryption is a per-notebook capability
 Like offline mode, a per-notebook toggle (default convenient, opt into paranoid). This is the
 upstream decision that lets auth be concrete.
@@ -358,6 +360,5 @@ and the per-zone reuse plan now live in `KICKOFF.md`.** Summary:
   doesn't fire; only E2EE/v2 would mandate it). Cache Storage remains shared → PIN-STORAGE-1 stands.
 - **Gaps framed for later:** history/trash/recovery (make every mutation recoverable);
   organization within a notebook (lean flat+tags+relations); import (Notion/Apple Notes/
-  Obsidian/Evernote); editor engine choice (ProseMirror/Lexical/TipTap — decide early in
-  Phase 1); notifications/reminders (iOS web push, likely plugin); schema/data migration.
+  Obsidian/Evernote); editor engine choice (ProseMirror/Lexical/TipTap — **decided: ProseMirror**); notifications/reminders (iOS web push, likely plugin); schema/data migration.
 - **E2EE zone option (a) vs (b)** — decide at v2 build time.

@@ -1,5 +1,7 @@
 # Stream A — auth construction strawman (for secSys early read)
 
+> **Historical — pre-pivot passkey/signed-challenge design, abandoned 2026-06-17, superseded by username+password (see auth-pivot-scope-map.md).**
+
 **Author:** devSys · **Status:** STRAWMAN — not locked, awaiting secSys pressure-test before
 anything enters `@deltos/shared` · **Refs:** `phase-1-vertical-slice.md` §Stream A,
 `phase-1-constraints.md` PIN-ID-1..9, S1 findings, secSys's `stream-a-readiness` audit angle.

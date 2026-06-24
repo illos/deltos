@@ -1,6 +1,6 @@
 # Spec — Note History + Undo/Redo v1
 
-**Status:** SPEC-READY (planner, 2026-06-20). Handoff target = pilot.
+**Status:** SHIPPED — v1 live 2026-06-24.
 **Design basis:** the "basic notes, day-to-day usable" milestone (user, 2026-06-17 — note HISTORY named
 explicitly; pulls the deferred Phase-3 version-history FORWARD onto the conflict-as-version data model
 already shipped). Undo/redo added in the 2026-06-20 design dialog. User confirmed the granularity model
