@@ -44,18 +44,31 @@ export function getPluginIslandFactory(pluginType: string): PluginIslandFactory 
 }
 
 /**
- * Fallback NodeView for plugin_block nodes whose plugin is not (yet) registered.
- * Renders a styled placeholder so the block is visible and selectable.
+ * Fallback NodeView for plugin_block nodes whose plugin runtime is not (currently) registered — code
+ * absent / version skew / a lazy runtime not yet loaded. Renders a styled placeholder so the block is
+ * visible + selectable. LOSSLESS (§6): the opaque payload lives in `node.attrs.pluginContent` and is never
+ * touched here, so it round-trips through edit/save/sync untouched.
+ *
+ * A1 (#123) friendlier placeholder: when the host can name the type from a manifest (a recognized plugin
+ * whose runtime just isn't active in this context) it shows the human NAME; an unrecognized type shows
+ * "Unknown block" + the raw type key. The name is INJECTED (not looked up here) so this seam stays free of
+ * the plugin registry — registry.ts already depends on this module.
  */
 export class UnknownPluginIslandView implements NodeView {
   readonly dom: HTMLElement;
 
-  constructor(node: PmNode) {
+  constructor(node: PmNode, name?: string) {
+    const pluginType = node.attrs.pluginType as string;
     const el = document.createElement('div');
     el.className = 'editor-plugin-island editor-plugin-island--unknown';
-    el.setAttribute('data-plugin-type', node.attrs.pluginType as string);
+    el.setAttribute('data-plugin-type', pluginType);
     el.contentEditable = 'false';
-    el.textContent = `[${node.attrs.pluginType as string}]`;
+    if (name) {
+      el.classList.add('editor-plugin-island--named');
+      el.textContent = name; // a recognized plugin — name it rather than show a raw key
+    } else {
+      el.textContent = `Unknown block [${pluginType}]`;
+    }
     this.dom = el;
   }
 
@@ -67,18 +80,22 @@ export class UnknownPluginIslandView implements NodeView {
 }
 
 /**
- * The nodeViews map to pass to EditorView constructor. Expands as plugins register.
- * Produces an UnknownPluginIslandView for unregistered types.
+ * The nodeViews map to pass to EditorView constructor. Expands as plugins register. Produces an
+ * UnknownPluginIslandView for unregistered types — named via the optional `resolveName` (the host passes
+ * the manifest registry's lookup) so a recognized-but-inactive plugin shows its name, §6.
  */
 export function buildPluginIslandNodeViews(
   schema: { nodes: Record<string, NodeType> },
+  resolveName?: (pluginType: string) => string | undefined,
 ): Record<string, (node: PmNode, view: EditorView, getPos: () => number | undefined) => NodeView> {
   if (!schema.nodes['plugin_block']) return {};
   return {
     plugin_block(node, view, getPos) {
       const pluginType = node.attrs.pluginType as string;
       const factory = getPluginIslandFactory(pluginType);
-      return factory ? factory.create(node, view, getPos) : new UnknownPluginIslandView(node);
+      return factory
+        ? factory.create(node, view, getPos)
+        : new UnknownPluginIslandView(node, resolveName?.(pluginType));
     },
   };
 }

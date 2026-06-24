@@ -12,13 +12,13 @@ import { buildInputRulesPlugin } from './inputRules.js';
 import { buildAutolinkKeymap } from './autolink.js';
 import { spineToPmDoc, pmDocToSpine, extractTitleFromDoc } from './serializer.js';
 import { buildPluginIslandNodeViews } from './nodeviews/PluginIsland.js';
-// Importing the embeds plugin registers the link_card NodeView (side-effect) + provides the paste-to-card
-// handler (#69 E2b). Editor core never imports plugins; this host wiring is the single allowed touch-point.
-import { linkCardPastePlugin } from '../plugins/embeds/index.js';
-// Inline-formula framework (docs/specs/inline-formulas.md) — self-contained: the registry (math is the
-// Phase-1 type), the '=' auto + '[...]' bracket input rules, the backspace-unwrap keymap, and the
-// type-dispatched NodeView. Editor core never imports plugins; this is the single host wiring touch-point.
-import { createDefaultFormulaRegistry, buildFormulaPlugins, buildFormulaNodeView } from '../plugins/formula/index.js';
+// A1 (#123): plugins are sourced through the manifest spine. `collectEagerContributions` aggregates the
+// built-in plugins' (formula, link_card, tools) contributions — the formula registry, extra PM plugins
+// (the link_card paste handler), and island NodeViews (registered into the PluginIsland map) — exactly what
+// the editor assembled inline before. The core formula machinery (plugins + NodeView) is still built here
+// FROM the aggregated registry. Editor core never imports a plugin directly; this is the single seam.
+import { pluginRegistry, collectEagerContributions } from '../plugins/runtime/index.js';
+import { buildFormulaPlugins, buildFormulaNodeView } from '../plugins/formula/index.js';
 import { TodoItemView } from './nodeviews/TodoItem.js';
 import { sliceToPlainText } from './clipboard.js';
 import { EditorControlStrip } from './EditorControlStrip.js';
@@ -180,7 +180,10 @@ export function ProseMirrorEditor({
   // Inline-formula registry (docs/specs/inline-formulas.md) — Phase-1 holds math; injected into the plugins,
   // the NodeView, AND the deckAdapter (so the '=' / '[...]' triggers fire on the custom keypad too). Stable
   // per editor instance (loadout-aware: a future loadout could build its own).
-  const formulaRegistry = useRef(createDefaultFormulaRegistry()).current;
+  // A1: the editor's plugin contributions, aggregated from the manifest spine once per instance. The
+  // formula registry it carries is the same MATH+HEXCOLOR set createDefaultFormulaRegistry() produced.
+  const contributions = useRef(collectEagerContributions(pluginRegistry)).current;
+  const formulaRegistry = contributions.formulaRegistry;
   // The keypad's abstract KeyActions, wired to PM via the adapter (closes over viewRef → stable across
   // view re-creation). The Deck loadout registry for this host: the 'text' context → the keypad.
   const deckActions = useRef(buildPmKeyActions(() => viewRef.current, formulaRegistry)).current;
@@ -499,7 +502,9 @@ export function ProseMirrorEditor({
       gapCursor(),
       uniqueBlockIdPlugin,
       titlePlaceholderPlugin,
-      linkCardPastePlugin(deltoSchema), // #69 E2b: bare-URL paste → link_card
+      // A1: plugin-contributed PM plugins (today: the link_card bare-URL paste handler, #69 E2b) — sourced
+      // through the manifest spine, kept LAST to preserve the prior plugin order exactly.
+      ...contributions.buildEditorPlugins(deltoSchema),
     ];
     basePluginsRef.current = basePlugins; // #69 §5: the spellcheck plugin is added on top via reconfigure
     const state = EditorState.create({ doc, plugins: basePlugins });
@@ -516,7 +521,8 @@ export function ProseMirrorEditor({
         ...(customKb ? { inputmode: 'none', autocorrect: 'off', autocapitalize: 'off' } : {}),
       },
       nodeViews: {
-        ...buildPluginIslandNodeViews(deltoSchema),
+        // A1: name an unregistered/not-yet-loaded plugin_block from its manifest (friendly placeholder, §6).
+        ...buildPluginIslandNodeViews(deltoSchema, (type) => pluginRegistry.manifestForBlockType(type)?.name),
         todo_item: (node, view, getPos) =>
           new TodoItemView(node, view, getPos as () => number | undefined),
         // Inline-formula node → type-dispatched NodeView (editable spec + per-type output widget).

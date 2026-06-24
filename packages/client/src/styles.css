@@ -998,7 +998,8 @@
   color: var(--faint); text-decoration: line-through;
 }
 
-/* Plugin island placeholder */
+/* Plugin island placeholder (#123 §6: a recognized-but-inactive plugin shows its NAME via --named; an
+   unrecognized type keeps the raw-key dashed placeholder). */
 .editor-plugin-island--unknown {
   border: 1px dashed var(--border);
   border-radius: 0.3rem;
@@ -1007,6 +1008,11 @@
   color: var(--secondary);
   font-size: 0.8rem;
   user-select: none;
+}
+/* Named (recognized) placeholder — solid, calmer; it's a known block awaiting its runtime, not an error. */
+.editor-plugin-island--named {
+  border-style: solid;
+  border-color: var(--handle);
 }
 
 /* ProseMirror — selection + cursor */

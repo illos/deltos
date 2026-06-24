@@ -1,20 +1,14 @@
 import { Plugin } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
-import { registerPluginIsland } from '../../editor/nodeviews/PluginIsland.js';
 import type { DeltoSchema } from '../../editor/schema.js';
-import { LinkCardNodeView } from './LinkCardNodeView.js';
 import { unfurl } from './unfurl.js';
 
 /**
- * Rich-embeds plugin (#69 E2b) — registers the `link_card` NodeView + provides the paste-to-card handler.
- * Importing this module REGISTERS the island (side-effect below); ProseMirrorEditor also adds
- * linkCardPastePlugin to the editor's plugins. The editor core never imports this — one-way, like the Deck.
+ * Rich-embeds plugin (#69 E2b) — the `link_card` plugin_block NodeView + the paste-to-card handler. As of
+ * A1 (#123) registration goes through the manifest spine: the `link-card` built-in manifest
+ * (runtime/builtins.ts) declares the island factory (its NodeView) + this paste plugin. No import
+ * side-effect — the loader performs the registration. The editor core never imports this directly.
  */
-
-// Register the link_card NodeView factory (side-effect on import).
-registerPluginIsland('link_card', {
-  create: (node, view, getPos) => new LinkCardNodeView(node, view, getPos),
-});
 
 // A bare URL alone (the whole pasted text, trimmed) → a card; anything else pastes normally (inline URLs
 // auto-linkify via the core input rule). Conservative pattern: a single http(s) token, no whitespace.

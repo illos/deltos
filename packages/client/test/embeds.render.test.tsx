@@ -16,8 +16,12 @@ vi.mock('../src/plugins/embeds/unfurl.js', () => ({
 import { linkCardPastePlugin } from '../src/plugins/embeds/index.js';
 import { buildPluginIslandNodeViews } from '../src/editor/nodeviews/PluginIsland.js';
 import { unfurl } from '../src/plugins/embeds/unfurl.js';
+import { collectEagerContributions, pluginRegistry } from '../src/plugins/runtime/index.js';
 
 const S = deltoSchema;
+// A1 (#123): the link_card island factory is registered through the manifest spine now (no import
+// side-effect). Collecting the eager built-in contributions performs that registration.
+collectEagerContributions(pluginRegistry);
 afterEach(() => vi.clearAllMocks());
 
 function makeView() {
@@ -26,7 +30,7 @@ function makeView() {
   state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 4))); // cursor in the body paragraph
   const view = new EditorView(document.createElement('div'), {
     state,
-    nodeViews: { ...buildPluginIslandNodeViews(S) }, // link_card factory registered by importing the plugin
+    nodeViews: { ...buildPluginIslandNodeViews(S) }, // link_card factory registered via the manifest spine (collectEagerContributions, top of file)
   });
   return view;
 }
