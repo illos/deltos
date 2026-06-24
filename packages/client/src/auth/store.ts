@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { AccessTokenResponse, RegisterResponse, TotpSetupResponse } from '@deltos/shared';
-import { ensureAccountScope, purgeAllLocalState } from '../db/accountScope.js';
+import { ensureAccountScope, purgeAllLocalState, readAccountMarker } from '../db/accountScope.js';
 import { suspendSync, flushPushQueue } from '../lib/syncEngine.js';
 
 /**
@@ -188,8 +188,20 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       const opening = get().isAuthing ? {} : { isAuthed: true, sessionState: 'active' as const };
       set({ bearerToken: s.token, accountId: s.accountId, username: s.username, recoveryEstablished: readRecoveryFlag(s), totpEnabled: readTotpFlag(s), ...opening });
     } catch {
-      // Network failure on cold boot — no session to render, but it isn't a credential failure.
-      if (!get().isAuthing) set({ isAuthed: false, sessionState: 'offline' });
+      // Network failure on cold boot — NOT a credential failure, so it must NOT kick to login (#85). If a
+      // session was established on this device (a resident account marker), OPEN THE SHELL OFFLINE from the
+      // local Dexie store: the data layer scopes on accountId, NOT the bearer, so notes render with no
+      // credential; API/sync no-op offline and resume on reconnect (no re-login). Only a device with NO
+      // resident account falls to the login gate — true first-setup, which can't happen offline anyway.
+      if (get().isAuthing) return; // a live ceremony owns the gate
+      const resident = await readAccountMarker();
+      if (resident) {
+        // recoveryEstablished:true so the gate doesn't divert to the recovery screen — a resident finalized
+        // account already established it. bearerToken stays null until reconnect re-mints it.
+        set({ isAuthed: true, sessionState: 'offline', accountId: resident, bearerToken: null, recoveryEstablished: true });
+      } else {
+        set({ isAuthed: false, sessionState: 'offline' });
+      }
     }
   },
 

@@ -63,6 +63,20 @@ export function App() {
 
   useEffect(() => {
     void init();
+    // #85 reconnect upgrade: after an OFFLINE shell boot (sessionState 'offline', no bearer), silently
+    // re-run init when connectivity returns → re-mints the access token + flips sessionState back to
+    // 'active', so sync resumes with NO re-login. Gated on 'offline' so a normal online session never
+    // re-refreshes spuriously.
+    const reInitIfOffline = () => {
+      if (useAuthStore.getState().sessionState === 'offline') void init();
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') reInitIfOffline(); };
+    window.addEventListener('online', reInitIfOffline);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('online', reInitIfOffline);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [init]);
 
   return (
