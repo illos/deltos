@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { EditorState, Plugin } from 'prosemirror-state';
+import { EditorState, Plugin, TextSelection } from 'prosemirror-state';
 import { EditorView, Decoration, DecorationSet } from 'prosemirror-view';
 import { history, undo, redo, undoDepth, redoDepth } from 'prosemirror-history';
 import { dropCursor } from 'prosemirror-dropcursor';
@@ -505,7 +505,9 @@ export function ProseMirrorEditor({
         // #69: the keyboard footprint is a pure function of context — re-derive it from the selection.
         setDeckContext(deriveDeckContext(newState));
 
-        if (!tr.docChanged) return;
+        // A #90 live-reconcile transaction (remote content refreshed into a clean editor) is NOT a local
+        // edit — don't schedule a save (that would echo the just-pulled content straight back).
+        if (!tr.docChanged || tr.getMeta('reconcile') === true) return;
 
         if (saveTimerRef.current !== null) clearTimeout(saveTimerRef.current);
         saveTimerRef.current = setTimeout(() => {
@@ -575,6 +577,33 @@ export function ProseMirrorEditor({
   // Recreate the view when the keyboard mode flips (customKb decides inputmode=none at creation).
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId, customKb]);
+
+  // #90 LIVE note-refresh: the view above seeds its doc ONCE (deps [noteId, customKb]), so remote content
+  // for the SAME open note (landed in Dexie by the 2s pull → new initialTitle/initialBody props) was
+  // ignored — the open editor froze at open-time. Reconcile it: when the incoming content changes for the
+  // same note AND the editor is CLEAN, replace the doc. NEVER replace a dirty editor (active typing →
+  // conflict engine owns it); echo-avoid (skip if incoming == current); a noteId change is handled by the
+  // rebuild effect above, not here.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || view.isDestroyed) return;
+    // CLEAN gate: a pending debounced save = a local edit in flight → don't clobber it. (The pull's
+    // mergeServerNotes already won't overwrite a pending row; this is the defensive editor-side check.)
+    if (saveTimerRef.current !== null) return;
+    const incoming = spineToPmDoc(deltoSchema, initialBody, initialTitle);
+    if (incoming.eq(view.state.doc)) return; // unchanged / echo of our own just-saved roundtrip → no-op
+    // Replace the whole doc. Preserve the caret best-effort when focused (clamp the old head into the new
+    // doc); the transaction is flagged `reconcile` so the dispatch handler skips the save + the undo stack.
+    const hadFocus = view.hasFocus();
+    const prevHead = view.state.selection.head;
+    const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, incoming.content);
+    const newHead = Math.min(prevHead, tr.doc.content.size);
+    try { tr.setSelection(TextSelection.create(tr.doc, newHead)); } catch { /* default selection is fine */ }
+    tr.setMeta('reconcile', true);
+    tr.setMeta('addToHistory', false);
+    view.dispatch(tr);
+    if (hadFocus) view.focus();
+  }, [initialTitle, initialBody]);
 
   // #69 §5: attach the spellcheck plugin when the toggle is ON. The engine is dynamic-imported from its
   // DIRECT module (not deck/index — that's statically imported here) so Rollup code-splits the ~50k dict
