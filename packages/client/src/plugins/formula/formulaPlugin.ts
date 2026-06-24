@@ -24,7 +24,7 @@ function formulaNode(schema: Schema, ftype: string, spec: string): PmNode {
   return formula.create({ ftype, state: null }, spec.length > 0 ? schema.text(spec) : null);
 }
 
-/** The framework is inert on a schema without the `formula` node (e.g. the minimal /kbprobe editor). */
+/** The framework is inert on a schema without the `formula` node (e.g. a minimal editor schema). */
 function hasFormulaNode(schema: Schema): boolean {
   return !!schema.nodes['formula'];
 }

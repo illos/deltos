@@ -17,7 +17,7 @@ import { useNotebookStore } from '../lib/notebookStore.js';
 const DEVICE_GLOBAL_DEVICE_KEYS: readonly string[] = ['appearance-theme', 'custom-keyboard', 'spellcheck'];
 
 /**
- * #52 client tenancy — OPTION B (clear-on-account-change). PROTOTYPE (secSys-review-pending, not shipped).
+ * #52 client tenancy — OPTION B (clear-on-account-change). SHIPPED (secSys-reviewed; live).
  *
  * The client local store is a single device-global Dexie DB that ACCUMULATES every account that logs in
  * on the device, and the list/switcher/search/trash reads are unfiltered by accountId → a new login
