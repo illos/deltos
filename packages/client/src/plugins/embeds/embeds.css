@@ -33,6 +33,14 @@
   text-decoration: none;
 }
 
+/* Degraded form (#125 A3): an online-only card rendered offline with no cached metadata falls back to a
+   plain legible link — never a broken/empty card. Presentation-only degradation; no fetch. */
+.link-card--degraded {
+  color: var(--accent);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+
 /* ── Favicon ─────────────────────────────────────────────────────────────────── */
 
 .link-card__favicon {

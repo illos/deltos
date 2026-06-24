@@ -1,5 +1,5 @@
 import { LinkCardBody } from './LinkCard.js';
-import type { PluginRenderContext } from '../runtime/renderContext.js';
+import { shouldDegrade, type PluginRenderContext } from '../runtime/renderContext.js';
 
 interface LinkCardPayload {
   url?: string;
@@ -10,15 +10,39 @@ interface LinkCardPayload {
   error?: boolean;
 }
 
+// link_card is an `online-only` capability (unfurl is a network fetch). The render-only path NEVER fetches,
+// so its only job is to never show a broken/forever-loading card when the metadata can't have arrived.
+const CAPABILITY = 'online-only' as const;
+
 /**
- * The link_card RENDER-ONLY view (§5 fork b, A2 #124) — the read-only surface used OUTSIDE an editor (search
- * peek, list preview, history diff, share). Zero ProseMirror: a real anchor wrapping the shared
- * LinkCardBody, no downgrade affordance. Context-driven degradation (e.g. a degraded form when offline/
- * shared) is A3 #125 — A2 receives the context but renders the same card for every read-only context.
+ * The link_card RENDER-ONLY view (§5 fork b, A2 #124; degraded render A3 #125) — the read-only surface used
+ * OUTSIDE an editor (search peek, list preview, history diff, share). Zero ProseMirror, and it makes NO
+ * network request — context-driven degradation is PRESENTATION ONLY (secSys #679), never access-gating.
+ *
+ * Degraded form: an online-only card that is offline AND has no cached metadata (just a url / still
+ * "loading") would otherwise render an empty/placeholder card → instead show a plain, legible link (never
+ * broken). With cached metadata the full card renders fine offline — it's all in the payload.
  */
-export function LinkCardRenderOnly({ payload }: { payload: unknown; context: PluginRenderContext }) {
+export function LinkCardRenderOnly({ payload, context }: { payload: unknown; context: PluginRenderContext }) {
   const c = (payload ?? {}) as LinkCardPayload;
   const url = c.url ?? '';
+  const hasCachedMeta = !!(c.title || c.favicon);
+
+  if (shouldDegrade(CAPABILITY, context) && !hasCachedMeta) {
+    return (
+      <a
+        className="link-card--degraded"
+        href={url || undefined}
+        target="_blank"
+        rel="noopener noreferrer nofollow"
+        referrerPolicy="no-referrer"
+        aria-label={`Open link: ${url}`}
+      >
+        {c.title ?? url}
+      </a>
+    );
+  }
+
   return (
     <a
       className="link-card link-card--readonly"
