@@ -9,13 +9,15 @@
  */
 import type { ReactNode } from 'react';
 import { LinkCardRenderOnly } from '../embeds/LinkCardRenderOnly.js';
+import { AttachmentRenderOnly } from '../attachment/AttachmentRenderOnly.js';
 import type { PluginRenderContext, PluginRenderOnlyComponent } from './renderContext.js';
 
 export type { PluginRenderContext, PluginRenderOnlyComponent } from './renderContext.js';
 
-/** Built-in render-only components, keyed by plugin_block `pluginType`. PM-free imports only. */
+/** Built-in render-only components, keyed by plugin_block `pluginType`. PM-free, fetch-free imports only. */
 const BUILT_IN_RENDER_ONLY: Readonly<Record<string, PluginRenderOnlyComponent>> = {
   link_card: LinkCardRenderOnly,
+  attachment: AttachmentRenderOnly,
 };
 
 /** The render-only component for a block type, or undefined if none ships one (→ raw placeholder). */

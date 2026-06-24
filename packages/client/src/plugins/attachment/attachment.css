@@ -1,0 +1,27 @@
+/* Attachment plugin (#126 A4). The chip is the read-only / non-image form; the editor adds the image
+   preview around the same primitives. */
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--list);
+  font-size: 13px;
+  color: var(--body);
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+.attachment-chip__icon { flex-shrink: 0; }
+.attachment-chip__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachment-chip__size {
+  flex-shrink: 0;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+}
