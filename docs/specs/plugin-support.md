@@ -219,6 +219,12 @@ un-scoped world (§2) *any block can land in any note / context*.
 Enforcement is by **render-context**: the render-only path (§5) passes the context
 (`live-edit | read-only-preview | offline | shared`) so a block can pick its degraded form.
 
+> **🔒 secSys forward-watch (A3, #679/#677):** `capabilities` drive **RENDER DEGRADATION ONLY**,
+> never ACCESS CONTROL. A3 is the first code to *read* `capabilities` (to pick a degraded render
+> form) — that stays a presentation choice. "`online-only` → degraded render" must NOT drift into
+> "`online-only` → client-side allow/deny the fetch." **The access decision always stays
+> server-side** (HC-A1-1). secSys watches when A3 (#125) lands.
+
 ---
 
 ## 5. The block presentation contract (edit / render / render-only)
@@ -496,11 +502,23 @@ for the planner's go → Jim feel-tests on live** ([[review-on-live-never-local-
     file-existence oracle at zero cost to v1-solo + avoids a pre-multi-user migration. (Global
     hash-only keys rejected — they leak a "someone else holds this file" oracle on dedup hit.)
     HC-A4-2 still required even per-account: a client could poison its OWN namespace.
+  - **TYPE-CONTRACT (secSys #679, folded into the A4 gate — NOT an A1 blocker):** the capability
+    type splits so a **backend-resource capability** (`blob`/`records`/`net`/`compute`/`schedule`/
+    `notify`) is a DISTINCT kind from a client-only one (`offline`/`online-only`), and the
+    backend-resource kind STRUCTURALLY implies a server-enforced route + host-attested `pluginId` at
+    the declaration site (so a backend cap can't be added client-only-enforced by accident). It is
+    BELT (a guardrail making accidental client-only-enforcement visible), NOT enforcement — the
+    runtime check is suspenders. **devSys-2's choice WHERE to land the split: in A1 now** (natural
+    home, cheap — `storage`/`network` already exist as §4 values) **OR with A4** (shaped by the
+    concrete `blob` need). Either satisfies; **A4's re-audit gates BOTH (a) the type encodes
+    backend-resource ⇒ server-route + host-attested pluginId AND (b) the runtime blob route actually
+    enforces server-side.** Don't let "we typed it" substitute for the runtime check.
   - **BUILD-GATE:** A4 implementation HOLDS for secSys RE-AUDIT before deploy-go (#129 cleared the
-    DESIGN; the build still needs eyes). Re-audit checklist (secSys #667): server-derived accountId
-    in every key · server-side hash-verify on upload · safe-serving content-type + Content-Disposition ·
-    quota/size/rate server-enforced · private R2 bucket · enforcement in the Worker route not the
-    client wrapper (HC-A1-1). Ping secSys when A4 lands.
+    DESIGN; the build still needs eyes). Re-audit checklist (secSys #667/#679): server-derived
+    accountId in every key · server-side hash-verify on upload · safe-serving content-type +
+    Content-Disposition · quota/size/rate server-enforced · private R2 bucket · enforcement in the
+    Worker route not the client wrapper (HC-A1-1) · the backend-resource type-contract (a). Ping
+    secSys when A4 lands.
 - **A5 — Slash `/` palette** (§10.1) — discovery surface over the manifest registry; desktop-primary.
   Can follow A1 in parallel with A2–A4.
 - **A6 — Versioning/migration** (§6) — manifest `schemaVersion` + lazy migrate-on-open. Hardening.
