@@ -18,7 +18,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import type { NotebookId } from '@deltos/shared';
 import { useAuthStore } from '../src/auth/store.js';
-import { startSyncTriggers, SYNC_PULL_CADENCE } from '../src/lib/syncEngine.js';
+import { startSyncTriggers, SYNC_PULL_CADENCE, SYNC_IDLE_TIMEOUT_MS } from '../src/lib/syncEngine.js';
 
 const NB = '55551111-5555-4555-8555-555511111111' as NotebookId;
 
@@ -110,5 +110,67 @@ describe('ST-5 — cleanup stops the poll', () => {
     stop();
 
     expect(clearSpy).toHaveBeenCalled();
+  });
+});
+
+// #91 — idle gate. shouldBeActive = (!hidden) AND (!idle); pause on idle only, never on mere unfocus.
+describe('ST-6 — visible-but-unfocused does NOT pause (blur is not a pause trigger)', () => {
+  it('a window blur leaves the poll running', () => {
+    const clearSpy = vi.spyOn(globalThis, 'clearInterval');
+    const stop = startSyncTriggers(NB, 'http://localhost');
+    window.dispatchEvent(new Event('blur'));
+    expect(clearSpy).not.toHaveBeenCalled(); // side-by-side windows keep live-syncing
+    stop();
+  });
+});
+
+describe('ST-7 — idle timeout pauses the poll', () => {
+  it('once the idle timeout elapses with no interaction, the poll stops', () => {
+    vi.useFakeTimers();
+    try {
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const clearSpy = vi.spyOn(globalThis, 'clearInterval');
+      global.fetch = vi.fn(async (url) => String(url).includes('/push') ? new Response(JSON.stringify({ results: [] }), { status: 200 }) : new Response(JSON.stringify({ notes: [], nextCursor: 0, hasMore: false }), { status: 200 })) as typeof fetch;
+      const stop = startSyncTriggers(NB, 'http://localhost');
+      // The idle timer is the setTimeout armed at SYNC_IDLE_TIMEOUT_MS.
+      const idleCb = setTimeoutSpy.mock.calls.find((c) => c[1] === SYNC_IDLE_TIMEOUT_MS)?.[0] as (() => void) | undefined;
+      expect(idleCb).toBeDefined();
+      vi.setSystemTime(Date.now() + SYNC_IDLE_TIMEOUT_MS + 1); // clock past idle (no timers fired)
+      idleCb!(); // idle timer fires → reconcile → pause
+      expect(clearSpy).toHaveBeenCalled();
+      stop();
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('ST-8 — interaction after an idle pause resumes (catch-up poll)', () => {
+  it('an activity event restarts the poll after idle', () => {
+    vi.useFakeTimers();
+    try {
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const intervalSpy = vi.spyOn(globalThis, 'setInterval');
+      const clearSpy = vi.spyOn(globalThis, 'clearInterval');
+      global.fetch = vi.fn(async (url) => String(url).includes('/push') ? new Response(JSON.stringify({ results: [] }), { status: 200 }) : new Response(JSON.stringify({ notes: [], nextCursor: 0, hasMore: false }), { status: 200 })) as typeof fetch;
+      const stop = startSyncTriggers(NB, 'http://localhost');
+      const idleCb = setTimeoutSpy.mock.calls.find((c) => c[1] === SYNC_IDLE_TIMEOUT_MS)?.[0] as (() => void) | undefined;
+      vi.setSystemTime(Date.now() + SYNC_IDLE_TIMEOUT_MS + 1);
+      idleCb!(); // pause
+      expect(clearSpy).toHaveBeenCalled();
+      intervalSpy.mockClear();
+      window.dispatchEvent(new Event('pointerdown')); // interaction → reset idle + resume
+      expect(intervalSpy).toHaveBeenCalled(); // poll restarted (catch-up)
+      stop();
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('ST-9 — activity while ALREADY active does not double-start the poll', () => {
+  it('a throttled interaction in an active session does not re-startPoll (no double-syncNow churn)', () => {
+    const intervalSpy = vi.spyOn(globalThis, 'setInterval');
+    const stop = startSyncTriggers(NB, 'http://localhost'); // active → one setInterval
+    intervalSpy.mockClear();
+    window.dispatchEvent(new Event('pointerdown')); // within the throttle window → no reconcile
+    expect(intervalSpy).not.toHaveBeenCalled();
+    stop();
   });
 });

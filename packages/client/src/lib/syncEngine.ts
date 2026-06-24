@@ -534,6 +534,15 @@ export const SYNC_PUSH_CADENCE = { idleSettleMs: 2000, maxWaitMs: 5000 } as cons
  * trades battery for convergence speed — user preference).
  */
 export const SYNC_PULL_CADENCE = { visibleIntervalMs: 2_000 } as const;
+/** #91 idle timeout: pause sync after this long with NO user interaction, even if focused+visible (the
+ *  walked-away case). Resumes (catch-up pull) on the next interaction. Tunable, like the cadence consts. */
+export const SYNC_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+/** Activity is sampled at most this often (don't churn the idle timer per pixel of pointermove). */
+const ACTIVITY_THROTTLE_MS = 5_000;
+/** The user-interaction events that count as activity (passive listeners). 'focus' (window regained focus)
+ *  counts as interaction → resets idle / resumes a catch-up; 'blur' is NOT a pause trigger (#91 revised:
+ *  pause on idle only, never on mere unfocus — side-by-side windows keep live-syncing). */
+const ACTIVITY_EVENTS = ['pointerdown', 'pointermove', 'keydown', 'touchstart', 'scroll', 'wheel', 'focus'] as const;
 
 let _idleTimer: ReturnType<typeof setTimeout> | null = null;
 let _maxWaitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -579,36 +588,70 @@ export function startSyncTriggers(notebookId: NotebookId, apiBase = '/api'): () 
     if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
   }
 
-  // Start polling immediately if visible (normal case on app open or in a foreground tab).
-  if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
-    startPoll();
-  }
+  // #91: the poll is "active" only while VISIBLE and (on DESKTOP) the window is FOCUSED — so a desktop
+  // window that's visible but unfocused (another app in front) pauses sync too. Focus gates DESKTOP ONLY
+  // (mobile focus/blur fire unreliably — visibility already covers mobile). One unified reconcile drives
+  // both visibility and focus.
+  // #91 (revised): the poll is "active" while VISIBLE and NOT IDLE. Pause on idle ONLY — a visible-but-
+  // unfocused window does NOT pause (side-by-side windows keep live-syncing). Idle = no interaction for
+  // SYNC_IDLE_TIMEOUT_MS (the walked-away case), platform-agnostic. Time-based; the activity timer below
+  // fires the reconcile when the idle threshold is crossed.
+  let lastActivity = Date.now();
+  let activityIdleTimer: ReturnType<typeof setTimeout> | null = null;
+  const isIdle = () => Date.now() - lastActivity >= SYNC_IDLE_TIMEOUT_MS;
+  const shouldBeActive = () =>
+    (typeof document === 'undefined' || document.visibilityState !== 'hidden') && !isIdle();
+  let wasActive = shouldBeActive();
+  if (wasActive) startPoll(); // poll immediately when active on open (foreground + focused)
+
+  // Reconcile on a visibility / focus / idle change — only on the active⇄inactive EDGE (no double-syncNow
+  // while already active). INACTIVE → stop polling + flush pending edits first (keep the conflict window
+  // tight). ACTIVE → immediate catch-up pull + resume polling (composes with #90: the open note refreshes).
+  const reconcileActive = () => {
+    const active = shouldBeActive();
+    if (active === wasActive) return;
+    wasActive = active;
+    if (active) { syncNow(notebookId, apiBase); startPoll(); }
+    else { stopPoll(); flushPush(notebookId, apiBase); }
+  };
+
+  // The idle timer fires the reconcile (→ pause) once the threshold passes with no activity; re-armed on
+  // every (throttled) interaction. Activity listeners stay ALWAYS-ON so the next interaction after an
+  // idle-pause resumes. The throttle ignores rapid repeats (no per-px pointermove churn) but the first
+  // interaction after an idle-pause is always >throttle-old → it resumes immediately.
+  const armIdleTimer = () => {
+    if (activityIdleTimer) clearTimeout(activityIdleTimer);
+    activityIdleTimer = setTimeout(reconcileActive, SYNC_IDLE_TIMEOUT_MS);
+  };
+  const onActivity = () => {
+    const now = Date.now();
+    if (now - lastActivity < ACTIVITY_THROTTLE_MS) return;
+    lastActivity = now;
+    armIdleTimer();
+    reconcileActive(); // resume on the idle→active edge (edge-guarded → no-op when already active)
+  };
+  armIdleTimer();
 
   const onOnline = () => flushPush(notebookId, apiBase); // reconnect → flush buffered edits now
   const onOffline = () => setState('offline');
-  const onVisibility = () => {
-    if (document.visibilityState === 'hidden') {
-      stopPoll();
-      flushPush(notebookId, apiBase); // mobile backgrounding — bound the unsynced window
-    } else {
-      syncNow(notebookId, apiBase); // immediate pull on return-to-app (don't wait for next tick)
-      startPoll();
-    }
-  };
   const onPageHide = () => flushPush(notebookId, apiBase); // mobile backgrounding — bound the unsynced window
   window.addEventListener('online', onOnline);
   window.addEventListener('offline', onOffline);
-  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility);
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', reconcileActive);
   window.addEventListener('pagehide', onPageHide);
+  // Activity listeners (incl. window 'focus') keep idle reset / resume the catch-up; NOT focus/blur PAUSE.
+  for (const evt of ACTIVITY_EVENTS) window.addEventListener(evt, onActivity, { passive: true });
 
   return () => {
     if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; }
     if (_maxWaitTimer) { clearTimeout(_maxWaitTimer); _maxWaitTimer = null; }
+    if (activityIdleTimer) { clearTimeout(activityIdleTimer); activityIdleTimer = null; }
     stopPoll();
     window.removeEventListener('online', onOnline);
     window.removeEventListener('offline', onOffline);
-    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', reconcileActive);
     window.removeEventListener('pagehide', onPageHide);
+    for (const evt of ACTIVITY_EVENTS) window.removeEventListener(evt, onActivity);
   };
 }
 
