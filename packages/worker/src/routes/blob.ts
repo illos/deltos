@@ -134,6 +134,9 @@ blob.get('/:hash', async (c: AppContext) => {
       // Never let a stored file run as active content on the app origin.
       'Content-Disposition': 'attachment',
       'X-Content-Type-Options': 'nosniff',
+      // secSys #694 Q2: defense-in-depth — even if a blob were ever rendered, a fully-sandboxed CSP that
+      // allows nothing means it can neither execute script nor load any subresource.
+      'Content-Security-Policy': "default-src 'none'; sandbox",
       'Cache-Control': 'private, max-age=31536000, immutable', // content-addressed → immutable
     },
   });

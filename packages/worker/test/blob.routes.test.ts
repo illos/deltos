@@ -115,6 +115,8 @@ describe('POST/GET /api/plugin/blob — content-addressed storage', () => {
     expect(down.headers.get('content-disposition')).toBe('attachment');
     expect(down.headers.get('x-content-type-options')).toBe('nosniff');
     expect(down.headers.get('content-type')).toBe('application/octet-stream');
+    // secSys #694 Q2: a fully-sandboxed, allow-nothing CSP on the blob response.
+    expect(down.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox");
   });
 
   it('keeps a known-safe image type for inline preview', async () => {
