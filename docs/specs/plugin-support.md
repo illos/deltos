@@ -453,6 +453,18 @@ for the planner's go → Jim feel-tests on live** ([[review-on-live-never-local-
   existing formula/embeds/tools behind it as the first "internal plugins" — behavior-preserving;
   this IS the de-risking proof.** Formalize the friendlier unknown-block placeholder (§6).
   *Accept:* existing plugins work unchanged through the manifest; entry bundle does not grow.
+  **🔒 secSys HARD CONDITIONS (gate #662, 2026-06-24 — bake in from the start, the load-bearing
+  one is HC-A1-1):**
+  - **HC-A1-1** — capability ENFORCEMENT lives **SERVER-SIDE** at each capability's Worker route,
+    keyed on **server-derived `accountId`** (`requireAccountId`) + **host-attested `pluginId`** —
+    NEVER in the client handle alone. The client handle = ergonomics + the future-sandbox seam;
+    the server route IS the boundary. (In v1 a trusted plugin can bypass the client handle —
+    import raw Dexie, call `fetch()` — so client-only enforcement is insecure the moment a plugin
+    is untrusted OR a first-party plugin has a bug.)
+  - **HC-A1-2** — data-scope is ALWAYS the calling session's `accountId` (BOLA); `pluginId` is
+    HOST-ASSIGNED at registration, never client-claimed (cross-plugin isolation rests on this).
+  - **HC-A1-3** — NO raw-SQL / NO raw-egress escape hatch; capabilities are bounded STRUCTURED
+    APIs (a plugin-supplied SQL/filter fragment or arbitrary fetch URL reopens injection/SSRF).
 - **A2 — Render-only component contract** (§5, fork b). Spine→shared render component; retrofit
   `link_card` as the proving case. *Accept:* link_card renders read-only OUTSIDE an editor;
   search/preview paths don't pull prosemirror-view.
@@ -462,6 +474,33 @@ for the planner's go → Jim feel-tests on live** ([[review-on-live-never-local-
   R2 content-addressing + byte-sync + the capability-scoped host handle. **secSys-gated** (trust
   handle + R2 quota/abuse + account-scoping, §8). *Accept:* drop image/file → stored in R2
   content-addressed, syncs across devices, renders inline + render-only, offline shows cached.
+  **⛔ BLOB GATE — secSys HARD CONDITIONS (gate #662); these ARE A4's acceptance criteria, secSys
+  re-audits the A4 build before its deploy-go:**
+  - **HC-A4-1** — blob ACCESS boundary = **the R2 KEY CONSTRUCTION** (secSys #667 refinement of the
+    `{accountId}/{hash}` decision below): the Worker builds the key as
+    `{server-derived-session-accountId}/{hash}`, NEVER from a client-supplied accountId — so account
+    B requesting hash-X gets `{B}/{hash-X}` → 404 (A's blob lives at `{A}/{hash-X}`). The prefix
+    structure ITSELF enforces isolation + kills the existence oracle; **never serve a blob by hash
+    alone.** A refs/metadata table then exists only for LISTING/GC, NOT as the access gate.
+  - **HC-A4-2** — server **recomputes + verifies** the content hash on upload; reject a
+    client-claimed-hash mismatch (else a poisoned CAS store serves X for hash-of-Y).
+  - **HC-A4-3** — stored-XSS: NEVER serve user blobs as inline `text/html` or `image/svg+xml` on
+    the app origin; force `Content-Disposition: attachment` for non-displayable types and/or serve
+    from a separate sandboxed origin; use the stored/sniffed type, not a client-claimed one.
+  - **HC-A4-4** — per-account storage **quota** + per-upload **size cap** + upload **rate-limit**,
+    server-enforced. Generous for v1-solo; durable per-account quota HARD before multi-user.
+  - **HC-A4-5** — R2 bucket NOT public/listable; ALL access via the Worker (checks the ownership table).
+  - **DECISION (navSys, 2026-06-24; secSys-endorsed #667 as cleaner+stronger than a global-hash +
+    ownership-table): R2 key = `{accountId}/{hash}`** (accountId always SERVER-DERIVED) — within-account
+    dedup, cross-account isolation, the key construction IS the access gate (HC-A4-1). Kills the
+    file-existence oracle at zero cost to v1-solo + avoids a pre-multi-user migration. (Global
+    hash-only keys rejected — they leak a "someone else holds this file" oracle on dedup hit.)
+    HC-A4-2 still required even per-account: a client could poison its OWN namespace.
+  - **BUILD-GATE:** A4 implementation HOLDS for secSys RE-AUDIT before deploy-go (#129 cleared the
+    DESIGN; the build still needs eyes). Re-audit checklist (secSys #667): server-derived accountId
+    in every key · server-side hash-verify on upload · safe-serving content-type + Content-Disposition ·
+    quota/size/rate server-enforced · private R2 bucket · enforcement in the Worker route not the
+    client wrapper (HC-A1-1). Ping secSys when A4 lands.
 - **A5 — Slash `/` palette** (§10.1) — discovery surface over the manifest registry; desktop-primary.
   Can follow A1 in parallel with A2–A4.
 - **A6 — Versioning/migration** (§6) — manifest `schemaVersion` + lazy migrate-on-open. Hardening.
