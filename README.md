@@ -220,6 +220,44 @@ mapping layer**. Plugins (future) extend only at two data seams — property typ
 
 ---
 
+## Plugin architecture
+
+> **Status: Phase 2 — designed (see [`docs/specs/plugin-support.md`](./docs/specs/plugin-support.md)), not yet built.** The editor seams below exist today; the manifest + loader + lifecycle on top is the upcoming work.
+
+A **plugin** is a *manifest that bundles registrations across the editor's existing contribution
+registries* — not just "an editor code-block." deltos already has the hard seams (`plugin_block`
+schema node, the island registry, the formula registry, the tool-descriptor registry, the Deck
+adapter, `resolveNoteView`, lazy chunks). **Genuine plugin support = the manifest + loader +
+lifecycle that feed those seams**, plus the durability and capability guarantees that make
+plugin-authored content safe to live in a notes app forever.
+
+### The footprint at a glance
+
+A plug-in is a **manifest** bundling a **client half** (view surfaces) + a **server half**
+(host capabilities), any subset, around a **domain entity**. Host surface = narrow + fixed;
+plug-in surface = broad + composed.
+
+**SURFACES it can register** — block (in-doc shard) · inline entity (link/math/hex/card
+detect-and-transform) · note-type (whole-note item-view, may have no editor) · collection-view
+(kanban/gallery/calendar — *deferred*) · editor tool · Deck loadout · slash `/` entry (*to
+build*) · new-note menu entry (*to build*).
+
+**AXES it works under** — **scope** (`collection ⊃ note-type ⊃ block`, one view contract at
+three scopes) · **half** (client views + server capabilities) · **activation** (content-presence
+loads, caret-context surfaces UI; notebook = soft ranking hint, never a gate) · **capability/
+offline** (offline default / online-only / collaborative; online-only degrades gracefully) ·
+**lifecycle tier** (tiny always-present manifest vs load-on-demand runtime).
+
+**RESOURCES it can call from deltos** — the spine (note body + properties bag; per-note
+structured data syncs free) + 5 host capabilities: `blob` (R2 files/media, synced) · `records`
+(D1 query API for cross-note/indexed data, *not raw SQL*) · `net` (SSRF-guarded egress + secrets)
+· `compute` (Worker/AI/Queues: transcode/OCR/transcription) · `schedule`+`notify` (Cron/DO alarms
++ Web Push). Capability-scoped host handle enforces account-scope + cost caps.
+
+Full design: [`docs/specs/plugin-support.md`](./docs/specs/plugin-support.md).
+
+---
+
 ## Feature Specs
 
 Each links to its spec under [`docs/specs/`](./docs/specs/).
@@ -229,41 +267,61 @@ Each links to its spec under [`docs/specs/`](./docs/specs/).
   contract and the single `can()` chokepoint. ✅ done. → [`phase-0-foundation.md`](./docs/specs/phase-0-foundation.md)
 - **v1 vertical slice** — substrate + spine + sync + one capture surface (ProseMirror editor with
   the title unified into the document), end-to-end. ✅ done. → [`phase-1-vertical-slice.md`](./docs/specs/phase-1-vertical-slice.md), constraints in [`phase-1-constraints.md`](./docs/specs/phase-1-constraints.md)
-- **Notes-list display** — list-row rendering polish. → [`notes-list-display.md`](./docs/specs/notes-list-display.md)
-- **Editor tools + Markdown-light** *(roadmap)* — bold/italic/headings/lists/checkboxes via
-  toolbar **and** inline ProseMirror input-rules (`# ` → heading), not stored-as-markdown.
+- **Notes-list display** — list-row rendering polish. ✅ done. → [`notes-list-display.md`](./docs/specs/notes-list-display.md)
+- **Editor tools + Markdown-light** — bold/italic/headings/lists/checkboxes via toolbar
+  (`EditorControlStrip`) **and** inline ProseMirror input-rules (`# ` → heading), not stored-as-markdown. ✅ done.
+- **Note history + undo/redo** — session-coalescing version capture (idle-settle + on-leave +
+  big-change floor); History panel (tap → diff / +−char-count → restore); undo/redo on mobile via
+  Deck buttons. ✅ done. → [`note-history-and-undo.md`](./docs/specs/note-history-and-undo.md)
 
 ### Notebooks & UI backbone
-- **UI backbone + notebooks** — the view-driven shell: notebook CRUD (with an undeletable default),
-  account-scoped notebook sync, move-note-between-notebooks, per-device current-notebook pointer,
-  and the collection/item view-resolution seam. ✅ done. → [`ui-backbone-notebooks.md`](./docs/specs/ui-backbone-notebooks.md)
+- **UI backbone + notebooks** — the view-driven shell: notebook CRUD, **All-Notes synthetic
+  default** (`notebookId` nullable — no stored default row, duplicate-default structurally
+  impossible), account-scoped notebook sync, move-note, delete→uncategorize, per-device
+  current-notebook pointer, and the collection/item view-resolution seam. ✅ done. → [`ui-backbone-notebooks.md`](./docs/specs/ui-backbone-notebooks.md), [`all-notes-synthetic-default.md`](./docs/specs/all-notes-synthetic-default.md)
 - **Bottom nav (mobile)** — a thumb-reachable, safe-area-aware bottom bar with an extensible
   action-slot row (New note + Search) and drag-up to the full nav menu; sidesteps the iOS
   edge-swipe conflict. Desktop keeps the left pane. ✅ done. → [`bottom-nav-mobile.md`](./docs/specs/bottom-nav-mobile.md), [`drag-gesture-hook.md`](./docs/specs/drag-gesture-hook.md)
+- **Desktop 3-region shell + drag-and-drop** — nav pane + note list + editor; drag a note onto a
+  notebook in the nav pane to move it. ✅ done.
 
 ### Search
 - **Search v1** — full-screen, fully **local/offline**, **fuzzy** + **relevance-ranked**
   (title > body) search across the account, prioritizing the current notebook with other notebooks
   as collapsible accordions; rows show title + highlighted snippet; cross-notebook peek doesn't
-  move the current notebook. → [`search.md`](./docs/specs/search.md)
+  move the current notebook. ✅ done. → [`search.md`](./docs/specs/search.md)
 
 ### Trash & swipe
 - **Swipe actions** — iOS-Mail-style swipe-right on note rows (mobile) revealing Copy + Delete,
-  hard-fling to delete with stretchy feel; sync-correct soft-delete + undo. Hand-rolled (no
-  animation dependency). ✅ shipped. → [`swipe-actions-note-list.md`](./docs/specs/swipe-actions-note-list.md)
+  hard-fling to delete with stretchy feel; **swipe-left = Move** → notebook bottom sheet;
+  sync-correct soft-delete + undo. Hand-rolled (no animation dependency). ✅ done. → [`swipe-actions-note-list.md`](./docs/specs/swipe-actions-note-list.md)
 - **Trash** — delete is sticky + recoverable via an undo toast or a Trash view; built as a
-  reserved `sys:trashedAt` property flag (no migration), riding the hardened update CAS path.
+  reserved `sys:trashedAt` property flag (no migration), riding the hardened update CAS path. ✅ done.
 
 ### Auth & identity
 - **Auth pivot — username + password (+ optional TOTP), recovery phrase as reset** — ungated
   day-to-day, durable httpOnly refresh cookie + in-memory access token, Argon2id (gated before
   hashing), revoke-all on credential changes. ✅ done, user-verified on-device. → [`auth-pivot-password.md`](./docs/specs/auth-pivot-password.md), disclosure copy in [`auth-disclosure-copy.md`](./docs/specs/auth-disclosure-copy.md)
 
+### Deck (custom keyboard)
+- **Deck** — custom on-screen keyboard (`inputmode=none`) that reclaims the iOS accessory bar,
+  predictive row, and emoji strip; hosts the editor toolbar in the keyboard footprint. Includes
+  voice transcription (Whisper, server-side) · inline formulas (math + hex-color detection) ·
+  rich embeds (link unfurl → `LinkCard`, `/api/unfurl`) · spellcheck + custom dictionary · editor
+  loadout + nav loadout · native iOS key geometry. ✅ done. → [`custom-keyboard.md`](./docs/specs/custom-keyboard.md)
+
+### UI & Settings
+- **UI visual refresh** — themes (light / dark / system), Mono body font + δ brand mark, SVG icons,
+  appearance picker, 3-dot global-nav overlay on mobile, δ mark in the top bar. ✅ done. → [`ui-visual-refresh.md`](./docs/specs/ui-visual-refresh.md)
+- **Settings** — Account info / Security (sign-out, 2FA toggle, recovery-phrase regenerate) /
+  Appearance picker / Custom dictionary / About. ✅ done. → [`settings-screen.md`](./docs/specs/settings-screen.md)
+
 ### Sync
 - **v1 shell + conflict-as-version** — local-first boot (auth/sync in background) + conflict
   retained as a version of the same note, never a lost write or duplicate. ✅ done. → [`v1-shell-and-conflict-versions.md`](./docs/specs/v1-shell-and-conflict-versions.md)
 - Cross-device sync boundary = `accountId`; remote changes appear live (pull on return-to-app +
-  short pull cadence while visible). ✅ done.
+  short pull cadence while visible). Sync blip indicator (solid green / ring / yellow / grey) +
+  tap-flush-reload; idle/tab sync-pause. ✅ done.
 
 > The `docs/specs/` directory also contains the per-feature **acceptance matrices** and
 > **done-gate checklists** used during the build.
@@ -272,8 +330,8 @@ Each links to its spec under [`docs/specs/`](./docs/specs/).
 
 ## Project Status & Roadmap
 
-The current near-term milestone is **"basic notes, day-to-day usable"** — nail a genuinely daily
-usable basic-notes app before broadening into the original Phase-2 (decoupling / plugins).
+**v1 shipped 2026-06-24** — the "basic notes, day-to-day usable" milestone is complete. Now
+broadening into plugin / extension work (Phase 2). See `docs/specs/plugin-support.md`.
 
 **Status legend:** `PLANNED` → `SPEC-READY` → `IN-FLIGHT` → `LANDED` → `DONE` (audited & accepted).
 
@@ -281,27 +339,31 @@ usable basic-notes app before broadening into the original Phase-2 (decoupling /
 - Installable offline PWA shell; local-first render-before-data boot.
 - Cloudflare deploy (Worker + prod D1 + PWA, same-origin, production mode).
 - **Auth pivot** — username + password + optional TOTP + recovery-phrase reset; ungated day-to-day.
-- **Sync** — account-scoped (boundary = `accountId`), conflict-as-version, live remote updates.
-- **Notes** — create / edit / view / delete; ProseMirror editor with unified title.
-- **Notebooks + view-driven shell** — CRUD, undeletable default, notebook sync, move-note,
+- **Sync** — account-scoped (boundary = `accountId`), conflict-as-version, live remote updates;
+  sync blip indicator + tap-flush-reload; idle/tab pause.
+- **Notes** — create / edit / view / delete; ProseMirror editor with unified title; auto-focus on new note.
+- **All-Notes synthetic default** — `notebookId` nullable, no stored default row; duplicate-default
+  structurally impossible.
+- **Notebooks + view-driven shell** — CRUD, notebook sync, move-note, delete→uncategorize,
   per-device current-notebook pointer, collection/item view seam.
 - **Bottom-nav (mobile)** with drag-up full menu; desktop left pane.
-- **Swipe actions + Trash** — sync-correct soft-delete + undo, duplicate, recoverable Trash view.
+- **Desktop drag-and-drop** — drag note → notebook in the nav pane.
+- **Swipe actions + Trash** — swipe-RIGHT = Copy + Delete; **swipe-LEFT = Move → notebook sheet**;
+  sync-correct soft-delete + undo, recoverable Trash view.
+- **Search v1** — fuzzy + relevance-ranked, fully local/offline, notebook-aware with accordion.
+- **Note history + undo/redo** — session-coalescing version capture; History panel; Deck undo/redo.
+- **Editor tools + Markdown-light** — `EditorControlStrip` toolbar + inline ProseMirror input-rules.
+- **Deck custom keyboard** — `inputmode=none`; voice (Whisper); inline formulas; rich embeds
+  (unfurl → LinkCard); spellcheck + custom dictionary; editor + nav loadouts; native iOS geometry.
+- **UI visual refresh** — themes (light/dark/system), Mono font, SVG icons, appearance picker, δ brand.
+- **Settings** — Account / Security / Appearance / Custom dictionary / About.
 
-### ⏳ In-flight / parked
-- **Search v1** — fuzzy, notebook-aware, fully local; spec landed and building. Awaiting on-device
-  smoke + deploy.
-- **Visual UI refresh** — colors, fonts, real iconography (replacing emoji placeholders), and the
-  desktop multi-pane layout (nav pane | list | note + resize handle). Look-and-feel direction not
-  yet designed with the user — the open design thread. Must hold the load-feel bar.
-
-### Forward roadmap (near-term)
-- **Note history** — per-note version timeline + restore (pulls the deferred version-history UI
-  forward onto the conflict-as-version data model already built).
-- **Settings** — account / username, sign-out, appearance, app info.
-- **Editor tools + Markdown-light** — toolbar formatting + inline input-rules.
-- **Password-recovery polish** — second-device validation, recovery-screen cleanup
-  (copy/download/print the phrase).
+### Forward roadmap
+- **Plugin framework** — manifest + loader + lifecycle (two-tier). See `docs/specs/plugin-support.md`.
+- **Attachment plugin** — first real block-shard; proves the `blob` storage capability (R2 +
+  content-addressing + byte-sync).
+- **Slash `/` palette** — unified insert/command surface over the manifest registry (#62).
+- **Password-recovery polish** — copy/download/print the recovery phrase.
 
 ### Framed future (specced direction, not yet scheduled)
 - **Per-notebook home-screen icons** + a straight-to-new-note shortcut (iOS webclips; per-webclip
@@ -336,10 +398,10 @@ deltos/
     │   └── src/{spine, api, auth, index.ts}
     ├── worker/           # @deltos/worker — Cloudflare Worker + Hono + D1
     │   ├── src/{routes, db, auth.ts, can()/chokepoint, passwordCrypto.ts, totp.ts, ...}
-    │   ├── migrations/   # 0000_baseline … 0009_backfill-default-notebooks (D1, forward-only)
+    │   ├── migrations/   # 0000_baseline … 0012_custom-dictionary (D1, forward-only)
     │   └── wrangler.jsonc
     └── client/           # @deltos/client — the installable PWA (React 19 + Vite + ProseMirror)
-        └── src/{routes, views, components, editor, auth, db, lib, sw.ts, App.tsx}
+        └── src/{routes, views, components, editor, auth, db, deck, theme, icons, plugins, styles, lib, sw.ts, App.tsx}
 ```
 
 ---

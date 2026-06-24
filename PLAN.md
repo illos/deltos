@@ -15,7 +15,29 @@ guess it was lifted?). See `KICKOFF.md` §Reuse discipline.
 
 ---
 
-## ⏯ CURRENT STATE (2026-06-20 — resume here)
+## ⏯ CURRENT STATE (2026-06-24 — v1 SHIPPED)
+
+> **v1 is LIVE at https://deltos.blackgate.studio.** Canonical branch = `ui-refresh`; `phase-0-foundation` is the deprecated deploy branch (main cwd is still on it).
+>
+> **Shipped & live (full v1 feature set):**
+> - ✅ **Auth** — username + password + optional TOTP 2FA + recovery-phrase reset; ungated day-to-day; `httpOnly` refresh cookie + in-memory access token; revoke-all on credential changes.
+> - ✅ **Notes** — create / edit / view / delete; ProseMirror editor with title unified into the document; auto-focus title on new note.
+> - ✅ **Trash** — sync-correct soft-delete (`sys:trashedAt` property flag) + undo toast + recoverable Trash view.
+> - ✅ **Notebooks + All-Notes** — CRUD; All-Notes synthetic default (`notebookId` nullable, no stored default row — duplicate-default structurally impossible); account-scoped sync; move-note (swipe-LEFT → notebook sheet); delete→uncategorize; per-device IDB current-notebook pointer.
+> - ✅ **Search v1** — fuzzy + relevance-ranked (title > body), fully local/offline, notebook-aware (current-notebook headline + other-notebooks accordion), highlighted snippet rows, cross-notebook peek.
+> - ✅ **Note history + undo/redo** — session-coalescing version capture (idle-settle + on-leave + big-change floor); History panel (tap→diff/+−count→restore); undo/redo buttons on mobile via Deck.
+> - ✅ **Deck** — custom on-screen keyboard (`inputmode=none`, reclaims iOS chrome strips); voice transcription (server-side Whisper); inline formulas (math + hex-color); rich embeds (link unfurl → LinkCard, `/api/unfurl`); spellcheck + custom dictionary; editor + nav loadouts; native-geometry key layout.
+> - ✅ **Mobile swipe actions** — swipe-RIGHT reveals Copy + Delete (stretchy hard-fling commit); swipe-LEFT = Move → notebook bottom sheet.
+> - ✅ **Desktop 3-region shell** — nav pane + note list + editor; drag-and-drop note → notebook.
+> - ✅ **UI visual refresh** — themes (light / dark / system), fonts (Mono + δ brand), SVG icons, appearance picker, 3-dot global-nav overlay (mobile), δ mark in top bar.
+> - ✅ **Sync** — account-scoped (`accountId` boundary), conflict-as-version (no lost writes), live remote updates; sync blip indicator (solid green / ring / yellow / grey) + tap-flush-reload; idle/tab sync-pause.
+> - ✅ **Settings** — Account info / Security (sign-out, 2FA toggle, recovery phrase) / Appearance picker / Custom dictionary / About.
+>
+> **NEXT (Phase 2 / plugin work):** plugin manifest + loader + lifecycle (`docs/specs/plugin-support.md`); attachment plugin (first real block-shard + `blob` capability); slash `/` palette (#62). Per-notebook home-screen icons and realtime push sync are in the framed-future queue.
+
+<details><summary>Prior CURRENT STATE — 2026-06-20 (context that led to v1 ship)</summary>
+
+## CURRENT STATE (2026-06-20)
 > **PIVOT (user, 2026-06-20): step back from UI-feel/polish work → build out functional SCREENS toward the "basic notes day-to-day usable" milestone.** First screen = **Settings & Account**.
 > - ✅ **README** — comprehensive front-door README written + pushed (`05831e6`, branch `phase-0-foundation`): ethos, real tech stack (pinned versions), architecture, feature specs, status/roadmap.
 > - ✅ **SETTINGS & ACCOUNT v1 — DEPLOYED LIVE 2026-06-20** on https://deltos.blackgate.studio (worker ver `d8fed979`, SHA `07cf7be`, history kept OFF the deploy). Sanity PASS; secSys backend lane security-clear; 3 UI-copy legs = fast-follow. ⛔ Review on the LIVE site, not a preview — new standing rule, [[review-on-live-never-local-preview]] + project `CLAUDE.md`.
@@ -31,6 +53,8 @@ guess it was lifted?). See `KICKOFF.md` §Reuse discipline.
 > - <s>SETTINGS & ACCOUNT v1 — SPEC-READY + HANDED OFF</s> (`docs/specs/settings-screen.md`). New `/settings` route; mostly assembly of existing auth-store primitives. Sections: Account (username/accountId/sync-status) · Security (sign-out, regenerate recovery phrase, 2FA enable+disable) · About (real version string). Two small backend gaps for 2FA: surface `totpEnabled` to the client + add a `/totp/disable` route (DB layer already supports it). **DEFERRED out of v1 (user-confirmed):** logged-in change-password (needs new endpoint) + appearance/theme (parked visual-refresh thread).
 > - ⏳ **PARKED, NOT YET DEPLOYED/GLASS-TESTED:** the search (#20) + bottom-nav (#31–36) + drag-sheet (#38) + auto-focus (#37) bundle is committed on the branch but not verified on-device or pushed live. Needs an on-device glass-test + deploy to close out.
 > - **Remaining for the "basic notes usable" milestone after settings:** note HISTORY (version timeline/restore — data model already built) · editor tools + markdown-light · password-recovery polish. Visual UI-refresh held pending a look/feel design pass with the user.
+
+</details>
 
 <details><summary>Prior CURRENT STATE — 2026-06-19</summary>
 
@@ -119,40 +143,31 @@ Android, for full surface control + sideload freedom — the own-your-software v
 remains queued/non-blocking (Phase 2/3 storage only). P0 still IN-FLIGHT (devSys) — its DONE+audit
 is the **STAGE B** gate to hand off Phase 1. secSys audits each as it lands, P0-hardest.
 
-## Phase 1 — the thesis-prover · 🟢 BUILDING (Stage B live 2026-06-15)
+## Phase 1 — the thesis-prover · ✅ COMPLETE (v1 shipped 2026-06-24)
 
-Substrate + spine + sync (server-readable, D1) + **one capture surface** + passkey/recovery/QR
-identity, end-to-end. **Spec: `docs/specs/phase-1-vertical-slice.md`**; constraints in
-`docs/specs/phase-1-constraints.md` (all S1+S2 audit flags folded — PIN-SYNC-1 atomic-CAS TOCTOU
-fix, PIN-ID-1/2 auth-gap closure, PIN-MODEL-1 relations, PIN-STORAGE/SUBSTRATE pins). Editor =
-**ProseMirror (LOCKED)**; relations = **global-by-id**.
+Substrate + spine + sync (server-readable, D1) + **one capture surface** + auth (auth mechanism
+pivoted from passkey to username+password 2026-06-17 — see decision log). **Spec:
+`docs/specs/phase-1-vertical-slice.md`**; constraints in `docs/specs/phase-1-constraints.md`.
+Editor = **ProseMirror (LOCKED)**; relations = **global-by-id**.
 
 | Stream | Scope | Owner | Status |
 |--------|-------|-------|--------|
-| A | Identity (passkey/recovery/QR, signed-challenge auth) | devSys (opus) | auth contract + `can()` **FROZEN** (closed union survives in-tree); server endpoints + client unlock = **DONE-GATE GREEN 2026-06-16** (chokepoint + 4 CF-gated routes + UI front door `b42737d`; secSys CF-1..5 verified; BOLA revoke fixed 21/21). Pending user passes: D5 copy + iOS dogfood |
-| B | Substrate + sync (atomic-CAS conflict engine) | devSys2 (opus) | server CAS + client queue-drain **verified correct** (trip-wire fired + closed); sync foundation solid |
-| C | Capture surface + editor (ProseMirror) | gruntSys2 (sonnet) | iOS-Safari functional gate **PASSED** (IME/paste/nested-selection); title unified into the document; left-aligned |
-| D | Integration / e2e | pilot | pending A + storage |
+| A | Identity + auth (auth contract + `can()`; auth mechanism pivoted → username+password, see decision log 2026-06-17) | devSys | ✅ **DONE** |
+| B | Substrate + sync (atomic-CAS conflict engine) | devSys2 | ✅ **DONE** (trip-wire fired + closed; server CAS + client queue-drain verified correct) |
+| C | Capture surface + editor (ProseMirror) | gruntSys2 | ✅ **DONE** (iOS-Safari gate passed; title unified into document) |
+| D | Integration / e2e | pilot | ✅ **DONE** |
 
-**Done-gate:** install PWA → unlock w/ passkey → create/edit offline → sync; recover/QR-join 2nd
-device; forced conflict → fork not lost-write. secSys audits each stream; **Stream-B trip-wire** =
-promote to devSys/opus if first audit finds a CAS/single-flight/race defect.
+**Done-gate (SATISFIED):** install PWA → log in (username+password, TOTP optional) → create/edit
+offline → sync; recover on a 2nd device via recovery phrase; forced conflict → conflict-as-version
+(no lost write). secSys audited each stream. **Stream-B trip-wire fired + re-audited PASS.**
 
-**Acceptance condition (security-clearance, OPEN):** the **no-PRF KeyStore disclosure** — when the
-active WebAuthn binding is `device-local` (wrapping key stored plaintext in IndexedDB, PIN-ID-6), the
-enroll/unlock UI MUST render an honest D5-style limitation disclosure. secSys's clearance of the
-baseline is *conditional* on this shipping; dropping it voids the clearance. **Owner: gruntSys2**
-(hard acceptance condition on its client-identity lane). Trigger-bound to the enroll/unlock UI
-surface (not dated). Tracked in `[[keystore-noprf-ui-disclosure]]`. **Seam COMPLETE**
-(`getEnrollmentPrfStatus()`, `47f018b`); the **render is now IN PROGRESS** as a hard acceptance
-criterion of gruntSys2's enroll/unlock/recovery UI surface. **Render BUILT** (`b42737d`,
-`Disclosure.tsx`); remaining to close (i): user-approved copy + iOS dogfood verify.
+**Acceptance condition (RESOLVED / SUPERSEDED):** the **no-PRF KeyStore disclosure** — PRF and
+passkeys were retired in the 2026-06-17 auth pivot; condition is moot. Auth disclosure shipped with
+the password auth UI. Tracked: `[[keystore-noprf-ui-disclosure]]`.
 
-**Acceptance condition (security-clearance, OPEN):** the **session token stays in-memory-only (F7).**
-secSys's v1 30-day session-TTL clearance holds ONLY if the client never persists the session/grant
-token at rest (no Dexie table, no localStorage, no cold-start cache). Hard acceptance criterion of
-devSys2's client-storage chunk; persisting it voids the TTL clearance (then shorten TTL / wrap at
-rest). Tracked in `[[session-token-in-memory-only]]`.
+**Acceptance condition (RESOLVED):** the **session token stays in-memory-only (F7)** — the access
+token remains in-memory; ungated-reload now rides a durable `httpOnly` refresh cookie per
+`[[auth-pivot-security-model]]`. Condition satisfied.
 
 ## Later (framed, not yet specced)
 - **Phase 2** — second surface (proves decoupling) + notebooks + universal search + plugin
@@ -190,7 +205,7 @@ rest). Tracked in `[[session-token-in-memory-only]]`.
   the public-handle sharing direction ("notes from our trip").
 
 ## Open decisions (decide at the relevant slice — not current blockers)
-- **Editor engine** — Phase 1, informed by S2. The next user-facing call.
+- ✅ **Editor engine** — **DECIDED: ProseMirror (direct)**, user-confirmed 2026-06-15 (DECISIONS.md D1).
 - Organization within a notebook (lean: flat + tags + relations) — Phase 2.
 - Offline cache text-only vs full media — Phase 3.
 - E2EE option (a) vs (b) — v2.
