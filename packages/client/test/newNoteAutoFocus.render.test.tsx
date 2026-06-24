@@ -16,7 +16,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, cleanup, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import type { Note, NotebookId } from '@deltos/shared';
-import { screen } from './renderHelpers.js';
 
 const NB_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' as NotebookId;
 const NOTE_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' as Note['id'];
@@ -120,7 +119,7 @@ describe('AF-3 — NoteRoute with isNew router state passes autoFocus=true to ed
 
     // Wait for note to load and PM to mount.
     await waitFor(() => {
-      expect(screen.queryByLabelText('Back to list')).not.toBeNull();
+      expect(document.querySelector('.editor__edited-line')).not.toBeNull();
     });
 
     await waitFor(() => {
@@ -151,7 +150,7 @@ describe('AF-4 — NoteRoute without isNew state does not steal focus (existing 
     );
 
     await waitFor(() => {
-      expect(screen.queryByLabelText('Back to list')).not.toBeNull();
+      expect(document.querySelector('.editor__edited-line')).not.toBeNull();
     });
 
     // Wait for PM to init fully before asserting absence of focus.

@@ -106,13 +106,14 @@ describe('NF-2 — NoteRoute renders note content (not blank)', () => {
       </MemoryRouter>,
     );
 
-    // "← Notes" + the version-history button are outside the editor chrome — if the component crashes
-    // (P0-2 blank screen), neither renders. Their presence proves the hook fix holds. (The move "More
-    // options" button was removed in #76 — the move affordance returns as a swipe→sheet in #78.)
+    // The note CONTENT renders — if the component crashes (P0-2 blank screen) the editor never mounts and
+    // the edited-time line is absent. Its presence proves the hook fix holds. (#76 removed the move "More
+    // options" button → swipe→sheet in #78; #82 made the meta bar desktop-only — so we key off the editor
+    // surface, which renders on both targets.)
     await waitFor(() => {
-      expect(screen.queryByLabelText('Back to list')).not.toBeNull();
+      expect(document.querySelector('.editor__edited-line')).not.toBeNull();
     });
-    expect(screen.queryByLabelText('Version history')).not.toBeNull();
+    expect(document.querySelector('.editor__pm')).not.toBeNull();
   });
 });
 

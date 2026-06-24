@@ -1,9 +1,8 @@
 /**
- * #76/#77 V1-polish note chrome. NoteRoute renders the single meta bar (history; desktop also delete) with
- * the move UI REMOVED (no move-picker, no "More options"/ellipsis), and the edited-time relocated to a
- * faint NON-EDITABLE line ABOVE the title (outside the contenteditable) on both desktop + mobile.
- * (The mobile global shell__bar suppression is a one-line `!useMatch('/note/:id')` guard in AuthedShell —
- * not rendered here, where NoteRoute mounts standalone — verified on-device at the deploy gate.)
+ * #76/#77/#82 V1-polish note chrome. The move UI is gone (no move-picker / "More options"). The edited-time
+ * is a faint NON-EDITABLE line above the title (both devices, #77). Per the #82 correction, editor__meta is
+ * DESKTOP-ONLY (history + delete there); on MOBILE there's NO editor__meta — the global shell__bar (rendered
+ * in AuthedShell, not here) is the single bar and carries history. NoteRoute mounts standalone here.
  */
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -36,7 +35,7 @@ async function renderNoteRoute() {
       </Routes>
     </MemoryRouter>,
   );
-  await waitFor(() => expect(screen.queryByLabelText('Back to list')).not.toBeNull());
+  await waitFor(() => expect(document.querySelector('.editor__edited-line')).not.toBeNull());
 }
 
 beforeEach(async () => {
@@ -47,23 +46,45 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-describe('#76 — move UI removed; history stays', () => {
-  it('mobile: history present, NO move-picker / "More options"', async () => {
+describe('#76/#82 — move UI removed; editor__meta desktop-only', () => {
+  it('mobile: NO editor__meta at all (history moved to the shell bar, #82); no move UI', async () => {
     stubDevice(false);
     await renderNoteRoute();
-    expect(screen.getByLabelText('Version history')).toBeTruthy();
-    expect(screen.queryByLabelText('More options')).toBeNull(); // the ellipsis (only opened the move picker)
+    expect(document.querySelector('.editor__meta')).toBeNull(); // editor__meta is desktop-only now
+    expect(screen.queryByLabelText('Version history')).toBeNull(); // history lives in the global shell bar
+    expect(screen.queryByLabelText('More options')).toBeNull();
     expect(document.querySelector('.editor__move-picker')).toBeNull();
-    expect(screen.queryByLabelText('Delete note')).toBeNull(); // mobile keeps swipe-delete, no meta trashcan
   });
 
-  it('desktop: history + delete present, still NO move-picker / "More options"', async () => {
+  it('desktop: editor__meta has history + delete, still NO move-picker / "More options"', async () => {
     stubDevice(true);
     await renderNoteRoute();
+    expect(document.querySelector('.editor__meta')).not.toBeNull();
     expect(screen.getByLabelText('Version history')).toBeTruthy();
     expect(screen.getByLabelText('Delete note')).toBeTruthy(); // desktop delete unchanged
     expect(screen.queryByLabelText('More options')).toBeNull();
     expect(document.querySelector('.editor__move-picker')).toBeNull();
+  });
+});
+
+describe('#82 — ?history opens the version panel (the shell-bar History seam)', () => {
+  it('NoteRoute at /note/:id?history shows the HistoryPanel instead of the note', async () => {
+    stubDevice(false);
+    const { db } = await import('../src/db/schema.js');
+    await db.notes.put(makeNote() as Parameters<typeof db.notes.put>[0]);
+    const { NoteRoute } = await import('../src/routes/NoteRoute.js');
+    render(
+      <MemoryRouter initialEntries={[`/note/${NOTE_ID}?history`]}>
+        <Routes><Route path="/note/:id" element={<NoteRoute />} /></Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('Version History')).toBeTruthy();
+  });
+
+  it('without ?history the note renders (no version panel)', async () => {
+    stubDevice(false);
+    await renderNoteRoute();
+    expect(screen.queryByText('Version History')).toBeNull();
   });
 });
 

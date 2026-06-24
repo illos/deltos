@@ -33,7 +33,7 @@ import type { ClientNote, NoteVersion } from '../db/schema.js';
  */
 export function NoteRoute() {
   const { id } = useParams<{ id: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { state } = useLocation();
   // True only when navigated from the new-note create flow — drives autoFocus on the editor.
   const isNew = (state as { isNew?: boolean } | null)?.isNew === true;
@@ -160,13 +160,21 @@ export function NoteRoute() {
 
   const clientNote = note as ClientNote;
 
-  // History panel — full-screen overlay when requested.
-  if (showHistory) {
+  // History panel — full-screen overlay when requested. Opened by the desktop editor__meta button
+  // (showHistory) OR, on mobile (#82), the global shell bar's History button via the ?history URL param.
+  if (showHistory || searchParams.has('history')) {
     return (
       <HistoryPanel
         note={note}
         versions={versions}
-        onBack={() => setShowHistory(false)}
+        onBack={() => {
+          setShowHistory(false);
+          if (searchParams.has('history')) {
+            const next = new URLSearchParams(searchParams);
+            next.delete('history');
+            setSearchParams(next, { replace: true });
+          }
+        }}
         onRestore={handleRestore}
       />
     );
@@ -189,33 +197,25 @@ export function NoteRoute() {
   const ViewComponent = resolveNoteView(note, NoteEditor);
   return (
     <>
-      {/* §3 note meta toolbar: back (mobile §5 — CSS-hidden on desktop's master-detail) on the left;
-          Synced indicator + version-history (+ desktop delete) on the right. The edited-time moved to a
-          faint line above the title (#77); the move affordance returns as a swipe→sheet (#78). */}
-      <header className="editor__meta">
-        {/* Exit-with-conflict: an unresolved conflict routes back through ?resolve first. */}
-        <Link
-          to={clientNote.hasConflict ? `/note/${parsedNoteId}?resolve` : '/'}
-          className="editor__back"
-          aria-label="Back to list"
-        >
-          <span aria-hidden="true">‹ </span>Notes
-        </Link>
-        <div className="editor__meta-end">
-          {/* Relocated sync indicator (was the top-bar pill; the §3 home is its place now). */}
-          <SyncIndicator />
-          <button className="editor__meta-btn" onClick={() => setShowHistory(true)} aria-label="Version history">
-            <VersionHistory size={18} />
-          </button>
-          {/* Desktop-only delete trashcan, sits next to history (mobile deletes via swipe). Soft-delete
-              → Trash, recoverable. */}
-          {isDesktop && (
+      {/* §3 note meta toolbar — DESKTOP ONLY (#82): the desktop 3-region note pane has no global shell bar,
+          so it carries Synced + version-history + delete here. On MOBILE the global shell__bar is the single
+          note bar (history lives there via ?history), so editor__meta is omitted entirely — no second bar,
+          no back chevron (the δ wordmark → '/' covers return). The edited-time is above the title (#77). */}
+      {isDesktop && (
+        <header className="editor__meta">
+          <div className="editor__meta-end">
+            {/* Relocated sync indicator (was the top-bar pill; the §3 home is its place now). */}
+            <SyncIndicator />
+            <button className="editor__meta-btn" onClick={() => setShowHistory(true)} aria-label="Version history">
+              <VersionHistory size={18} />
+            </button>
+            {/* Desktop delete trashcan, next to history. Soft-delete → Trash, recoverable. */}
             <button className="editor__meta-btn" onClick={handleDeleteNote} aria-label="Delete note">
               <Trash size={18} />
             </button>
-          )}
-        </div>
-      </header>
+          </div>
+        </header>
+      )}
       <ViewComponent note={note} onSave={handleSave} autoFocus={isNew} />
     </>
   );

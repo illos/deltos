@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate, useMatch } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate, useMatch, useLocation } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
 import type { NotebookId } from '@deltos/shared';
 import { NewNote } from './routes/NewNote.js';
@@ -28,7 +28,7 @@ import { resolveCollectionView } from './lib/collectionViews.js';
 import type { CollectionViewProps } from './lib/collectionViews.js';
 import { useNotebookStore } from './lib/notebookStore.js';
 import { notePreview, formatSmartDate } from './lib/notePreview.js';
-import { ComposeNew, Search, Ellipsis } from './icons/index.js';
+import { ComposeNew, Search, Ellipsis, VersionHistory } from './icons/index.js';
 import { SyncIndicator } from './components/SyncIndicator.js';
 import { SessionStatus } from './components/SessionStatus.js';
 import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
@@ -238,10 +238,11 @@ function AuthedShell() {
   // Device class drives the structural fork: desktop = persistent 3-region master-detail; mobile =
   // single-column push + bottom-sheet nav. Called before the early returns (rules-of-hooks).
   const isDesktop = useIsDesktop();
-  // #76: on MOBILE the note view carries its own top bar (editor__meta with back/history/sync), so the
-  // global shell__bar would be a redundant SECOND bar — suppress it on the note route. (Desktop uses the
-  // 3-region shell, which has no shell__bar, so it's already single-bar.)
+  // #82: the GLOBAL shell__bar is the single mobile note bar (editor__meta is hidden on mobile). On the note
+  // route we surface version-history here (next to ⋯) via a ?history URL param NoteRoute reads. (Desktop uses
+  // the 3-region shell — no shell__bar — and keeps its own editor__meta.)
   const onNoteRoute = useMatch('/note/:id') != null;
+  const location = useLocation();
   // #69: in custom-keyboard mode (toggle ON, mobile) the standalone universal bottom nav is PERMANENTLY
   // gone — not hidden-while-typing (that flashed it back under Jim's thumb every time the keyboard
   // dropped). Toggle-driven body class, independent of the keyboard being up/down. Slice B absorbs
@@ -309,7 +310,7 @@ function AuthedShell() {
       {/* Mobile-only full-screen nav overlay (#69 global nav — visible even in deck-custom mode). */}
       <FullScreenNav open={overlayOpen} onClose={() => setOverlayOpen(false)} />
 
-      {!onNoteRoute && <header className="shell__bar">
+      <header className="shell__bar">
         {/*
           Desktop: the notebook name is a trigger for the drawer.
           Mobile (via CSS .shell__nb-trigger--mobile-readonly): just a context label —
@@ -334,6 +335,17 @@ function AuthedShell() {
           <button className="shell__search-btn shell__search-btn--desktop-only" aria-label="Search" onClick={() => navigate('/search')}>🔍</button>
           <SessionStatus />
           <SyncIndicator />
+          {/* #82: on the note route, version-history moves UP here (editor__meta is hidden on mobile). Sets
+              ?history on the current /note/:id URL; NoteRoute opens its HistoryPanel on that param. */}
+          {onNoteRoute && (
+            <button
+              className="shell__nav-btn shell__nav-btn--mobile-only"
+              onClick={() => navigate(`${location.pathname}?history`)}
+              aria-label="Version history"
+            >
+              <VersionHistory size={20} />
+            </button>
+          )}
           {/* Global 3-dot nav button — mobile-only (#69 gap-fill: stays visible in body.deck-custom). */}
           <button
             className="shell__nav-btn shell__nav-btn--mobile-only"
@@ -344,7 +356,7 @@ function AuthedShell() {
             <Ellipsis size={24} />
           </button>
         </div>
-      </header>}
+      </header>
 
       <main className="shell__main">
         <Routes>

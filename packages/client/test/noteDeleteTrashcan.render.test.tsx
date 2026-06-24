@@ -58,7 +58,7 @@ async function renderNoteRoute() {
     </MemoryRouter>,
   );
   // Wait for the note to load (meta row present).
-  await waitFor(() => expect(screen.queryByLabelText('Back to list')).not.toBeNull());
+  await waitFor(() => expect(document.querySelector('.editor__edited-line')).not.toBeNull());
   return view;
 }
 
@@ -105,7 +105,9 @@ describe('NDT-2 — mobile keeps swipe-to-delete: no trashcan in the meta', () =
     await renderNoteRoute();
 
     expect(screen.queryByLabelText('Delete note')).toBeNull();
-    // The rest of the meta is unaffected (history still present).
-    expect(screen.getByLabelText('Version history')).toBeTruthy();
+    // #82: mobile has NO editor__meta at all (the global shell bar is the single bar; history lives there,
+    // not in NoteRoute). So neither the delete trashcan nor an in-route history button renders here.
+    expect(document.querySelector('.editor__meta')).toBeNull();
+    expect(screen.queryByLabelText('Version history')).toBeNull();
   });
 });
