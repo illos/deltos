@@ -15,7 +15,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "db:migrate:local": "pnpm --filter @deltos/worker db:migrate:local"
+    "db:migrate:local": "pnpm --filter @deltos/worker db:migrate:local",
+    "preflight": "bash scripts/preflight.sh"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
