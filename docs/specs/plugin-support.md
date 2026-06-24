@@ -519,6 +519,26 @@ for the planner's go → Jim feel-tests on live** ([[review-on-live-never-local-
     Content-Disposition · quota/size/rate server-enforced · private R2 bucket · enforcement in the
     Worker route not the client wrapper (HC-A1-1) · the backend-resource type-contract (a). Ping
     secSys when A4 lands.
+  - **A4 SPLIT (pilot): #126 = SERVER (blob route + type-contract) · #132 = CLIENT (attachment UI:
+    drop/paste→blob→preview + render-only chip + offline-degraded; depends_on #126).**
+  - **✅ SERVER-HALF (#126) RE-AUDIT = PASS (secSys #694)** — all conditions verified in code
+    (BOLA-impossible by key construction, hash-verify, octet+attachment+nosniff serving, private R2,
+    type-contract `serverEnforced:true` makes "backend cap enforced client-side" unrepresentable).
+  - **POST-AUDIT outcomes (secSys #694):**
+    - **Q1 quota accounting:** R2-list-sum is OK for v1-solo (do NOT build the D1 counter now —
+      premature). ⚠️ It carries a TOCTOU race + O(n)-list cost → a **durable atomic per-account
+      counter (D1) + per-account upload RATE-limit are HARD before >1 user** (bundle them — same class
+      as [[transcribe-ai-cost-ruling]]). FLAG, don't waive — tracked.
+    - **Q2 CSP:** attachment+nosniff+octet is sufficient; **adopt** `Content-Security-Policy:
+      default-src 'none'; sandbox` on the blob GET — trivial, strictly additive defense-in-depth.
+    - **⚠️ CLIENT-HALF CONDITION (#132 re-audit, HARD):** the inline preview is client-side
+      (fetch bytes → object URL); it MUST only object-URL-render KNOWN-SAFE image types
+      (png/jpeg/gif/webp), NEVER the stored html/svg mime — else a `blob:` render re-introduces the
+      XSS the server prevented. Gate #132's client re-audit on this.
+  - **DEPLOY GROUPING (navSys ruling): SHIP #126 + #132 TOGETHER in ONE deploy-go** (not server-alone)
+    — no dormant secured route, one R2 provisioning + one Jim feel-test. Bundled deploy HOLDS for:
+    #132 built + secSys CLIENT re-audit (the type-allowlist) + my go. On deploy: PROD SECURITY SMOKE
+    the server controls live (cross-account hash → 404, hash-mismatch → 400, octet+attachment serving).
 - **A5 — Slash `/` palette** (§10.1) — discovery surface over the manifest registry; desktop-primary.
   Can follow A1 in parallel with A2–A4.
 - **A6 — Versioning/migration** (§6) — manifest `schemaVersion` + lazy migrate-on-open. Hardening.
