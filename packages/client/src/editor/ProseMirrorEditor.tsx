@@ -46,7 +46,7 @@ import type { EditorActiveState } from './editorState.js';
 import type { ToolDescriptor } from './editorTools.js';
 import { useIsDesktop } from '../lib/useIsDesktop.js';
 import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
-import { useKeypadSwipe } from '../lib/useKeypadSwipe.js';
+import { useKeypadSwipe, useScrollHideKeypad } from '../lib/useKeypadSwipe.js';
 
 interface ProseMirrorEditorProps {
   noteId: string;
@@ -265,14 +265,19 @@ export function ProseMirrorEditor({
   useLayoutEffect(() => { lockedRef.current = locked; });
   const toggleKeypad = useCallback(() => setKeypadShown((s) => !s), []);
   const toggleLock = useCallback(() => setLocked((l) => !l), []);
-  // #69 §7 keypad show/hide gestures on the note body (custom-keyboard only). A caret-placing TAP re-shows
-  // the keypad (the PM focus event only fires on focus-IN, so a tap within an already-focused editor — after
-  // a manual or swipe hide — wouldn't otherwise re-show it); a fast+large upward FLICK hides it. PASSIVE
-  // (never captures/preventDefaults) so note scrolling is untouched. Both respect the manual lock (frozen).
+  // #69 §7 / #81 keypad show/hide (custom-keyboard only), both respecting the manual lock (frozen):
+  //  • a caret-placing TAP re-shows the keypad (the PM focus event only fires on focus-IN, so a tap within
+  //    an already-focused editor — after a hide — wouldn't otherwise re-show it). PASSIVE.
+  //  • a FAST UPWARD scroll of the note body hides it (#81) — driven off the real scroll event, replacing
+  //    the broken pointer-flick detector (a fast flick is native scroll → pointercancel, never detected).
   const keypadSwipe = useKeypadSwipe({
     enabled: customKb,
     onTap: () => { if (!lockedRef.current) setKeypadShown(true); },
-    onSwipeUp: () => { if (!lockedRef.current) setKeypadShown(false); },
+  });
+  useScrollHideKeypad({
+    enabled: customKb,
+    onHide: () => { if (!lockedRef.current) setKeypadShown(false); },
+    containerRef,
   });
   // #69 editor-loadout v1: the group selector (below keys) + per-group submenu (above keys) share one
   // open-group state. They're host-injected into the generic KeypadLoadout; the loadout itself is

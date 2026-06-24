@@ -1,84 +1,82 @@
 // @vitest-environment jsdom
 /**
- * #69 §7 — useKeypadSwipe: the note-body gesture pair. Tap (caret placement) → show; fast+large upward
- * flick → hide; everything else (slow drag, scroll, horizontal, downward, cancel, disabled) → no-op.
+ * #69 §7 / #81 — keypad show/hide. useKeypadSwipe now does ONLY the caret-tap → SHOW (the broken
+ * pointer-flick hide was removed in #81). The hide is scroll-driven: isFastUpwardScroll is the pure
+ * velocity/direction decision (fast UPWARD scroll → hide; slow / downward → no).
  */
 import { describe, it, expect, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import { useKeypadSwipe } from '../src/lib/useKeypadSwipe.js';
+import { useKeypadSwipe, isFastUpwardScroll, HIDE_SCROLL_VELOCITY_PX_PER_MS } from '../src/lib/useKeypadSwipe.js';
 
 const ev = (clientX: number, clientY: number, timeStamp: number, pointerId = 1) =>
   ({ clientX, clientY, timeStamp, pointerId }) as unknown as ReactPointerEvent;
 
 function setup(enabled = true) {
   const onTap = vi.fn();
-  const onSwipeUp = vi.fn();
-  const { result } = renderHook(() => useKeypadSwipe({ enabled, onTap, onSwipeUp }));
-  return { h: result.current, onTap, onSwipeUp };
+  const { result } = renderHook(() => useKeypadSwipe({ enabled, onTap }));
+  return { h: result.current, onTap };
 }
 
-describe('useKeypadSwipe', () => {
-  it('a near-stationary tap → onTap (show), not onSwipeUp', () => {
-    const { h, onTap, onSwipeUp } = setup();
+describe('useKeypadSwipe — caret-tap → show', () => {
+  it('a near-stationary tap → onTap', () => {
+    const { h, onTap } = setup();
     h.onPointerDown(ev(100, 300, 0));
     h.onPointerUp(ev(103, 296, 40)); // moved ~5px
     expect(onTap).toHaveBeenCalledTimes(1);
-    expect(onSwipeUp).not.toHaveBeenCalled();
   });
 
-  it('a fast + large upward flick → onSwipeUp (hide), not onTap', () => {
-    const { h, onTap, onSwipeUp } = setup();
+  it('a drag/scroll (movement beyond the tap threshold) → NOT a tap (no-op; hide is scroll-driven now)', () => {
+    const { h, onTap } = setup();
     h.onPointerDown(ev(100, 400, 0));
-    h.onPointerUp(ev(105, 280, 100)); // up 120px in 100ms = 1.2px/ms
-    expect(onSwipeUp).toHaveBeenCalledTimes(1);
+    h.onPointerUp(ev(105, 280, 100)); // a 120px move — used to be a hide-flick; now just not-a-tap
     expect(onTap).not.toHaveBeenCalled();
   });
 
-  it('a slow large upward drag (low velocity) → neither (looks like a scroll)', () => {
-    const { h, onTap, onSwipeUp } = setup();
-    h.onPointerDown(ev(100, 400, 0));
-    h.onPointerUp(ev(105, 280, 600)); // up 120px in 600ms = 0.2px/ms < 0.6
-    expect(onTap).not.toHaveBeenCalled();
-    expect(onSwipeUp).not.toHaveBeenCalled();
-  });
-
-  it('a fast but horizontal-dominant drag → neither', () => {
-    const { h, onSwipeUp } = setup();
-    h.onPointerDown(ev(100, 400, 0));
-    h.onPointerUp(ev(300, 320, 100)); // up 80px but dx 200px → horizontal wins
-    expect(onSwipeUp).not.toHaveBeenCalled();
-  });
-
-  it('a fast DOWNWARD flick → neither (only upward hides)', () => {
-    const { h, onTap, onSwipeUp } = setup();
-    h.onPointerDown(ev(100, 200, 0));
-    h.onPointerUp(ev(102, 360, 100)); // downward
-    expect(onTap).not.toHaveBeenCalled();
-    expect(onSwipeUp).not.toHaveBeenCalled();
-  });
-
-  it('pointercancel (scroll taken over) aborts the gesture → neither', () => {
-    const { h, onTap, onSwipeUp } = setup();
-    h.onPointerDown(ev(100, 400, 0));
+  it('pointercancel aborts → no tap', () => {
+    const { h, onTap } = setup();
+    h.onPointerDown(ev(100, 300, 0));
     h.onPointerCancel();
-    h.onPointerUp(ev(105, 280, 100)); // would-be flick, but start was cleared
+    h.onPointerUp(ev(101, 300, 30));
     expect(onTap).not.toHaveBeenCalled();
-    expect(onSwipeUp).not.toHaveBeenCalled();
   });
 
-  it('disabled → no gesture is recognized', () => {
-    const { h, onTap, onSwipeUp } = setup(false);
-    h.onPointerDown(ev(100, 400, 0));
-    h.onPointerUp(ev(105, 280, 100));
+  it('disabled → no tap', () => {
+    const { h, onTap } = setup(false);
+    h.onPointerDown(ev(100, 300, 0));
+    h.onPointerUp(ev(101, 300, 30));
     expect(onTap).not.toHaveBeenCalled();
-    expect(onSwipeUp).not.toHaveBeenCalled();
   });
 
   it('ignores a pointerup from a different pointerId', () => {
     const { h, onTap } = setup();
     h.onPointerDown(ev(100, 300, 0, 1));
-    h.onPointerUp(ev(101, 300, 30, 2)); // different finger
+    h.onPointerUp(ev(101, 300, 30, 2));
     expect(onTap).not.toHaveBeenCalled();
+  });
+});
+
+describe('isFastUpwardScroll — the hide decision (#81)', () => {
+  it('fast UPWARD scroll (scrollTop increasing, velocity ≥ threshold) → hide', () => {
+    expect(isFastUpwardScroll(120, 100)).toBe(true); // 1.2 px/ms
+    expect(isFastUpwardScroll(60, 100)).toBe(true);   // 0.6 px/ms = threshold
+  });
+  it('slow upward scroll (below threshold) → no hide', () => {
+    expect(isFastUpwardScroll(30, 100)).toBe(false); // 0.3 px/ms
+    expect(isFastUpwardScroll(120, 600)).toBe(false); // 0.2 px/ms
+  });
+  it('DOWNWARD scroll (scrollTop decreasing) → no hide, however fast', () => {
+    expect(isFastUpwardScroll(-200, 100)).toBe(false);
+  });
+  it('zero / negative elapsed time → no hide (guards divide-by-zero)', () => {
+    expect(isFastUpwardScroll(120, 0)).toBe(false);
+    expect(isFastUpwardScroll(120, -10)).toBe(false);
+  });
+  it('honours a custom threshold', () => {
+    expect(isFastUpwardScroll(100, 100, 1.5)).toBe(false); // 1.0 < 1.5
+    expect(isFastUpwardScroll(200, 100, 1.5)).toBe(true);  // 2.0 ≥ 1.5
+  });
+  it('exports a sane default threshold', () => {
+    expect(HIDE_SCROLL_VELOCITY_PX_PER_MS).toBeGreaterThan(0);
   });
 });
