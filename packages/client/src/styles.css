@@ -1339,6 +1339,35 @@ a.auth__link { display: inline; }
 /* #78 Move seam button (left drag) — theme accent so it reads as a primary action (light/dark/system). */
 .swipe-row__btn--move   { background: var(--accent); color: #fff; min-width: 84px; }
 
+/* #78 notebook-picker BOTTOM SHEET — opened by the Move seam; replaces the old inline move-picker. Theme
+   tokens → light/dark/system. */
+.nb-sheet { position: fixed; inset: 0; z-index: 400; display: flex; flex-direction: column; justify-content: flex-end; }
+.nb-sheet__backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.4); }
+.nb-sheet__panel {
+  position: relative; background: var(--paper);
+  border-top-left-radius: 16px; border-top-right-radius: 16px;
+  padding: 12px 12px max(16px, env(safe-area-inset-bottom));
+  max-height: 70vh; overflow-y: auto; box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.18);
+}
+.nb-sheet__title { font-family: var(--ff); font-size: 13px; color: var(--secondary); text-align: center; margin: 4px 0 10px; }
+.nb-sheet__list { list-style: none; margin: 0; padding: 0; }
+.nb-sheet__row {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  appearance: none; -webkit-appearance: none; border: none; background: var(--list);
+  color: var(--ink); font-family: var(--ff); font-size: 16px; /* ≥16px = no iOS zoom */
+  padding: 13px 16px; border-radius: 10px; margin-bottom: 6px; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.nb-sheet__row:active { background: var(--sel); }
+.nb-sheet__row--current { color: var(--secondary); }
+.nb-sheet__row:disabled { opacity: 0.5; cursor: default; }
+.nb-sheet__hint { font-size: 12px; color: var(--faint); margin-left: auto; }
+.nb-sheet__cancel {
+  width: 100%; appearance: none; -webkit-appearance: none; border: none; background: var(--sel);
+  color: var(--ink); font-family: var(--ff); font-size: 16px; padding: 13px; border-radius: 10px; margin-top: 4px; cursor: pointer;
+}
+.nb-sheet__cancel:active { background: var(--border); }
+
 /* Foreground: slides imperatively over the back layer; explicit bg to cover buttons */
 .swipe-row__foreground {
   position: relative;

@@ -34,10 +34,12 @@ import { SessionStatus } from './components/SessionStatus.js';
 import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
 import { ConflictBadgeSlot } from './components/ConflictBadgeSlot.js';
 import { SwipeRow } from './components/SwipeRow.js';
+import { NotebookPickerSheet } from './components/NotebookPickerSheet.js';
 import { useAuthStore } from './auth/store.js';
 import { selectBootView } from './auth/shellGate.js';
 import { useNotes, useCurrentNotebook, useNotebooks } from './db/storeHooks.js';
 import { mutateNotes } from './db/mutate.js';
+import { notifyQueueWrite } from './lib/syncEngine.js';
 import { showToast, showActionToast } from './lib/toastEvents.js';
 
 /**
@@ -140,6 +142,17 @@ export function HomeView({ notebookId }: CollectionViewProps) {
   const navigate = useNavigate();
   // Single-open invariant: only one swipe row open at a time
   const [openId, setOpenId] = useState<string | null>(null);
+  // #78 swipe-to-move: the note whose notebook-picker sheet is open (null = closed).
+  const [movingNote, setMovingNote] = useState<Note | null>(null);
+
+  const handleMove = useCallback((note: Note, targetNotebookId: NotebookId | null) => {
+    setMovingNote(null);
+    if (targetNotebookId === note.notebookId) return; // no-op (also disabled in the sheet)
+    void mutateNotes.put({ ...note, notebookId: targetNotebookId })
+      .then(() => notifyQueueWrite(targetNotebookId))
+      .catch(console.error);
+    showToast('Moved');
+  }, []);
 
   const handleDelete = useCallback((note: Note) => {
     mutateNotes.softDelete(note).catch(console.error);
@@ -195,6 +208,7 @@ export function HomeView({ notebookId }: CollectionViewProps) {
                   onClose={() => setOpenId(null)}
                   onDelete={() => handleDelete(note)}
                   onDuplicate={() => handleDuplicate(note)}
+                  onMove={() => setMovingNote(note)}
                 >
                   <Link
                     to={`/note/${note.id}`}
@@ -214,6 +228,15 @@ export function HomeView({ notebookId }: CollectionViewProps) {
             );
           })}
         </ul>
+      )}
+      {/* #78 swipe-to-move → notebook-picker bottom sheet (mobile). */}
+      {movingNote && (
+        <NotebookPickerSheet
+          notebooks={notebooks}
+          currentNotebookId={movingNote.notebookId}
+          onSelect={(nbId) => handleMove(movingNote, nbId)}
+          onClose={() => setMovingNote(null)}
+        />
       )}
     </div>
   );
