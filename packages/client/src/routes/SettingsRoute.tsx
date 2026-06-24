@@ -25,6 +25,7 @@ function sessionLabel(s: SessionState): string {
   switch (s) {
     case 'active': return 'Synced / Online';
     case 'offline': return 'Offline — changes saved locally';
+    case 'revoked': return 'Signed out — sign in to resume sync';
     case 'unauthed': return 'Not signed in';
     case 'booting': return 'Connecting…';
   }

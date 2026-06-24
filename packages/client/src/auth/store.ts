@@ -29,7 +29,17 @@ import { suspendSync, flushPushQueue } from '../lib/syncEngine.js';
 const API = '/api/auth';
 
 /** Detailed session status — drives the quiet status pill + the sync-on-active trigger. Never gates. */
-export type SessionState = 'booting' | 'active' | 'unauthed' | 'offline';
+export type SessionState =
+  | 'booting'
+  | 'active'
+  | 'unauthed'
+  // #85 OFFLINE: /refresh threw (no network) but a resident account exists → local shell, sync AUTO-resumes
+  // on reconnect (no re-login). UX: 'Offline — changes saved locally'.
+  // #89 REVOKED: server reachable, /refresh returned a genuine 401 (cookie revoked/expired) + a resident
+  // account → local shell with sync HARD-GATED. A revoked cookie can't /refresh, so this needs a FULL
+  // re-login (does NOT auto-resume) — visibly DISTINCT from 'offline'. UX: 'Signed out — sign in to resume sync'.
+  | 'offline'
+  | 'revoked';
 
 export interface AuthState {
   /** Boot-gate input: null = booting (resolving /refresh); else see the shell rule (isAuthed && !isAuthing). */
@@ -176,7 +186,25 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   async init() {
     try {
       const res = await authFetch('/refresh');
-      if (!res.ok) { if (!get().isAuthing) set({ isAuthed: false, sessionState: 'unauthed' }); return; }
+      if (!res.ok) {
+        if (get().isAuthing) return; // a live ceremony owns the gate
+        // #89 (secSys Leg 2): a genuine 401 (revoked/expired refresh cookie) WITH a resident account →
+        // open the LOCAL shell in the DISTINCT 'signed-out, resume sync' mode rather than a hard login-kick.
+        // The at-rest data is already on-device (rely-on-device disclosure), so a hard-401 protects nothing
+        // real; sync stays gated by the absent bearer. suspendSync() stops any cycle so the dead session is
+        // never loop-retried (local edits queue, drain after a FULL re-login mints a fresh bearer). A
+        // non-401 error, or no resident, falls to the login gate as before.
+        if (res.status === 401) {
+          const resident = await readAccountMarker();
+          if (resident) {
+            suspendSync();
+            set({ isAuthed: true, sessionState: 'revoked', accountId: resident, bearerToken: null, recoveryEstablished: true });
+            return;
+          }
+        }
+        set({ isAuthed: false, sessionState: 'unauthed' });
+        return;
+      }
       const s = (await res.json()) as AccessTokenResponse;
       // #52 tenancy (option B): purge the local store if it belongs to another account (or is unmarked
       // — first fixed-build load). AWAITED BEFORE the shell opens so there's no cold-boot flash of the

@@ -309,8 +309,12 @@ function AuthedShell() {
   const syncKey = currentNotebookId ?? INITIAL_SYNC_SENTINEL;
   useEffect(() => {
     if (!_ready) return;
+    // #89: in the revoked ('signed-out, resume sync') mode, do NOT start the triggers — startSyncTriggers
+    // calls resumeSync() (lifting init()'s suspend) + polls a dead session. Sync stays hard-gated until a
+    // full re-login flips sessionState to 'active' and this effect re-runs to start it (draining the queue).
+    if (sessionState === 'revoked') return;
     return startSyncTriggers(syncKey);
-  }, [_ready, syncKey]);
+  }, [_ready, syncKey, sessionState]);
 
   // When the background session goes live, drain the queue immediately.
   // syncNow is single-flight-guarded so concurrent triggers collapse to one push.
