@@ -19,8 +19,10 @@ import { hexColorType } from '../src/plugins/hexcolor/hexColorType.js';
 import { EDITOR_TOOLS } from '../src/editor/editorTools.js';
 
 describe('#123 plugin runtime — manifest spine', () => {
-  it('re-homes formula, link-card, core-tools + the lazy attachment as the v1 built-in array', () => {
-    expect(BUILT_IN_PLUGINS.map((m) => m.id)).toEqual(['formula', 'link-card', 'core-tools', 'attachment']);
+  it('re-homes formula, link-card, core-tools + the lazy attachment (+ its eager insert handler)', () => {
+    expect(BUILT_IN_PLUGINS.map((m) => m.id)).toEqual([
+      'formula', 'link-card', 'core-tools', 'attachment', 'attachment-insert',
+    ]);
   });
 
   it('attachment is LAZY (async load) + declares the blob host capability via the server-enforced contract', () => {

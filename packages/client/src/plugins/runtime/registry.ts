@@ -53,6 +53,13 @@ export class PluginRegistry {
     if (!manifest) return null;
     const runtime = await manifest.load();
     this.runtimeCache.set(id, runtime);
+    // A lazily-loaded runtime's island NodeViews must become live so its blocks render once loaded
+    // (idempotent — the same factory re-set). Editor-plugin/tool contributions can't be retro-added to a
+    // live EditorView, so those only apply via eager assembly; islands resolve per-node-view-creation, so
+    // registering here + a node-view refresh upgrades a placeholder block to the real view.
+    for (const [type, factory] of Object.entries(runtime.islandFactories ?? {})) {
+      registerPluginIsland(type, factory);
+    }
     return runtime;
   }
 }

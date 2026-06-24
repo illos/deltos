@@ -19,6 +19,7 @@ import { mathType } from '../math/mathType.js';
 import { hexColorType } from '../hexcolor/hexColorType.js';
 import { LinkCardNodeView } from '../embeds/LinkCardNodeView.js';
 import { linkCardPastePlugin } from '../embeds/index.js';
+import { attachmentDropPlugin } from '../attachment/attachmentDrop.js';
 import { EDITOR_TOOLS } from '../../editor/editorTools.js';
 
 /** Inline-formula framework — MATH + HEXCOLOR types merged into the shared FormulaRegistry. */
@@ -72,9 +73,22 @@ const attachmentPlugin: PluginManifest = {
   load: () => import('../attachment/runtime.js').then((m) => m.attachmentRuntime),
 };
 
+/**
+ * Attachment INSERT — the small EAGER half of the attachment plugin: the drop/paste handler, always
+ * listening (the heavy node-view runtime stays lazy, loaded on the first file). Rides the editorPlugins
+ * seam exactly like the link_card paste handler. Light (no react-dom — just the blob client + PM).
+ */
+const attachmentInsertPlugin: PluginManifest = {
+  id: 'attachment-insert',
+  name: 'Attachment insert',
+  capabilities: ['offline'],
+  load: () => ({ editorPlugins: (schema) => [attachmentDropPlugin(schema)] }),
+};
+
 export const BUILT_IN_PLUGINS: readonly PluginManifest[] = [
   formulaPlugin,
   linkCardPlugin,
   coreToolsPlugin,
   attachmentPlugin,
+  attachmentInsertPlugin,
 ];
