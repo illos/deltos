@@ -19,8 +19,15 @@ import { hexColorType } from '../src/plugins/hexcolor/hexColorType.js';
 import { EDITOR_TOOLS } from '../src/editor/editorTools.js';
 
 describe('#123 plugin runtime — manifest spine', () => {
-  it('re-homes formula, link-card, and core-tools as the v1 built-in array', () => {
-    expect(BUILT_IN_PLUGINS.map((m) => m.id)).toEqual(['formula', 'link-card', 'core-tools']);
+  it('re-homes formula, link-card, core-tools + the lazy attachment as the v1 built-in array', () => {
+    expect(BUILT_IN_PLUGINS.map((m) => m.id)).toEqual(['formula', 'link-card', 'core-tools', 'attachment']);
+  });
+
+  it('attachment is LAZY (async load) + declares the blob host capability via the server-enforced contract', () => {
+    const attachment = BUILT_IN_PLUGINS.find((m) => m.id === 'attachment')!;
+    expect(isEager(attachment.load())).toBe(false); // dynamic import → skipped at eager assembly
+    expect(attachment.hostCapabilities).toEqual([{ kind: 'blob', serverEnforced: true }]);
+    expect(attachment.capabilities).toEqual(['offline']); // the blob is cached → offline-capable render
   });
 
   it('aggregates formula types into ONE shared registry (math + hexcolor), not collapsed', () => {

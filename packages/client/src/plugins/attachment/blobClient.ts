@@ -58,7 +58,23 @@ export async function loadBlobUrl(hash: string, mime: string): Promise<string> {
   return url;
 }
 
-/** Whether a stored mime is a previewable image (drives image-vs-chip rendering). */
-export function isPreviewableImage(mime: string | undefined): boolean {
+/**
+ * The HARD safe-type gate (secSys #694): a stored blob may be object-URL-rendered INLINE only when it is a
+ * known-safe raster image (png/jpeg/gif/webp). Everything else — html, svg, pdf, unknown — must NEVER be
+ * inline-rendered (a blob: URL of html/svg would re-introduce the XSS the server prevents); it becomes a
+ * download chip. This is THE allowlist the node-view gates on.
+ */
+export function isInlineRenderableImage(mime: string | undefined): boolean {
   return !!mime && SAFE_IMAGE_TYPES.has(mime);
+}
+
+/** Download a stored blob (the non-image / unsafe path — never inline). Forces octet-stream bytes. */
+export async function downloadBlob(hash: string, name: string): Promise<void> {
+  const url = await loadBlobUrl(hash, 'application/octet-stream');
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name || 'download';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }

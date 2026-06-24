@@ -25,3 +25,25 @@
   color: var(--secondary);
   font-variant-numeric: tabular-nums;
 }
+
+/* In-editor block wrapper + inline image preview (safe raster types only). */
+.attachment-island { margin: 6px 0; }
+.attachment-image {
+  display: block;
+  max-width: 100%;
+  max-height: 420px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+/* Download chip (non-image / unsafe types — never inline-rendered) is a bare button around the chip. */
+.attachment-download {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}

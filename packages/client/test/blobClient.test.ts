@@ -4,7 +4,7 @@
  */
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { uploadBlob, loadBlobUrl, isPreviewableImage } from '../src/plugins/attachment/blobClient.js';
+import { uploadBlob, loadBlobUrl, isInlineRenderableImage } from '../src/plugins/attachment/blobClient.js';
 import { useAuthStore } from '../src/auth/store.js';
 
 beforeEach(() => {
@@ -44,10 +44,15 @@ describe('#126 blobClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1); // second call served from cache
   });
 
-  it('isPreviewableImage gates image-vs-chip rendering', () => {
-    expect(isPreviewableImage('image/png')).toBe(true);
-    expect(isPreviewableImage('image/webp')).toBe(true);
-    expect(isPreviewableImage('application/pdf')).toBe(false);
-    expect(isPreviewableImage(undefined)).toBe(false);
+  it('isInlineRenderableImage allows ONLY png/jpeg/gif/webp (secSys #694 inline gate)', () => {
+    expect(isInlineRenderableImage('image/png')).toBe(true);
+    expect(isInlineRenderableImage('image/jpeg')).toBe(true);
+    expect(isInlineRenderableImage('image/gif')).toBe(true);
+    expect(isInlineRenderableImage('image/webp')).toBe(true);
+    // unsafe / non-raster — NEVER inline-rendered
+    expect(isInlineRenderableImage('image/svg+xml')).toBe(false);
+    expect(isInlineRenderableImage('text/html')).toBe(false);
+    expect(isInlineRenderableImage('application/pdf')).toBe(false);
+    expect(isInlineRenderableImage(undefined)).toBe(false);
   });
 });

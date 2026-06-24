@@ -53,4 +53,28 @@ const coreToolsPlugin: PluginManifest = {
   load: () => ({ tools: EDITOR_TOOLS }),
 };
 
-export const BUILT_IN_PLUGINS: readonly PluginManifest[] = [formulaPlugin, linkCardPlugin, coreToolsPlugin];
+/**
+ * Attachment (image/file) — the first plugin with a SERVER-ENFORCED host capability (`blob`, §7) AND the
+ * first LAZY plugin: its runtime is dynamic-`import()`ed on demand (heavy — react-dom + the blob client), so
+ * it never touches the entry/eager graph (perf gate). collectEagerContributions skips it (async load); its
+ * NodeView registers when the runtime loads (on insert / on opening a note that has an attachment block).
+ * `offline` presentation (the blob is cached) + the `blob` backend capability declared via the structural
+ * server-enforced contract.
+ */
+const attachmentPlugin: PluginManifest = {
+  id: 'attachment',
+  name: 'Attachment',
+  capabilities: ['offline'],
+  hostCapabilities: [{ kind: 'blob', serverEnforced: true }],
+  blockTypes: ['attachment'],
+  palette: { label: 'File or image', keywords: ['file', 'image', 'photo', 'attach', 'upload'] },
+  schemaVersion: 1,
+  load: () => import('../attachment/runtime.js').then((m) => m.attachmentRuntime),
+};
+
+export const BUILT_IN_PLUGINS: readonly PluginManifest[] = [
+  formulaPlugin,
+  linkCardPlugin,
+  coreToolsPlugin,
+  attachmentPlugin,
+];

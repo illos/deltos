@@ -93,8 +93,14 @@ export interface PluginManifest {
   readonly id: string;
   /** Human-readable name (used in the friendly unknown-block placeholder + palette). */
   readonly name: string;
-  /** Declared capabilities (§4). Defaults to offline-only when omitted. */
+  /** Declared PRESENTATION capabilities (§4) — render degradation only. Defaults to offline when omitted. */
   readonly capabilities?: readonly PluginCapability[];
+  /**
+   * Declared BACKEND-RESOURCE capabilities (§7, HC-A1) — each is server-enforced at its Worker route. The
+   * structural `{ kind, serverEnforced: true }` shape is the type-contract: a backend resource cannot be
+   * declared as a bare presentation flag, so it is always bound to server-side enforcement.
+   */
+  readonly hostCapabilities?: readonly HostCapability[];
   /** plugin_block `pluginType` key(s) this plugin owns — drives lazy-load + the named placeholder. */
   readonly blockTypes?: readonly string[];
   /** Discovery entry for the slash palette / new-note menu (A5). */
