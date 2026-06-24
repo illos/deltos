@@ -331,6 +331,62 @@ structured input/output schemas per command (schema-first, per the `schema-first
 an agent can enumerate a plugin's commands and invoke them with validated payloads. The
 manifest's command list IS the agent-facing surface.
 
+### 9A. The AGENT GUIDE — domain competence ships with the plugin (Jim 2026-06-24)
+
+**The missing half of API-first.** A call-schema tells an agent the *shape* of an operation
+(`addSplice(fromCable, fromTube, fromFiber, …)`) but NOTHING about what it MEANS or the STRATEGY
+to use it. Handed a domain artifact cold, an agent must reverse-engineer the domain — and guesses
+wrong. So every MCP-accessible plugin ships a **first-class agent guide / playbook** in its
+manifest: the agent-facing analog of the views humans get.
+
+**THREE AUDIENCES, one definition:** human-viewer → render-only component (§5) · human-editor →
+edit view + UI · **agent-driver → MCP tools + the agent guide** (the new piece).
+
+**The guide's four parts:**
+1. **Ontology / glossary** — domain vocabulary + conventions (the semantics that turn shorthand
+   into structure). *Fiber example: the TIA-598 color order → "Aqua tube" = tube 12, "pink fiber"
+   = Rose = 11, "Y,V,R,A" = the last four tubes; can/cable/tube/fiber hierarchy; "spliced through"
+   = a pass-through range mapping.* None of this lives in a JSON schema.
+2. **Playbook** — intent → operation recipe (the worked procedure for translating a request into a
+   sequence of plugin calls).
+3. **Worked examples** — sample input → exact tool-call sequence → result. Few-shot, so the agent
+   pattern-matches instead of theorizing.
+4. **Conventions & ambiguity rules** — defaults + *when to ask the human vs. assume*.
+
+**Static guide + dynamic state:** the static guide = *how to drive me*; an MCP **resource** exposes
+*what's here now* (e.g. the cables already in this note) for the agent to read before acting.
+
+**THE 90% PRINCIPLE (why partial is safe):** the guide need only get the agent to ~90% via guided
+tools — **the plugin's own UI is the human's last-10% correction surface.** Agent drafts → human
+verifies/fixes in the UI → exports. Agent-driven bulk + human-UI verification COMPOSE; that
+composition is what makes "even if it isn't perfect" acceptable. (Maps onto MCP-native delivery:
+rich tool descriptions + a per-plugin server-instructions/prompt + example prompts + ontology as a
+resource.)
+
+**Why it's strategic:** without it every agent re-educates itself on every domain every time; with
+it, **domain competence ships with the tool** (author the fiber guide once → any agent is instantly
+fluent). Doubles as the plugin's human documentation. This is the headline that makes AI-drivable
+plugins work in PRACTICE, not just principle. Delivered over the access axis (§14).
+
+**LOCALITY — the agent surface is BACKEND-RESIDENT (Jim 2026-06-24), and that's a gift.** The three
+audiences map to three locality tiers: human-viewer + human-editor = **CLIENT** (lazy past first
+paint, bundle-cost-sensitive, MUST work offline per [[offline-never-gate-on-network]]); agent-driver
+= **BACKEND-ONLY** (the guide + runbooks + MCP tool defs are served by the Worker to a connecting
+agent; the LLM consumer lives OUTSIDE the device, never in the client bundle). The human half and
+the agent half therefore have **OPPOSITE constraint profiles**, and the heaviest complexity (rich
+ontologies, large few-shot sets, elaborate playbooks) sits entirely on the side that is NEITHER
+bundle-sensitive NOR offline-constrained. Three consequences:
+1. **Zero client-bundle cost** — the perf gate ([[performance-is-a-standing-value]]) CANNOT be
+   regressed by agent complexity, by construction.
+2. **No offline burden** — agent control is STRUCTURALLY online (remote consumer ↔ backend over the
+   network), not a dropped feature; the offline case can't arise, so there's no degradation matrix.
+3. **Author it rich** — no size budget, iterate freely; the cost of making the AI story GOOD is low.
+
+Robust even if **in-app AI** is added later (a "summarize" button inside deltos) — that's a thin
+client caller of the same backend MCP surface; the guides still live in the backend, never the
+bundle. **So the two things deltos cares most about — load-feel and offline — are exactly what the
+agent layer cannot threaten.**
+
 ---
 
 ## 10. First consumers (prove the API against real needs, not speculation)
@@ -374,21 +430,48 @@ plugins."
 
 ---
 
-## 12. Build sequencing (proposed)
+## 12. Build decomposition — TWO TRACKS
 
-1. **Manifest + loader + two-tier registration** (§1, §3) — the spine; registers
-   manifests at startup, lazy-loads runtimes on demand. Re-homes the existing built-in
-   registrations (formula/embeds/tools) behind it as the first "internal plugins."
-2. **Render-only component contract** (§5, fork b) — so search/preview/share stop pulling
-   PM; retrofit the existing link_card embed as the proving case.
-3. **Capability model + degraded render** (§4) — declarations + render-context plumbing.
-4. **Attachment plugin** (§10.2) + **storage capability** (§7) — first real third block-shard;
-   forces the storage channel. secSys gate (§8) on the trust handle.
-5. **Slash palette** (§10.1) — the discovery surface over the manifest registry.
-6. **Versioning/migration** (§6) + **plugin-call schemas** (§9) — hardening + the
-   MCP/agent surface. Can interleave once the manifest carries the fields.
+The work splits into two independent tracks. **Track A = the plugin framework + plugins
+(build NOW).** **Track B = the access/AI/agent story (deferred; starts with addressability).**
+Track A does NOT depend on Track B — a content-addressed blob embedded in a doc needs no
+note-URLs — so the framework can start immediately.
 
-Each step is independently shippable and holds the perf gate (§3).
+**Every Track-A slice is independently shippable and holds these gates:** the **perf gate**
+(entry bundle must NOT grow — §3, [[plugins-lazy-past-first-paint]], enforced by the #72 strict
+build + entry-bundle check, which lands FIRST); the **rendered-UI gate** (DOM-assert tests +
+Jim on-device smoke before deploy — [[ui-features-need-rendered-ui-gate]]); and **deploy holds
+for the planner's go → Jim feel-tests on live** ([[review-on-live-never-local-preview]]).
+
+### Track A — the framework (build now)
+
+- **A0 — land #72** (strict prod build + entry-bundle-size check in the pre-flight gate) FIRST,
+  so the perf gate self-enforces on every plugin PR.
+- **A1 — Manifest + loader + two-tier registration spine** (§1, §3). Pin the manifest shape
+  (§13 leans: built-in array; manifest *aggregates* the existing registries). Loader registers
+  manifests at startup (tier-1, in entry), lazy-loads runtimes on demand (tier-2). **Re-home the
+  existing formula/embeds/tools behind it as the first "internal plugins" — behavior-preserving;
+  this IS the de-risking proof.** Formalize the friendlier unknown-block placeholder (§6).
+  *Accept:* existing plugins work unchanged through the manifest; entry bundle does not grow.
+- **A2 — Render-only component contract** (§5, fork b). Spine→shared render component; retrofit
+  `link_card` as the proving case. *Accept:* link_card renders read-only OUTSIDE an editor;
+  search/preview paths don't pull prosemirror-view.
+- **A3 — Capability model + degraded render** (§4). Manifest declares capabilities; render-context
+  plumbed. *Accept:* an online-only block shows a cached/degraded form offline, never broken.
+- **A4 — Attachment plugin + `blob` capability** (§7, §10.2) — first real NEW block-shard; forces
+  R2 content-addressing + byte-sync + the capability-scoped host handle. **secSys-gated** (trust
+  handle + R2 quota/abuse + account-scoping, §8). *Accept:* drop image/file → stored in R2
+  content-addressed, syncs across devices, renders inline + render-only, offline shows cached.
+- **A5 — Slash `/` palette** (§10.1) — discovery surface over the manifest registry; desktop-primary.
+  Can follow A1 in parallel with A2–A4.
+- **A6 — Versioning/migration** (§6) — manifest `schemaVersion` + lazy migrate-on-open. Hardening.
+
+### Track B — access / AI (deferred; designed-for, §14 + §9A)
+
+Starts with **addressability** (its own focused mini-spec: note/collection URL shape, routing,
+access control, interaction with the synthetic-default/notebookStore model), then the grant /
+access-token layer, then the MCP surface + per-plugin agent guides, then share, then collab.
+Gated on secSys throughout (most security-sensitive axis).
 
 ---
 
