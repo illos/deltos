@@ -2390,12 +2390,14 @@ a.auth__link { display: inline; }
 
 /* ── #69 Deck — HOST-side rules only (the Deck surface + keypad CSS lives in src/deck/deck.css) ──
    Caret clearance: when the Deck is up, give the editable bottom space so the last lines scroll clear of
-   it (approximation of keypad + the 47px reserved slot + safe-area; tune on-device with the overlay). */
-.editor__pm--kb { padding-bottom: 311px; scroll-padding-bottom: 311px; }
-/* #69 C-manual: keypad hidden → the Deck collapses to just the slim base bar (toggle), so the note reclaims
-   the keypad's height — clear only the base region + safe-area. Must follow .editor__pm--kb to win (same
-   specificity). Approximate (base 47 + safe + margin) — tune on-device. */
-.editor__pm--kb-collapsed { padding-bottom: 72px; scroll-padding-bottom: 72px; }
+   it. #97: the bottom space is now the REAL Deck height — var(--deck-h), published live by the Deck via
+   ResizeObserver (per loadout/layer/device/orientation) — plus a small margin; the hardcoded 311/72 are now
+   only first-paint fallbacks before the var is measured. The JS selection-clearance (ProseMirrorEditor)
+   reads the same var for the case iOS native selection-scroll ignores scroll-padding. */
+.editor__pm--kb { padding-bottom: calc(var(--deck-h, 311px) + 12px); scroll-padding-bottom: calc(var(--deck-h, 311px) + 12px); }
+/* #69 C-manual: keypad collapsed → the Deck is just the slim base bar; --deck-h already reflects that smaller
+   height, so this only swaps the pre-measure fallback (72) — must follow .editor__pm--kb to win. */
+.editor__pm--kb-collapsed { padding-bottom: calc(var(--deck-h, 72px) + 12px); scroll-padding-bottom: calc(var(--deck-h, 72px) + 12px); }
 
 /* #69 editor loadout v1 (commit 2) — the Deploy-3 tool registry ASSEMBLED into the Deck's layers,
    host-injected into the generic KeypadLoadout. Reuses the MobileEditorBar BUTTON + glyph classes

@@ -47,6 +47,7 @@ import type { ToolDescriptor } from './editorTools.js';
 import { useIsDesktop } from '../lib/useIsDesktop.js';
 import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
 import { useKeypadSwipe, useScrollHideKeypad } from '../lib/useKeypadSwipe.js';
+import { deckClearanceScroll, findScrollParent, DECK_CLEARANCE_MARGIN_PX } from '../lib/deckClearance.js';
 
 interface ProseMirrorEditorProps {
   noteId: string;
@@ -279,6 +280,28 @@ export function ProseMirrorEditor({
     onHide: () => { if (!lockedRef.current) setKeypadShown(false); },
     containerRef,
   });
+  // #97 SELECTION CLEARANCE: iOS native long-press selection-scroll IGNORES scroll-padding-bottom, so a word
+  // selected near the bottom lands BEHIND the Deck. On any selection/caret change (incl. selection-only, not
+  // a docChanged txn → a document 'selectionchange' listener catches it), if the selection sits below the
+  // Deck, scroll the note's container so it clears. Custom-keyboard only (the Deck is up); uses the REAL
+  // Deck height (--deck-h). rAF-debounced so it settles AFTER the browser's native scroll (no fight).
+  useEffect(() => {
+    if (!customKb) return;
+    let raf = 0;
+    const onSelectionChange = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const view = viewRef.current;
+        if (!view || view.isDestroyed || !view.hasFocus()) return;
+        const coords = view.coordsAtPos(view.state.selection.head); // viewport (client) coords
+        const deckH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--deck-h')) || 0;
+        const delta = deckClearanceScroll(coords.bottom, window.innerHeight, deckH, DECK_CLEARANCE_MARGIN_PX);
+        if (delta > 1) findScrollParent(containerRef.current).scrollBy({ top: delta, behavior: 'auto' });
+      });
+    };
+    document.addEventListener('selectionchange', onSelectionChange);
+    return () => { document.removeEventListener('selectionchange', onSelectionChange); cancelAnimationFrame(raf); };
+  }, [customKb]);
   // #69 editor-loadout v1: the group selector (below keys) + per-group submenu (above keys) share one
   // open-group state. They're host-injected into the generic KeypadLoadout; the loadout itself is
   // assembled below, once the tool runners (runTool / handleUndo / handleRedo) are defined.
