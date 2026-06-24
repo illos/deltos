@@ -26,6 +26,13 @@
 }
 .link-card:active { background: var(--sel); }
 
+/* Read-only variant (#124 A2): rendered as a plain anchor outside an editor — no downgrade × button, so it
+   reclaims the right padding; standard link decoration off (the whole card is the affordance). */
+.link-card--readonly {
+  padding-right: 14px;
+  text-decoration: none;
+}
+
 /* ── Favicon ─────────────────────────────────────────────────────────────────── */
 
 .link-card__favicon {
