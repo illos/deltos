@@ -4,6 +4,7 @@ import type { Node as PmNode } from 'prosemirror-model';
 import type { EditorView, NodeView } from 'prosemirror-view';
 import { AttachmentChip } from './AttachmentChip.js';
 import { loadBlobUrl, downloadBlob, isInlineRenderableImage } from './blobClient.js';
+import { pluginRegistry } from '../runtime/index.js';
 
 interface AttachmentPayload {
   hash?: string;
@@ -67,7 +68,10 @@ export class AttachmentNodeView implements NodeView {
   }
 
   private renderNode(node: PmNode): void {
-    this.root.render(<AttachmentView payload={(node.attrs.pluginContent ?? {}) as AttachmentPayload} />);
+    // A6 #128: lazy migrate-on-open — bring an older-schemaVersion payload to current before rendering
+    // (no-op while attachment is v1; the hook is live so a future v2 upgrades on open, never a bulk pass).
+    const payload = pluginRegistry.migrateBlock('attachment', node.attrs.pluginContent ?? {}) as AttachmentPayload;
+    this.root.render(<AttachmentView payload={payload} />);
   }
 
   update(node: PmNode): boolean {

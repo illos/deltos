@@ -81,6 +81,12 @@ export interface PluginRuntime {
   readonly editorPlugins?: (schema: DeltoSchema) => readonly Plugin[];
   /** Editor tool descriptors (toolbar / Deck / palette surfaces). */
   readonly tools?: readonly ToolDescriptor[];
+  /**
+   * Forward-migration for a stored payload authored at an OLDER schemaVersion (§6, A6 #128). Returns the
+   * payload upgraded to the manifest's CURRENT schemaVersion. Run LAZILY on open (never a bulk pass, per the
+   * disposable/clean-state posture + perf). Omit when the payload shape has never changed.
+   */
+  readonly migrate?: (payload: unknown, fromVersion: number) => unknown;
 }
 
 /**
@@ -109,6 +115,34 @@ export interface PluginManifest {
   readonly schemaVersion?: number;
   /** Tier-2 loader. Synchronous for built-ins (in-chunk); a Promise for lazy/heavy plugins. */
   readonly load: () => PluginRuntime | Promise<PluginRuntime>;
+}
+
+/** The stored schema version of a block payload (a payload authored before versioning → treated as v1). */
+export function payloadVersion(payload: unknown): number {
+  if (payload && typeof payload === 'object') {
+    const v = (payload as { schemaVersion?: unknown }).schemaVersion;
+    if (typeof v === 'number') return v;
+  }
+  return 1;
+}
+
+/**
+ * Lazily migrate a stored payload to `currentVersion` via the runtime's migrate fn (§6, A6). No-op when the
+ * payload is already current or no migrate is provided. Stamps the new schemaVersion so it isn't re-migrated.
+ * Pure (no PM / no registry) so any read path can call it. LOSSLESS — never drops the original on a missing
+ * migrate; an unmigratable old block just renders as-is (durability §6).
+ */
+export function migratePayload(
+  payload: unknown,
+  currentVersion: number,
+  migrate?: (p: unknown, from: number) => unknown,
+): unknown {
+  const from = payloadVersion(payload);
+  if (from >= currentVersion || !migrate) return payload;
+  const migrated = migrate(payload, from);
+  return migrated && typeof migrated === 'object'
+    ? { ...(migrated as object), schemaVersion: currentVersion }
+    : migrated;
 }
 
 /** A manifest whose runtime loads synchronously — the v1 built-in case (eager, behavior-preserving). */

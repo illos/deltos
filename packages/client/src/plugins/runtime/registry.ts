@@ -15,7 +15,7 @@ import type { DeltoSchema } from '../../editor/schema.js';
 import { createFormulaRegistry, type FormulaRegistry } from '../formula/index.js';
 import { registerPluginIsland } from '../../editor/nodeviews/PluginIsland.js';
 import type { ToolDescriptor } from '../../editor/editorTools.js';
-import { isEager, type PluginManifest, type PluginRuntime } from './manifest.js';
+import { isEager, migratePayload, type PluginManifest, type PluginRuntime } from './manifest.js';
 
 export class PluginRegistry {
   private readonly manifests = new Map<string, PluginManifest>();
@@ -40,6 +40,19 @@ export class PluginRegistry {
 
   manifestById(id: string): PluginManifest | undefined {
     return this.manifests.get(id);
+  }
+
+  /**
+   * Lazily migrate a stored block payload to its plugin's CURRENT schemaVersion (§6, A6 #128) — the
+   * migrate-on-open hook a consumer (node-view / resolver) calls before rendering. Requires the plugin's
+   * runtime to be loaded (migrate lives there); returns the payload UNCHANGED when there's no manifest /
+   * no declared version / no loaded migrate / it's already current. Never bulk; never lossy.
+   */
+  migrateBlock(pluginType: string, payload: unknown): unknown {
+    const manifest = this.byBlockType.get(pluginType);
+    if (!manifest?.schemaVersion) return payload;
+    const runtime = this.runtimeCache.get(manifest.id);
+    return migratePayload(payload, manifest.schemaVersion, runtime?.migrate);
   }
 
   /**
