@@ -22,6 +22,7 @@ import { BottomNav } from './components/BottomNav.js';
 import { ThreeRegionShell } from './components/ThreeRegionShell.js';
 import { DeckHostProvider } from './components/DeckHost.js';
 import { useIsDesktop } from './lib/useIsDesktop.js';
+import { useNoteDnd } from './lib/dnd/useNoteDnd.js';
 import { useCustomKeyboard } from './lib/useCustomKeyboard.js';
 import { startSyncTriggers, syncNow } from './lib/syncEngine.js';
 import { resolveCollectionView } from './lib/collectionViews.js';
@@ -144,6 +145,9 @@ export function HomeView({ notebookId }: CollectionViewProps) {
   const [openId, setOpenId] = useState<string | null>(null);
   // #78 swipe-to-move: the note whose notebook-picker sheet is open (null = closed).
   const [movingNote, setMovingNote] = useState<Note | null>(null);
+  // #79 desktop note→notebook drag-and-drop: lazily-loaded chunk, desktop only (null on mobile / until loaded).
+  const isDesktop = useIsDesktop();
+  const noteDnd = useNoteDnd(isDesktop);
 
   const handleMove = useCallback((note: Note, targetNotebookId: NotebookId | null) => {
     setMovingNote(null);
@@ -214,6 +218,9 @@ export function HomeView({ notebookId }: CollectionViewProps) {
                     to={`/note/${note.id}`}
                     className={`home__note-link${selected ? ' home__note-link--selected' : ''}`}
                     aria-current={selected ? 'page' : undefined}
+                    draggable={noteDnd ? true : undefined}
+                    onDragStart={noteDnd ? (e) => noteDnd.startNoteDrag(e, note) : undefined}
+                    onDragEnd={noteDnd ? () => noteDnd.endNoteDrag() : undefined}
                   >
                     <span className="home__note-title">{displayTitle}</span>
                     <span className="home__note-meta">

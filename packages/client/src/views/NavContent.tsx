@@ -5,6 +5,8 @@ import { useNotebooks, useNotes } from '../db/storeHooks.js';
 import { useNotebookStore } from '../lib/notebookStore.js';
 import { mutateNotebooks } from '../db/mutateNotebooks.js';
 import { notifyQueueWrite } from '../lib/syncEngine.js';
+import { useIsDesktop } from '../lib/useIsDesktop.js';
+import { useNoteDnd } from '../lib/dnd/useNoteDnd.js';
 import { Notebook, BulletList, Plus, Trash, SettingsSliders } from '../icons/index.js';
 
 interface NavContentProps {
@@ -32,6 +34,11 @@ export function NavContent({ onNavigate }: NavContentProps) {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const navigate = useNavigate();
+  // #79 desktop note→notebook DnD: notebook rows are drop targets (lazy chunk, desktop only). dropTarget
+  // holds the highlighted row's key ('all' = All Notes, else the notebook id).
+  const isDesktop = useIsDesktop();
+  const noteDnd = useNoteDnd(isDesktop);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   const countByNotebook = useMemo(() => {
     const m: Record<string, number> = {};
@@ -82,8 +89,14 @@ export function NavContent({ onNavigate }: NavContentProps) {
       <p className="dt-label nav-content__label">Notebooks</p>
 
       <ul className="nav-content__list">
-        {/* All Notes — synthetic aggregate, pinned above the notebooks (Jim), distinct icon, undeletable. */}
-        <li className={`nav-content__item${currentNotebookId === null ? ' nav-content__item--current' : ''}`}>
+        {/* All Notes — synthetic aggregate, pinned above the notebooks (Jim), distinct icon, undeletable.
+            #79 drop target: dropping a note here uncategorizes it (notebookId → null). */}
+        <li
+          className={`nav-content__item${currentNotebookId === null ? ' nav-content__item--current' : ''}${dropTarget === 'all' ? ' nav-content__item--drop-target' : ''}`}
+          onDragOver={noteDnd ? (e) => { if (noteDnd.allowNoteDrop(e)) setDropTarget('all'); } : undefined}
+          onDragLeave={noteDnd ? () => setDropTarget((t) => (t === 'all' ? null : t)) : undefined}
+          onDrop={noteDnd ? (e) => { void noteDnd.dropNoteOnNotebook(e, null); setDropTarget(null); } : undefined}
+        >
           <button className="nav-content__nb-btn" onClick={() => { void handleSelect(null); }}>
             <BulletList className="nav-content__nb-icon" size={15} />
             <span className="nav-content__nb-name">All Notes</span>
@@ -93,7 +106,10 @@ export function NavContent({ onNavigate }: NavContentProps) {
         {notebooks.map((nb) => (
           <li
             key={nb.id}
-            className={`nav-content__item${nb.id === currentNotebookId ? ' nav-content__item--current' : ''}`}
+            className={`nav-content__item${nb.id === currentNotebookId ? ' nav-content__item--current' : ''}${dropTarget === nb.id ? ' nav-content__item--drop-target' : ''}`}
+            onDragOver={noteDnd ? (e) => { if (noteDnd.allowNoteDrop(e)) setDropTarget(nb.id); } : undefined}
+            onDragLeave={noteDnd ? () => setDropTarget((t) => (t === nb.id ? null : t)) : undefined}
+            onDrop={noteDnd ? (e) => { void noteDnd.dropNoteOnNotebook(e, nb.id); setDropTarget(null); } : undefined}
           >
             <button className="nav-content__nb-btn" onClick={() => { void handleSelect(nb.id); }}>
               <Notebook className="nav-content__nb-icon" size={15} />

@@ -1796,6 +1796,12 @@ a.auth__link { display: inline; }
 }
 .nav-content__item--current .nav-content__nb-icon { color: var(--accent); }
 .nav-content__item--current .nav-content__nb-count { color: var(--secondary); }
+/* #79 desktop DnD drop target — accent ring while a note is dragged over this notebook row. */
+.nav-content__item--drop-target .nav-content__nb-btn {
+  background: var(--sel);
+  box-shadow: inset 0 0 0 2px var(--accent);
+  border-radius: 8px;
+}
 
 /* + New notebook (§1) — plus icon + label, Plex Mono 12px, --secondary. */
 .nav-content__new-btn {
