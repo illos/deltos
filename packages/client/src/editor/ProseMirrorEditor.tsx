@@ -49,6 +49,8 @@ import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
 import { useKeypadSwipe, useScrollHideKeypad } from '../lib/useKeypadSwipe.js';
 import { deckClearanceScroll, findScrollParent, DECK_CLEARANCE_MARGIN_PX } from '../lib/deckClearance.js';
 import { registerPendingEditFlush } from '../lib/pendingEditFlush.js';
+import { createSlashPalettePlugin, SlashPalette, buildPaletteItems, matchesQuery } from './slashPalette/index.js';
+import type { PaletteEvent, PaletteItem } from './slashPalette/index.js';
 
 interface ProseMirrorEditorProps {
   noteId: string;
@@ -229,6 +231,26 @@ export function ProseMirrorEditor({
   }, [closeLink]);
   const submitLinkRef = useRef(submitLink);
   useLayoutEffect(() => { submitLinkRef.current = submitLink; });
+
+  // A5 (#127) — slash palette: floating insert+command popup triggered by typing '/'.
+  // Desktop-primary: enabled when isDesktop, disabled on mobile (ref checked per-keystroke).
+  const [paletteAnchor, setPaletteAnchor] = useState<{ left: number; bottom: number } | null>(null);
+  const [paletteQuery, setPaletteQuery] = useState('');
+  const [paletteSelectedIndex, setPaletteSelectedIndex] = useState(0);
+  // Refs mirror state + stable callbacks so the PM plugin always calls the latest handlers.
+  const paletteSliceStartRef = useRef(0);
+  const paletteSelectedIdxRef = useRef(0);
+  const paletteQueryRef = useRef('');
+  const paletteEnabledRef = useRef(isDesktop);
+  const paletteDispatchRef = useRef<(event: PaletteEvent) => void>(() => {});
+  // Stable runTool ref so the execute function always sees the latest runTool without being
+  // listed in runTool's dependency array (which would cause PM plugin recreation).
+  const runToolRef = useRef<typeof runTool | null>(null);
+  useLayoutEffect(() => {
+    paletteEnabledRef.current = isDesktop;
+    paletteSelectedIdxRef.current = paletteSelectedIndex;
+    paletteQueryRef.current = paletteQuery;
+  });
   // Wrap the keypad actions so that WHILE link entry is open, keys route into the ACTIVE field's buffer (no
   // native keyboard) instead of the document; Enter advances Title→URL, then applies. Built once; preserves
   // which OPTIONAL capabilities the base actions expose (so trackpad / auto-cap / double-space aren't
@@ -379,6 +401,75 @@ export function ProseMirrorEditor({
     tool.command(deltoSchema)(view.state, view.dispatch);
     view.focus();
   }, []);
+  // Keep runToolRef current so the palette execute path always calls the latest runTool without
+  // listing runTool in effect dependencies (would cause PM plugin recreation on every render).
+  useLayoutEffect(() => { runToolRef.current = runTool; });
+
+  // A5: palette selection handler — called on click AND on Enter key (via paletteDispatchRef).
+  const handlePaletteSelect = useCallback((item: PaletteItem) => {
+    const view = viewRef.current;
+    if (!view) return;
+    // Delete the '/query' trigger text before executing the command.
+    const sliceStart = paletteSliceStartRef.current;
+    const { from } = view.state.selection;
+    if (from > sliceStart) {
+      view.dispatch(view.state.tr.delete(sliceStart, from));
+    }
+    setPaletteAnchor(null);
+    if (item.kind === 'tool') {
+      runToolRef.current?.(item.tool);
+    } else {
+      const pbType = deltoSchema.nodes['plugin_block'];
+      if (pbType) {
+        const node = pbType.create({ pluginType: item.manifest.id, pluginContent: null });
+        view.dispatch(view.state.tr.replaceSelectionWith(node).scrollIntoView());
+        view.focus();
+      }
+    }
+  }, []);
+  const handlePaletteSelectRef = useRef(handlePaletteSelect);
+  useLayoutEffect(() => { handlePaletteSelectRef.current = handlePaletteSelect; });
+
+  // A5: palette event dispatcher — called from the PM plugin, updates React state.
+  // Updated each render via useLayoutEffect so the PM plugin always calls the latest version.
+  useLayoutEffect(() => {
+    paletteDispatchRef.current = (event: PaletteEvent) => {
+      switch (event.type) {
+        case 'open':
+          paletteSliceStartRef.current = event.sliceStart;
+          setPaletteAnchor({ left: event.anchorLeft, bottom: event.anchorBottom });
+          setPaletteQuery('');
+          setPaletteSelectedIndex(0);
+          break;
+        case 'query':
+          paletteSliceStartRef.current = event.sliceStart;
+          setPaletteAnchor({ left: event.anchorLeft, bottom: event.anchorBottom });
+          setPaletteQuery(event.query);
+          setPaletteSelectedIndex(0);
+          break;
+        case 'close':
+          setPaletteAnchor(null);
+          break;
+        case 'nav':
+          setPaletteSelectedIndex((i) =>
+            event.direction === 'up' ? Math.max(0, i - 1) : i + 1,
+          );
+          break;
+        case 'enter': {
+          paletteSliceStartRef.current = event.sliceStart;
+          const allItems = buildPaletteItems(contributions.tools, pluginRegistry.allManifests());
+          const filtered = allItems.filter((it) => matchesQuery(it, paletteQueryRef.current));
+          const idx = filtered.length > 0
+            ? Math.min(paletteSelectedIdxRef.current, filtered.length - 1)
+            : -1;
+          const selected = filtered[idx];
+          if (selected) handlePaletteSelectRef.current(selected);
+          else setPaletteAnchor(null);
+          break;
+        }
+      }
+    };
+  });
 
   // #69 §6.1 voice: the Deck's voice loadout (deck-core) wired to deltos's concrete Transcriber (single-
   // flight POST /api/transcribe) + commit-to-note. The mic control lives in the selector; while recording,
@@ -486,7 +577,12 @@ export function ProseMirrorEditor({
     const doc = spineToPmDoc(deltoSchema, initialBody, initialTitle);
 
     const basePlugins: Plugin[] = [
-      // Inline-formula FIRST: its Backspace-unwrap keymap must intercept before the base keymap (a chip-edge
+      // A5: slash palette FIRST — intercepts Arrow/Enter/Escape while open; returns false when closed.
+      createSlashPalettePlugin(
+        (event) => paletteDispatchRef.current(event),
+        paletteEnabledRef,
+      ),
+      // Inline-formula SECOND: its Backspace-unwrap keymap must intercept before the base keymap (a chip-edge
       // backspace unwraps; everything else falls through). Its '=' auto + '[...]' bracket input rules are
       // order-independent. Self-contained — does not touch core inputRules.ts.
       ...buildFormulaPlugins(formulaRegistry),
@@ -751,6 +847,18 @@ export function ProseMirrorEditor({
           suggestions={spellSuggest.suggestions}
           onPick={(w) => handleSpellPick(spellSuggest.from, spellSuggest.to, w)}
           onClose={() => setSpellSuggest(null)}
+        />
+      )}
+      {/* A5 (#127): slash palette — desktop-only floating popup; portal to body, anchored at the '/' caret. */}
+      {isDesktop && (
+        <SlashPalette
+          anchor={paletteAnchor}
+          query={paletteQuery}
+          selectedIndex={paletteSelectedIndex}
+          tools={contributions.tools}
+          manifests={pluginRegistry.allManifests()}
+          onSelect={handlePaletteSelect}
+          onClose={() => setPaletteAnchor(null)}
         />
       )}
     </>

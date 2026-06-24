@@ -2469,6 +2469,31 @@ body.deck-custom .bottom-nav { display: none; }
 .spell-popover__item:active { background: var(--sel); }
 .spell-popover__empty { color: var(--secondary); font-size: 14px; padding: 11px 14px; }
 
+/* A5 (#127) — slash palette: the `/`-triggered insert+command popup (docs/specs/plugin-support.md §10.1).
+   Desktop-primary; portal to document.body so it floats above all editor chrome. */
+.slash-palette {
+  position: fixed; z-index: 500; /* above Deck (50), nav (300-350), spell-popover (400) */
+  background: var(--list); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  padding: 4px; min-width: 200px; max-width: min(300px, 85vw);
+  max-height: 40vh; overflow-y: auto;
+  display: flex; flex-direction: column;
+}
+.slash-palette__item {
+  appearance: none; -webkit-appearance: none; background: none; border: none; text-align: left;
+  color: var(--ink); font-family: var(--ff); font-size: 16px; line-height: 1.2;
+  padding: 9px 12px; min-height: 40px; border-radius: 6px; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  -webkit-tap-highlight-color: transparent;
+}
+.slash-palette__item--selected { background: var(--sel); }
+.slash-palette__item:active { background: var(--sel); }
+.slash-palette__icon {
+  display: flex; align-items: center; color: var(--secondary); flex-shrink: 0;
+}
+.slash-palette__label { flex: 1; }
+
 /* #69 §5.1 spellcheck suggestion BAR — the Deck TOP-SLOT presentation (custom-keyboard mode). A
    horizontally scrollable row of pills, like the native iOS predictive bar. Sits in the top-slot layer
    (same look as the formatting submenu .elt-sub — a sibling occupant). */
