@@ -48,12 +48,15 @@ import { useIsDesktop } from '../lib/useIsDesktop.js';
 import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
 import { useKeypadSwipe, useScrollHideKeypad } from '../lib/useKeypadSwipe.js';
 import { deckClearanceScroll, findScrollParent, DECK_CLEARANCE_MARGIN_PX } from '../lib/deckClearance.js';
+import { registerPendingEditFlush } from '../lib/pendingEditFlush.js';
 
 interface ProseMirrorEditorProps {
   noteId: string;
   initialTitle: string;
   initialBody: BlockBody;
-  onChange: (title: string, body: BlockBody) => void;
+  // Returns void OR a promise that resolves once the save has reached Dexie — the #101 pending-edit flush
+  // awaits it so a hard reload never unloads mid-write.
+  onChange: (title: string, body: BlockBody) => void | Promise<void>;
   autoFocus?: boolean;
   /** Called in effect cleanup after the final onChange flush — signals "left the note". */
   onLeave?: () => void;
@@ -316,6 +319,24 @@ export function ProseMirrorEditor({
   useLayoutEffect(() => { onLeaveRef.current = onLeave; });
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // #101 tap-to-reload data-safety: register a flush so a hard reload (the SyncIndicator tap) can COMMIT
+  // this editor's in-memory debounced edit to Dexie and AWAIT it before the page unloads (IndexedDB txns
+  // abort on unload → lost edit otherwise). No-op when no save is pending. Refs are stable, so register once.
+  useEffect(
+    () =>
+      registerPendingEditFlush(async () => {
+        if (saveTimerRef.current === null) return;
+        const view = viewRef.current;
+        if (!view || view.isDestroyed) return;
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        const title = extractTitleFromDoc(view.state.doc);
+        const body = pmDocToSpine(view.state.doc);
+        await onChangeRef.current(title, body);
+      }),
+    [],
+  );
 
   const handleUndo = useCallback(() => {
     const view = viewRef.current;

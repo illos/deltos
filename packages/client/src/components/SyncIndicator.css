@@ -1,31 +1,59 @@
-/* Sync status indicator — §3 note-meta treatment: a status DOT + the word (Plex Mono, --secondary),
-   NO bordered pill. The 'synced' dot is ALWAYS green --sync (hard invariant — never the accent);
-   other states tint the dot to signal at a glance. */
+/* #101 Sync status — a pure colored BLIP (no text). One COLOR per signal:
+   solid green = synced · pulsing green = syncing/pending · yellow = error · grey/dim = offline/local-only.
+   The blip is a button (tap = flush-then-hard-reload), so reset the button chrome and grow the hit area
+   past the 8px dot for a comfortable touch target. */
 
 .sync-indicator {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: none;
+  margin: 0;
+  padding: 5px; /* ~18px hit area around the 8px dot — finger-friendly, no visual box */
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--secondary);
-  text-transform: capitalize; /* "synced" → "Synced" */
-  white-space: nowrap;
+  justify-content: center;
+  line-height: 0;
+  cursor: pointer; /* signals tappable (title carries "Tap to reload") */
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
   user-select: none;
   -webkit-user-select: none;
 }
 
 .sync-indicator__dot {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: var(--sync); /* synced = the always-green --sync dot (invariant); per-state overrides below */
+  background: var(--sync); /* default = the always-green --sync; per-state overrides below */
   flex-shrink: 0;
 }
 
-/* Per-state dot colour. 'synced' (idle) keeps the green --sync default above. */
-.sync-indicator--local-only .sync-indicator__dot { background: var(--faint); } /* grey — never synced this session */
-.sync-indicator--syncing    .sync-indicator__dot { background: #7eb8f5; }      /* blue   — pushing/pulling */
-.sync-indicator--pending    .sync-indicator__dot { background: #c8b46e; }      /* amber  — writes queued */
-.sync-indicator--offline    .sync-indicator__dot { background: #f0b86e; }      /* orange — no connectivity */
-.sync-indicator--error      .sync-indicator__dot { background: #f08f6e; }      /* red    — last sync failed */
+/* synced — solid green (the always-green --sync invariant). */
+.sync-indicator--synced .sync-indicator__dot { background: var(--sync); }
+
+/* syncing / pending — green, PULSING (honest "not fully synced yet"). */
+.sync-indicator--syncing .sync-indicator__dot {
+  background: var(--sync);
+  animation: sync-blip-pulse 1.1s ease-in-out infinite;
+}
+
+/* error ONLY — yellow (warm gold reads on both light + dark at this size). NOT used for offline. */
+.sync-indicator--error .sync-indicator__dot { background: #E0A52E; }
+
+/* offline / local-only — grey/dim. Neutral "not syncing right now", deliberately NOT yellow (#85/#86:
+   offline is not an error). */
+.sync-indicator--offline .sync-indicator__dot {
+  background: var(--faint);
+  opacity: 0.7;
+}
+
+@keyframes sync-blip-pulse {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%      { opacity: 0.35; transform: scale(0.78); }
+}
+
+/* Respect reduced-motion: hold the green steady rather than pulsing. */
+@media (prefers-reduced-motion: reduce) {
+  .sync-indicator--syncing .sync-indicator__dot { animation: none; }
+}

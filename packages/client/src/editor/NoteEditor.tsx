@@ -24,7 +24,7 @@ export interface NoteEditorProps {
  */
 export function NoteEditor({ note, onSave, autoFocus = false }: NoteEditorProps) {
   const persistUpdate = useCallback(
-    (updates: Partial<Pick<Note, 'title' | 'body'>>) => {
+    (updates: Partial<Pick<Note, 'title' | 'body'>>): Promise<void> => {
       const now = new Date().toISOString();
       const updated: Note = {
         ...note,
@@ -32,15 +32,15 @@ export function NoteEditor({ note, onSave, autoFocus = false }: NoteEditorProps)
         updatedAt: now,
         syncStatus: 'pending',
       };
-      void onSave(updated);
+      // Return the save promise (not `void`) so the editor's #101 pending-edit flush can await the Dexie
+      // write before a hard reload. The normal debounced path doesn't await it — fire-and-forget is fine.
+      return onSave(updated);
     },
     [note, onSave],
   );
 
   const handleDocChange = useCallback(
-    (title: string, body: BlockBody) => {
-      persistUpdate({ title, body });
-    },
+    (title: string, body: BlockBody): Promise<void> => persistUpdate({ title, body }),
     [persistUpdate],
   );
 
