@@ -53,7 +53,13 @@
   //   { "binding": "UNFURL_CACHE", "id": "<paste-id-here>" },
   // ],
   //
+  // R2 — the content-addressed blob store (plugin-support §7, A4 #126; `blob` host capability via
+  // /api/plugin/blob). PRIVATE bucket; all access goes through the authenticated Worker. Provision once:
+  //   wrangler r2 bucket create deltos-blobs
+  "r2_buckets": [
+    { "binding": "BLOBS", "bucket_name": "deltos-blobs" },
+  ],
+  //
   // Reserved per the locked architecture — NOT wired in Phase 0:
   //   - Durable Objects (live collaboration's promote-to-DO seam; the E2EE relay)
-  //   - R2 (the content-addressed blob store)
 }

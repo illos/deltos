@@ -56,4 +56,12 @@ export interface Env {
    * wrangler.jsonc under `kv_namespaces` with `binding: "UNFURL_CACHE"`.
    */
   UNFURL_CACHE?: KVNamespace;
+  /**
+   * R2 bucket for the `blob` host capability (plugin-support §7, A4 #126) — content-addressed file/photo
+   * storage behind the authenticated Worker (PRIVATE bucket; access only via routes/blob.ts, keyed on the
+   * server-derived accountId). Optional in the type so unit tests inject a stub / omit it; the blob route
+   * fail-closes (503) when unbound. Provision: `wrangler r2 bucket create deltos-blobs`; the binding in
+   * wrangler.jsonc (declared) resolves to it at deploy.
+   */
+  BLOBS?: R2Bucket;
 }

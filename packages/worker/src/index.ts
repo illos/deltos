@@ -30,6 +30,7 @@ import { sync } from './routes/sync.js';
 import { passwordAuth } from './routes/passwordAuth.js';
 import { transcribe } from './routes/transcribe.js';
 import { unfurl } from './routes/unfurl.js';
+import { blob } from './routes/blob.js';
 
 const app = new Hono<AppEnv>();
 
@@ -94,6 +95,15 @@ app.route('/api/transcribe', transcribe);
 // ---------------------------------------------------------------------------
 
 app.route('/api/unfurl', unfurl);
+
+// ---------------------------------------------------------------------------
+// BLOB host capability (plugin-support §7, A4 #126) — the first server-enforced plugin host capability.
+// Content-addressed file/photo storage in a PRIVATE R2 bucket, behind the authenticated Worker. Upload
+// hash-verifies + keys on the SERVER-derived accountId; download is BOLA-safe (own-prefix only) + served
+// with safe headers (attachment + nosniff). First consumer: the attachment plugin.
+// ---------------------------------------------------------------------------
+
+app.route('/api/plugin/blob', blob);
 
 // ---------------------------------------------------------------------------
 // Helpers

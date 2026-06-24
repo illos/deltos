@@ -28,7 +28,35 @@ import type { ToolDescriptor } from '../../editor/editorTools.js';
  * exception that must degrade gracefully (enforced by render-context, A3). v1 only records them on the
  * manifest — degraded-render plumbing arrives in A3.
  */
-export type PluginCapability = 'offline' | 'online-only' | 'collaborative' | 'storage' | 'network';
+/**
+ * PRESENTATION capabilities (§4) — affect RENDER only (which form a read-only block draws), never access.
+ * Consumed by shouldDegrade (A3). `offline` is the local-first default.
+ */
+export type PluginCapability = 'offline' | 'online-only' | 'collaborative';
+
+/**
+ * BACKEND-RESOURCE capability kinds (§7) — each is backed by a host resource (R2/D1/egress/…) and ENFORCED
+ * at a server route. Distinct from presentation capabilities.
+ */
+export type HostCapabilityKind = 'blob' | 'records' | 'net' | 'compute' | 'schedule' | 'notify';
+
+/**
+ * A backend-resource capability declaration (HC-A1 type-contract, A4 #126). STRUCTURALLY distinct from the
+ * presentation `capabilities` strings: a backend capability is a RECORD that MUST carry
+ * `serverEnforced: true` — the type-level acknowledgement that this capability is enforced SERVER-SIDE at
+ * its Worker route (keyed on the server-derived accountId + the host-assigned pluginId), NEVER by the
+ * client. Consequences, by construction:
+ *   - you cannot declare a backend resource as a bare presentation flag (different shape), and
+ *   - you cannot omit the server-enforcement marker (`serverEnforced` is required and must be the literal
+ *     `true`).
+ * So "a backend capability enforced client-side / not bound to a server route" is UNREPRESENTABLE — A4's
+ * `blob` (and every future host capability) can't be added client-only-enforced by accident. The MODEL
+ * carries the invariant the docs used to; the actual enforcing route lives in the Worker (routes/blob.ts).
+ */
+export interface HostCapability {
+  readonly kind: HostCapabilityKind;
+  readonly serverEnforced: true;
+}
 
 /** Tier-1 palette/discovery entry (consumed by the slash palette, A5). Metadata only — no runtime. */
 export interface PluginPaletteEntry {
