@@ -5,12 +5,12 @@
 # The entry-bundle gz check enforces [[plugins-lazy-past-first-paint]]:
 # plugin runtimes must be loaded on demand, never bundled into the entry chunk.
 #
-# Baseline at gate creation: 147.7 KB gz (2026-06-24, ui-refresh HEAD).
-# To raise the ceiling deliberately: update ENTRY_BUNDLE_GZ_CEILING_KB below,
-# add a commit-message line explaining why (e.g. "raise bundle ceiling 175→190: adds X").
+# Baseline: 147 KB gz (A1 plugin spine, 2026-06-24). Ceiling = baseline + 5 KB to
+# catch runtime-code leaks at KB-scale while absorbing tiny manifest accretion.
+# To raise deliberately: update ENTRY_BUNDLE_GZ_CEILING_KB below and document why.
 set -euo pipefail
 
-ENTRY_BUNDLE_GZ_CEILING_KB=175
+ENTRY_BUNDLE_GZ_CEILING_KB=152
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
