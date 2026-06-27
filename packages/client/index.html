@@ -4,7 +4,11 @@
 <html lang="en" data-palette="ember" data-voice="sans" data-mode="system">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- maximum-scale=1 + user-scalable=no: HARD cap the page at 1.0 scale so iOS can never auto-zoom on a
+         tap/focus/selection in the editor (an absolute must-not, Jim). deltos is a single-user app, so losing
+         pinch-zoom is an acceptable trade for never zooming involuntarily. Caps the zoom regardless of which
+         iOS trigger fires (we ruled out the code-level causes: inputmode=none, >=16px body, no word-select). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <!-- Mode-aware status-bar color = Ember --nav surface (boot default), so a light device's chrome
          doesn't flash dark on cold load. The Appearance picker (Lane 5) can refine per chosen palette. -->
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F2F2F4" />
