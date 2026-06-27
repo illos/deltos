@@ -106,6 +106,18 @@ export interface AuthActions {
    * Resolves fast; the shell renders off the gate rule. Never throws. Suppressed while a ceremony runs.
    */
   init(): Promise<void>;
+  /**
+   * Re-mint the in-memory access token MID-SESSION from the httpOnly refresh cookie. Unlike {@link init}
+   * the shell is already open, so this NEVER touches the boot gate (isAuthed) or opens/closes the shell —
+   * it only swaps the bearer (and lifts a prior 'offline'/'revoked' sessionState back to 'active' on
+   * success). Bounded by {@link REFRESH_TIMEOUT_MS}. The sync engine calls it when a request is rejected
+   * for an expired/revoked access token (a 403 on the sync routes — the 15-min access TTL elapsed). Returns:
+   *   - 'ok'      — a fresh bearer is in memory; retry the request.
+   *   - 'revoked' — the refresh cookie itself is dead (genuine 401), or re-points to another account →
+   *                 the caller hard-gates sync (a full re-login is required, #89).
+   *   - 'offline' — couldn't reach the server (network / timeout); stay offline, reconnect retries.
+   */
+  remintBearer(): Promise<'ok' | 'revoked' | 'offline'>;
   /** Create the account + mint the session; returns the recovery phrase to show ONCE. Does NOT open the
    *  shell — the route shows + has the user acknowledge the phrase, then calls finalizeAuth. */
   register(username: string, password: string, turnstileToken?: string): Promise<RegisterResult>;
@@ -151,13 +163,30 @@ export interface AuthActions {
   clearError(): void;
 }
 
-/** Authed JSON fetch (same-origin → the refresh cookie rides automatically; the access token bearers). */
-function authFetch(path: string, body?: unknown, token?: string | null): Promise<Response> {
-  return fetch(`${API}${path}`, {
+/**
+ * How long a /refresh may take before we stop waiting. A WEAK (not absent) network otherwise leaves the
+ * boot fetch pending FOREVER → the blue spinner never clears (offline works because fetch rejects fast;
+ * a weak link neither resolves nor rejects). Bounded → on timeout the cold boot falls into the resident-
+ * shell offline open (#85) and re-mints on reconnect; mid-session {@link AuthActions.remintBearer} uses
+ * the same bound. Tunable — do not bury the literal.
+ */
+export const REFRESH_TIMEOUT_MS = 6000;
+
+/** Authed JSON fetch (same-origin → the refresh cookie rides automatically; the access token bearers).
+ *  `timeoutMs` (when > 0) abort-bounds the request — used for the /refresh calls so a weak network can't
+ *  hang the caller. A timeout aborts → fetch rejects (AbortError) → the caller's catch (offline path). */
+function authFetch(path: string, body?: unknown, token?: string | null, timeoutMs?: number): Promise<Response> {
+  const init: RequestInit = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
+  };
+  if (!timeoutMs || timeoutMs <= 0) return fetch(`${API}${path}`, init);
+  // Manual AbortController (not AbortSignal.timeout) so the timer is driveable under fake timers in tests.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  init.signal = ctrl.signal;
+  return fetch(`${API}${path}`, init).finally(() => clearTimeout(timer));
 }
 
 /** Read the recoveryEstablished flag off an auth response (on AccessTokenResponse: login + refresh).
@@ -185,7 +214,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
 
   async init() {
     try {
-      const res = await authFetch('/refresh');
+      const res = await authFetch('/refresh', undefined, undefined, REFRESH_TIMEOUT_MS);
       if (!res.ok) {
         if (get().isAuthing) return; // a live ceremony owns the gate
         // #89 (secSys Leg 2): a genuine 401 (revoked/expired refresh cookie) WITH a resident account →
@@ -231,6 +260,32 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
         set({ isAuthed: false, sessionState: 'offline' });
       }
     }
+  },
+
+  async remintBearer() {
+    let res: Response;
+    try {
+      res = await authFetch('/refresh', undefined, undefined, REFRESH_TIMEOUT_MS);
+    } catch {
+      return 'offline'; // network error or timeout — stay offline; the next reconnect/cycle retries
+    }
+    if (!res.ok) {
+      // A genuine 401 = the refresh cookie is revoked/expired → a full re-login is required (#89). Any
+      // other non-ok (5xx/transient) → 'offline' so a blip doesn't latch the scary error state.
+      return res.status === 401 ? 'revoked' : 'offline';
+    }
+    const s = (await res.json()) as AccessTokenResponse;
+    // Identity must not change under a live session. If the cookie somehow re-points to a DIFFERENT
+    // account, never swap the live session into it (that would cross the tenancy boundary with no wipe) —
+    // treat it as revoked so the caller forces a clean re-login.
+    if (get().accountId && s.accountId !== get().accountId) return 'revoked';
+    set({
+      bearerToken: s.token,
+      recoveryEstablished: readRecoveryFlag(s),
+      totpEnabled: readTotpFlag(s),
+      sessionState: 'active',
+    });
+    return 'ok';
   },
 
   async register(username, password, turnstileToken) {

@@ -27,6 +27,49 @@ function authHeader(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/** Raised by {@link syncFetch} when a re-mint could NOT restore a usable bearer — carries WHY so runSync
+ *  sets the right non-error state. 'revoked' → signed out (hard-gate, #89); 'offline' → can't reach server. */
+class SyncAuthError extends Error {
+  constructor(public readonly kind: 'revoked' | 'offline') {
+    super(`sync auth ${kind}`);
+    this.name = 'SyncAuthError';
+  }
+}
+
+// Single-flight the re-mint: a cycle's push AND pull can both be rejected for the same expired token —
+// share ONE /refresh, never fire two concurrent re-mints.
+let _remintInFlight: Promise<'ok' | 'revoked' | 'offline'> | null = null;
+function remintOnce(): Promise<'ok' | 'revoked' | 'offline'> {
+  if (!_remintInFlight) {
+    _remintInFlight = useAuthStore.getState().remintBearer().finally(() => { _remintInFlight = null; });
+  }
+  return _remintInFlight;
+}
+
+/**
+ * fetch() for EVERY sync request. On an auth rejection it re-mints the in-memory bearer from the refresh
+ * cookie ONCE and retries. The rejection statuses are subtle (verified against the worker guard):
+ *   - 403 — an EXPIRED/revoked access token. The worker finds the grant by token-hash (no expiry filter)
+ *           but `grantAllows` fails the expiry check → the chokepoint denies with 403, NOT 401. This is
+ *           the COMMON case (15-min access TTL) and the one behind "stuck yellow until I hard-reload".
+ *   - 401 — defensive (the sync routes don't currently emit it, but treat it the same as 403).
+ *   - 503 — an ABSENT bearer (no Authorization → dev-stub principal → prod fail-closed tripwire). Covers
+ *           the offline/weak-boot recovery: the shell opened with bearer=null and now re-mints in place.
+ * On a sync route a 403 can only mean "your token expired" (the client can never request another account —
+ * accountId is server-derived), so re-mint is always the right response. Before this, the engine threw on
+ * any !res.ok → setState('error') and every 2s tick re-failed with the same dead token; only a full reload
+ * re-minted via init(). A dead cookie (re-mint → 'revoked') or unreachable server ('offline') surfaces a
+ * typed {@link SyncAuthError} so runSync sets revoked/offline rather than a generic error.
+ */
+async function syncFetch(apiBase: string, path: string, init: RequestInit = {}): Promise<Response> {
+  const send = () => fetch(`${apiBase}${path}`, { ...init, headers: { ...(init.headers ?? {}), ...authHeader() } });
+  const res = await send();
+  if (res.status !== 401 && res.status !== 403 && res.status !== 503) return res;
+  const outcome = await remintOnce();
+  if (outcome !== 'ok') throw new SyncAuthError(outcome);
+  return send(); // retry ONCE with the fresh bearer (a still-failing retry returns as-is → caller throws)
+}
+
 /**
  * Stream B sync engine: offline-first write buffer + server-authoritative pull.
  *
@@ -137,15 +180,27 @@ async function runSync(notebookId: NotebookId, apiBase: string): Promise<void> {
     const remaining = await getStore().queueCount(); // any queue left?
     setState(remaining > 0 ? 'pending' : 'idle');
   } catch (err) {
-    if (err instanceof TypeError && err.message.includes('fetch')) {
+    if (err instanceof SyncAuthError) {
+      if (err.kind === 'revoked') {
+        // #89: the refresh cookie is dead → a full re-login is required. STOP the loop (no point
+        // re-failing every 2s with no way to mint a token) and mark the session revoked. Grey, NOT the
+        // scary yellow 'error' — a signed-out device isn't an error (companion to #85/#86).
+        useAuthStore.setState({ sessionState: 'revoked' });
+        suspendSync();
+        setState('offline');
+      } else {
+        setState('offline'); // couldn't reach the server to re-mint — not synced, but not an error
+      }
+    } else if (err instanceof TypeError && err.message.includes('fetch')) {
       setState('offline');
     } else {
       setState('error');
     }
   } finally {
     _inFlight.delete(notebookId);
-    if (_pending.has(notebookId)) {
-      // A trigger for THIS notebook arrived while we were running — honour it with one follow-up.
+    // Honour a trigger that arrived mid-cycle — UNLESS we were suspended (logout / revoked), where a
+    // re-run would just re-fail or re-populate after a wipe.
+    if (!_suspended && _pending.has(notebookId)) {
       void runSync(notebookId, apiBase);
     }
   }
@@ -209,9 +264,9 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
       dictionaryEntries: [],
     };
 
-    const res = await fetch(`${apiBase}/sync/push`, {
+    const res = await syncFetch(apiBase, '/sync/push', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`push ${res.status}`);
@@ -309,10 +364,7 @@ async function pullUpdates(notebookId: NotebookId, apiBase: string): Promise<voi
   let hasMore = true;
 
   while (hasMore) {
-    const res = await fetch(
-      `${apiBase}/sync/pull?cursor=${next}`,
-      { headers: authHeader() },
-    );
+    const res = await syncFetch(apiBase, `/sync/pull?cursor=${next}`);
     if (!res.ok) throw new Error(`pull ${res.status}`);
 
     const json: SyncPullResponse = await res.json();
@@ -418,9 +470,9 @@ async function pushNotebooks(apiBase: string): Promise<void> {
     dictionaryEntries: [],
   };
 
-  const res = await fetch(`${apiBase}/sync/push`, {
+  const res = await syncFetch(apiBase, '/sync/push', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`push notebooks ${res.status}`);
@@ -497,9 +549,9 @@ async function pushDictionary(apiBase: string): Promise<void> {
     dictionaryEntries: entries.map((e) => e.payload),
   };
 
-  const res = await fetch(`${apiBase}/sync/push`, {
+  const res = await syncFetch(apiBase, '/sync/push', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`push dictionary ${res.status}`);
