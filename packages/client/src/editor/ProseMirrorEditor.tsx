@@ -309,27 +309,41 @@ export function ProseMirrorEditor({
     containerRef,
   });
   // #97 SELECTION CLEARANCE: iOS native long-press selection-scroll IGNORES scroll-padding-bottom, so a word
-  // selected near the bottom lands BEHIND the Deck. On any selection/caret change (incl. selection-only, not
-  // a docChanged txn → a document 'selectionchange' listener catches it), if the selection sits below the
-  // Deck, scroll the note's container so it clears. Custom-keyboard only (the Deck is up); uses the REAL
-  // Deck height (--deck-h). rAF-debounced so it settles AFTER the browser's native scroll (no fight).
+  // selected near the bottom lands BEHIND the Deck. If the caret sits below the Deck's top edge, scroll the
+  // note's container the MINIMAL amount so it clears (0 if already above). Custom-keyboard only (the Deck is
+  // up); reads the REAL FULL Deck height (--deck-h, incl. the top-slot bar). Instant, so it settles AFTER the
+  // browser's native scroll (no fight).
+  const clearCaretBelowDeck = useCallback(() => {
+    const view = viewRef.current;
+    if (!view || view.isDestroyed || !view.hasFocus()) return;
+    const coords = view.coordsAtPos(view.state.selection.head); // viewport (client) coords
+    const deckH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--deck-h')) || 0;
+    const delta = deckClearanceScroll(coords.bottom, window.innerHeight, deckH, DECK_CLEARANCE_MARGIN_PX);
+    if (delta > 1) findScrollParent(containerRef.current).scrollBy({ top: delta, behavior: 'auto' });
+  }, []);
+  // Re-clear on any selection/caret change (incl. selection-only, not a docChanged txn → a document
+  // 'selectionchange' listener catches it). rAF-debounced.
   useEffect(() => {
     if (!customKb) return;
     let raf = 0;
     const onSelectionChange = () => {
       cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        const view = viewRef.current;
-        if (!view || view.isDestroyed || !view.hasFocus()) return;
-        const coords = view.coordsAtPos(view.state.selection.head); // viewport (client) coords
-        const deckH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--deck-h')) || 0;
-        const delta = deckClearanceScroll(coords.bottom, window.innerHeight, deckH, DECK_CLEARANCE_MARGIN_PX);
-        if (delta > 1) findScrollParent(containerRef.current).scrollBy({ top: delta, behavior: 'auto' });
-      });
+      raf = requestAnimationFrame(clearCaretBelowDeck);
     };
     document.addEventListener('selectionchange', onSelectionChange);
     return () => { document.removeEventListener('selectionchange', onSelectionChange); cancelAnimationFrame(raf); };
-  }, [customKb]);
+  }, [customKb, clearCaretBelowDeck]);
+  // #69 §5.1 NO-JUMP: when the spell-suggestion bar (a top-slot occupant) shows or hides, the Deck height
+  // changes but the editor's reserved padding does NOT — it tracks the keypad, excluding the transient slot
+  // (styles.css subtracts --deck-top-slot-h) — so the content no longer reflow-jumps to the top on show OR
+  // hide. The ONLY adjustment is this minimal caret clearance: if the now-taller Deck covers the caret, nudge
+  // it up by exactly the overlap; otherwise nothing moves. rAF so --deck-h is read AFTER the Deck + loadout
+  // ResizeObservers republish for the new slot.
+  useEffect(() => {
+    if (!customKb) return;
+    const raf = requestAnimationFrame(clearCaretBelowDeck);
+    return () => cancelAnimationFrame(raf);
+  }, [customKb, spellSuggest, clearCaretBelowDeck]);
   // #69 editor-loadout v1: the group selector (below keys) + per-group submenu (above keys) share one
   // open-group state. They're host-injected into the generic KeypadLoadout; the loadout itself is
   // assembled below, once the tool runners (runTool / handleUndo / handleRedo) are defined.
