@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { EditorState, Plugin, TextSelection } from 'prosemirror-state';
+import { EditorState, Plugin, TextSelection, Selection } from 'prosemirror-state';
 import { EditorView, Decoration, DecorationSet } from 'prosemirror-view';
 import { history, undo, redo, undoDepth, redoDepth } from 'prosemirror-history';
 import { dropCursor } from 'prosemirror-dropcursor';
@@ -603,7 +603,16 @@ export function ProseMirrorEditor({
       ...contributions.buildEditorPlugins(deltoSchema),
     ];
     basePluginsRef.current = basePlugins; // #69 §5: the spellcheck plugin is added on top via reconfigure
-    const state = EditorState.create({ doc, plugins: basePlugins });
+    // Caret placement on open (Jim 2026-06-27): an EMPTY note (the new-note flow) keeps PM's default caret at
+    // the START of the title so you can type the title immediately; a note that ALREADY HAS CONTENT places the
+    // caret at the END of the doc — typing continues the note instead of prepending to the title. (The Deck
+    // keys dispatch at the current selection, so without this the first keystroke on an existing note landed
+    // at title-start.) Content-based, not isNew-flag-based, so it's right however the note was opened.
+    let state = EditorState.create({ doc, plugins: basePlugins });
+    if (doc.textContent.length > 0) {
+      try { state = state.apply(state.tr.setSelection(Selection.atEnd(doc))); }
+      catch { /* malformed doc — the default start selection is fine */ }
+    }
 
     const view = new EditorView(containerRef.current, {
       state,
