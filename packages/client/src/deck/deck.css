@@ -76,10 +76,6 @@
 
 /* ── KeypadLoadout (#69 C-manual) — collapsible keypad layer + persistent base region ───────────────── */
 .keypad-loadout { display: flex; flex-direction: column; }
-/* #69 §5.1 NO-JUMP wrapper: hosts the transient top-slot occupant so its height can be measured
-   (--deck-top-slot-h). Flex column so the single occupant stretches full-width exactly as when it was a
-   direct child of .keypad-loadout; 0 height (no box growth, parent has no gap) when empty. */
-.keypad-loadout__top-slot { display: flex; flex-direction: column; }
 
 /* The persistent BASE region — the control home BELOW the keys (layer model §0.6). Constant height: it puts
    the keys at the native vertical position when the keypad is shown (the ~47pt band native reserves for its

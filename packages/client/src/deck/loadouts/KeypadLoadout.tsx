@@ -1,4 +1,4 @@
-import { useRef, useLayoutEffect } from 'react';
+import { useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { KeyActions } from '../types.js';
 import { Keypad } from './Keypad.js';
@@ -79,23 +79,6 @@ export function KeypadLoadout({
   const longFired = useRef(false);
   const clear = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
 
-  // #69 §5.1 NO-JUMP: publish the top-slot's OWN height (--deck-top-slot-h, 0 when empty) so the editor can
-  // reserve only the KEYPAD's height (--deck-h − --deck-top-slot-h) and NOT reflow when the transient slot
-  // (spell-suggestion bar / formatting submenu / link bar) shows or hides — the reflow read as a jarring
-  // jump-to-top. ResizeObserver keeps it live; mirrors the Deck's --deck-h publish. Runs every render so a
-  // slot swap re-evaluates the ref.
-  const topSlotRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const root = document.documentElement;
-    const el = topSlotRef.current;
-    if (!el) { root.style.setProperty('--deck-top-slot-h', '0px'); return; }
-    const publish = () => root.style.setProperty('--deck-top-slot-h', `${Math.round(el.getBoundingClientRect().height)}px`);
-    publish();
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(publish) : null;
-    ro?.observe(el);
-    return () => { ro?.disconnect(); root.style.setProperty('--deck-top-slot-h', '0px'); };
-  });
-
   const onDown = (e: React.PointerEvent) => {
     e.preventDefault();
     longFired.current = false;
@@ -110,10 +93,8 @@ export function KeypadLoadout({
   return (
     <div className="keypad-loadout">
       {/* Top-slot layer — ABOVE the keys (grows the Deck upward; keys never move). One occupant at a time
-          (formatting submenu / spell suggestions / voice waveform), chosen by the host. Null = empty.
-          Wrapped so its height can be measured (--deck-top-slot-h) and excluded from the editor's reserved
-          space — see the NO-JUMP note above. */}
-      <div ref={topSlotRef} className="keypad-loadout__top-slot">{topSlot}</div>
+          (formatting submenu / spell suggestions / voice waveform), chosen by the host. Null = empty. */}
+      {topSlot}
       {keypadShown && <Keypad actions={actions} />}
       {/* Persistent base region — the control home below the keys; present in both sub-states. */}
       <div className="keypad-loadout__base">
