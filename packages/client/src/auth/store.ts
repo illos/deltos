@@ -169,8 +169,13 @@ export interface AuthActions {
  * a weak link neither resolves nor rejects). Bounded → on timeout the cold boot falls into the resident-
  * shell offline open (#85) and re-mints on reconnect; mid-session {@link AuthActions.remintBearer} uses
  * the same bound. Tunable — do not bury the literal.
+ *
+ * 3s (not longer): the offline open is NOT a dead-end — the shell is fully usable from local Dexie and
+ * self-heals to 'active' within ~one poll (~2s) once the link firms up (syncFetch 503 → re-mint). The
+ * spinner is the only bad state, so bias to leaving it FAST. A healthy /refresh is <300ms, so 3s only
+ * trips on a genuinely slow link — exactly where "in my notes now" beats waiting to start authed.
  */
-export const REFRESH_TIMEOUT_MS = 6000;
+export const REFRESH_TIMEOUT_MS = 3000;
 
 /** Authed JSON fetch (same-origin → the refresh cookie rides automatically; the access token bearers).
  *  `timeoutMs` (when > 0) abort-bounds the request — used for the /refresh calls so a weak network can't
