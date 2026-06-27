@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, type MouseEvent as ReactMouseEvent } from 'react';
 import { EditorState, Plugin, TextSelection, Selection } from 'prosemirror-state';
 import { EditorView, Decoration, DecorationSet } from 'prosemirror-view';
 import { history, undo, redo, undoDepth, redoDepth } from 'prosemirror-history';
@@ -802,6 +802,20 @@ export function ProseMirrorEditor({
     onCancel: cancelLink,
   };
 
+  // Click/tap in the EMPTY area below the text — the blank lower note body / the deck-clearance padding,
+  // which is the wrapper element ITSELF (outside the .ProseMirror editable, so a bare click there otherwise
+  // does nothing) — focuses the editor and drops the caret at the END of the doc, so tapping anywhere in a
+  // sparse note continues from the last filled line (title or below) instead of forcing a click up near the
+  // title (Jim 2026-06-27). A click on real content has a DESCENDANT target → we bail and let ProseMirror
+  // place the caret at the click point as usual.
+  const focusEndFromEmptyArea = useCallback((e: ReactMouseEvent) => {
+    if (e.target !== containerRef.current) return;
+    const view = viewRef.current;
+    if (!view || view.isDestroyed) return;
+    view.dispatch(view.state.tr.setSelection(Selection.atEnd(view.state.doc)).scrollIntoView());
+    view.focus();
+  }, []);
+
   return (
     <>
       {/* Desktop: the Deck editor loadout AS the toolbar — the converged registry rendered flat, a top-
@@ -822,6 +836,7 @@ export function ProseMirrorEditor({
       <div
         ref={containerRef}
         {...keypadSwipe}
+        onClick={focusEndFromEmptyArea}
         className={`editor__pm${customKb ? ' editor__pm--kb' : ''}${customKb && !keypadShown ? ' editor__pm--kb-collapsed' : ''}`}
       />
       {/* Mobile, custom keyboard ON: the Deck (mounted at the shell via DeckHostProvider) owns the bottom

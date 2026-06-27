@@ -8,7 +8,7 @@
  */
 import 'fake-indexeddb/auto';
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { render, cleanup, waitFor } from '@testing-library/react';
+import { render, cleanup, waitFor, fireEvent } from '@testing-library/react';
 import { Selection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { ProseMirrorEditor } from '../src/editor/ProseMirrorEditor.js';
@@ -46,5 +46,19 @@ describe('caret placement on open', () => {
     await waitFor(() => expect(view).not.toBeNull());
     const v = view as unknown as EditorView;
     expect(v.state.selection.from).toBe(Selection.atStart(v.state.doc).from); // default = title start
+  });
+
+  it('clicking the EMPTY body area (the wrapper itself) focuses the editor with the caret at the END', async () => {
+    let view: EditorView | null = null;
+    const { container } = mountEditor('A note', (v) => { if (v) view = v; });
+    await waitFor(() => expect(view).not.toBeNull());
+    const v = view as unknown as EditorView;
+    // Put the caret at the START so we can prove the empty-area click moves it to the END.
+    v.dispatch(v.state.tr.setSelection(Selection.atStart(v.state.doc)));
+    expect(v.state.selection.from).toBe(Selection.atStart(v.state.doc).from);
+    // A click whose target is the .editor__pm wrapper itself = the blank area below the text.
+    const pm = container.querySelector('.editor__pm') as HTMLElement;
+    fireEvent.click(pm);
+    expect(v.state.selection.from).toBe(Selection.atEnd(v.state.doc).from);
   });
 });
