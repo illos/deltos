@@ -92,9 +92,13 @@ export function KeypadLoadout({
 
   return (
     <div className="keypad-loadout">
-      {/* Top-slot layer — ABOVE the keys (grows the Deck upward; keys never move). One occupant at a time
-          (formatting submenu / spell suggestions / voice waveform), chosen by the host. Null = empty. */}
-      {topSlot}
+      {/* Top-slot layer — an OUT-OF-FLOW overlay ABOVE the keys (#69 §5.1). One occupant at a time
+          (formatting submenu / spell suggestions / voice waveform), chosen by the host; null = empty.
+          NO-JUMP: it's absolutely positioned (see deck.css) so it does NOT grow the Deck's measured box —
+          --deck-h stays constant, so the editor's bottom padding never reflows when it shows/hides (the
+          Deck is position:fixed; a transient bar must not feed the in-flow editor layout). It visually
+          overlays the bottom of the note instead of pushing content. */}
+      {topSlot && <div className="keypad-loadout__top-slot">{topSlot}</div>}
       {keypadShown && <Keypad actions={actions} />}
       {/* Persistent base region — the control home below the keys; present in both sub-states. */}
       <div className="keypad-loadout__base">

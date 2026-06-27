@@ -75,7 +75,15 @@
 .keypad__key--punct .keypad__face { width: calc(100% - var(--kp-gap)); } /* the wider face fills its cell */
 
 /* ── KeypadLoadout (#69 C-manual) — collapsible keypad layer + persistent base region ───────────────── */
-.keypad-loadout { display: flex; flex-direction: column; }
+.keypad-loadout { display: flex; flex-direction: column; position: relative; }
+/* #69 §5.1 NO-JUMP: the transient top-slot (spell-suggestion bar / formatting submenu / link bar) is an
+   OUT-OF-FLOW overlay anchored just above the keys (bottom:100% of .keypad-loadout). Because it's absolutely
+   positioned it does NOT add to the Deck's measured height (--deck-h), so the editor's bottom padding never
+   reflows when it shows/hides → no jump (the Deck is position:fixed; nothing here may move the in-flow DOM).
+   left:0/right:0 PINS the width to the Deck so the horizontally-scrollable pill row scrolls INSIDE it and can
+   never widen the surface past the viewport (the bug the prior in-flow wrapper hit). The occupant carries its
+   own opaque background (e.g. .spell-bar), so it cleanly overlays the note text behind it. */
+.keypad-loadout__top-slot { position: absolute; left: 0; right: 0; bottom: 100%; }
 
 /* The persistent BASE region — the control home BELOW the keys (layer model §0.6). Constant height: it puts
    the keys at the native vertical position when the keypad is shown (the ~47pt band native reserves for its
