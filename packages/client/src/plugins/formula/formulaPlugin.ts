@@ -157,6 +157,26 @@ export const unwrapFormulaBackspace: Command = (state, dispatch): boolean => {
   return true;
 };
 
+/** SPIKE (Mechanic B): symmetric FORWARD-DELETE. Delete at the LEFT EDGE of a formula chip (caret right
+ *  BEFORE it) → unwrap it to its plain-text spec, caret left at the START of that text to keep editing —
+ *  the mirror of {@link unwrapFormulaBackspace}. Additive: returns false when the caret isn't immediately
+ *  before a formula, so the base Delete (and everything else) is untouched. */
+export const unwrapFormulaDelete: Command = (state, dispatch): boolean => {
+  if (!state.selection.empty) return false;
+  const pos = state.selection.from;
+  const after = state.doc.resolve(pos).nodeAfter;
+  if (!after || after.type.name !== 'formula') return false;
+  if (dispatch) {
+    const to = pos + after.nodeSize;
+    const spec = after.textContent;
+    // replaceWith maps the caret to the START of the inserted text (pos), so editing continues in-place.
+    dispatch(spec.length > 0
+      ? state.tr.replaceWith(pos, to, state.schema.text(spec))
+      : state.tr.delete(pos, to));
+  }
+  return true;
+};
+
 /** All inline-formula editor plugins, bound to a registry. The unwrap keymap goes BEFORE the base keymap;
  *  the input rules carry the auto triggers (one per registered trigger char) + the bracket rule. */
 export function buildFormulaPlugins(registry: FormulaRegistry): Plugin[] {
@@ -181,6 +201,8 @@ export function buildFormulaPlugins(registry: FormulaRegistry): Plugin[] {
   return [
     keymap({
       Backspace: unwrapFormulaBackspace,
+      // SPIKE (Mechanic B): forward-Delete is the symmetric unwrap (caret right BEFORE the chip).
+      Delete: unwrapFormulaDelete,
       // ENTER is a boundary too (Jim): wrap a trailing boundary token (bare hex), THEN do the normal Enter
       // on the updated state. Returns false when there's no boundary formula, so the editor's normal Enter
       // chain (lists/todos) is untouched in the common case.
