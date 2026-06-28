@@ -6,6 +6,7 @@ import { LinkCard } from './LinkCard.js';
 import type { LinkCardProps } from './LinkCard.js';
 import { openLinkInNewTab } from '../../editor/openLink.js';
 import { deltoSchema } from '../../editor/schema.js';
+import { createBlockDragHandle, blockHandleStopEvent } from '../../editor/plugins/blockDragHandle.js';
 
 /**
  * LinkCardNodeView (#69 rich-embeds E2b) — the imperative PM NodeView for a `link_card` plugin_block. It
@@ -33,13 +34,21 @@ export class LinkCardNodeView implements NodeView {
   dom: HTMLElement;
   private root: Root;
   private node: PmNode;
+  private readonly handle: HTMLElement;
+  private readonly mount: HTMLElement;
 
   constructor(node: PmNode, private readonly view: EditorView, private readonly getPos: () => number | undefined) {
     this.node = node;
     this.dom = document.createElement('div');
     this.dom.className = 'link-card-island';
     this.dom.setAttribute('data-plugin-type', 'link_card');
-    this.root = createRoot(this.dom);
+    // Drag handle (block-object-chrome): a grip that lets PM drag the whole draggable atom. The React card
+    // mounts into a sibling so the handle is never inside the React-managed subtree.
+    this.handle = createBlockDragHandle();
+    this.mount = document.createElement('div');
+    this.mount.className = 'block-object-body';
+    this.dom.append(this.handle, this.mount);
+    this.root = createRoot(this.mount);
     this.renderCard();
   }
 
@@ -89,7 +98,8 @@ export class LinkCardNodeView implements NodeView {
     return true;
   }
 
-  stopEvent(): boolean { return true; }
+  // Let a drag-start on the grip reach PM (so it drags the atom); keep PM out of the React interior otherwise.
+  stopEvent(event: Event): boolean { return blockHandleStopEvent(this.handle, event); }
   ignoreMutation(): boolean { return true; }
   destroy(): void {
     // Defer so we never unmount synchronously inside a React render cycle (React 19 guard).

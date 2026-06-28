@@ -5,6 +5,7 @@ import type { EditorView, NodeView } from 'prosemirror-view';
 import { AttachmentChip } from './AttachmentChip.js';
 import { loadBlobUrl, downloadBlob, isInlineRenderableImage } from './blobClient.js';
 import { pluginRegistry } from '../runtime/index.js';
+import { createBlockDragHandle, blockHandleStopEvent } from '../../editor/plugins/blockDragHandle.js';
 
 interface AttachmentPayload {
   hash?: string;
@@ -58,12 +59,20 @@ export function AttachmentView({ payload }: { payload: AttachmentPayload }) {
 export class AttachmentNodeView implements NodeView {
   readonly dom: HTMLElement;
   private root: Root;
+  private readonly handle: HTMLElement;
+  private readonly mount: HTMLElement;
 
   constructor(node: PmNode) {
     this.dom = document.createElement('div');
     this.dom.className = 'attachment-island';
     this.dom.contentEditable = 'false';
-    this.root = createRoot(this.dom);
+    // Drag handle (block-object-chrome): a grip that lets PM drag the whole draggable atom. The React view
+    // mounts into a sibling so the handle is never inside the React-managed subtree.
+    this.handle = createBlockDragHandle();
+    this.mount = document.createElement('div');
+    this.mount.className = 'block-object-body';
+    this.dom.append(this.handle, this.mount);
+    this.root = createRoot(this.mount);
     this.renderNode(node);
   }
 
@@ -80,7 +89,8 @@ export class AttachmentNodeView implements NodeView {
     return true;
   }
 
-  stopEvent(): boolean { return true; }
+  // Let a drag-start on the grip reach PM (so it drags the atom); keep PM out of the React interior otherwise.
+  stopEvent(event: Event): boolean { return blockHandleStopEvent(this.handle, event); }
   ignoreMutation(): boolean { return true; }
   destroy(): void {
     // Defer so we never unmount synchronously inside a React render cycle (React 19 guard).
