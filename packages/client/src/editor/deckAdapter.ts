@@ -6,6 +6,9 @@ import type { DeckContext, KeyActions } from '../deck/index.js';
 import { unwrapFormulaBackspace, formulaTriggerOnInsert, maybeWrapBoundaryFormula } from '../plugins/formula/index.js';
 import type { FormulaRegistry } from '../plugins/formula/index.js';
 import { linkifyTrailingUrl, unwrapLinkBackspace } from './autolink.js';
+// Block-object chrome (Mechanic A): single-press inline-atom delete. The Deck bypasses the PM keymap, so the
+// SAME command the keymap chains must be invoked here too ([[deck-keypad-bypasses-inputrules-keymap]]).
+import { deleteInlineAtomBackspace } from './plugins/blockAtomChrome.js';
 
 /**
  * The deltos↔Deck ADAPTER (#69 §0.5). ALL ProseMirror-specific code lives here, never in Deck core: the
@@ -58,6 +61,11 @@ export function buildPmKeyActions(getView: () => EditorView | null, formulaRegis
       // Link (#74): a backspace at a linked run's right edge unwraps it to plain URL text (dual-wired here
       // for the Deck since it bypasses the keymap). Formula nodes vs link marks don't overlap → order safe.
       if (unwrapLinkBackspace(v.state, v.dispatch)) return;
+      // Block-object (Mechanic A): a backspace right after a block-object atom (link card / attachment)
+      // deletes it as ONE unit (single press) — the same guarded command the keymap chains, dual-wired here
+      // since the Deck bypasses the keymap. Inert unless the caret flanks an inline atom, so normal char
+      // delete below is untouched. (Formulas are content nodes, not atoms → handled by the unwrap above.)
+      if (deleteInlineAtomBackspace(v.state, v.dispatch)) return;
       const { selection } = v.state;
       if (!selection.empty) { deleteSelection(v.state, v.dispatch); return; }
       if (selection.$from.parentOffset > 0) { v.dispatch(v.state.tr.delete(selection.from - 1, selection.from)); return; }

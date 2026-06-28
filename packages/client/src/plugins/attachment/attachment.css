@@ -26,8 +26,16 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* In-editor block wrapper + inline image preview (safe raster types only). */
-.attachment-island { margin: 6px 0; }
+/* In-editor block wrapper + inline image preview (safe raster types only). EXPLICIT full-width block: the
+   plugin_block atom is inline in the schema but a line-owning block object, so the block look is intentional.
+   It's a [drag-grip][body] row (block-object-chrome) — flex is itself block-level. */
+.attachment-island {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 6px 0;
+}
 .attachment-image {
   display: block;
   max-width: 100%;

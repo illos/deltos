@@ -1,0 +1,31 @@
+/* Block-object chrome — the drag grip + body layout shared by every line-owning block object (link card,
+   attachment). The island itself is made an explicit full-width block in each plugin's own CSS; this owns the
+   [grip][body] row + the grip's look. Consumes host theme tokens — never hardcodes colour. */
+
+.block-object-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.block-drag-handle {
+  flex: 0 0 auto;
+  align-self: stretch;
+  width: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  color: var(--secondary);
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.35;
+  border-radius: 6px;
+  /* a node drag is a deliberate grab, not a scroll — keep the browser from stealing the gesture */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 120ms ease, background 120ms ease;
+}
+.block-drag-handle:hover { opacity: 0.7; background: var(--border); }
+.block-drag-handle:active { cursor: grabbing; opacity: 0.9; }

@@ -16,6 +16,8 @@ import { keymap } from 'prosemirror-keymap';
 import type { Command } from 'prosemirror-state';
 import type { DeltoSchema } from './schema.js';
 import { toggleMarkCmd, linkCommand } from './commands.js';
+// SPIKE (block-object-chrome, Mechanic A): single-press delete for the inline-atom plugin_block.
+import { deleteInlineAtomBackspace, deleteInlineAtomDelete } from './plugins/blockAtomChrome.js';
 
 /**
  * Keyboard bindings for the deltos editor. Keeps standard editing muscle-memory intact
@@ -108,6 +110,12 @@ export function buildKeymap(schema: DeltoSchema) {
     liftEmptyBlock,
     splitBlock,
   );
+
+  // SPIKE (Mechanic A): inline-atom plugin_block deletes as ONE character. PM's base Backspace/Delete would
+  // "select the atom first, delete on the second press"; chain our single-press commands ahead of the base
+  // handlers (they return false unless the caret flanks an inline atom, so normal editing is untouched).
+  bindings['Backspace'] = chainCommands(deleteInlineAtomBackspace, baseKeymap['Backspace']!);
+  bindings['Delete']    = chainCommands(deleteInlineAtomDelete, baseKeymap['Delete']!);
 
   // List indentation
   if (nodes['list_item']) {

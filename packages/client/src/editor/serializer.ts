@@ -128,46 +128,99 @@ function parseListContent(raw: unknown): ListContent {
 
 // ── PM doc → spine ────────────────────────────────────────────────────────────────────────
 
+// Convert ONE inline child into a segment (or null for nodes that aren't text-bearing inline — e.g. a
+// SPIKE inline plugin_block, which a textblock-level caller hoists into its own spine block instead).
+function inlineChildToSegment(child: PmNode): TextSegment | null {
+  if (child.type.name === 'hard_break') return { text: '\n' };
+  // Inline-formula node → a formula segment: text = the spec, plus { type, state }. The result is NOT
+  // stored (recomputed on render). The math MARK is no longer emitted (math is a formula node now); the
+  // mark stays parse-only in the schema for clipboard back-compat + the load-time upgrade shim.
+  if (child.type.name === 'formula') {
+    return {
+      text: child.textContent,
+      formula: { type: child.attrs.ftype as string, state: child.attrs.state ?? null },
+    };
+  }
+  if (child.type.name !== 'text') return null;
+  const seg: TextSegment = { text: child.text ?? '' };
+  if (child.marks.some((m) => m.type.name === 'bold'))          seg.bold      = true;
+  if (child.marks.some((m) => m.type.name === 'italic'))        seg.italic    = true;
+  if (child.marks.some((m) => m.type.name === 'code'))          seg.code      = true;
+  if (child.marks.some((m) => m.type.name === 'underline'))     seg.underline = true;
+  if (child.marks.some((m) => m.type.name === 'strikethrough')) seg.strike    = true;
+  if (child.marks.some((m) => m.type.name === 'highlight'))     seg.highlight = true;
+  const linkMark = child.marks.find((m) => m.type.name === 'link');
+  if (linkMark) seg.link = linkMark.attrs.href as string;
+  return seg;
+}
+
 function inlineToSegments(node: PmNode): TextSegment[] {
   const segments: TextSegment[] = [];
   node.forEach((child) => {
-    if (child.type.name === 'hard_break') {
-      segments.push({ text: '\n' });
-      return;
-    }
-    // Inline-formula node → a formula segment: text = the spec, plus { type, state }. The result is NOT
-    // stored (recomputed on render). The math MARK is no longer emitted (math is a formula node now); the
-    // mark stays parse-only in the schema for clipboard back-compat + the load-time upgrade shim.
-    if (child.type.name === 'formula') {
-      segments.push({
-        text: child.textContent,
-        formula: { type: child.attrs.ftype as string, state: child.attrs.state ?? null },
-      });
-      return;
-    }
-    if (child.type.name !== 'text') return;
-    const seg: TextSegment = { text: child.text ?? '' };
-    if (child.marks.some((m) => m.type.name === 'bold'))          seg.bold      = true;
-    if (child.marks.some((m) => m.type.name === 'italic'))        seg.italic    = true;
-    if (child.marks.some((m) => m.type.name === 'code'))          seg.code      = true;
-    if (child.marks.some((m) => m.type.name === 'underline'))     seg.underline = true;
-    if (child.marks.some((m) => m.type.name === 'strikethrough')) seg.strike    = true;
-    if (child.marks.some((m) => m.type.name === 'highlight'))     seg.highlight = true;
-    const linkMark = child.marks.find((m) => m.type.name === 'link');
-    if (linkMark) seg.link = linkMark.attrs.href as string;
-    segments.push(seg);
+    const seg = inlineChildToSegment(child);
+    if (seg) segments.push(seg);
   });
   return segments;
+}
+
+/**
+ * SPIKE (Mechanic A): build a spine `plugin_block` Block from an inline plugin_block PM node. Reads its
+ * attrs identically to the legacy block-atom path — the spine shape (a top-level Block of `pluginType`,
+ * carrying the opaque `pluginContent`) is UNCHANGED by the inline re-model. This is the round-trip seam.
+ */
+function pluginNodeToBlock(node: PmNode): Block {
+  const id = (node.attrs.id as string | null) ?? (newBlockId() as string);
+  return {
+    id: id as BlockId,
+    type: (node.attrs.pluginType as string) || 'plugin_block',
+    content: node.attrs.pluginContent as unknown,
+  };
+}
+
+/**
+ * SPIKE (Mechanic A): a textblock (paragraph) may now CONTAIN inline plugin_block atoms. Split it into spine
+ * blocks in document order: runs of text/inline collapse into paragraph blocks, each plugin_block becomes
+ * its OWN top-level spine block (preserving the legacy spine shape). The pure-text case returns a single
+ * paragraph (zero behavioural change); the isolated-object case (a paragraph holding ONLY the atom) returns
+ * just the plugin block (no synthetic empty paragraph), which is the round-trip inverse of the wrap below.
+ */
+function textblockToBlocks(node: PmNode, paragraphId: string): Block[] {
+  let hasPlugin = false;
+  node.forEach((c) => { if (c.type.name === 'plugin_block') hasPlugin = true; });
+  if (!hasPlugin) {
+    return [{ id: paragraphId as BlockId, type: 'paragraph', content: { segments: inlineToSegments(node) } satisfies ParagraphContent }];
+  }
+  const out: Block[] = [];
+  let buffer: TextSegment[] = [];
+  let usedParagraphId = false;
+  const flush = () => {
+    if (buffer.length === 0) return;
+    const pid = usedParagraphId ? (newBlockId() as string) : paragraphId;
+    usedParagraphId = true;
+    out.push({ id: pid as BlockId, type: 'paragraph', content: { segments: buffer } satisfies ParagraphContent });
+    buffer = [];
+  };
+  node.forEach((child) => {
+    if (child.type.name === 'plugin_block') {
+      flush();
+      out.push(pluginNodeToBlock(child));
+      return;
+    }
+    const seg = inlineChildToSegment(child);
+    if (seg) buffer.push(seg);
+  });
+  flush();
+  return out;
 }
 
 function pmNodeToBlock(node: PmNode): Block | Block[] | null {
   const id = (node.attrs.id as string | null) ?? (newBlockId() as string);
 
   switch (node.type.name) {
-    case 'paragraph': {
-      const content: ParagraphContent = { segments: inlineToSegments(node) };
-      return { id: id as BlockId, type: 'paragraph', content };
-    }
+    case 'paragraph':
+      // SPIKE (Mechanic A): a paragraph may carry inline plugin_block atoms → split them back out to their
+      // own top-level spine blocks (legacy shape). Pure-text paragraphs return a single block, unchanged.
+      return textblockToBlocks(node, id);
 
     case 'heading': {
       const content: HeadingContent = {
@@ -420,13 +473,18 @@ function spineBlockToPmNode(schema: Schema, block: Block): PmNode | PmNode[] | n
       return listNodeType.create({ id }, items);
     }
 
-    default:
-      // Unknown or plugin block: represent as plugin_block atom.
-      return schema.nodes['plugin_block']!.create({
+    default: {
+      // Unknown or plugin block: represent as a plugin_block atom. SPIKE (Mechanic A): the atom is now
+      // INLINE, so it cannot sit directly in the doc/quote body (which expect blocks) — wrap it in a
+      // paragraph. textblockToBlocks() is the exact inverse on the way back (an isolated atom unwraps to the
+      // bare plugin block). The synthetic wrapper paragraph gets a fresh id; the atom keeps the spine id.
+      const atom = schema.nodes['plugin_block']!.create({
         id,
         pluginType: block.type,
         pluginContent: block.content ?? null,
       });
+      return schema.nodes['paragraph']!.create({ id: newBlockId() as string }, [atom]);
+    }
   }
 }
 

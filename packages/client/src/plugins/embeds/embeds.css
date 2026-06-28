@@ -128,6 +128,14 @@
 }
 .link-card__downgrade:active { background: var(--border); }
 
-/* The plugin_block atom wrapper the NodeView mounts the card into (#69 E2b) — block-level with a little
-   breathing room so the card isn't flush against surrounding paragraphs. */
-.link-card-island { display: block; margin: 6px 0; }
+/* The plugin_block atom wrapper the NodeView mounts the card into (#69 E2b). EXPLICIT full-width block: the
+   atom renders inline in the schema but is a line-owning block object, so the look is intentional, not
+   incidental on the card's own width. It's a [drag-grip][card] row (block-object-chrome) — flex is itself
+   block-level — with a little breathing room so the card isn't flush against surrounding paragraphs. */
+.link-card-island {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 6px 0;
+}
