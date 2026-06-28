@@ -140,7 +140,7 @@ describe('PDF reader Slice 1 — mounted viewer', () => {
     // It replaced the old "No preview" icon branch.
     expect(document.querySelector('.file-view__nopreview')).toBeNull();
     // Bytes come from the authenticated blob GET helper, keyed by hash.
-    await waitFor(() => expect(loadBlobBytes).toHaveBeenCalledWith(`${PDF_ID}hash`));
+    await waitFor(() => expect(loadBlobBytes).toHaveBeenCalledWith(`${PDF_ID}hash`, expect.anything()));
     expect(openPdf).toHaveBeenCalled();
     // Toolbar page control (Slice 2): an editable page field on the current page + a `/ total` readout.
     await waitFor(() => expect((screen.getByLabelText('Page number') as HTMLInputElement).value).toBe('1'));
@@ -183,5 +183,29 @@ describe('PDF reader Slice 1 — mounted viewer', () => {
     expect(document.querySelector('.pdf-reader--error')).not.toBeNull();
     // No live canvas in the error state.
     expect(document.querySelector('.pdf-reader__canvas')).toBeNull();
+  });
+
+  it('PDF-UI-6 — a pdf.js parse failure surfaces the underlying cause as an on-screen diagnostic', async () => {
+    // The reopen-detachment signature is exactly this shape: openPdf throws a detached-buffer error.
+    openPdf.mockRejectedValueOnce(new Error('Cannot perform Construct on a detached ArrayBuffer'));
+    await mountRoute(PDF_ID, fileNote(PDF_ID, 'reopen.pdf', 'application/pdf'));
+
+    await waitFor(() => expect(screen.getByText(/download to view/i)).toBeTruthy());
+    const detail = document.querySelector('.pdf-reader__error-detail');
+    expect(detail).not.toBeNull();
+    expect(detail!.textContent).toMatch(/parse:.*detached ArrayBuffer/i);
+  });
+
+  it('PDF-UI-7 — a byte-fetch failure surfaces the HTTP status + bearer presence as a diagnostic', async () => {
+    // A BlobLoadError-shaped rejection (status + bearer) — duck-typed by the reader (no class import needed).
+    loadBlobBytes.mockReset().mockRejectedValueOnce(
+      Object.assign(new Error('blob load failed (404)'), { status: 404, hadBearer: true, offline: false }),
+    );
+    await mountRoute(PDF_ID, fileNote(PDF_ID, 'missing.pdf', 'application/pdf'));
+
+    await waitFor(() => expect(screen.getByText(/download to view/i)).toBeTruthy());
+    const detail = document.querySelector('.pdf-reader__error-detail');
+    expect(detail).not.toBeNull();
+    expect(detail!.textContent).toMatch(/fetch: HTTP 404, bearer/i);
   });
 });

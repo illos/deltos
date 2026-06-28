@@ -142,7 +142,7 @@ describe('FileNoteView — open surface', () => {
     expect(document.querySelector('.file-view__image')).toBeNull(); // no <img> at all
     // pdf goes through loadBlobBytes (raw bytes), never the image-derivative path.
     expect(loadViewUrl).not.toHaveBeenCalled();
-    await waitFor(() => expect(loadBlobBytes).toHaveBeenCalledWith(`${PDF_ID}hash`));
+    await waitFor(() => expect(loadBlobBytes).toHaveBeenCalledWith(`${PDF_ID}hash`, expect.anything()));
   });
 
   it('FNV-3 — a normal note still resolves to the PM block editor (no regression)', async () => {

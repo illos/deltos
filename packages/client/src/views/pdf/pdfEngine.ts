@@ -20,6 +20,7 @@ import * as pdfjs from 'pdfjs-dist';
 // by vite.config.ts so the SW can match it). `?url` gives us the served URL; we construct the Worker ourselves
 // as `{ type: 'module' }`, so the asset's extension is irrelevant to pdf.js's classic/module detection.
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { toWorkerData } from './pdfBuffer.js';
 
 /** Intrinsic page dimensions (CSS px at scale 1). */
 export interface PdfPageDims {
@@ -145,9 +146,11 @@ function projectTextContent(
 }
 
 /**
- * Open a PDF from its raw bytes (§2.2 hands us the ArrayBuffer from the authenticated blob GET). The bytes
- * are wrapped in a fresh `Uint8Array` and transferred into the worker by pdf.js (§2.2 "transfer, not copy");
- * we keep no long-lived second reference to the buffer.
+ * Open a PDF from its raw bytes (§2.2 hands us the ArrayBuffer from the authenticated blob GET). pdf.js
+ * TRANSFERS the buffer into its worker, which DETACHES it on the main thread — and our blob cache returns the
+ * SAME ArrayBuffer on every reopen, so we must NEVER let pdf.js detach the cached buffer. `toWorkerData` hands
+ * pdf.js a fresh COPY each open; pdf.js may detach the copy, the cached buffer stays intact, and reopen works
+ * (the reopen-fails-on-second-visit bug; see pdfBuffer.ts).
  */
 export async function openPdf(data: ArrayBuffer): Promise<OpenedPdf> {
   // One worker per document. We build the Worker ourselves (explicit `{ type: 'module' }`) and hand pdf.js the
@@ -161,7 +164,9 @@ export async function openPdf(data: ArrayBuffer): Promise<OpenedPdf> {
 
   // SECURITY CONFIG (§7 / gate PDF-S) — the heart of "parse, not execute":
   const params = {
-    data: new Uint8Array(data),
+    // A fresh COPY (never the cached buffer) — pdf.js transfers + detaches this; the cache entry survives so a
+    // reopen (cache hit) still has intact bytes. (reopen-detachment fix; pdfBuffer.ts.)
+    data: toWorkerData(data),
     worker,
     // Scripting OFF — NEVER execute embedded PDF JavaScript. (Default; we set it false explicitly + never load
     // the pdf.sandbox module, so the gate is auditable: this is the only `enableScripting` in the codebase.)
