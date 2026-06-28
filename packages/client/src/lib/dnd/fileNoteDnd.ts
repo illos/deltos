@@ -47,7 +47,11 @@ export async function dropFilesOnList(e: DragEvent): Promise<void> {
         const note = await mutateNotes.createFileNote(file);
         notebookId = note.notebookId;
         created += 1;
-      } catch {
+      } catch (err) {
+        // A deliberate Cancel (large-file direct upload) aborts the XHR → AbortError. That's not a failure:
+        // the transient progress indicator already disappeared, so just stay silent (no error toast). Any
+        // real failure (network, R2 checksum reject, quota) surfaces the per-file toast (no orphan note).
+        if ((err as { name?: string } | null)?.name === 'AbortError') return;
         showToast(`Couldn't add "${file.name}"`);
       }
     }),

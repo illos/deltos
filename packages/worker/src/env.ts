@@ -74,4 +74,25 @@ export interface Env {
    * required to exercise it; plain `wrangler dev` cannot. Declared in wrangler.jsonc as `images`.
    */
   IMAGES?: ImagesBinding;
+  /**
+   * R2 S3-API Access Key ID for the direct-to-R2 large-file upload (direct-r2-upload.md §3.1 / §5.1). Paired with
+   * R2_SECRET_ACCESS_KEY, it lets POST /api/plugin/blob/presign sign a short-lived presigned PUT URL (the `BLOBS`
+   * binding itself cannot sign URLs). A Worker SECRET — NEVER in `vars`, the bundle, or the client; only the
+   * presigned URL ever reaches the browser. Scope it to Object Read & Write on the single `deltos-blobs` bucket.
+   * Provision: `wrangler secret put R2_ACCESS_KEY_ID` (Jim, one-time). Optional in the type so unit tests inject a
+   * stub / omit it; the presign route fail-closes (503 blob_direct_not_configured) when it (or its pair) is unset.
+   */
+  R2_ACCESS_KEY_ID?: string;
+  /**
+   * R2 S3-API Secret Access Key — the secret half of the presigning token (see R2_ACCESS_KEY_ID). A Worker SECRET,
+   * never client-exposed. Provision: `wrangler secret put R2_SECRET_ACCESS_KEY` (Jim, one-time).
+   */
+  R2_SECRET_ACCESS_KEY?: string;
+  /**
+   * R2 S3-API endpoint host for presigning — `https://<account_id>.r2.cloudflarestorage.com`, where <account_id> is
+   * the `account_id` in wrangler.jsonc. A NON-SECRET `var` (set in wrangler.jsonc), not a secret: it's just the host
+   * the presigned PUT targets (`${endpoint}/deltos-blobs/${accountId}/${hash}`). Optional in the type so unit tests
+   * inject it; the presign route fail-closes (503) when unset.
+   */
+  R2_S3_ENDPOINT?: string;
 }

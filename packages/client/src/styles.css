@@ -1943,6 +1943,82 @@ a.auth__link { display: inline; }
   touch-action: manipulation;
 }
 
+/* ── Large-file upload progress (direct-r2-upload.md §6.3) ───────────── */
+
+/* Pinned card region (above the toast-host so it doesn't overlap an upload toast). Transient pills for the
+   in-flight direct-to-R2 uploads — upload-first: no note exists until confirm, so these are not note rows. */
+.upload-host {
+  position: fixed;
+  bottom: calc(env(safe-area-inset-bottom) + 1rem);
+  right: 1rem;
+  width: min(calc(100vw - 2rem), 22rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 901;
+  pointer-events: none;
+}
+
+.upload-card {
+  background: var(--surface, #1e1e1e);
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  border-radius: 0.6rem;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+  padding: 0.6rem 0.75rem;
+  pointer-events: auto;
+  animation: toast-in 0.18s ease;
+}
+
+.upload-card__row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.upload-card__name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.upload-card__pct {
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--secondary);
+}
+
+.upload-card__cancel {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid rgba(255,255,255,0.25);
+  color: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.18rem 0.5rem;
+  border-radius: 0.3rem;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.upload-card__bar {
+  margin-top: 0.5rem;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.12);
+  overflow: hidden;
+}
+
+.upload-card__fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent, #6ea8fe);
+  transition: width 0.15s ease;
+}
+
 /* ── Conflict badge ─────────────────────────────────────────────────── */
 
 .conflict-badge {
