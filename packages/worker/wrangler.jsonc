@@ -46,7 +46,17 @@
     // deltos.blackgate.studio (user switch 2026-06-16); the workers.dev origin's auth now 401s by
     // design (passkeys are RP-bound per domain → enroll fresh on the canonical domain).
     "AUTH_AUDIENCE": "deltos.blackgate.studio",
+    // Direct-to-R2 large-file upload (direct-r2-upload.md §3.1/§5.1). The S3-API endpoint host the presign
+    // route targets = `https://<account_id>.r2.cloudflarestorage.com` where <account_id> is the `account_id`
+    // above. NON-SECRET (it's just a host); the credentials are the two secrets below, NOT here.
+    "R2_S3_ENDPOINT": "https://462b5ee1e395c11b8523d6c38de0577a.r2.cloudflarestorage.com",
   },
+  // Direct-to-R2 upload SECRETS (direct-r2-upload.md §5.1) — the R2 S3-API token that POST /api/plugin/blob/presign
+  // signs with. Provisioned ONCE by Jim, NEVER hardcoded here (secrets never live in wrangler.jsonc/the repo):
+  //   wrangler secret put R2_ACCESS_KEY_ID       # the R2 API token's Access Key ID
+  //   wrangler secret put R2_SECRET_ACCESS_KEY   # the R2 API token's Secret Access Key
+  // The token must be Object Read & Write, scoped to the single `deltos-blobs` bucket (least privilege). Also
+  // one-time: set the bucket CORS policy (PUT, app origin, x-amz-checksum-sha256 header) — see §5.2.
   // Same-origin PWA hosting: serve the client build as static assets; SPA-fallback unmatched routes
   // to index.html; run the Worker FIRST only for /api/* so the API is never shadowed by the shell.
   "assets": {
