@@ -47,7 +47,9 @@ const openPdf = vi.fn(async () => ({
   renderPage,
   destroy,
 }));
-vi.mock('../src/views/pdf/pdfEngine.js', () => ({ openPdf }));
+// RENDER_PRIORITY is imported by PdfReader (the thumbnail rail tags its low-priority renders with it), so the
+// engine mock must re-export it.
+vi.mock('../src/views/pdf/pdfEngine.js', () => ({ openPdf, RENDER_PRIORITY: { MAIN: 0, THUMBNAIL: 1 } }));
 
 function makeNote(over: Partial<Note>): Note {
   return {
@@ -138,8 +140,9 @@ describe('PDF reader Slice 1 — mounted viewer', () => {
     // Bytes come from the authenticated blob GET helper, keyed by hash.
     await waitFor(() => expect(loadBlobBytes).toHaveBeenCalledWith(`${PDF_ID}hash`));
     expect(openPdf).toHaveBeenCalled();
-    // Toolbar shows the page count from the (mock) document.
-    await waitFor(() => expect(screen.getByText('1 / 3')).toBeTruthy());
+    // Toolbar page control (Slice 2): an editable page field on the current page + a `/ total` readout.
+    await waitFor(() => expect((screen.getByLabelText('Page number') as HTMLInputElement).value).toBe('1'));
+    expect(screen.getByText('/ 3')).toBeTruthy();
   });
 
   it('PDF-UI-2 — the windowed viewer renders a live canvas for the visible page', async () => {

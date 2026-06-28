@@ -35,13 +35,35 @@ export interface PdfRenderHandle {
   cancel(): void;
 }
 
+/**
+ * Render priority for the SINGLE shared queue (§4.4). Lower number = more urgent. The visible main-viewer pages
+ * (HIGH) always preempt pending thumbnails (LOW) for the next free slot, so the thumbnail rail can never starve
+ * the page the user is actually reading. There is exactly one worker + one queue for both surfaces.
+ */
+export const RENDER_PRIORITY = { MAIN: 0, THUMBNAIL: 1 } as const;
+export type RenderPriority = (typeof RENDER_PRIORITY)[keyof typeof RENDER_PRIORITY];
+
+export interface RenderOptions {
+  /** Queue priority — defaults to MAIN (high). Thumbnails pass THUMBNAIL (low) so they yield to the reader. */
+  priority?: RenderPriority;
+}
+
 /** An opened PDF document — the handle PdfReader drives. */
 export interface OpenedPdf {
   readonly numPages: number;
   /** Cheap: reads the page dict + viewport, does NOT rasterize (§4.1). */
   getPageDims(pageNumber: number): Promise<PdfPageDims>;
-  /** Rasterize `pageNumber` into `canvas` at `cssScale`, DPR-aware + pixel-capped (§4.2). Queued (§4.4). */
-  renderPage(pageNumber: number, canvas: HTMLCanvasElement, cssScale: number): PdfRenderHandle;
+  /**
+   * Rasterize `pageNumber` into `canvas` at `cssScale`, DPR-aware + pixel-capped (§4.2). Funnels through the
+   * SINGLE bounded, priority-ordered queue (§4.4). The thumbnail rail calls this with `priority: THUMBNAIL`
+   * (low) — same worker, same queue, lower priority — never a second worker / second page-load.
+   */
+  renderPage(
+    pageNumber: number,
+    canvas: HTMLCanvasElement,
+    cssScale: number,
+    opts?: RenderOptions,
+  ): PdfRenderHandle;
   /** Cancel everything, destroy the document + terminate the worker, drop all bitmaps (§4.4 teardown). */
   destroy(): Promise<void>;
 }
@@ -110,14 +132,31 @@ export async function openPdf(data: ArrayBuffer): Promise<OpenedPdf> {
     throw err;
   }
 
-  // ---- the single bounded render queue (§4.4) ----
-  const queue: Array<() => void> = [];
+  // ---- the single bounded, PRIORITY-ordered render queue (§4.4) ----
+  // One queue serves both the main viewer and the thumbnail rail. Each free worker slot is handed to the most
+  // urgent pending job (lowest priority number; FIFO within a priority via `seq`), so a backlog of low-priority
+  // thumbnail renders can never delay a visible main page — the reader always wins the next slot.
+  interface QueuedJob {
+    run: () => void;
+    priority: number;
+    seq: number;
+  }
+  const queue: QueuedJob[] = [];
+  let seqCounter = 0;
   let active = 0;
   const pump = () => {
     while (active < MAX_CONCURRENT_RENDERS && queue.length) {
-      const job = queue.shift()!;
+      let bestIdx = 0;
+      for (let i = 1; i < queue.length; i++) {
+        const cand = queue[i]!;
+        const best = queue[bestIdx]!;
+        if (cand.priority < best.priority || (cand.priority === best.priority && cand.seq < best.seq)) {
+          bestIdx = i;
+        }
+      }
+      const job = queue.splice(bestIdx, 1)[0]!;
       active++;
-      job();
+      job.run();
     }
   };
   const release = () => {
@@ -136,7 +175,13 @@ export async function openPdf(data: ArrayBuffer): Promise<OpenedPdf> {
       return { width: vp.width, height: vp.height };
     },
 
-    renderPage(pageNumber: number, canvas: HTMLCanvasElement, cssScale: number): PdfRenderHandle {
+    renderPage(
+      pageNumber: number,
+      canvas: HTMLCanvasElement,
+      cssScale: number,
+      opts?: RenderOptions,
+    ): PdfRenderHandle {
+      const priority = opts?.priority ?? RENDER_PRIORITY.MAIN;
       let canceled = false;
       let task: pdfjs.RenderTask | null = null;
 
@@ -179,7 +224,7 @@ export async function openPdf(data: ArrayBuffer): Promise<OpenedPdf> {
               reject(err);
             });
         };
-        queue.push(run);
+        queue.push({ run, priority, seq: seqCounter++ });
         pump();
       });
 
