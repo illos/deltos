@@ -299,6 +299,77 @@
   object-fit: contain;
   border-radius: 6px;
 }
+.file-view__preview--pdf {
+  display: block;
+  padding: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+/* PDF reader (pdf-reader.md §3.1, Slice 1) — a sticky compact toolbar over a scrollable, virtualized page
+   column. The scroll region is the Intersection.../scroll-math root; pages are absolutely positioned at their
+   computed offsets so the scrollbar + jump math stay exact while only windowed pages hold live canvases. */
+.pdf-reader { display: flex; flex-direction: column; width: 100%; }
+.pdf-reader__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--nav, var(--list));
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--secondary);
+}
+.pdf-reader__pageinfo { font-variant-numeric: tabular-nums; }
+.pdf-reader__filename {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  min-width: 0;
+}
+.pdf-reader__scroll {
+  position: relative;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  height: 70vh;
+  max-height: 70vh;
+  background: var(--list);
+  border-radius: 0 0 12px 12px;
+}
+.pdf-reader__pages { position: relative; width: 100%; margin: 0 auto; }
+.pdf-reader__page {
+  left: 50%;
+  transform: translateX(-50%);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  background: #fff;
+}
+.pdf-reader__canvas { display: block; width: 100%; height: 100%; }
+.pdf-reader__spinner,
+.pdf-reader__error-msg {
+  padding: 24px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--faint);
+}
+.pdf-reader--error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 16px;
+}
+.pdf-reader__download {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
 .file-view__nopreview {
   display: flex;
   flex-direction: column;
