@@ -366,14 +366,15 @@
   background: var(--sel);
 }
 /* The drop affordance must read as a deliberate surface laid OVER the list, not one the rows show through.
-   .home is an isolated stacking context (above), the SwipeRows are positioned with z-index:auto (paint layer
-   6); z-index:1 lifts this overlay into the positive-z paint layer (7) so it wins over every row. The fill is
-   a near-opaque accent-tinted paper that mutes the rows beneath; pointer-events:none keeps the real drop/
-   dragleave on .home untouched. */
+   .home is an isolated stacking context (above). Each note row's `.swipe-row__foreground` is `position:relative;
+   z-index:1` (+ will-change:transform → its own stacking context), so the rows sit at z-index 1 within .home.
+   An overlay at z-index:1 would TIE the rows and lose on DOM order (the <ul> comes after this overlay), which is
+   why the rows showed through — the overlay must beat 1, so z-index:5. The fill is an accent-tinted paper that
+   mutes the rows beneath; pointer-events:none keeps the real drop/dragleave on .home untouched. */
 .home__drop-overlay {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 5;
   pointer-events: none; /* never intercept the drag/drop (or dragleave) on .home */
   display: flex;
   align-items: center;
