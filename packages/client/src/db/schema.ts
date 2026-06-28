@@ -138,7 +138,22 @@ export interface BlobCacheRow {
   bytes: ArrayBuffer;    // the immutable blob bytes
   mime?: string;         // content type (for object-URL typing); absent for raw-bytes (pdf) reads
   size: number;          // byte length — summed for the LRU budget
-  lastAccess: number;    // epoch ms, bumped on every hit — the LRU ordering key
+  lastAccess: number;    // epoch ms, bumped on every hit (informational on the bytes row; the meta sidecar
+                         //   below carries the authoritative LRU recency that eviction reads)
+}
+
+/**
+ * Size-only LRU sidecar mirroring {@link BlobCacheRow} by the SAME compound PK `[accountId+resourceKey]`,
+ * holding ONLY the bytes' length + last-access timestamp — never the bytes. Eviction (blobClient) sums sizes
+ * and selects oldest-first victims entirely from THIS table, so a normal blob persist never deserializes any
+ * cached `ArrayBuffer` to do the budget math (PERF — Jim's load north-star; up to ~200 MB otherwise). Kept in
+ * lockstep with `blobCache` on every put/touch/evict, and dropped in the SAME `wipeLocalState` clear.
+ */
+export interface BlobCacheMetaRow {
+  accountId: string;     // resident account — half the compound PK (mirrors blobCache)
+  resourceKey: string;   // the other half of the PK (mirrors blobCache)
+  size: number;          // byte length — summed for the LRU budget (no bytes loaded)
+  lastAccess: number;    // epoch ms, bumped on every hit — the authoritative LRU ordering key
 }
 
 class DeltosDB extends Dexie {
@@ -153,6 +168,7 @@ class DeltosDB extends Dexie {
   // Compound primary key [accountId+resourceKey] → typed via Dexie's Table (EntityTable takes a single
   // key-property name; a compound key has none, so the key type is the tuple [accountId, resourceKey]).
   blobCache!: Table<BlobCacheRow, [string, string]>;
+  blobCacheMeta!: Table<BlobCacheMetaRow, [string, string]>;
 
   constructor() {
     super('deltos');
@@ -194,6 +210,11 @@ class DeltosDB extends Dexie {
       // identical hash under a different account is a different row), + an accountId index (scoped sweeps)
       // and a lastAccess index (LRU eviction by oldest touch).
       blobCache: '[accountId+resourceKey], accountId, lastAccess',
+    });
+    this.version(9).stores({
+      // Size-only LRU sidecar for blobCache: mirrors the compound PK so eviction sums sizes + picks oldest
+      // victims WITHOUT deserializing any bytes row (perf — Jim's load north-star). lastAccess index = LRU order.
+      blobCacheMeta: '[accountId+resourceKey], lastAccess',
     });
   }
 }
