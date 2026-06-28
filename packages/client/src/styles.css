@@ -47,6 +47,8 @@
   min-height: 0;
   width: 100%;
   box-sizing: border-box;
+  /* Anchor for the panel-spanning file-drop overlay (.home__drop-overlay). */
+  position: relative;
 }
 
 /* §2 header — notebook name + N-notes count (top-left) · compose icon top-right (off the FAB). */
@@ -342,10 +344,28 @@
 }
 .file-view__meta-row dd { margin: 0; color: var(--body); overflow-wrap: anywhere; min-width: 0; }
 
-/* Desktop list-drop affordance — the whole list pane rings while an OS file is dragged over it. */
+/* Desktop list-drop affordance — the whole list pane (not just the populated rows) is the drop target
+   AND rings while an OS file is dragged over it.
+
+   The .home pane is `flex:1` but its 3-region parent (.shell-3region__list) is a *block* box, so flex-grow
+   is inert there and .home would otherwise collapse to its content height — dropping in the empty space
+   below the notes would miss. The parent is a definite-height flex item (stretched in the height:100%
+   .shell-3region row), so `min-height:100%` here makes .home fill the whole panel: dragover/drop fire over
+   the empty region too, and the ring spans the pane. (Scoped to the desktop list — mobile keeps min-height:0
+   from the base rule, and the file-drag affordance is desktop-only anyway.) */
+.shell-3region__list .home {
+  min-height: 100%;
+}
+/* Whole-panel tint while dragging; the dashed ring is the inset overlay below (panel-sized because .home
+   now fills the pane), so the indication covers the empty space below the list — not a content-sized box. */
 .home--file-drag {
-  outline: 2px dashed var(--accent);
-  outline-offset: -4px;
+  background: var(--sel);
+}
+.home__drop-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none; /* never intercept the drag/drop (or dragleave) on .home */
+  border: 2px dashed var(--accent);
   border-radius: 6px;
 }
 
