@@ -5,7 +5,8 @@
  *
  * FNV-1  An IMAGE file note opens in FileNoteView (NOT the PM editor); the inline preview <img> points at the
  *        mocked `…/:hash/view` derivative URL.
- * FNV-2  A PDF (non-image) file note opens with the large format icon + a "no preview" affordance, no <img>.
+ * FNV-2  A PDF file note opens the in-app PDF reader (pdf-reader.md Slice 1), NOT the old "no preview" icon and
+ *        NOT an <img>. (Deep reader behavior is covered in pdfReader.render.test.tsx; pdf.js is mocked here.)
  * FNV-3  A NORMAL note still resolves to the PM block editor — no regression.
  * FNV-4  Delete soft-deletes the note (sys:trashedAt, the real db effect) and returns to the list.
  * FNV-5  Rename edits the note title (persisted via the real onSave → mutateNotes.put).
@@ -35,11 +36,23 @@ const VIEW_URL = 'blob:mock-view-url';
 // downloadBlob is a no-op spy. Per-test we can override loadViewUrl to reject (FNV-6).
 const loadViewUrl = vi.fn(async () => VIEW_URL);
 const downloadBlob = vi.fn(async () => {});
+const loadBlobBytes = vi.fn(async () => new ArrayBuffer(8));
 vi.mock('../src/plugins/attachment/blobClient.js', () => ({
   loadViewUrl,
   downloadBlob,
+  loadBlobBytes,
   // loadThumbUrl is referenced by the list pill; harmless to provide.
   loadThumbUrl: vi.fn(async () => VIEW_URL),
+}));
+
+// Mock the pdf.js engine seam so a pdf note's reader mounts without a real PDF engine / Worker (PDF-UI gate).
+vi.mock('../src/views/pdf/pdfEngine.js', () => ({
+  openPdf: vi.fn(async () => ({
+    numPages: 1,
+    getPageDims: vi.fn(async () => ({ width: 600, height: 800 })),
+    renderPage: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+    destroy: vi.fn(async () => {}),
+  })),
 }));
 
 function makeNote(over: Partial<Note>): Note {
@@ -88,6 +101,7 @@ beforeEach(async () => {
   localStorage.clear();
   loadViewUrl.mockReset().mockResolvedValue(VIEW_URL);
   downloadBlob.mockReset().mockResolvedValue(undefined);
+  loadBlobBytes.mockReset().mockResolvedValue(new ArrayBuffer(8));
   // Desktop so the route renders predictably; matchMedia → true.
   vi.stubGlobal('matchMedia', (q: string) => ({ matches: true, media: q, addEventListener() {}, removeEventListener() {} }));
   global.fetch = vi.fn(async () => new Response(JSON.stringify({}), { status: 200 })) as typeof fetch;
@@ -116,15 +130,15 @@ describe('FileNoteView — open surface', () => {
     expect(loadViewUrl).toHaveBeenCalledWith(`${IMG_ID}hash`);
   });
 
-  it('FNV-2 — pdf file note opens with the format icon + "no preview", no broken image', async () => {
+  it('FNV-2 — pdf file note opens the in-app PDF reader, not the "no preview" icon or an <img>', async () => {
     await mountRoute(PDF_ID, fileNote(PDF_ID, 'Q3-report.pdf', 'application/pdf'));
 
-    await waitFor(() => expect(document.querySelector('.file-view')).not.toBeNull());
-    expect(screen.getByText(/no preview/i)).toBeTruthy();
+    await waitFor(() => expect(document.querySelector('.pdf-reader')).not.toBeNull());
+    expect(document.querySelector('.file-view__nopreview')).toBeNull(); // old branch gone for pdfs
     expect(document.querySelector('.file-view__image')).toBeNull(); // no <img> at all
-    expect(document.querySelector('.file-view__nopreview-icon')).not.toBeNull();
-    // Non-image never requests a derivative.
+    // pdf goes through loadBlobBytes (raw bytes), never the image-derivative path.
     expect(loadViewUrl).not.toHaveBeenCalled();
+    await waitFor(() => expect(loadBlobBytes).toHaveBeenCalledWith(`${PDF_ID}hash`));
   });
 
   it('FNV-3 — a normal note still resolves to the PM block editor (no regression)', async () => {

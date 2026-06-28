@@ -299,6 +299,183 @@
   object-fit: contain;
   border-radius: 6px;
 }
+.file-view__preview--pdf {
+  display: block;
+  padding: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+/* PDF reader (pdf-reader.md §3.1, Slice 1) — a sticky compact toolbar over a scrollable, virtualized page
+   column. The scroll region is the Intersection.../scroll-math root; pages are absolutely positioned at their
+   computed offsets so the scrollbar + jump math stay exact while only windowed pages hold live canvases. */
+.pdf-reader { display: flex; flex-direction: column; width: 100%; }
+.pdf-reader__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--nav, var(--list));
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--secondary);
+}
+.pdf-reader__pageinfo { font-variant-numeric: tabular-nums; }
+.pdf-reader__filename {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+  min-width: 0;
+}
+.pdf-reader__scroll {
+  position: relative;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  height: 70vh;
+  max-height: 70vh;
+  background: var(--list);
+  border-radius: 0 0 12px 12px;
+}
+.pdf-reader__pages { position: relative; width: 100%; margin: 0 auto; }
+.pdf-reader__page {
+  left: 50%;
+  transform: translateX(-50%);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  background: #fff;
+}
+.pdf-reader__canvas { display: block; width: 100%; height: 100%; }
+.pdf-reader__spinner,
+.pdf-reader__error-msg {
+  padding: 24px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--faint);
+}
+.pdf-reader--error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 16px;
+}
+.pdf-reader__download {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+/* PDF reader Slice 2 — toolbar page control + virtualized thumbnail rail (pdf-reader.md §3.2, §3.3, §4.3). */
+.pdf-reader__toolbar { gap: 8px; }
+.pdf-reader__thumbs-toggle,
+.pdf-reader__pagestep {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--list);
+  color: var(--secondary);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+.pdf-reader__thumbs-toggle.is-on { background: var(--accent); color: var(--on-accent, #fff); border-color: var(--accent); }
+.pdf-reader__thumbs-toggle:disabled,
+.pdf-reader__pagestep:disabled { opacity: 0.4; cursor: default; }
+.pdf-reader__pageinfo {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.pdf-reader__pageinput {
+  width: 3.2em;
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--list);
+  color: var(--text, var(--secondary));
+  font: inherit;
+  font-size: 16px; /* ≥16px so iOS Safari doesn't auto-zoom on focus (ios-input-16px-no-zoom). */
+  text-align: center;
+}
+.pdf-reader__pagetotal { white-space: nowrap; }
+
+/* The body is the flex row that hosts the docked rail (desktop) beside the scrollable page column. */
+.pdf-reader__body { position: relative; display: flex; align-items: stretch; }
+.pdf-reader__body .pdf-reader__scroll { flex: 1 1 auto; min-width: 0; border-radius: 0 0 12px 0; }
+
+/* The virtualized rail: a narrow scroll column; thumbs are absolutely positioned at their computed offsets so
+   only the windowed ones hold a live canvas while the scroll height stays exact (§4.3). */
+.pdf-reader__thumbs {
+  flex: 0 0 auto;
+  width: 132px;
+  height: 70vh;
+  max-height: 70vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--nav, var(--list));
+  border-right: 1px solid var(--border);
+  border-radius: 0 0 0 12px;
+}
+.pdf-reader__thumbs-track { position: relative; width: 100%; }
+.pdf-reader__thumb {
+  left: 50%;
+  transform: translateX(-50%);
+  display: block;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  overflow: hidden;
+}
+.pdf-reader__thumb--active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.pdf-reader__thumb-canvas { display: block; width: 100%; height: 100%; }
+.pdf-reader__thumb-num {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.pdf-reader__thumbs-backdrop { display: none; }
+
+/* Mobile (≤768px): the rail is an OVERLAY drawer, not a docked column — it never eats reading width (OQ-2). */
+.pdf-reader--mobile .pdf-reader__body .pdf-reader__scroll { border-radius: 0 0 12px 12px; }
+.pdf-reader--mobile .pdf-reader__thumbs {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 0;
+  height: 100%;
+  max-height: 100%;
+  box-shadow: 2px 0 12px rgba(0, 0, 0, 0.3);
+}
+.pdf-reader--mobile .pdf-reader__thumbs-backdrop {
+  display: block;
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+}
 .file-view__nopreview {
   display: flex;
   flex-direction: column;

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
 import type { NoteEditorProps } from '../editor/NoteEditor.js';
@@ -33,6 +33,17 @@ function isPreviewableImage(mime: string, name: string): boolean {
   return /\.(png|jpe?g|gif|webp|heic|heif)$/i.test(name);
 }
 
+// PDF detection mirrors isPreviewableImage — mime-first, with a `.pdf` extension fallback (pdf-reader.md §2.1).
+function isPdf(mime: string, name: string): boolean {
+  return mime === 'application/pdf' || /\.pdf$/i.test(name);
+}
+
+// SECOND-LEVEL lazy import (pdf-reader.md §6.1, gate PDF-P): the PDF reader — and through it pdf.js — loads
+// ONLY when a pdf file note actually opens. Because this is a dynamic `import()`, PdfReader/pdf.js never enter
+// FileNoteView's STATIC import graph (which is itself already a lazy chunk off the entry bundle). Two lazy
+// hops from first load; opening an image/normal note pulls zero pdf.js bytes.
+const LazyPdfReader = lazy(() => import('./pdf/PdfReader.js').then((m) => ({ default: m.PdfReader })));
+
 export function FileNoteView({ note, onSave }: NoteEditorProps) {
   const navigate = useNavigate();
   const att = fileNoteAttachment(note);
@@ -41,6 +52,7 @@ export function FileNoteView({ note, onSave }: NoteEditorProps) {
   const hash = att?.hash;
 
   const image = isPreviewableImage(mime, name);
+  const pdf = isPdf(mime, name);
   const [viewUrl, setViewUrl] = useState<string | null>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
 
@@ -120,20 +132,31 @@ export function FileNoteView({ note, onSave }: NoteEditorProps) {
           </p>
         </header>
 
-        <div className="file-view__preview">
-          {showImage ? (
-            <img className="file-view__image" src={viewUrl!} alt={name} decoding="async" />
-          ) : (
-            <div className="file-view__nopreview">
-              <span className="file-view__nopreview-icon" aria-hidden="true">
-                <Icon size={72} />
-              </span>
-              {/* Non-image (pdf/office/unknown): a deliberate v1 boundary per the safe-serving design
-                  (octet-stream + Content-Disposition: attachment), NOT a bug. Icon + Download is the path. */}
-              {!image && <span className="file-view__nopreview-label">No preview available</span>}
-            </div>
-          )}
-        </div>
+        {pdf && hash ? (
+          // The in-app PDF reader (pdf-reader.md §2.1) replaces the old "No preview available" branch for pdfs.
+          // Suspense covers the second-level lazy chunk; the reader degrades to the icon + Download itself on a
+          // parse/offline failure (gate PDF-2), so the surrounding chrome (Download/Rename/Delete) always works.
+          <div className="file-view__preview file-view__preview--pdf">
+            <Suspense fallback={<div className="pdf-reader__spinner" role="status">Loading reader…</div>}>
+              <LazyPdfReader hash={hash} name={name} onDownload={handleDownload} />
+            </Suspense>
+          </div>
+        ) : (
+          <div className="file-view__preview">
+            {showImage ? (
+              <img className="file-view__image" src={viewUrl!} alt={name} decoding="async" />
+            ) : (
+              <div className="file-view__nopreview">
+                <span className="file-view__nopreview-icon" aria-hidden="true">
+                  <Icon size={72} />
+                </span>
+                {/* Non-image, non-pdf (office/unknown): a deliberate v1 boundary per the safe-serving design
+                    (octet-stream + Content-Disposition: attachment), NOT a bug. Icon + Download is the path. */}
+                {!image && <span className="file-view__nopreview-label">No preview available</span>}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="file-view__actions">
           <button type="button" className="file-view__action file-view__action--primary" onClick={handleDownload} disabled={!hash}>

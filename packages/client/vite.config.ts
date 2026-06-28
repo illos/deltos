@@ -1,8 +1,43 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import type { UserConfig } from 'vitest/config';
 import { execSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { cpSync, createReadStream, existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+
+// pdf.js ships its CMaps + standard-14 font data as loose binary asset dirs. The PDF reader points pdf.js at
+// SAME-ORIGIN copies of them (`/pdfjs/cmaps/`, `/pdfjs/standard_fonts/`) so the engine never reaches a CDN for
+// resources (pdf-reader.md §7 / gate PDF-S). This tiny plugin copies them into the build output and serves
+// them from node_modules in dev. They are NOT JS chunks (`.bcmap`/`.pfb`/`.ttf`) so they fall outside the SW
+// precache glob — fetched only when a PDF actually needs a non-embedded font, never bundled into any JS chunk.
+function pdfjsAssets(): Plugin {
+  const require = createRequire(import.meta.url);
+  const pdfjsRoot = dirname(require.resolve('pdfjs-dist/package.json'));
+  const dirs = ['cmaps', 'standard_fonts'] as const;
+  return {
+    name: 'deltos-pdfjs-assets',
+    // No `apply` → runs in both dev (configureServer) and build (writeBundle).
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const m = req.url ? /^\/pdfjs\/(cmaps|standard_fonts)\/([^?]+)/.exec(req.url) : null;
+        if (!m || !m[1] || !m[2]) return next();
+        const file = join(pdfjsRoot, m[1], m[2]);
+        if (!file.startsWith(pdfjsRoot) || !existsSync(file)) return next();
+        res.setHeader('Content-Type', 'application/octet-stream');
+        createReadStream(file).pipe(res);
+      });
+    },
+    writeBundle(options) {
+      const outDir = options.dir ?? resolve('dist');
+      for (const d of dirs) {
+        const src = join(pdfjsRoot, d);
+        if (existsSync(src)) cpSync(src, join(outDir, 'pdfjs', d), { recursive: true });
+      }
+    },
+  };
+}
 
 // The control dashboard injects a stable per-project HTTPS port; fall back to Vite's default
 // when running outside it. Binding 127.0.0.1 (not localhost→::1) is what `tailscale serve`
@@ -38,7 +73,29 @@ export default defineConfig({
   // keeps `pnpm typecheck` (tsconfig.node.json) fully green so the gate means deploy-clean.
   // @ts-expect-error — `test` is read by vitest at runtime; not in vite's config type.
   test: testConfig,
+  build: {
+    rollupOptions: {
+      output: {
+        // STABLE pdf.js chunk names (pdf-reader.md §6.1) so the SW can match them by glob/predicate. pdf.js is
+        // collapsed into one `pdfjs-[hash].js` chunk; everything else keeps Vite's default names.
+        manualChunks(id: string) {
+          if (id.includes('pdfjs-dist')) return 'pdfjs';
+          return undefined;
+        },
+        chunkFileNames: (info) =>
+          info.name === 'pdfjs' ? 'assets/pdfjs-[hash].js' : 'assets/[name]-[hash].js',
+        // The pdf.js parser worker (imported `?url`) is emitted SAME-ORIGIN with a matchable `.js` name so the
+        // SW runtime rule + globIgnores can target it; all other assets keep the default name.
+        assetFileNames: (info) => {
+          const n = info.name ?? '';
+          if (/pdf\.worker(\.min)?\.m?js$/.test(n)) return 'assets/pdf.worker-[hash].js';
+          return 'assets/[name]-[hash][extname]';
+        },
+      },
+    },
+  },
   plugins: [
+    pdfjsAssets(),
     react(),
     VitePWA({
       // injectManifest: we own the service worker source; the plugin only injects the
@@ -51,6 +108,9 @@ export default defineConfig({
         // woff2: precache the everyday fonts (Plex Sans default voice + Plex Mono metadata) at SW
         // install so the first everyday load is instant + offline (UI refresh, Lane 0).
         globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest,woff2}'],
+        // pdf.js chunks are LAZY + runtime-cached on first PDF open (sw.ts), NEVER install-precached — so the
+        // ~0.5 MB engine never bloats install for users who never open a PDF (pdf-reader.md §6.2 / gate PDF-P).
+        globIgnores: ['**/pdfjs-*.js', '**/pdf.worker*.js'],
       },
       manifest: {
         name: 'deltos',
