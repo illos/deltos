@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useParams, Link, useSearchParams, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import type { Note, NoteId } from '@deltos/shared';
-import { NoteIdSchema } from '@deltos/shared';
+import { NoteIdSchema, isFileNote } from '@deltos/shared';
 import { getStore } from '../db/store.js';
 import { noteHasContent } from '../lib/noteContent.js';
 import { useNote } from '../db/storeHooks.js';
@@ -201,7 +201,9 @@ export function NoteRoute() {
           so it carries Synced + version-history + delete here. On MOBILE the global shell__bar is the single
           note bar (history lives there via ?history), so editor__meta is omitted entirely — no second bar,
           no back chevron (the δ wordmark → '/' covers return). The edited-time is above the title (#77). */}
-      {isDesktop && (
+      {/* File notes render their own chrome (delete/rename/download) in FileNoteView, so the desktop
+          meta toolbar is suppressed for them — otherwise the pane shows two headers + a redundant delete. */}
+      {isDesktop && !isFileNote(note) && (
         <header className="editor__meta">
           <div className="editor__meta-end">
             {/* Relocated sync indicator (was the top-bar pill; the §3 home is its place now). */}

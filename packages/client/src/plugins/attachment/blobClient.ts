@@ -59,6 +59,36 @@ export async function loadBlobUrl(hash: string, mime: string): Promise<string> {
 }
 
 /**
+ * Load a host-generated WebP derivative (the list-tile `thumb` or the open-view `view`) as an object URL
+ * (file-notes.md §4.4). The Slice-1 worker pre-bakes both at upload and serves them INLINE (`image/webp` +
+ * nosniff) from `GET /:hash/{thumb|view}` — a plain authenticated R2.get, NO per-render transform. WebP is
+ * always safe to inline (it is never user-uploaded active content — only the host derivative), so the type
+ * is fixed to `image/webp`. Session-cached by `{variant}:{hash}` (content-addressed → one fetch per session).
+ * Throws on miss (404 = derivative not baked yet / non-image); the caller falls back to the format icon.
+ */
+async function loadDerivativeUrl(hash: string, variant: 'thumb' | 'view'): Promise<string> {
+  const cacheKey = `${variant}:${hash}`;
+  const cached = urlCache.get(cacheKey);
+  if (cached) return cached;
+  const res = await fetch(`${BLOB_API}/${hash}/${variant}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`blob ${variant} load failed (${res.status})`);
+  const bytes = await res.arrayBuffer();
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'image/webp' }));
+  urlCache.set(cacheKey, url);
+  return url;
+}
+
+/** The square 256² list-tile WebP derivative as an object URL (file-notes.md §3.1 / §4.4). */
+export function loadThumbUrl(hash: string): Promise<string> {
+  return loadDerivativeUrl(hash, 'thumb');
+}
+
+/** The ≤2048px full-view WebP derivative as an object URL for the open viewer (file-notes.md §3.2 / §4.4). */
+export function loadViewUrl(hash: string): Promise<string> {
+  return loadDerivativeUrl(hash, 'view');
+}
+
+/**
  * The HARD safe-type gate (secSys #694): a stored blob may be object-URL-rendered INLINE only when it is a
  * known-safe raster image (png/jpeg/gif/webp). Everything else — html, svg, pdf, unknown — must NEVER be
  * inline-rendered (a blob: URL of html/svg would re-introduce the XSS the server prevents); it becomes a

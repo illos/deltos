@@ -10,6 +10,7 @@
  * surrounding `color` / theme token. Each icon is an independent named export (tree-shakeable — an
  * app pays only for the icons it imports).
  */
+import type { ComponentType } from 'react';
 import { IconBase, type IconProps } from './IconBase.js';
 
 export { IconBase } from './IconBase.js';
@@ -319,4 +320,152 @@ export function SyncDot(props: IconProps) {
       <circle cx="12" cy="12" r="5" fill="currentColor" stroke="none" />
     </IconBase>
   );
+}
+
+// — File-type glyphs (file-notes.md §3.1 — the artifact-pill leading visual) ————————————————
+//
+// A foreign-file note's list pill paints a square thumbnail for images; everything else gets one of these
+// format glyphs, resolved extension-first by resolveFileIcon (mime-class fallback → FileGeneric). All share
+// the page frame below; the label/mark inside discriminates the format. Decorative-only (aria-hidden).
+
+/** The shared document-page frame (rounded sheet + folded top-right corner) every file glyph is drawn over. */
+const PAGE_FRAME = (
+  <>
+    <path d="M6.5 3h6L18 8.5V20a1 1 0 0 1-1 1H6.5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />
+    <path d="M12.5 3v6H18" />
+  </>
+);
+
+// Small monospace label sat in the lower half of the page (mirrors the NumberedList numerals).
+const fileLabel = {
+  fontSize: '5px',
+  fontFamily: "'IBM Plex Mono', monospace",
+  fill: 'currentColor',
+  stroke: 'none',
+  letterSpacing: '0.2px',
+} as const;
+
+/** Generic document — page + two text lines (the unknown-extension / unknown-mime fallback). */
+export function FileGeneric(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.5} {...props}>
+      {PAGE_FRAME}
+      <line x1="8.5" y1="13" x2="15" y2="13" />
+      <line x1="8.5" y1="16" x2="15" y2="16" />
+    </IconBase>
+  );
+}
+
+/** PDF document. */
+export function FilePdf(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.5} {...props}>
+      {PAGE_FRAME}
+      <text x="7.4" y="17.6" style={fileLabel}>PDF</text>
+    </IconBase>
+  );
+}
+
+/** Word-processor document (doc / docx / rtf / txt / md). */
+export function FileDoc(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.5} {...props}>
+      {PAGE_FRAME}
+      <line x1="8.5" y1="12.5" x2="15" y2="12.5" />
+      <line x1="8.5" y1="15" x2="15" y2="15" />
+      <line x1="8.5" y1="17.5" x2="12.5" y2="17.5" />
+    </IconBase>
+  );
+}
+
+/** Spreadsheet (xls / xlsx / csv / numbers) — page + a small cell grid. */
+export function FileSheet(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.4} {...props}>
+      {PAGE_FRAME}
+      <rect x="8" y="12" width="7.5" height="6" rx="0.6" />
+      <line x1="11.75" y1="12" x2="11.75" y2="18" />
+      <line x1="8" y1="15" x2="15.5" y2="15" />
+    </IconBase>
+  );
+}
+
+/** Presentation (ppt / pptx / key) — page + a screen rectangle. */
+export function FileSlides(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.4} {...props}>
+      {PAGE_FRAME}
+      <rect x="8" y="12.5" width="7.5" height="5" rx="0.8" />
+    </IconBase>
+  );
+}
+
+/** Archive (zip / tar / gz / rar / 7z) — page + a zipper. */
+export function FileArchive(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.4} {...props}>
+      {PAGE_FRAME}
+      <line x1="11.75" y1="11.5" x2="11.75" y2="18.5" strokeDasharray="1 1.4" />
+    </IconBase>
+  );
+}
+
+/** Video (mp4 / mov / webm / mkv …) — a frame with a play triangle. */
+export function FileVideo(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.5} {...props}>
+      <rect x="3.5" y="5.5" width="17" height="13" rx="2.5" />
+      <path d="M10.5 9.2l4.4 2.8-4.4 2.8z" fill="currentColor" stroke="none" />
+    </IconBase>
+  );
+}
+
+/** Audio (mp3 / wav / m4a …) — a musical note. */
+export function FileAudio(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.5} {...props}>
+      <path d="M9 17V6l9-2v9" />
+      <circle cx="6.5" cy="17" r="2.5" />
+      <circle cx="15.5" cy="15" r="2.5" />
+    </IconBase>
+  );
+}
+
+/** Blender project (.blend) — the logo's notched-eye-and-drop mark, fine-line. */
+export function Blender(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.5} {...props}>
+      <circle cx="12" cy="12.5" r="7.5" />
+      <circle cx="12" cy="10.5" r="2.4" />
+      <circle cx="11.6" cy="10.2" r="0.7" fill="currentColor" stroke="none" />
+      <path d="M9.6 12.4c1.2 2 4.2 2.4 6 1" />
+    </IconBase>
+  );
+}
+
+/**
+ * Resolve a file note's format glyph (file-notes.md §3.1) — EXTENSION-FIRST, then a mime-class fallback,
+ * then the generic document. Used only for NON-image notes (and as an image's fallback when no thumbnail
+ * exists). Pure + synchronous — cheap enough for the list row.
+ */
+const EXT_ICON: Record<string, ComponentType<IconProps>> = {
+  pdf: FilePdf,
+  doc: FileDoc, docx: FileDoc, rtf: FileDoc, txt: FileDoc, md: FileDoc, pages: FileDoc, odt: FileDoc,
+  xls: FileSheet, xlsx: FileSheet, csv: FileSheet, numbers: FileSheet, ods: FileSheet,
+  ppt: FileSlides, pptx: FileSlides, key: FileSlides, odp: FileSlides,
+  zip: FileArchive, tar: FileArchive, gz: FileArchive, tgz: FileArchive, rar: FileArchive, '7z': FileArchive,
+  blend: Blender,
+  mp4: FileVideo, mov: FileVideo, webm: FileVideo, mkv: FileVideo, avi: FileVideo, m4v: FileVideo,
+  mp3: FileAudio, wav: FileAudio, m4a: FileAudio, flac: FileAudio, ogg: FileAudio, aac: FileAudio,
+};
+
+export function resolveFileIcon(name: string | undefined, mime: string | undefined): ComponentType<IconProps> {
+  const ext = (name ?? '').toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+  if (ext && EXT_ICON[ext]) return EXT_ICON[ext];
+  if (mime) {
+    if (mime.startsWith('image/')) return Image; // an image that somehow lacks a thumbnail
+    if (mime.startsWith('video/')) return FileVideo;
+    if (mime.startsWith('audio/')) return FileAudio;
+  }
+  return FileGeneric;
 }

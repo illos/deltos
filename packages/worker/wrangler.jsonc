@@ -15,6 +15,13 @@
   "ai": {
     "binding": "AI",
   },
+  // Cloudflare Workers Images (file-notes spec §4 — `compute` host capability). In-Worker transforms of
+  // PRIVATE R2 image bytes: upload-time dual-WebP pre-bake (thumb 256² cover + view ≤2048px scale-down)
+  // and download-time JPEG transcode. NO local impl — `wrangler dev` can't run it; use a deploy or
+  // `wrangler dev --remote` (same constraint as the `AI` binding above).
+  "images": {
+    "binding": "IMAGES",
+  },
   "d1_databases": [
     {
       "binding": "DB",

@@ -2,6 +2,7 @@ import { Plugin, TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import type { DeltoSchema } from '../../editor/schema.js';
 import { uploadBlob } from './blobClient.js';
+import { buildAttachmentContent } from './attachmentBlock.js';
 
 /**
  * Attachment INSERT path (A4 #132) — drop / paste a file → upload to the blob capability → embed. This is a
@@ -69,7 +70,7 @@ async function handleFiles(view: EditorView, schema: DeltoSchema, files: File[])
     files.map(async (file, i) => {
       try {
         const { hash, size } = await uploadBlob(file);
-        fillBlock(view, tokens[i]!, { hash, name: file.name, mime: file.type, size });
+        fillBlock(view, tokens[i]!, { ...buildAttachmentContent(file, { hash, size }) });
       } catch {
         fillBlock(view, tokens[i]!, { name: file.name, mime: file.type, size: file.size, error: true });
       }

@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv, AppContext } from '../context.js';
+import type { Env } from '../env.js';
 import { apiError, NON_PROD_ENVIRONMENTS } from '../http.js';
 import { resolvePrincipal } from '../auth.js';
 
@@ -35,9 +36,64 @@ const ACCOUNT_BLOB_QUOTA = 250 * 1024 * 1024;
 /** Content-types safe to hand back with their real type (images can't execute). Everything else → octet. */
 const SAFE_INLINE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
+/**
+ * Image inputs we pre-bake WebP derivatives for (file-notes spec §4.2). The SAFE_INLINE image set plus HEIC/HEIF
+ * — `env.IMAGES` decodes HEIC on all plans (FN-W4), and the user never sees the raw HEIC bytes inline (browsers
+ * can't decode them), only the host-baked WebP. The derivative bake is content-format-agnostic; this set only
+ * decides WHICH uploads are worth a bake.
+ */
+const BAKEABLE_IMAGE_TYPES = new Set([...SAFE_INLINE_TYPES, 'image/heic', 'image/heif']);
+
+/**
+ * The two WebP derivatives pre-baked per image (file-notes spec §4.2, gate FN-W2). Keys live under the SAME
+ * server-derived `{accountId}/` prefix as the original blob (HC-A4-1 access boundary), suffixed so a user upload
+ * — whose key is `{accountId}/{64-hex-hash}` — can NEVER land bytes at a derivative key. That key-namespace gap is
+ * what makes the inline derivative routes safe to serve non-attachment: they only ever return host-generated WebP.
+ */
+const DERIVATIVES = [
+  /** Square center-crop tile for the list artifact-pill. */
+  { suffix: 'thumb.webp', transform: { width: 256, height: 256, fit: 'cover' as const } },
+  /** Long-edge ≤2048px contain (never upscales) for the open-view preview. */
+  { suffix: 'view.webp', transform: { width: 2048, height: 2048, fit: 'scale-down' as const } },
+];
+
 /** Never serve active/ambiguous content with its real type on the app origin (nosniff + attachment also apply). */
 function safeServeType(stored: string | undefined): string {
   return stored && SAFE_INLINE_TYPES.has(stored) ? stored : 'application/octet-stream';
+}
+
+/**
+ * Pre-bake the two WebP derivatives for an uploaded image (file-notes spec §4.2; gate FN-W2). The `env.IMAGES`
+ * call is the mockable seam — unit tests inject a stub binding (the real binding has NO local impl, only
+ * `wrangler dev --remote`). Every derive is:
+ *   - IDEMPOTENT: content-addressed key + a head()-precheck → a re-upload of the same hash skips an already-baked
+ *     derivative (never double-bakes destructively), and a derive that failed last time is retried.
+ *   - NON-FATAL: the original blob is already stored, so a transform/store failure is logged and swallowed — the
+ *     upload still succeeds; the list just falls back to the format icon and the open-view to the large icon.
+ * Degrades cleanly (no-op) when IMAGES is unbound (gate FN-W1).
+ */
+async function bakeImageDerivatives(env: Env, accountId: string, hash: string, buf: ArrayBuffer): Promise<void> {
+  const images = env.IMAGES;
+  const bucket = env.BLOBS;
+  if (!images || !bucket) return;
+  for (const d of DERIVATIVES) {
+    const derivKey = `${accountId}/${hash}.${d.suffix}`;
+    try {
+      if (await bucket.head(derivKey)) continue; // already baked — idempotent skip
+      const result = await images
+        .input(new Response(buf).body as ReadableStream<Uint8Array>)
+        .transform(d.transform)
+        .output({ format: 'image/webp' });
+      // Collect to bytes before storing so the value is an ArrayBuffer (portable across R2 impls).
+      const out = await new Response(result.image()).arrayBuffer();
+      await bucket.put(derivKey, out, {
+        httpMetadata: { contentType: 'image/webp' },
+        customMetadata: { accountId, derived: d.suffix, sourceHash: hash },
+      });
+    } catch (err) {
+      console.error(`blob: WebP derivative bake failed for ${derivKey} (non-fatal)`, err);
+    }
+  }
 }
 
 function toHex(buf: ArrayBuffer): string {
@@ -95,6 +151,7 @@ blob.post('/', async (c: AppContext) => {
   }
 
   const key = `${accountId}/${hash}`;
+  const mime = c.req.header('x-blob-mime') ?? c.req.header('content-type') ?? 'application/octet-stream';
 
   // Dedup: content-addressed, so an identical upload is a no-op (and must not double-count quota).
   const existing = await c.env.BLOBS.head(key);
@@ -103,12 +160,20 @@ blob.post('/', async (c: AppContext) => {
     if (used + buf.byteLength > ACCOUNT_BLOB_QUOTA) {
       return apiError(c, 413, 'quota_exceeded', 'account storage quota exceeded');
     }
-    const mime = c.req.header('x-blob-mime') ?? c.req.header('content-type') ?? 'application/octet-stream';
     await c.env.BLOBS.put(key, buf, {
       // Store metadata for serving; the content-type is re-sanitized on the way out regardless.
       httpMetadata: { contentType: mime },
       customMetadata: { accountId, mime, size: String(buf.byteLength) },
     });
+  }
+
+  // file-notes spec §4.2 — pre-bake the two WebP derivatives for image uploads (gate FN-W2). Runs on every
+  // upload (even a dedup hit) because the bake is idempotent + non-fatal: it retries a previously-failed derive
+  // and skips an already-baked one, and a failure here NEVER fails the upload (the original blob is stored).
+  // Images > 20 MB exceed the IMAGES input cap (§4.5) → the transform simply fails non-fatally (no thumbnail),
+  // which is the spec's chosen behavior (store original, fall back to icon).
+  if (BAKEABLE_IMAGE_TYPES.has(mime)) {
+    await bakeImageDerivatives(c.env, accountId, hash, buf);
   }
 
   return c.json({ hash, size: buf.byteLength });
@@ -141,3 +206,45 @@ blob.get('/:hash', async (c: AppContext) => {
     },
   });
 });
+
+/**
+ * Inline WebP derivative serving (file-notes spec §4.4; gate FN-W5). The ONE place blob bytes are served
+ * NON-attachment — safe ONLY because it exclusively serves the HOST-GENERATED WebP derivatives baked at upload
+ * (§4.2), never user-supplied bytes/mime, so the active-content XSS surface stays closed:
+ *   - The Content-Type is HARDCODED `image/webp` — never the stored/user mime (defense even if a stub mislabels).
+ *   - The R2 key is `{server-derived accountId}/{hash}.{suffix}.webp`. A user upload can only ever write
+ *     `{accountId}/{64-hex-hash}` (no suffix), so it is structurally impossible to plant bytes at a derivative
+ *     key → these routes can only ever return host-baked output.
+ *   - Same accountId-prefix BOLA boundary as the main GET: another account's prefix simply has nothing → 404.
+ * nosniff + the fully-sandboxed CSP still ride along (defense-in-depth). Disposition is `inline` (vs the main
+ * GET's `attachment`); the main blob GET's attachment serving is unchanged.
+ */
+function serveDerivative(suffix: string) {
+  return async (c: AppContext): Promise<Response> => {
+    const accountId = await resolveAccountId(c);
+    if (!accountId) return apiError(c, 401, 'unauthorized', 'blob storage requires an authenticated session');
+    if (!c.env.BLOBS) return apiError(c, 503, 'blob_not_configured', 'blob storage is unavailable (R2 unbound)');
+
+    const hash = c.req.param('hash');
+    if (!hash || !/^[0-9a-f]{64}$/.test(hash)) return apiError(c, 400, 'invalid_request', 'invalid blob id');
+
+    const object = await c.env.BLOBS.get(`${accountId}/${hash}.${suffix}`);
+    if (!object) return apiError(c, 404, 'not_found', 'derivative not found');
+
+    return new Response(object.body, {
+      headers: {
+        // HARDCODED — a derivative is ALWAYS host-baked WebP; never echo a stored/user-supplied content-type.
+        'Content-Type': 'image/webp',
+        'Content-Disposition': 'inline',
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'; sandbox",
+        'Cache-Control': 'private, max-age=31536000, immutable', // content-addressed → immutable
+      },
+    });
+  };
+}
+
+/** GET /:hash/thumb — the 256² square list tile (inline WebP). */
+blob.get('/:hash/thumb', serveDerivative('thumb.webp'));
+/** GET /:hash/view — the ≤2048px open-view preview (inline WebP). */
+blob.get('/:hash/view', serveDerivative('view.webp'));
