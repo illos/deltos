@@ -396,9 +396,14 @@ function spineBlockToPmNode(schema: Schema, block: Block): PmNode | PmNode[] | n
     case 'quote': {
       const c = parseQuoteContent(block.content);
       const inner: PmNode[] = [];
+      // The quote's FIRST paragraph is render-only: pmDocToSpine flattens its segments into the quote
+      // content and discards its node id (only the quote's own id + any *extra* children are persisted).
+      // A fresh random id here made spineToPmDoc non-deterministic → broke the #90 reconcile echo-guard
+      // (incoming.eq(doc)) → wiped the undo stack. Derive it from the persisted quote id so the same spine
+      // always serializes to the same doc. `~q` cannot collide with a real UUID (uuids never contain `~`).
       if (c.segments.length > 0) {
         inner.push(schema.nodes['paragraph']!.create(
-          { id: newBlockId() as string },
+          { id: `${id}~q` },
           segmentsToPmInline(schema, c.segments),
         ));
       }
@@ -409,7 +414,7 @@ function spineBlockToPmNode(schema: Schema, block: Block): PmNode | PmNode[] | n
           else inner.push(converted);
         }
       }
-      const content = inner.length > 0 ? inner : [schema.nodes['paragraph']!.create({ id: newBlockId() as string })];
+      const content = inner.length > 0 ? inner : [schema.nodes['paragraph']!.create({ id: `${id}~q` })];
       return schema.nodes['blockquote']!.create({ id }, content);
     }
 
@@ -445,17 +450,22 @@ function spineBlockToPmNode(schema: Schema, block: Block): PmNode | PmNode[] | n
           }
         }
 
+        // A list_item's INNER paragraph/todo carries no persisted id — pmDocToSpine keys the spine block on
+        // the list_item id (itemId) and throws the inner node's id away. Emitting `id: null` (instead of a
+        // fresh random) keeps spineToPmDoc deterministic; uniqueBlockIdPlugin is taught to leave these null
+        // (it would otherwise re-mint a random one), so the live doc and the round-trip stay byte-identical →
+        // the #90 reconcile echo-guard short-circuits instead of replacing the doc + wiping undo history.
         let innerNode: PmNode;
         if (child.type === 'todo') {
           const tc = parseTodoContent(child.content);
           innerNode = schema.nodes['todo_item']!.create(
-            { id: newBlockId() as string, checked: tc.checked },
+            { id: null, checked: tc.checked },
             segmentsToPmInline(schema, tc.segments),
           );
         } else {
           const pc = parseParagraphContent(child.content);
           innerNode = schema.nodes['paragraph']!.create(
-            { id: newBlockId() as string },
+            { id: null },
             segmentsToPmInline(schema, pc.segments),
           );
         }
@@ -465,8 +475,8 @@ function spineBlockToPmNode(schema: Schema, block: Block): PmNode | PmNode[] | n
 
       if (items.length === 0) {
         items.push(schema.nodes['list_item']!.create(
-          { id: newBlockId() as string },
-          [schema.nodes['paragraph']!.create({ id: newBlockId() as string })],
+          { id: `${id}~empty` },
+          [schema.nodes['paragraph']!.create({ id: null })],
         ));
       }
 
@@ -483,7 +493,10 @@ function spineBlockToPmNode(schema: Schema, block: Block): PmNode | PmNode[] | n
         pluginType: block.type,
         pluginContent: block.content ?? null,
       });
-      return schema.nodes['paragraph']!.create({ id: newBlockId() as string }, [atom]);
+      // The wrapper paragraph is render-only (textblockToBlocks unwraps an isolated atom back to the bare
+      // plugin block, discarding this paragraph's id). Derive it from the atom's persisted id (`~w`) so
+      // spineToPmDoc is deterministic — a fresh random here broke the #90 reconcile echo-guard.
+      return schema.nodes['paragraph']!.create({ id: `${id}~w` }, [atom]);
     }
   }
 }

@@ -1,5 +1,6 @@
 import { Plugin } from 'prosemirror-state';
 import type { Transaction } from 'prosemirror-state';
+import type { Node as PmNode } from 'prosemirror-model';
 import { newBlockId } from '../../lib/ids.js';
 
 /**
@@ -37,6 +38,35 @@ const ID_NODE_TYPES = new Set([
   'plugin_block',
 ]);
 
+/**
+ * RENDER-ONLY inner node: the list_item's inner paragraph/todo_item. pmDocToSpine keys a list block-child on
+ * the list_item's id and DISCARDS this inner node's id, so it is never persisted. spineToPmDoc emits `id: null`
+ * here; the plugin both refuses to MINT one AND STRIPS any stray id (e.g. a top-level block dragged INTO a
+ * list, or a split copying an id) so the live doc converges on the deterministic id-less shape.
+ */
+function isRenderOnlyInner(node: PmNode, parent: PmNode | null): boolean {
+  return (
+    (node.type.name === 'paragraph' || node.type.name === 'todo_item') &&
+    parent?.type.name === 'list_item'
+  );
+}
+
+/**
+ * MANAGED: the plugin mints/dedupes the id (it backs the spine block). Everything else is ignored. Two render-
+ * only exclusions, both because their id is NOT round-tripped into the spine and a minted/random one defeats
+ * the #90 reconcile echo-guard (incoming.eq(doc)) — wiping the undo stack on every autosave:
+ *   • the `title` node — pmDocToSpine skips it entirely (title travels as a separate string). It is seeded
+ *     id-less and we never mint one, so it stays null and matches spineToPmDoc's null. (We don't STRIP it: a
+ *     title can't be duplicated and an explicitly-id'd title in fixtures should be left as-is.)
+ *   • a list_item's inner paragraph/todo_item — see isRenderOnlyInner (those are stripped to null).
+ */
+function isManaged(node: PmNode, parent: PmNode | null): boolean {
+  if (!ID_NODE_TYPES.has(node.type.name)) return false;
+  if (node.type.name === 'title') return false;
+  if (isRenderOnlyInner(node, parent)) return false;
+  return true;
+}
+
 export const uniqueBlockIdPlugin = new Plugin({
   appendTransaction(transactions, oldState, newState) {
     const docChanged = transactions.some((tr) => tr.docChanged);
@@ -47,8 +77,8 @@ export const uniqueBlockIdPlugin = new Plugin({
     // transaction chain so we know where the prior owner landed in newState.
     // This is what lets us distinguish the original from a pasted copy.
     const oldIdToPos = new Map<string, number>();
-    oldState.doc.descendants((node, pos) => {
-      if (!ID_NODE_TYPES.has(node.type.name)) return;
+    oldState.doc.descendants((node, pos, parent) => {
+      if (!isManaged(node, parent)) return;
       const id = node.attrs.id as string | null;
       if (id) oldIdToPos.set(id, pos);
     });
@@ -65,8 +95,14 @@ export const uniqueBlockIdPlugin = new Plugin({
     // ── Step 2: Collect all positions for each id in the new doc ──────────────
     const idToPositions = new Map<string, number[]>();
     const nullPositions: number[] = [];
-    newState.doc.descendants((node, pos) => {
-      if (!ID_NODE_TYPES.has(node.type.name)) return;
+    const strayIdPositions: number[] = []; // unmanaged (list-inner) nodes that carry a stray id → null it out
+    newState.doc.descendants((node, pos, parent) => {
+      if (!isManaged(node, parent)) {
+        // List-inner nodes must stay id-less so spineToPmDoc round-trips deterministically. (The title is also
+        // unmanaged but is intentionally left untouched — see isManaged.)
+        if (isRenderOnlyInner(node, parent) && node.attrs.id) strayIdPositions.push(pos);
+        return;
+      }
       const id = node.attrs.id as string | null;
       if (!id) {
         nullPositions.push(pos);
@@ -79,6 +115,14 @@ export const uniqueBlockIdPlugin = new Plugin({
 
     const patchTr = newState.tr;
     let patched = false;
+
+    // ── Step 0: Strip stray ids off render-only inner nodes (converge to the deterministic id-less shape) ─
+    for (const pos of strayIdPositions) {
+      const node = newState.doc.nodeAt(pos);
+      if (!node) continue;
+      patchTr.setNodeMarkup(pos, undefined, { ...node.attrs, id: null });
+      patched = true;
+    }
 
     // ── Step 3: Mint fresh IDs for null-id nodes (new nodes from split/insert) ─
     for (const pos of nullPositions) {
