@@ -461,9 +461,10 @@ function PdfThumbnailRail({
     for (let i = 0; i < opened.numPages; i++) {
       const d = dims[i] ?? null;
       const aspect = d ? d.height / d.width : medianAspect;
+      const h = aspect * THUMB_CSS_WIDTH;
       offsets[i] = y;
-      heights[i] = aspect * THUMB_CSS_WIDTH;
-      y += heights[i] + THUMB_GAP_PX;
+      heights[i] = h;
+      y += h + THUMB_GAP_PX;
     }
     return { heights, offsets, totalHeight: y };
   }, [opened.numPages, dims, medianAspect]);
