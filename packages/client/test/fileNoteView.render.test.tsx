@@ -46,13 +46,17 @@ vi.mock('../src/plugins/attachment/blobClient.js', () => ({
 }));
 
 // Mock the pdf.js engine seam so a pdf note's reader mounts without a real PDF engine / Worker (PDF-UI gate).
+// RENDER_PRIORITY is imported by PdfReader (thumbnail + search renders tag their priority), so the mock must
+// re-export it; getPageText backs the Slice-3 text layer / search index.
 vi.mock('../src/views/pdf/pdfEngine.js', () => ({
   openPdf: vi.fn(async () => ({
     numPages: 1,
     getPageDims: vi.fn(async () => ({ width: 600, height: 800 })),
     renderPage: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+    getPageText: vi.fn(async () => ({ items: [] })),
     destroy: vi.fn(async () => {}),
   })),
+  RENDER_PRIORITY: { MAIN: 0, THUMBNAIL: 1, SEARCH: 2 },
 }));
 
 function makeNote(over: Partial<Note>): Note {

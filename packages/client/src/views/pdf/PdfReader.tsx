@@ -1,7 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { loadBlobBytes } from '../../plugins/attachment/blobClient.js';
 import { useIsDesktop } from '../../lib/useIsDesktop.js';
-import { openPdf, RENDER_PRIORITY, type OpenedPdf, type PdfPageDims } from './pdfEngine.js';
+import { openPdf, RENDER_PRIORITY, type OpenedPdf, type PdfPageDims, type PdfPageText } from './pdfEngine.js';
+import {
+  buildMatches,
+  pagePlainText,
+  splitItemForRender,
+  type PdfMatch,
+} from './pdfSearch.js';
 
 /**
  * PdfReader (pdf-reader.md §3 — Slice 1 + Slice 2) — the lazy in-app PDF viewer mounted in FileNoteView's
@@ -63,6 +69,15 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
   const [visible, setVisible] = useState<Set<number>>(() => new Set([1]));
   const [currentPage, setCurrentPage] = useState(1);
 
+  // --- Slice 3 (search): per-page extracted text cache (null = not yet extracted), the find-bar state, and the
+  //     active-match cursor. The cache is also what feeds the inert text layer (selection/copy) on visible pages. ---
+  const [pageTexts, setPageTexts] = useState<Array<PdfPageText | null>>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [activeMatch, setActiveMatch] = useState(0);
+  // Pages with an in-flight getPageText, so we never double-extract (the cache + this set are the dedup).
+  const pageTextInflight = useRef<Set<number>>(new Set());
+
   const isDesktop = useIsDesktop();
   // Mobile (OQ-2): rail OFF by default — it opens as a drawer/overlay so it never eats reading width. Desktop:
   // rail docked open by default. The `≡` toolbar button toggles either treatment.
@@ -82,6 +97,11 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
     setDims([]);
     setVisible(new Set([1]));
     setCurrentPage(1);
+    setPageTexts([]);
+    setSearchOpen(false);
+    setQuery('');
+    setActiveMatch(0);
+    pageTextInflight.current.clear();
 
     (async () => {
       try {
@@ -94,6 +114,7 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
         doc = pdf;
         setOpened(pdf);
         setDims(new Array(pdf.numPages).fill(null));
+        setPageTexts(new Array(pdf.numPages).fill(null));
         setPhase('ready');
       } catch {
         if (alive) setPhase('error');
@@ -221,6 +242,147 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
     [opened, layout, recomputeWindow],
   );
 
+  // ===================== Slice 3: text extraction + the match index (§5.2) =====================
+  // Latest-value refs so the extraction/jump callbacks stay stable (no churn) while reading fresh state.
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const pageTextsRef = useRef(pageTexts);
+  pageTextsRef.current = pageTexts;
+
+  // Extract one page's text through the engine's SEARCH-priority queue and cache it. Idempotent: a cached or
+  // in-flight page is skipped, so the visible-page effect and the full-index effect can both call it freely.
+  const requestPageText = useCallback(
+    (pageNumber: number) => {
+      if (!opened) return;
+      if (pageTextsRef.current[pageNumber - 1]) return;
+      if (pageTextInflight.current.has(pageNumber)) return;
+      pageTextInflight.current.add(pageNumber);
+      opened
+        .getPageText(pageNumber)
+        .then((pt) => {
+          setPageTexts((prev) => {
+            if (prev[pageNumber - 1]) return prev;
+            const next = prev.slice();
+            next[pageNumber - 1] = pt;
+            return next;
+          });
+        })
+        .catch(() => {
+          /* extraction failed for this page — it simply contributes no matches / no text layer */
+        })
+        .finally(() => {
+          pageTextInflight.current.delete(pageNumber);
+        });
+    },
+    [opened],
+  );
+
+  // Visible pages always get their text extracted → the inert text layer (selection/copy) + a head start on the
+  // index. SEARCH priority means this never delays the canvas the user is reading.
+  useEffect(() => {
+    if (!opened) return;
+    for (const p of visible) requestPageText(p);
+  }, [opened, visible, requestPageText]);
+
+  // When a search is active, lazily extract the WHOLE document so "x of N" is a true total. Built off the
+  // first-paint path (only kicks in once the user opens search + types), page by page, deduped (§5.2 / gate PDF-6).
+  useEffect(() => {
+    if (!opened || !searchOpen || query.trim() === '') return;
+    for (let n = 1; n <= opened.numPages; n++) requestPageText(n);
+  }, [opened, searchOpen, query, requestPageText]);
+
+  // The flat, document-ordered match list. Recomputed from the (growing) text cache + the query — so searching
+  // before indexing finishes returns what's known so far and grows as pages complete.
+  const matches = useMemo(
+    () => (searchOpen ? buildMatches(pageTexts, query) : []),
+    [searchOpen, pageTexts, query],
+  );
+  const matchesRef = useRef(matches);
+  matchesRef.current = matches;
+
+  const matchesByPage = useMemo(() => {
+    const byPage = new Map<number, PdfMatch[]>();
+    for (const m of matches) {
+      const arr = byPage.get(m.pageIndex);
+      if (arr) arr.push(m);
+      else byPage.set(m.pageIndex, [m]);
+    }
+    return byPage;
+  }, [matches]);
+
+  const clampedActive = matches.length ? Math.min(Math.max(activeMatch, 0), matches.length - 1) : 0;
+  const activeMatchObj: PdfMatch | null = matches.length ? matches[clampedActive] ?? null : null;
+  // Is the document still being indexed for the current query? (some page in range not yet extracted.)
+  const indexing =
+    searchOpen && query.trim() !== '' && !!opened && pageTexts.slice(0, opened.numPages).some((t) => t === null);
+
+  // Jump to a match (§5.3): reuse the Slice-2 `scrollToPage` primitive to bring the match's page into the render
+  // window, THEN refine the scroll so the match sits centered. If the page's text isn't cached yet (a match on a
+  // not-yet-extracted page can't happen — matches only exist for cached pages — but the page may have scrolled
+  // out), we still land on the page; the highlight paints once its text layer is ready.
+  const scrollToMatch = useCallback(
+    (m: PdfMatch) => {
+      scrollToPage(m.pageIndex + 1);
+      const el = scrollRef.current;
+      const pt = pageTextsRef.current[m.pageIndex];
+      const lay = layoutRef.current;
+      if (!el || !pt) return;
+      const scale = lay.scales[m.pageIndex] ?? 0;
+      const pageTop = lay.offsets[m.pageIndex] ?? 0;
+      if (scale <= 0) return;
+      const { itemStarts } = pagePlainText(pt.items);
+      // The item whose run contains the match start (the last item starting at/before charStart).
+      let idx = 0;
+      for (let i = 0; i < itemStarts.length; i++) {
+        if ((itemStarts[i] ?? 0) <= m.charStart) idx = i;
+        else break;
+      }
+      const item = pt.items[idx];
+      if (!item) return;
+      const itemTopPx = pageTop + item.top * scale;
+      const target = itemTopPx - el.clientHeight / 2 + (item.height * scale) / 2;
+      el.scrollTop = Math.max(0, target);
+      recomputeWindow();
+    },
+    [scrollToPage, recomputeWindow],
+  );
+
+  // Select match #idx (wrapping) → set the cursor + jump to it. The single path used by next/prev and the
+  // auto-jump-to-first-result effect.
+  const selectMatch = useCallback(
+    (idx: number) => {
+      const list = matchesRef.current;
+      if (!list.length) return;
+      const i = ((idx % list.length) + list.length) % list.length;
+      setActiveMatch(i);
+      const m = list[i];
+      if (m) scrollToMatch(m);
+    },
+    [scrollToMatch],
+  );
+
+  // Auto-jump to the FIRST match once a new query's results are available (handles async indexing: fires once,
+  // when matches go 0→N for this exact query). Manual next/prev afterwards won't retrigger it.
+  const lastJumpedQuery = useRef('');
+  useEffect(() => {
+    if (!searchOpen) return;
+    if (query.trim() === '') {
+      lastJumpedQuery.current = '';
+      return;
+    }
+    if (matches.length === 0) return;
+    if (lastJumpedQuery.current === query) return;
+    lastJumpedQuery.current = query;
+    selectMatch(0);
+  }, [searchOpen, query, matches, selectMatch]);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setQuery('');
+    setActiveMatch(0);
+    lastJumpedQuery.current = '';
+  }, []);
+
   if (phase === 'error') {
     return (
       <div className="pdf-reader pdf-reader--error">
@@ -264,7 +426,35 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
         <span className="pdf-reader__filename" title={name}>
           {name}
         </span>
+
+        <button
+          type="button"
+          className={'pdf-reader__search-toggle' + (searchOpen ? ' is-on' : '')}
+          aria-pressed={searchOpen}
+          aria-label={searchOpen ? 'Close search' : 'Search'}
+          title="Search"
+          onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+          disabled={!opened}
+        >
+          🔍
+        </button>
       </div>
+
+      {searchOpen && opened && (
+        <PdfSearchBar
+          query={query}
+          onQueryChange={(v) => {
+            setQuery(v);
+            setActiveMatch(0);
+          }}
+          matchCount={matches.length}
+          activeIndex={matches.length ? clampedActive : -1}
+          indexing={indexing}
+          onNext={() => selectMatch(clampedActive + 1)}
+          onPrev={() => selectMatch(clampedActive - 1)}
+          onClose={closeSearch}
+        />
+      )}
 
       <div className="pdf-reader__body">
         {railOpen && opened && (
@@ -297,6 +487,7 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
                 const pageNumber = i + 1;
                 const pageScale = layout.scales[i] ?? 0;
                 const isLive = visible.has(pageNumber) && pageScale > 0;
+                const pageText = pageTexts[i] ?? null;
                 return (
                   <div
                     key={pageNumber}
@@ -310,7 +501,19 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
                     }}
                   >
                     {isLive ? (
-                      <PdfPageCanvas opened={opened} pageNumber={pageNumber} cssScale={pageScale} />
+                      <>
+                        <PdfPageCanvas opened={opened} pageNumber={pageNumber} cssScale={pageScale} />
+                        {/* Inert text layer (§5.1) for the windowed page only — selection/copy + search
+                            highlight. Torn down with the page when it leaves the window (virtualized). */}
+                        {pageText && (
+                          <PdfTextLayer
+                            pageText={pageText}
+                            cssScale={pageScale}
+                            matches={matchesByPage.get(i) ?? EMPTY_MATCHES}
+                            activeMatch={activeMatchObj && activeMatchObj.pageIndex === i ? activeMatchObj : null}
+                          />
+                        )}
+                      </>
                     ) : null}
                   </div>
                 );
@@ -575,6 +778,166 @@ function PdfThumbCanvas({
   }, [opened, pageNumber, cssScale]);
 
   return <canvas ref={canvasRef} className="pdf-reader__thumb-canvas" />;
+}
+
+// Stable empty array so a page with no matches doesn't churn the text layer's memo deps.
+const EMPTY_MATCHES: readonly PdfMatch[] = Object.freeze([]);
+
+/**
+ * The find bar (§3.4 / Slice 3): a query input, the `x of N` match counter, prev/next match navigation, and a
+ * close button. Pure presentation — all index/jump logic lives in PdfReader; this just renders state + fires
+ * callbacks. Enter / next advance; prev steps back. The input is auto-focused on open.
+ */
+function PdfSearchBar({
+  query,
+  onQueryChange,
+  matchCount,
+  activeIndex,
+  indexing,
+  onNext,
+  onPrev,
+  onClose,
+}: {
+  query: string;
+  onQueryChange: (v: string) => void;
+  matchCount: number;
+  /** 0-based active match, or -1 when there are none. */
+  activeIndex: number;
+  indexing: boolean;
+  onNext: () => void;
+  onPrev: () => void;
+  onClose: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const hasQuery = query.trim() !== '';
+  const counter =
+    matchCount > 0
+      ? `${activeIndex + 1} of ${matchCount}`
+      : hasQuery
+        ? indexing
+          ? 'Indexing…'
+          : 'No results'
+        : '';
+
+  return (
+    <div className="pdf-reader__search" role="search">
+      <input
+        ref={inputRef}
+        className="pdf-reader__search-input"
+        type="text"
+        aria-label="Search in document"
+        placeholder="Find in document"
+        value={query}
+        onChange={(e) => onQueryChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            if (e.shiftKey) onPrev();
+            else onNext();
+          } else if (e.key === 'Escape') {
+            onClose();
+          }
+        }}
+      />
+      <span className="pdf-reader__search-count" aria-live="polite">
+        {counter}
+      </span>
+      <button
+        type="button"
+        className="pdf-reader__search-step"
+        aria-label="Previous match"
+        onClick={onPrev}
+        disabled={matchCount === 0}
+      >
+        ‹
+      </button>
+      <button
+        type="button"
+        className="pdf-reader__search-step"
+        aria-label="Next match"
+        onClick={onNext}
+        disabled={matchCount === 0}
+      >
+        ›
+      </button>
+      <button type="button" className="pdf-reader__search-close" aria-label="Close search" onClick={onClose}>
+        ✕
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The INERT text layer (§5.1, gate PDF-S) over one rendered page. It positions one plain `<span>` per extracted
+ * text run at the run's glyph box, and within a span splits the text around search matches into `<mark>`s
+ * (active match = a distinct class). This gives free native selection/copy AND the highlight surface.
+ *
+ * 🔒 ESCAPE-SAFETY — the exact mechanism that keeps attacker text inert: every piece of PDF text reaches the DOM
+ * ONLY as a React child string (`{seg.text}` / `{item.str}`), i.e. a React text node → the browser sets it via
+ * `textContent`, NEVER `innerHTML`. `splitItemForRender` only SLICES the string; it never builds markup. So a
+ * run containing `<img onerror=…>` or `</span>` renders as those literal characters — no element is created, no
+ * attribute is parsed, no script can run. There is NO `dangerouslySetInnerHTML` anywhere in this layer.
+ */
+function PdfTextLayer({
+  pageText,
+  cssScale,
+  matches,
+  activeMatch,
+}: {
+  pageText: PdfPageText;
+  cssScale: number;
+  matches: readonly PdfMatch[];
+  activeMatch: PdfMatch | null;
+}) {
+  const items = pageText.items;
+  const itemStarts = useMemo(() => pagePlainText(items).itemStarts, [items]);
+
+  return (
+    <div className="pdf-reader__textlayer">
+      {items.map((item, i) => {
+        const itemStart = itemStarts[i] ?? 0;
+        const segs = splitItemForRender(item, itemStart, matches, activeMatch);
+        const hasMark = segs.some((s) => s.kind !== 'plain');
+        const fontSize = item.height * cssScale;
+        return (
+          <span
+            key={i}
+            className="pdf-reader__textspan"
+            style={{
+              left: item.left * cssScale,
+              top: item.top * cssScale,
+              fontSize: fontSize > 0 ? fontSize : undefined,
+            }}
+          >
+            {!hasMark ? (
+              // Fast path: no match in this run → the whole run as a single (escaped) React text node.
+              item.str
+            ) : (
+              segs.map((seg, k) =>
+                seg.kind === 'plain' ? (
+                  // React text node — escaped. (Wrapped so keys are stable across segments.)
+                  <span key={k}>{seg.text}</span>
+                ) : (
+                  <mark
+                    key={k}
+                    className={
+                      'pdf-reader__hl' + (seg.kind === 'active' ? ' pdf-reader__hl--active' : '')
+                    }
+                  >
+                    {seg.text}
+                  </mark>
+                ),
+              )
+            )}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 function sameSet(a: Set<number>, b: Set<number>): boolean {

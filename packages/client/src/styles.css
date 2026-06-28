@@ -476,6 +476,86 @@
   inset: 0;
   background: rgba(0, 0, 0, 0.35);
 }
+
+/* PDF reader Slice 3 — find bar + inert text layer + match highlights (pdf-reader.md §3.4, §5). */
+.pdf-reader__search-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--list);
+  cursor: pointer;
+}
+.pdf-reader__search-toggle.is-on { background: var(--accent); border-color: var(--accent); }
+.pdf-reader__search-toggle:disabled { opacity: 0.4; cursor: default; }
+/* The find bar docks just under the toolbar; on mobile this keeps it above the keyboard naturally. */
+.pdf-reader__search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--nav, var(--list));
+  border-bottom: 1px solid var(--border);
+}
+.pdf-reader__search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 32px;
+  /* ≥16px so iOS Safari doesn't auto-zoom on focus (ios-input-16px-no-zoom). */
+  font-size: 16px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg, #fff);
+  color: var(--primary);
+}
+.pdf-reader__search-count {
+  flex: 0 0 auto;
+  min-width: 72px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--secondary);
+}
+.pdf-reader__search-step,
+.pdf-reader__search-close {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--list);
+  cursor: pointer;
+}
+.pdf-reader__search-step:disabled { opacity: 0.4; cursor: default; }
+
+/* The inert text layer overlays the page canvas with transparent, selectable positioned text. Highlights are
+   the only visible part (the glyphs themselves are transparent — the canvas shows the real rendering). */
+.pdf-reader__textlayer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  /* selection works; glyphs invisible over the canvas. */
+  color: transparent;
+}
+.pdf-reader__textspan {
+  position: absolute;
+  white-space: pre;
+  transform-origin: 0 0;
+  cursor: text;
+}
+.pdf-reader__hl {
+  background: rgba(255, 213, 0, 0.45);
+  color: transparent;
+  border-radius: 2px;
+}
+.pdf-reader__hl--active { background: rgba(255, 145, 0, 0.65); }
+
 .file-view__nopreview {
   display: flex;
   flex-direction: column;
