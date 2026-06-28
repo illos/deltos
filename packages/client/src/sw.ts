@@ -53,6 +53,6 @@ registerRoute(
 registerRoute(
   ({ url }) =>
     url.origin === self.location.origin &&
-    (/\/assets\/pdfjs-.*\.js$/.test(url.pathname) || /\/assets\/pdf\.worker.*\.js$/.test(url.pathname)),
+    (/^\/assets\/pdfjs-.*\.js$/.test(url.pathname) || /^\/assets\/pdf\.worker.*\.js$/.test(url.pathname)),
   new CacheFirst({ cacheName: 'deltos-pdfjs' }),
 );
