@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { loadBlobBytes } from '../../plugins/attachment/blobClient.js';
+import { useAuthStore } from '../../auth/store.js';
 import { useIsDesktop } from '../../lib/useIsDesktop.js';
 import { openPdf, RENDER_PRIORITY, type OpenedPdf, type PdfPageDims, type PdfPageText } from './pdfEngine.js';
 import {
@@ -88,7 +89,25 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // --- open: bytes (authenticated GET) → pdf.js parse. Either branch failing → degrade (gate PDF-2). ---
+  // Bearer-retry on the FIRST cold open (mirrors AttachmentNodeView). The reader is local-first: on a
+  // cold/evicted mobile return it can mount BEFORE auth rehydrates, so a never-cached PDF's first blob GET
+  // lands with no bearer → 401 → phase 'error' would latch permanently. We watch the token and, when it
+  // transitions null→present WHILE the open has FAILED, bump `attempt` to retry the open exactly once per
+  // arrival. The heavy open effect stays keyed on `[hash, attempt]` so it re-parses ONLY the failed/loading
+  // state — never a `ready` doc (PDF parse is expensive, unlike the cheap image object-URL): a successful
+  // doc has phase!=='error', so a later token rotation never bumps `attempt` and never re-parses.
+  const bearerToken = useAuthStore((s) => s.bearerToken);
+  const [attempt, setAttempt] = useState(0);
+  const prevBearer = useRef(bearerToken);
+  useEffect(() => {
+    const had = prevBearer.current;
+    prevBearer.current = bearerToken;
+    if (!had && bearerToken && phase === 'error') setAttempt((a) => a + 1);
+  }, [bearerToken, phase]);
+
+  // --- open: bytes (cached: memory → IndexedDB → authenticated GET) → pdf.js parse. Either branch failing
+  //     → degrade (gate PDF-2). An IndexedDB cache hit needs no bearer, so a reopen survives the pre-auth
+  //     window; only a never-cached first open during cold boot needs the bearer-retry above. ---
   useEffect(() => {
     let alive = true;
     let doc: OpenedPdf | null = null;
@@ -125,7 +144,7 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
       alive = false;
       if (doc) void doc.destroy();
     };
-  }, [hash]);
+  }, [hash, attempt]);
 
   // --- progressively fetch page dims (cheap viewport reads, §4.1), in batches to bound re-renders. Page 1
   //     first so the first estimate is real; the rest stream in and the layout reconciles. ---
