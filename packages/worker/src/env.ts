@@ -64,4 +64,14 @@ export interface Env {
    * wrangler.jsonc (declared) resolves to it at deploy.
    */
   BLOBS?: R2Bucket;
+  /**
+   * Cloudflare Workers Images binding (file-notes spec §4 — the `compute` host capability). Transforms
+   * PRIVATE R2 image bytes IN-WORKER (no public URL / zone config / dashboard image-resizing): on upload
+   * the blob route pre-bakes two WebP derivatives ({hash}.thumb.webp 256² cover, {hash}.view.webp ≤2048px
+   * scale-down) and on download transcodes to JPEG. Optional in the type so unit tests inject a stub / omit
+   * it; every derive is NON-FATAL (a failed/absent bake never fails the upload — the original blob already
+   * stored). Like `AI`, the binding has NO local implementation — `wrangler dev --remote` (or a deploy) is
+   * required to exercise it; plain `wrangler dev` cannot. Declared in wrangler.jsonc as `images`.
+   */
+  IMAGES?: ImagesBinding;
 }
