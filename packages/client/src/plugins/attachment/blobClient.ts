@@ -58,6 +58,32 @@ export async function loadBlobUrl(hash: string, mime: string): Promise<string> {
   return url;
 }
 
+// Session bytes cache — content-addressed + immutable, so one fetch per hash per session (the pdf reader can
+// reopen the same PDF without refetching). Keyed separately from urlCache (different value shape).
+const bytesCache = new Map<string, ArrayBuffer>();
+
+/**
+ * Load a blob's raw bytes for a parser that needs the ArrayBuffer — the PDF reader (pdf-reader.md §2.2).
+ * Authenticated `GET /api/plugin/blob/:hash` — the SAME route + octet-stream + `attachment` serving as every
+ * other blob fetch: no inline serving, no new route, `blob.ts` untouched. Returns the bytes; the caller hands
+ * them to pdf.js (which transfers ownership into its worker). Throws on miss/offline → the reader degrades to
+ * the icon + Download (gate PDF-2).
+ *
+ * PIN-STORAGE-1 (pin-storage-1-sw-cache-invariant): this hits `/api/*`, which the service worker MUST NEVER
+ * runtime-cache. The SW navigation denylist already excludes `/api/`, and the new pdf.js runtime-cache rule
+ * (sw.ts) is scoped strictly to first-party `/assets/pdfjs-*.js` + `/assets/pdf.worker*.js` chunk names — an
+ * `/api/*` path can match NEITHER, so these bytes are never written to Cache Storage.
+ */
+export async function loadBlobBytes(hash: string): Promise<ArrayBuffer> {
+  const cached = bytesCache.get(hash);
+  if (cached) return cached;
+  const res = await fetch(`${BLOB_API}/${hash}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`blob bytes load failed (${res.status})`);
+  const bytes = await res.arrayBuffer();
+  bytesCache.set(hash, bytes);
+  return bytes;
+}
+
 /**
  * Load a host-generated WebP derivative (the list-tile `thumb` or the open-view `view`) as an object URL
  * (file-notes.md §4.4). The Slice-1 worker pre-bakes both at upload and serves them INLINE (`image/webp` +
