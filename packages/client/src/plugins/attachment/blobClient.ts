@@ -21,6 +21,37 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/** Which cache tier a successful byte-load came from — surfaced to callers (the PDF reader) for diagnosis. */
+export type BlobLoadTier = 'memory' | 'indexeddb' | 'network';
+
+/** Optional sink a caller passes to `loadBlobBytes` to learn which tier served the bytes (diagnostics only). */
+export interface BlobLoadMeta {
+  tier?: BlobLoadTier;
+}
+
+/**
+ * A byte-fetch failure carrying the ground-truth a UI error path needs to diagnose it (the PDF reader surfaces
+ * this under "Couldn't open this PDF" so an on-device/iOS failure can be screenshotted without a console):
+ *   - `status`  — the HTTP status when the network responded non-OK (e.g. 401/404); undefined when offline;
+ *   - `hadBearer` — whether an Authorization bearer was attached to the request (a 401 with no bearer = the
+ *      pre-auth cold-boot race; a 401 WITH a bearer = a genuinely rejected token);
+ *   - `offline` — the fetch itself rejected (network down / no response).
+ * It is a plain `Error` subclass with the historical `blob load failed (…)` message, so existing generic
+ * `catch`/degrade paths are unaffected.
+ */
+export class BlobLoadError extends Error {
+  readonly status: number | undefined;
+  readonly hadBearer: boolean;
+  readonly offline: boolean;
+  constructor(message: string, info: { status?: number; hadBearer: boolean; offline: boolean }) {
+    super(message);
+    this.name = 'BlobLoadError';
+    this.status = info.status;
+    this.hadBearer = info.hadBearer;
+    this.offline = info.offline;
+  }
+}
+
 /** The resident data-ownership account (D6 scope). null = truly unauthed → the local cache is OFF (no
  *  anonymous bucket; never read or write under a null account). Read live each call so a switch is honored. */
 function currentAccountId(): string | null {
@@ -100,11 +131,15 @@ async function fetchBytesCached(
   resourceKey: string,
   fetchPath: string,
   mime?: string,
+  meta?: BlobLoadMeta,
 ): Promise<ArrayBuffer> {
   if (accountId) {
     const mk = memKey(accountId, resourceKey);
     const mem = bytesMem.get(mk);
-    if (mem) return mem;
+    if (mem) {
+      if (meta) meta.tier = 'memory';
+      return mem;
+    }
     let row: { bytes: ArrayBuffer } | undefined;
     try {
       row = await db.blobCache.get([accountId, resourceKey]);
@@ -115,12 +150,22 @@ async function fetchBytesCached(
       bytesMem.set(mk, row.bytes);
       // Touch the LRU timestamp (fire-and-forget — a failed touch only loses recency, not correctness).
       void db.blobCache.update([accountId, resourceKey], { lastAccess: Date.now() }).catch(() => {});
+      if (meta) meta.tier = 'indexeddb';
       return row.bytes;
     }
   }
-  const res = await fetch(fetchPath, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`blob load failed (${res.status})`);
+  const headers = authHeaders();
+  const hadBearer = 'Authorization' in headers;
+  let res: Response;
+  try {
+    res = await fetch(fetchPath, { headers });
+  } catch {
+    // The fetch itself rejected → offline / no response. Carry that (no HTTP status) for diagnosis.
+    throw new BlobLoadError('blob load failed (network)', { hadBearer, offline: true });
+  }
+  if (!res.ok) throw new BlobLoadError(`blob load failed (${res.status})`, { status: res.status, hadBearer, offline: false });
   const bytes = await res.arrayBuffer();
+  if (meta) meta.tier = 'network';
   if (accountId) {
     bytesMem.set(memKey(accountId, resourceKey), bytes);
     void persistBytes(accountId, resourceKey, bytes, mime);
@@ -179,8 +224,8 @@ export async function loadBlobUrl(hash: string, mime: string): Promise<string> {
  * NOT the SW Cache Storage that PIN-STORAGE-1 governs — like notes, not like `/api/*` runtime-caching. The
  * network miss still hits `/api/*`, which the SW navigation denylist already excludes from Cache Storage.
  */
-export async function loadBlobBytes(hash: string): Promise<ArrayBuffer> {
-  return fetchBytesCached(currentAccountId(), hash, `${BLOB_API}/${hash}`);
+export async function loadBlobBytes(hash: string, meta?: BlobLoadMeta): Promise<ArrayBuffer> {
+  return fetchBytesCached(currentAccountId(), hash, `${BLOB_API}/${hash}`, undefined, meta);
 }
 
 /**

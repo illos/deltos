@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { loadBlobBytes } from '../../plugins/attachment/blobClient.js';
+import { loadBlobBytes, type BlobLoadMeta } from '../../plugins/attachment/blobClient.js';
 import { useAuthStore } from '../../auth/store.js';
 import { useIsDesktop } from '../../lib/useIsDesktop.js';
 import { openPdf, RENDER_PRIORITY, type OpenedPdf, type PdfPageDims, type PdfPageText } from './pdfEngine.js';
@@ -63,6 +63,10 @@ const THUMB_WINDOW_BUFFER_PX = 600;
 
 export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
+  // A short, human-readable diagnostic of WHY the open failed (temporary instrument): distinguishes a byte-fetch
+  // failure (status / bearer / offline) from a pdf.js open/parse failure (error name + which cache tier the bytes
+  // came from). Rendered under "Couldn't open this PDF" so an on-device/iOS failure can be screenshotted.
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [opened, setOpened] = useState<OpenedPdf | null>(null);
   // Per-page intrinsic dims; null until measured. Length === numPages once open.
   const [dims, setDims] = useState<Array<PdfPageDims | null>>([]);
@@ -112,6 +116,7 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
     let alive = true;
     let doc: OpenedPdf | null = null;
     setPhase('loading');
+    setErrorDetail(null);
     setOpened(null);
     setDims([]);
     setVisible(new Set([1]));
@@ -123,8 +128,23 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
     pageTextInflight.current.clear();
 
     (async () => {
+      // Two distinct failure modes, each with its own ground-truth diagnostic (gate PDF-2):
+      //   1) byte-fetch failure  → status / bearer / offline (from BlobLoadError, duck-typed so a mocked
+      //      blobClient that omits the class still degrades cleanly);
+      //   2) pdf.js open/parse failure → the error name/message + which cache tier fed the bytes (a detached
+      //      buffer, a worker error, InvalidPDFException…).
+      const meta: BlobLoadMeta = {};
+      let bytes: ArrayBuffer;
       try {
-        const bytes = await loadBlobBytes(hash);
+        bytes = await loadBlobBytes(hash, meta);
+      } catch (err) {
+        if (alive) {
+          setErrorDetail(describeFetchError(err));
+          setPhase('error');
+        }
+        return;
+      }
+      try {
         const pdf = await openPdf(bytes);
         if (!alive) {
           void pdf.destroy();
@@ -135,8 +155,11 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
         setDims(new Array(pdf.numPages).fill(null));
         setPageTexts(new Array(pdf.numPages).fill(null));
         setPhase('ready');
-      } catch {
-        if (alive) setPhase('error');
+      } catch (err) {
+        if (alive) {
+          setErrorDetail(describeParseError(err, meta.tier));
+          setPhase('error');
+        }
       }
     })();
 
@@ -406,6 +429,11 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
     return (
       <div className="pdf-reader pdf-reader--error">
         <p className="pdf-reader__error-msg">Couldn’t open this PDF.</p>
+        {errorDetail && (
+          <p className="pdf-reader__error-detail" aria-label="Diagnostic">
+            [{errorDetail}]
+          </p>
+        )}
         <button type="button" className="pdf-reader__download" onClick={onDownload}>
           Download to view
         </button>
@@ -963,6 +991,40 @@ function sameSet(a: Set<number>, b: Set<number>): boolean {
   if (a.size !== b.size) return false;
   for (const v of a) if (!b.has(v)) return false;
   return true;
+}
+
+/** The error's `name: message` (or `String(err)`), for the temporary on-screen diagnostic. */
+function errLabel(err: unknown): string {
+  if (err && typeof err === 'object') {
+    const name = (err as { name?: unknown }).name;
+    const message = (err as { message?: unknown }).message;
+    const parts = [name, message].filter((p): p is string => typeof p === 'string' && p.length > 0);
+    if (parts.length) return parts.join(': ');
+  }
+  return String(err);
+}
+
+/**
+ * Diagnose a byte-fetch failure. Duck-typed on the BlobLoadError shape (no class import → a mocked blobClient
+ * that omits the class still degrades cleanly). Surfaces the HTTP status (or offline) and whether a bearer was
+ * attached — e.g. `fetch: HTTP 401, no bearer` (pre-auth race) vs `fetch: HTTP 401, bearer` (rejected token).
+ */
+function describeFetchError(err: unknown): string {
+  if (err && typeof err === 'object' && 'hadBearer' in err) {
+    const be = err as { status?: number; hadBearer?: boolean; offline?: boolean };
+    const where = be.offline ? 'offline/network' : `HTTP ${be.status ?? '?'}`;
+    return `fetch: ${where}, ${be.hadBearer ? 'bearer' : 'no bearer'}`;
+  }
+  return `fetch: ${errLabel(err)}`;
+}
+
+/**
+ * Diagnose a pdf.js open/parse failure: the error name/message plus which cache tier fed the bytes — e.g.
+ * `parse: Error: Cannot perform Construct on a detached ArrayBuffer, bytes from memory` (the reopen-detachment
+ * signature) or `parse: InvalidPDFException: …, bytes from network`.
+ */
+function describeParseError(err: unknown, tier: string | undefined): string {
+  return `parse: ${errLabel(err)}${tier ? `, bytes from ${tier}` : ''}`;
 }
 
 export default PdfReader;
