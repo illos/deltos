@@ -1,7 +1,10 @@
 import type { Note, NoteId } from '@deltos/shared';
-import { setTrashedAt, userProperties } from '@deltos/shared';
+import { setTrashedAt, userProperties, setFileType, UNSYNCED_VERSION } from '@deltos/shared';
 import { getStore } from './store.js';
 import type { ClientNote } from './schema.js';
+import { newNoteId } from '../lib/ids.js';
+import { getDefaultNotebookId } from '../lib/notebooks.js';
+import { useAuthStore } from '../auth/store.js';
 
 /**
  * The write API for synced notes. Call mutateNotes.* for every note write — never write the
@@ -87,5 +90,48 @@ export const mutateNotes = {
       createdAt: now,
     });
     return dup;
+  },
+
+  /**
+   * Create a FILE NOTE from a foreign file (file-notes.md §5.1) — the note-type sibling of the
+   * attachment block, minted from a desktop list-drop (or a future mobile picker). The note's title
+   * is the filename, its properties carry the `fileType:'file'` marker (setFileType), and its body is
+   * the SINGLE attachment block pointing at the content-addressed R2 blob — the same payload shape the
+   * editor insert path produces (buildAttachmentContent/Block), so the two never drift.
+   *
+   * Upload FIRST and ABORT on failure (no orphan note — a file note with no blob is useless, §5.1).
+   * This is the one mutator that also drives a blob upload; every other method is a pure local upsert.
+   * The blob client + attachment builder are dynamic-imported so this path (and blobClient) stays OUT
+   * of the entry bundle — createFileNote is only reached from the lazy desktop-drop chunk, never on
+   * first paint (perf north-star / gate FN-8).
+   */
+  async createFileNote(file: File): Promise<Note> {
+    const [{ uploadBlob }, { buildAttachmentContent, buildAttachmentBlock }] = await Promise.all([
+      import('../plugins/attachment/blobClient.js'),
+      import('../plugins/attachment/attachmentBlock.js'),
+    ]);
+    const { hash, size } = await uploadBlob(file);
+    const now = new Date().toISOString();
+    const content = buildAttachmentContent(file, { hash, size });
+    const note: Note = {
+      id: newNoteId(),
+      notebookId: getDefaultNotebookId(),
+      title: file.name,
+      properties: setFileType({}),
+      body: [buildAttachmentBlock(content)],
+      version: UNSYNCED_VERSION,
+      createdAt: now,
+      updatedAt: now,
+      syncStatus: 'local-only',
+      accountId: useAuthStore.getState().accountId ?? undefined,
+    };
+    await getStore().putNoteAndEnqueue(note, {
+      id: crypto.randomUUID(),
+      recordId: note.id,
+      payload: note,
+      baseVersion: note.version,
+      createdAt: now,
+    });
+    return note;
   },
 };

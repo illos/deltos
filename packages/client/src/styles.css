@@ -183,6 +183,56 @@
   border-radius: 10px;
 }
 
+/* ── File-note artifact pill (file-notes.md §3.1) ──────────────────────────────────
+   A file note's list row is more object-like than a prose row: a leading visual (square thumbnail
+   tile for images, format icon otherwise) + filename + a faint size/type meta line. Rides inside the
+   same .home__note-link / SwipeRow, so swipe + selection keep working. */
+.home__pill {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.home__pill-thumb,
+.home__pill-icon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--sel);
+}
+.home__pill-thumb {
+  object-fit: cover;
+}
+.home__pill-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--secondary);
+}
+.home__pill-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+/* The filename reuses .home__note-title (truncating ellipsis). */
+.home__pill-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Desktop list-drop affordance — the whole list pane rings while an OS file is dragged over it. */
+.home--file-drag {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+  border-radius: 6px;
+}
+
 /* ── Trash view ───────────────────────────────────────────────────────────────── */
 
 .trash {

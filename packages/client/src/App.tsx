@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react';
+import type { DragEvent } from 'react';
 import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate, useMatch, useLocation } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
+import { isFileNote } from '@deltos/shared';
 import type { NotebookId } from '@deltos/shared';
 import { NewNote } from './routes/NewNote.js';
 import { RegisterRoute } from './routes/RegisterRoute.js';
@@ -23,6 +25,7 @@ import { ThreeRegionShell } from './components/ThreeRegionShell.js';
 import { DeckHostProvider } from './components/DeckHost.js';
 import { useIsDesktop } from './lib/useIsDesktop.js';
 import { useNoteDnd } from './lib/dnd/useNoteDnd.js';
+import { useFileNoteDnd } from './lib/dnd/useFileNoteDnd.js';
 import { useCustomKeyboard } from './lib/useCustomKeyboard.js';
 import { startSyncTriggers, syncNow } from './lib/syncEngine.js';
 import { resolveCollectionView } from './lib/collectionViews.js';
@@ -35,6 +38,7 @@ import { SessionStatus } from './components/SessionStatus.js';
 import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
 import { ConflictBadgeSlot } from './components/ConflictBadgeSlot.js';
 import { SwipeRow } from './components/SwipeRow.js';
+import { FileNotePill } from './components/FileNotePill.js';
 import { NotebookPickerSheet } from './components/NotebookPickerSheet.js';
 import { useAuthStore } from './auth/store.js';
 import { selectBootView } from './auth/shellGate.js';
@@ -162,6 +166,20 @@ export function HomeView({ notebookId }: CollectionViewProps) {
   // #79 desktop note→notebook drag-and-drop: lazily-loaded chunk, desktop only (null on mobile / until loaded).
   const isDesktop = useIsDesktop();
   const noteDnd = useNoteDnd(isDesktop);
+  // file-notes §5.1 desktop list-drop → file-note creation: a second lazy desktop-only chunk (mirror of
+  // noteDnd). Drop OS files on the list pane → one file note per file; stays on the list (reactive pill).
+  const fileNoteDnd = useFileNoteDnd(isDesktop);
+  const [fileDragOver, setFileDragOver] = useState(false);
+  const fileDropProps = fileNoteDnd
+    ? {
+        onDragOver: (e: DragEvent) => { if (fileNoteDnd.allowFileDrop(e)) setFileDragOver(true); },
+        onDragLeave: (e: DragEvent) => {
+          // Ignore the dragleave fired when crossing into a child element (relatedTarget still inside).
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFileDragOver(false);
+        },
+        onDrop: (e: DragEvent) => { setFileDragOver(false); void fileNoteDnd.dropFilesOnList(e); },
+      }
+    : {};
 
   const handleMove = useCallback((note: Note, targetNotebookId: NotebookId | null) => {
     setMovingNote(null);
@@ -185,7 +203,7 @@ export function HomeView({ notebookId }: CollectionViewProps) {
   }, []);
 
   return (
-    <div className="home">
+    <div className={`home${fileDragOver ? ' home--file-drag' : ''}`} {...fileDropProps}>
       {/* §2 list header: notebook name + N-notes count (top-left), compose icon top-right (off the FAB). */}
       <header className="home__header">
         <div className="home__heading">
@@ -213,6 +231,7 @@ export function HomeView({ notebookId }: CollectionViewProps) {
             const { displayTitle, previewLine } = notePreview(note);
             const smartDate = formatSmartDate(note.updatedAt);
             const selected = note.id === openNoteId;
+            const isFile = isFileNote(note);
             // Notebook pill: ONLY in the All-Notes aggregate, ONLY for a categorized note whose notebook is
             // known. Uncategorized (notebookId null) or a specific-notebook view → no pill.
             const nbName = notebookId === null && note.notebookId !== null
@@ -230,18 +249,26 @@ export function HomeView({ notebookId }: CollectionViewProps) {
                 >
                   <Link
                     to={`/note/${note.id}`}
-                    className={`home__note-link${selected ? ' home__note-link--selected' : ''}`}
+                    className={`home__note-link${selected ? ' home__note-link--selected' : ''}${isFile ? ' home__note-link--file' : ''}`}
                     aria-current={selected ? 'page' : undefined}
                     draggable={noteDnd ? true : undefined}
                     onDragStart={noteDnd ? (e) => noteDnd.startNoteDrag(e, note) : undefined}
                     onDragEnd={noteDnd ? () => noteDnd.endNoteDrag() : undefined}
                   >
-                    <span className="home__note-title">{displayTitle}</span>
-                    <span className="home__note-meta">
-                      <span className="home__note-date">{smartDate}</span>
-                      {previewLine && <span className="home__note-preview">{previewLine}</span>}
-                      {nbName && <span className="home__note-nb-pill">{nbName}</span>}
-                    </span>
+                    {isFile ? (
+                      // file-notes §3.1: a file note renders as an artifact pill (leading visual + filename +
+                      // size/type), not the prose title + preview row.
+                      <FileNotePill note={note} />
+                    ) : (
+                      <>
+                        <span className="home__note-title">{displayTitle}</span>
+                        <span className="home__note-meta">
+                          <span className="home__note-date">{smartDate}</span>
+                          {previewLine && <span className="home__note-preview">{previewLine}</span>}
+                          {nbName && <span className="home__note-nb-pill">{nbName}</span>}
+                        </span>
+                      </>
+                    )}
                   </Link>
                   <ConflictBadgeSlot note={note} />
                 </SwipeRow>
