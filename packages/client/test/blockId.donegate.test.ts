@@ -34,16 +34,22 @@ function blockIds(d: PMNode): Array<string | null> {
 const allUnique = (ids: Array<string | null>) => new Set(ids).size === ids.length;
 
 describe('DG-2d — block ids unique + stable through transforms', () => {
-  it('mints a fresh unique id for every block that lacks one (new/inserted nodes)', () => {
+  it('mints a fresh unique id for every PERSISTED block that lacks one (new/inserted nodes)', () => {
     const state = mkState(doc(title(null), para(null, 'a'), para(null, 'b')));
     // Any doc-changing tx triggers the plugin's appendTransaction; inserting a (null-id) block does it.
     const tr = state.tr.insert(state.doc.content.size, para(null, 'c'));
     const next = state.apply(tr);
 
-    const ids = blockIds(next.doc);
-    expect(ids).toHaveLength(4);
-    expect(ids.every((id) => typeof id === 'string' && id.length > 0)).toBe(true); // all minted
-    expect(allUnique(ids)).toBe(true); // all distinct
+    // The TITLE is render-only (its id is never persisted — pmDocToSpine skips it; the title travels as a
+    // separate string). The plugin deliberately leaves it id-less so spineToPmDoc's null title round-trips and
+    // the #90 reconcile echo-guard short-circuits instead of wiping undo history. Only paragraphs get ids.
+    expect(next.doc.firstChild!.type.name).toBe('title');
+    expect(next.doc.firstChild!.attrs.id).toBeNull();
+
+    const paraIds = blockIds(next.doc).filter((_id, i) => i > 0); // drop the title slot
+    expect(paraIds).toHaveLength(3);
+    expect(paraIds.every((id) => typeof id === 'string' && id.length > 0)).toBe(true); // all minted
+    expect(allUnique(paraIds)).toBe(true); // all distinct
   });
 
   it('re-mints a DUPLICATE id (paste/split copy) but PRESERVES the prior owner', () => {
