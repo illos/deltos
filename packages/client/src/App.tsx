@@ -207,12 +207,17 @@ export function HomeView({ notebookId }: CollectionViewProps) {
 
   return (
     <div className={`home${fileDragOver ? ' home--file-drag' : ''}`} {...fileDropProps}>
-      {/* file-notes §5.1 desktop list-drop affordance — a panel-spanning dashed ring shown while an OS file
-          is dragged over the list pane. Absolutely positioned (inset:0) inside the position:relative .home,
-          which fills the FULL list panel (min-height:100% in the 3-region list), so the indication covers the
-          whole pane including the empty space below the notes — not just the populated rows. pointer-events:
-          none so it never intercepts the drag/drop on .home. */}
-      {fileDragOver && <div className="home__drop-overlay" aria-hidden="true" />}
+      {/* file-notes §5.1 desktop list-drop affordance — a panel-spanning drop surface shown while an OS file
+          is dragged over the list pane. Absolutely positioned (inset:0) inside .home, which is an isolated
+          stacking context filling the FULL list panel (min-height:100% in the 3-region list); z-index:1 lifts
+          it ABOVE the note rows (positioned SwipeRows) so it reads as a deliberate "drop here" surface the
+          rows don't show through — and stays confined to this pane. pointer-events:none so it never
+          intercepts the drag/drop on .home. */}
+      {fileDragOver && (
+        <div className="home__drop-overlay" aria-hidden="true">
+          <span className="home__drop-label">Drop to add a file</span>
+        </div>
+      )}
       {/* §2 list header: notebook name + N-notes count (top-left), compose icon top-right (off the FAB). */}
       <header className="home__header">
         <div className="home__heading">

@@ -47,8 +47,12 @@
   min-height: 0;
   width: 100%;
   box-sizing: border-box;
-  /* Anchor for the panel-spanning file-drop overlay (.home__drop-overlay). */
+  /* Anchor + own stacking context for the panel-spanning file-drop overlay (.home__drop-overlay):
+     position:relative is its containing block; isolation:isolate makes .home a stacking context so the
+     overlay's elevated z-index is resolved ENTIRELY within this pane — it paints above the note rows but
+     can never escape to overlap the editor pane or shell chrome. */
   position: relative;
+  isolation: isolate;
 }
 
 /* §2 header — notebook name + N-notes count (top-left) · compose icon top-right (off the FAB). */
@@ -361,12 +365,33 @@
 .home--file-drag {
   background: var(--sel);
 }
+/* The drop affordance must read as a deliberate surface laid OVER the list, not one the rows show through.
+   .home is an isolated stacking context (above), the SwipeRows are positioned with z-index:auto (paint layer
+   6); z-index:1 lifts this overlay into the positive-z paint layer (7) so it wins over every row. The fill is
+   a near-opaque accent-tinted paper that mutes the rows beneath; pointer-events:none keeps the real drop/
+   dragleave on .home untouched. */
 .home__drop-overlay {
   position: absolute;
   inset: 0;
+  z-index: 1;
   pointer-events: none; /* never intercept the drag/drop (or dragleave) on .home */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent) 10%, var(--paper));
   border: 2px dashed var(--accent);
   border-radius: 6px;
+}
+/* Centered "drop here" prompt — a pill in the app's type/token language (accent on paper). */
+.home__drop-label {
+  font-family: var(--ff);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--paper);
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 /* ── Trash view ───────────────────────────────────────────────────────────────── */
