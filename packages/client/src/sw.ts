@@ -39,3 +39,20 @@ registerRoute(
   ({ url }) => url.pathname.startsWith('/fonts/'),
   new CacheFirst({ cacheName: 'deltos-fonts' }),
 );
+
+// PDF.js ENGINE CHUNKS — runtime-cached so a second PDF open (incl. offline) needs no network for the engine
+// (pdf-reader.md §6.2). These are FIRST-PARTY app-asset JS chunks, modeled exactly on the /fonts/ rule above.
+// They are deliberately kept OUT of the install precache (vite.config.ts globIgnores), so this rule caches
+// them lazily on first PDF open. CacheFirst + no expiration = stored once, served forever across this deploy;
+// a new deploy hashes new filenames → new entries, old ones idle out (same lifecycle as the fonts rule).
+//
+// PIN-STORAGE-1 (pin-storage-1-sw-cache-invariant) — the predicate is scoped to BOTH same-origin AND the
+// pdf.js chunk-name prefixes (`/assets/pdfjs-*.js`, `/assets/pdf.worker*.js`). An `/api/*` path can satisfy
+// NEITHER, so the PDF blob bytes (GET /api/plugin/blob/:hash) match no caching strategy and are NEVER written
+// to Cache Storage. No `/api` response ever reaches a caching strategy in this file (grep-auditable).
+registerRoute(
+  ({ url }) =>
+    url.origin === self.location.origin &&
+    (/\/assets\/pdfjs-.*\.js$/.test(url.pathname) || /\/assets\/pdf\.worker.*\.js$/.test(url.pathname)),
+  new CacheFirst({ cacheName: 'deltos-pdfjs' }),
+);
