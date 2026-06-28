@@ -4,6 +4,7 @@ import type { Node as PmNode } from 'prosemirror-model';
 import type { EditorView, NodeView } from 'prosemirror-view';
 import { AttachmentChip } from './AttachmentChip.js';
 import { loadBlobUrl, downloadBlob, isInlineRenderableImage } from './blobClient.js';
+import { useAuthStore } from '../../auth/store.js';
 import { pluginRegistry } from '../runtime/index.js';
 import { createBlockDragHandle, blockHandleStopEvent } from '../../editor/plugins/blockDragHandle.js';
 
@@ -26,15 +27,22 @@ export function AttachmentView({ payload }: { payload: AttachmentPayload }) {
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const safeImage = isInlineRenderableImage(mime);
+  // Re-attempt the blob load when the bearer (re)appears. The editor is local-first: on a cold/offline
+  // open it mounts BEFORE auth rehydrates, so the first blob GET can land with no bearer → 401 → reject.
+  // Keying the effect on the token means that transient failure no longer LATCHES into a permanent bare
+  // chip (the "image stopped previewing" bug) — when the refresh mints the token the load retries and the
+  // image appears. loadBlobUrl is session-cached by hash, so a token rotation after success is a no-op.
+  const bearerToken = useAuthStore((s) => s.bearerToken);
 
   useEffect(() => {
     if (!hash || !safeImage) return; // only safe images are ever loaded into an object URL
     let alive = true;
+    setFailed(false); // fresh attempt: clear any prior latch so a now-valid bearer can succeed
     loadBlobUrl(hash, mime ?? '')
       .then((u) => { if (alive) setUrl(u); })
       .catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; };
-  }, [hash, mime, safeImage]);
+  }, [hash, mime, safeImage, bearerToken]);
 
   if (safeImage) {
     // safe image: inline once loaded; while loading / on failure, the chip (no inline render of nothing).
