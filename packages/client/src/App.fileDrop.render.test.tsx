@@ -85,7 +85,17 @@ describe('HomeView file-note dropzone spans the whole notes panel', () => {
     expect(allowFileDrop).toHaveBeenCalled();
     expect(home.classList.contains('home--file-drag')).toBe(true);
     // The ring is a real inset:0 child of .home (CSS sizes it to the whole pane).
-    expect(home.querySelector('.home__drop-overlay')).not.toBeNull();
+    const overlay = home.querySelector('.home__drop-overlay') as HTMLElement;
+    expect(overlay).not.toBeNull();
+    // Stacking intent (the fix): the overlay must paint ABOVE the note rows. jsdom does no layout/layering and
+    // doesn't load styles.css, so (as the prior assertions do) we prove the WIRING the CSS keys on: the overlay
+    // carries the .home__drop-overlay class that the stylesheet gives `z-index:1` (above the positioned
+    // SwipeRows), and it lives inside .home — which the stylesheet makes an isolated stacking context so that
+    // elevated z-index stays confined to this pane. The visible "drop here" prompt rides inside the overlay.
+    expect(overlay.classList.contains('home__drop-overlay')).toBe(true);
+    const label = overlay.querySelector('.home__drop-label');
+    expect(label).not.toBeNull();
+    expect(label?.textContent).toMatch(/drop/i);
   });
 
   it('a drop clears the state and triggers file-note creation', () => {
