@@ -1,8 +1,10 @@
 /**
- * SPIKE (block-object-chrome) — Mechanic A: plugin_block re-modelled from a BLOCK atom to an INLINE atom
- * that renders block-level. Proves: (1) caret-as-character, (2) single-press delete, (3) lossless spine
- * round-trip, (4) the migration shape (a top-level spine plugin block ⇒ a paragraph-wrapped inline atom on
- * open, the inverse on save). NodeView mounting under the inline model is covered by embeds.render.test.tsx.
+ * Block-object chrome — Mechanic A: plugin_block re-modelled from a BLOCK atom to an INLINE atom that renders
+ * block-level. Proves: (1) caret-as-character, (2) single-press delete, (3) lossless spine round-trip,
+ * (4) the migration shape (a top-level spine plugin block ⇒ a paragraph-wrapped inline atom on open, the
+ * inverse on save). The mounted-editor DOM/selection behaviour (caret flanks, single-press delete tears the
+ * NodeView down, the drag handle) is covered in blockObjectChrome.render.test.tsx; the Deck-path dual-wiring
+ * (the same single-press delete through the keypad adapter, not the keymap) in deckBlockObjectDelete.test.ts.
  */
 import { describe, it, expect } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
