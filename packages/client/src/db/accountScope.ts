@@ -46,6 +46,22 @@ const DEVICE_GLOBAL_DEVICE_KEYS: readonly string[] = ['appearance-theme', 'custo
 
 const ACCOUNT_MARKER_KEY = 'last-account';
 
+/**
+ * Registration seam for in-memory account-state that lives OUTSIDE this module and must be released on a
+ * local wipe (account switch / logout). The dependency points INWARD: a holder (e.g. the lazily-loaded
+ * attachment `blobClient`, which is kept OUT of the core bundle — see db/mutate.ts) registers its reset fn
+ * here, rather than this core module statically importing the plugin (which would defeat that lazy split and
+ * risk an import cycle). A holder that was never imported has no in-memory state and never registers — a
+ * correct no-op. Listeners run AFTER the Dexie/localStorage wipe, best-effort (one throwing can't block the rest).
+ */
+type WipeListener = () => void;
+const wipeListeners = new Set<WipeListener>();
+
+/** Register an in-memory reset to run on every {@link wipeLocalState} (account switch + logout). Idempotent. */
+export function onLocalWipe(fn: WipeListener): void {
+  wipeListeners.add(fn);
+}
+
 export async function readAccountMarker(): Promise<string | null> {
   return (await db.deviceState.get(ACCOUNT_MARKER_KEY))?.value ?? null;
 }
@@ -62,7 +78,7 @@ export async function readAccountMarker(): Promise<string | null> {
 async function wipeLocalState(): Promise<void> {
   await db.transaction(
     'rw',
-    [db.notes, db.notebooks, db.noteVersions, db.syncQueue, db.notebookQueue, db.dictionaryWords, db.dictionaryQueue, db.blobCache, db.deviceState],
+    [db.notes, db.notebooks, db.noteVersions, db.syncQueue, db.notebookQueue, db.dictionaryWords, db.dictionaryQueue, db.blobCache, db.blobCacheMeta, db.deviceState],
     async () => {
       await Promise.all([
         db.notes.clear(),
@@ -73,6 +89,7 @@ async function wipeLocalState(): Promise<void> {
         db.dictionaryWords.clear(), // §5.2 ISOLATION: the custom dictionary is account-scoped — never inherit across accounts
         db.dictionaryQueue.clear(), // W8: drop un-pushed dictionary entries — never drain under another bearer
         db.blobCache.clear(), // ISOLATION: cached blob bytes are account-scoped — never inherit across accounts (#52)
+        db.blobCacheMeta.clear(), // the size-only LRU sidecar — dropped in lockstep with blobCache
       ]);
       // DENY-BY-DEFAULT deviceState wipe (#57): delete EVERY key except the device-global allowlist
       // (the notebook pointer + the resident-account marker + any future per-account pointer all go).
@@ -99,6 +116,15 @@ async function wipeLocalState(): Promise<void> {
   // In-memory mirror is part of local account state (#57): reset it so a logout→login (or switch)
   // shows NO stale prior-account notebook for the ~1 tick before AuthedShell's initNotebook rehydrates.
   useNotebookStore.getState().reset();
+  // Release any OUT-OF-MODULE in-memory account state (e.g. blobClient's bytes/object-URL session tiers).
+  // Best-effort: a throwing listener must not abort the wipe (the durable state is already cleared above).
+  for (const fn of wipeListeners) {
+    try {
+      fn();
+    } catch {
+      /* memory-release is best-effort housekeeping — never let it break the wipe */
+    }
+  }
 }
 
 /**

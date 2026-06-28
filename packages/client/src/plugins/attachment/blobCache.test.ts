@@ -18,7 +18,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { useAuthStore } from '../../auth/store.js';
 import { db } from '../../db/schema.js';
 import { ensureAccountScope } from '../../db/accountScope.js';
-import { loadBlobBytes, loadThumbUrl, loadViewUrl } from './blobClient.js';
+import { loadBlobBytes, loadBlobUrl, loadThumbUrl, loadViewUrl, resetBlobMemory } from './blobClient.js';
 
 const BLOB_API = '/api/plugin/blob';
 
@@ -42,6 +42,15 @@ function okResponse(bytes: ArrayBuffer): Response {
 async function waitForRow(accountId: string, resourceKey: string): Promise<void> {
   for (let i = 0; i < 100; i++) {
     if (await db.blobCache.get([accountId, resourceKey])) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+// Wait for a fire-and-forget meta touch to land at/after a recency floor (touch runs AFTER the hit returns).
+async function waitForMetaTouch(accountId: string, resourceKey: string, after: number): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    const m = await db.blobCacheMeta.get([accountId, resourceKey]);
+    if (m && m.lastAccess > after) return;
     await new Promise((r) => setTimeout(r, 5));
   }
 }
@@ -92,9 +101,12 @@ describe('content-addressed local blob cache', () => {
     expect(new Uint8Array(out)).toEqual(new Uint8Array(bytesOf(8, 9)));
     expect(fetchMock).not.toHaveBeenCalled(); // served from IndexedDB → never raced the pre-auth 401
 
-    // the hit touched lastAccess (LRU recency).
-    const row = await db.blobCache.get(['acctA', 'coldHash']);
-    expect(row!.lastAccess).toBeGreaterThan(1);
+    // the hit touched LRU recency on the size-only sidecar (backfilling meta for this pre-seeded legacy row),
+    // WITHOUT rewriting the bytes row.
+    await waitForMetaTouch('acctA', 'coldHash', 1);
+    const meta = await db.blobCacheMeta.get(['acctA', 'coldHash']);
+    expect(meta!.lastAccess).toBeGreaterThan(1);
+    expect(meta!.size).toBe(8); // size backfilled from the bytes row — no bytes deserialized for the budget
   });
 
   it('ACCOUNT ISOLATION: account B cannot read account A’s cached bytes for the SAME hash', async () => {
@@ -127,13 +139,22 @@ describe('content-addressed local blob cache', () => {
     expect(await db.blobCache.count()).toBe(0);
   });
 
-  it('LRU evicts the oldest-by-lastAccess rows once the total size exceeds the budget', async () => {
+  it('LRU evicts the oldest-by-lastAccess rows to under budget WITHOUT deserializing cached bytes', async () => {
     const BUDGET = 200 * 1024 * 1024;
     const big = Math.floor(BUDGET / 2); // 100MB each → two fit (200MB), a third overflows
+    // The bytes rows hold TINY actual buffers while the meta records the REAL size, so a correct eviction MUST
+    // read size from the sidecar (never the bytes). Seed both tables in lockstep (as persistBytes would).
     await db.blobCache.bulkPut([
       { accountId: 'acctA', resourceKey: 'old', bytes: bytesOf(1), size: big, lastAccess: 1 },
       { accountId: 'acctA', resourceKey: 'mid', bytes: bytesOf(1), size: big, lastAccess: 2 },
     ]);
+    await db.blobCacheMeta.bulkPut([
+      { accountId: 'acctA', resourceKey: 'old', size: big, lastAccess: 1 },
+      { accountId: 'acctA', resourceKey: 'mid', size: big, lastAccess: 2 },
+    ]);
+
+    // Eviction must NEVER range-scan the bytes table (that's what materialized ~200MB on every write).
+    const bytesOrderBy = vi.spyOn(db.blobCache, 'orderBy');
 
     // A new ~100MB network write pushes the total to ~300MB → over budget → evict the oldest ('old').
     fetchMock.mockResolvedValueOnce(okResponse(bytesOf(big, 3)));
@@ -143,9 +164,15 @@ describe('content-addressed local blob cache', () => {
       if (!(await db.blobCache.get(['acctA', 'old']))) break;
       await new Promise((r) => setTimeout(r, 5));
     }
-    expect(await db.blobCache.get(['acctA', 'old'])).toBeUndefined(); // oldest evicted
+    // Oldest evicted from BOTH tables; the rest survive in BOTH.
+    expect(await db.blobCache.get(['acctA', 'old'])).toBeUndefined();
+    expect(await db.blobCacheMeta.get(['acctA', 'old'])).toBeUndefined();
     expect(await db.blobCache.get(['acctA', 'mid'])).toBeDefined();
+    expect(await db.blobCacheMeta.get(['acctA', 'mid'])).toBeDefined();
     expect(await db.blobCache.get(['acctA', 'newHash'])).toBeDefined();
+    expect(await db.blobCacheMeta.get(['acctA', 'newHash'])).toBeDefined();
+    // The budget math + victim selection ran entirely on the size-only sidecar — bytes were never scanned.
+    expect(bytesOrderBy).not.toHaveBeenCalled();
   });
 
   it('wipeLocalState clears the blob cache (the account-switch + logout seam)', async () => {
@@ -157,6 +184,41 @@ describe('content-addressed local blob cache', () => {
     // ensureAccountScope to a DIFFERENT account routes through wipeLocalState (same seam logout uses).
     await ensureAccountScope('someoneElse');
     expect(await db.blobCache.count()).toBe(0);
+    expect(await db.blobCacheMeta.count()).toBe(0); // the size-only sidecar is dropped in lockstep
+  });
+
+  it('resetBlobMemory revokes live object URLs and clears the in-memory bytes/URL tiers', async () => {
+    const revoke = vi.fn();
+    let n = 0;
+    vi.stubGlobal('URL', { createObjectURL: () => `blob:stub-${n++}`, revokeObjectURL: revoke });
+    fetchMock.mockResolvedValue(okResponse(bytesOf(8)));
+
+    await loadBlobUrl('memUrlHash', 'image/png'); // populates urlMem (object URL) + bytesMem
+    await loadBlobUrl('memUrlHash', 'image/png'); // memory HIT — same URL, no second fetch
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await waitForRow('acctA', 'memUrlHash'); // let the fire-and-forget persist land before we clear IDB below
+
+    resetBlobMemory();
+    expect(revoke).toHaveBeenCalledWith('blob:stub-0'); // the live object URL was revoked
+
+    // Memory tiers cleared: with the durable IDB row also gone, the next load is a true MISS → re-fetch,
+    // proving bytesMem was emptied (else it would have served from memory with no fetch).
+    await db.blobCache.clear();
+    await db.blobCacheMeta.clear();
+    fetchMock.mockResolvedValue(okResponse(bytesOf(8)));
+    await loadBlobUrl('memUrlHash', 'image/png');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('the wipe seam (onLocalWipe) releases blob memory: a switch revokes live URLs', async () => {
+    const revoke = vi.fn();
+    vi.stubGlobal('URL', { createObjectURL: () => 'blob:wired', revokeObjectURL: revoke });
+    fetchMock.mockResolvedValue(okResponse(bytesOf(8)));
+    await loadBlobUrl('wiredHash', 'image/png'); // a live object URL now sits in urlMem
+
+    // The account-switch wipe path must fire the registered resetBlobMemory (plugin → core seam).
+    await ensureAccountScope('anotherAccount');
+    expect(revoke).toHaveBeenCalledWith('blob:wired');
   });
 
   it('derivatives (thumb/view) cache under a resourceKey DISTINCT from the original hash', async () => {

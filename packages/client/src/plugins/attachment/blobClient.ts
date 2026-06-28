@@ -8,6 +8,7 @@
  */
 import { useAuthStore } from '../../auth/store.js';
 import { db } from '../../db/schema.js';
+import { onLocalWipe } from '../../db/accountScope.js';
 
 const BLOB_API = '/api/plugin/blob';
 
@@ -54,8 +55,34 @@ function memKey(accountId: string, resourceKey: string): string {
   return `${accountId}::${resourceKey}`;
 }
 
-/** Persist bytes for `[accountId+resourceKey]` then LRU-evict to the size budget. Best-effort (fire-and-forget):
- *  a storage error never breaks the read path — the network already returned the bytes. */
+/**
+ * Release the session memory tiers (bytes + object URLs) and `revokeObjectURL` every live `blob:` URL.
+ * Called by the account-scope wipe seam (db/accountScope.ts `onLocalWipe`) on switch/logout so a prior
+ * account's in-memory bytes/URLs don't linger this session (memory hygiene + no leaked object URLs).
+ * Account ISOLATION is already enforced by the per-account PK + the IndexedDB wipe; this is the in-memory
+ * counterpart. Idempotent and safe to call anytime (including in a non-DOM/test env — revoke is guarded).
+ */
+export function resetBlobMemory(): void {
+  for (const url of urlMem.values()) {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      /* no DOM URL in this env (or already revoked) — nothing to release */
+    }
+  }
+  urlMem.clear();
+  bytesMem.clear();
+}
+
+// Register the in-memory release with the core wipe seam. The dependency points plugin → core (core never
+// imports this lazily-split module — see db/mutate.ts), so registering here keeps blobClient OUT of the core
+// bundle while still being released on every account switch/logout. Runs once when this module first loads;
+// a session that never loaded blobClient holds no blob memory, so the absent registration is a correct no-op.
+onLocalWipe(resetBlobMemory);
+
+/** Persist bytes for `[accountId+resourceKey]` (+ its size-only meta mirror) then LRU-evict to the size budget.
+ *  Best-effort (fire-and-forget): a storage error never breaks the read path — the network already returned the
+ *  bytes. The bytes row and its meta row are written in ONE transaction so they can never diverge. */
 async function persistBytes(
   accountId: string,
   resourceKey: string,
@@ -63,13 +90,18 @@ async function persistBytes(
   mime: string | undefined,
 ): Promise<void> {
   try {
-    await db.blobCache.put({
-      accountId,
-      resourceKey,
-      bytes,
-      ...(mime ? { mime } : {}),
-      size: bytes.byteLength,
-      lastAccess: Date.now(),
+    const now = Date.now();
+    const size = bytes.byteLength;
+    await db.transaction('rw', db.blobCache, db.blobCacheMeta, async () => {
+      await db.blobCache.put({
+        accountId,
+        resourceKey,
+        bytes,
+        ...(mime ? { mime } : {}),
+        size,
+        lastAccess: now,
+      });
+      await db.blobCacheMeta.put({ accountId, resourceKey, size, lastAccess: now });
     });
     await evictToBudget();
   } catch {
@@ -77,15 +109,24 @@ async function persistBytes(
   }
 }
 
-/** Delete oldest-by-lastAccess rows until the total cached size is within budget. Runs after each write. */
+/**
+ * Delete oldest-by-lastAccess entries until the total cached size is within budget. Runs after each write.
+ *
+ * PERF (Jim's load north-star): the size math + victim selection operate ENTIRELY on the size-only
+ * `blobCacheMeta` sidecar — tiny rows that carry no `bytes` — so a normal blob persist NEVER deserializes any
+ * cached `ArrayBuffer` (up to ~200 MB) just to sum sizes. Victims are removed from BOTH tables in lockstep.
+ */
 async function evictToBudget(): Promise<void> {
-  const rows = await db.blobCache.orderBy('lastAccess').toArray();
+  const metas = await db.blobCacheMeta.orderBy('lastAccess').toArray(); // no bytes loaded — meta is size-only
   let total = 0;
-  for (const r of rows) total += r.size;
-  for (const r of rows) {
+  for (const m of metas) total += m.size;
+  for (const m of metas) {
     if (total <= CACHE_BUDGET_BYTES) break;
-    await db.blobCache.delete([r.accountId, r.resourceKey]);
-    total -= r.size;
+    await db.transaction('rw', db.blobCache, db.blobCacheMeta, async () => {
+      await db.blobCache.delete([m.accountId, m.resourceKey]);
+      await db.blobCacheMeta.delete([m.accountId, m.resourceKey]);
+    });
+    total -= m.size;
   }
 }
 
@@ -105,7 +146,7 @@ async function fetchBytesCached(
     const mk = memKey(accountId, resourceKey);
     const mem = bytesMem.get(mk);
     if (mem) return mem;
-    let row: { bytes: ArrayBuffer } | undefined;
+    let row: { bytes: ArrayBuffer; size: number } | undefined;
     try {
       row = await db.blobCache.get([accountId, resourceKey]);
     } catch {
@@ -113,8 +154,12 @@ async function fetchBytesCached(
     }
     if (row) {
       bytesMem.set(mk, row.bytes);
-      // Touch the LRU timestamp (fire-and-forget — a failed touch only loses recency, not correctness).
-      void db.blobCache.update([accountId, resourceKey], { lastAccess: Date.now() }).catch(() => {});
+      // Touch the LRU timestamp on the size-only sidecar ONLY (fire-and-forget) — a failed touch loses recency,
+      // not correctness. Doing it on the meta row (not the bytes row) keeps a hit from rewriting up to 25 MB of
+      // bytes just to bump recency, and backfills meta for any legacy row written before the sidecar existed.
+      void db.blobCacheMeta
+        .put({ accountId, resourceKey, size: row.size, lastAccess: Date.now() })
+        .catch(() => {});
       return row.bytes;
     }
   }
@@ -123,6 +168,10 @@ async function fetchBytesCached(
   const bytes = await res.arrayBuffer();
   if (accountId) {
     bytesMem.set(memKey(accountId, resourceKey), bytes);
+    // Fire-and-forget persist under the account captured at fetch time. A switch DURING this persist is
+    // isolation-safe: the store is content-addressed and the server enforces per-account hash ownership, so a
+    // row written under the captured account can only ever hold content that account already references —
+    // never another account's bytes, even if the resident account changed mid-flight.
     void persistBytes(accountId, resourceKey, bytes, mime);
   }
   return bytes;
