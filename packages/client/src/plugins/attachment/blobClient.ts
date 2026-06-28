@@ -7,6 +7,7 @@
  * (light previews), so it never imports this.
  */
 import { useAuthStore } from '../../auth/store.js';
+import { db } from '../../db/schema.js';
 
 const BLOB_API = '/api/plugin/blob';
 
@@ -18,6 +19,113 @@ export interface UploadedBlob {
 function authHeaders(): Record<string, string> {
   const token = useAuthStore.getState().bearerToken;
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/** The resident data-ownership account (D6 scope). null = truly unauthed → the local cache is OFF (no
+ *  anonymous bucket; never read or write under a null account). Read live each call so a switch is honored. */
+function currentAccountId(): string | null {
+  return useAuthStore.getState().accountId;
+}
+
+/**
+ * Content-addressed local blob cache (blob-cache feature). Fixes BOTH the "PDF doesn't reload on mobile
+ * return" latch AND makes reopening any blob (PDF/image) instant + offline-capable:
+ *   - memory cache (session) → IndexedDB (`db.blobCache`, account-scoped, survives reload/eviction) → network.
+ *   - an IndexedDB hit returns WITHOUT touching the network or the bearer — this is what makes a cold/evicted
+ *     mobile return open the PDF without re-racing the pre-auth refresh window (the 401-latch bug), and what
+ *     makes a reopen zero-cost + fully offline.
+ *
+ * ACCOUNT ISOLATION (HARD): the row PK is `[accountId+resourceKey]`, scoped to the LIVE accountId. Account B
+ * can never read account A's bytes even for an identical hash (different PK row). `accountId===null` → no
+ * read, no write (network-only; the caller degrades on the inevitable 401). The whole table is dropped by
+ * `wipeLocalState` on account-switch + logout. F7: only bytes + accountId + hash + mime + size persist —
+ * NEVER the bearer/token.
+ */
+
+// ~200 MB LRU budget across the (single-resident-account) table; single entries are ≤25 MB (server cap).
+const CACHE_BUDGET_BYTES = 200 * 1024 * 1024;
+
+// Session memory caches, keyed by `${accountId}::${resourceKey}` (account-scoped even in memory). Wiped on
+// reload; the IndexedDB layer is the durable tier.
+const bytesMem = new Map<string, ArrayBuffer>();
+const urlMem = new Map<string, string>();
+
+function memKey(accountId: string, resourceKey: string): string {
+  return `${accountId}::${resourceKey}`;
+}
+
+/** Persist bytes for `[accountId+resourceKey]` then LRU-evict to the size budget. Best-effort (fire-and-forget):
+ *  a storage error never breaks the read path — the network already returned the bytes. */
+async function persistBytes(
+  accountId: string,
+  resourceKey: string,
+  bytes: ArrayBuffer,
+  mime: string | undefined,
+): Promise<void> {
+  try {
+    await db.blobCache.put({
+      accountId,
+      resourceKey,
+      bytes,
+      ...(mime ? { mime } : {}),
+      size: bytes.byteLength,
+      lastAccess: Date.now(),
+    });
+    await evictToBudget();
+  } catch {
+    /* cache is best-effort; the caller already has its bytes */
+  }
+}
+
+/** Delete oldest-by-lastAccess rows until the total cached size is within budget. Runs after each write. */
+async function evictToBudget(): Promise<void> {
+  const rows = await db.blobCache.orderBy('lastAccess').toArray();
+  let total = 0;
+  for (const r of rows) total += r.size;
+  for (const r of rows) {
+    if (total <= CACHE_BUDGET_BYTES) break;
+    await db.blobCache.delete([r.accountId, r.resourceKey]);
+    total -= r.size;
+  }
+}
+
+/**
+ * The single cached-fetch primitive every blob read goes through. memory → IndexedDB (account-scoped) →
+ * network (authed). On an IndexedDB hit: touch lastAccess, populate memory, return — no network, no bearer.
+ * On a network success: populate memory + persist fire-and-forget. With `accountId===null` the cache is
+ * bypassed entirely (network-only). Throws on a network miss/offline → the caller degrades.
+ */
+async function fetchBytesCached(
+  accountId: string | null,
+  resourceKey: string,
+  fetchPath: string,
+  mime?: string,
+): Promise<ArrayBuffer> {
+  if (accountId) {
+    const mk = memKey(accountId, resourceKey);
+    const mem = bytesMem.get(mk);
+    if (mem) return mem;
+    let row: { bytes: ArrayBuffer } | undefined;
+    try {
+      row = await db.blobCache.get([accountId, resourceKey]);
+    } catch {
+      row = undefined; // storage unavailable — fall through to network
+    }
+    if (row) {
+      bytesMem.set(mk, row.bytes);
+      // Touch the LRU timestamp (fire-and-forget — a failed touch only loses recency, not correctness).
+      void db.blobCache.update([accountId, resourceKey], { lastAccess: Date.now() }).catch(() => {});
+      return row.bytes;
+    }
+  }
+  const res = await fetch(fetchPath, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`blob load failed (${res.status})`);
+  const bytes = await res.arrayBuffer();
+  if (accountId) {
+    bytesMem.set(memKey(accountId, resourceKey), bytes);
+    void persistBytes(accountId, resourceKey, bytes, mime);
+  }
+  return bytes;
 }
 
 /** Upload a file to content-addressed R2. The server hashes + keys it under the caller's account. */
@@ -39,49 +147,40 @@ function safeClientType(mime: string): string {
   return SAFE_IMAGE_TYPES.has(mime) ? mime : 'application/octet-stream';
 }
 
-// Session object-URL cache — content-addressed + immutable, so one fetch per hash per session.
-const urlCache = new Map<string, string>();
-
 /**
- * Load a blob's bytes and return an object URL for inline display (the EDIT path's image preview). Throws
- * when offline / not cached — the caller degrades (shows the chip). Content-addressed → cached for the
- * session.
+ * Load a blob's bytes and return an object URL for inline display (the EDIT path's image preview). Routes
+ * through the content-addressed cache (memory → IndexedDB → network), so a reopen is instant + offline.
+ * Throws when offline AND not cached — the caller degrades (shows the chip). The object URL itself is
+ * session-memoized per `[accountId+hash]` (immutable content), so repeated mounts reuse one URL.
  */
 export async function loadBlobUrl(hash: string, mime: string): Promise<string> {
-  const cached = urlCache.get(hash);
-  if (cached) return cached;
-  const res = await fetch(`${BLOB_API}/${hash}`, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`blob load failed (${res.status})`);
-  const bytes = await res.arrayBuffer();
+  const accountId = currentAccountId();
+  const urlKey = accountId ? memKey(accountId, hash) : null;
+  if (urlKey) {
+    const cached = urlMem.get(urlKey);
+    if (cached) return cached;
+  }
+  const bytes = await fetchBytesCached(accountId, hash, `${BLOB_API}/${hash}`, safeClientType(mime));
   const url = URL.createObjectURL(new Blob([bytes], { type: safeClientType(mime) }));
-  urlCache.set(hash, url);
+  if (urlKey) urlMem.set(urlKey, url);
   return url;
 }
 
-// Session bytes cache — content-addressed + immutable, so one fetch per hash per session (the pdf reader can
-// reopen the same PDF without refetching). Keyed separately from urlCache (different value shape).
-const bytesCache = new Map<string, ArrayBuffer>();
-
 /**
  * Load a blob's raw bytes for a parser that needs the ArrayBuffer — the PDF reader (pdf-reader.md §2.2).
- * Authenticated `GET /api/plugin/blob/:hash` — the SAME route + octet-stream + `attachment` serving as every
- * other blob fetch: no inline serving, no new route, `blob.ts` untouched. Returns the bytes; the caller hands
- * them to pdf.js (which transfers ownership into its worker). Throws on miss/offline → the reader degrades to
- * the icon + Download (gate PDF-2).
+ * Routes through the content-addressed cache (memory → IndexedDB → network): an IndexedDB hit returns the
+ * bytes with NO network and NO bearer dependency, which is what lets a cold/evicted mobile return reopen the
+ * PDF without re-racing the pre-auth window (the 401-latch bug) — and makes a reopen zero-cost + offline.
+ * Authenticated `GET /api/plugin/blob/:hash` on a miss — the SAME route + octet-stream + `attachment` serving
+ * as every other blob fetch: no inline serving, no new route, `blob.ts` untouched. Returns the bytes; the
+ * caller hands them to pdf.js. Throws on miss/offline → the reader degrades to the icon + Download (gate PDF-2).
  *
- * PIN-STORAGE-1 (pin-storage-1-sw-cache-invariant): this hits `/api/*`, which the service worker MUST NEVER
- * runtime-cache. The SW navigation denylist already excludes `/api/`, and the new pdf.js runtime-cache rule
- * (sw.ts) is scoped strictly to first-party `/assets/pdfjs-*.js` + `/assets/pdf.worker*.js` chunk names — an
- * `/api/*` path can match NEITHER, so these bytes are never written to Cache Storage.
+ * PIN-STORAGE-1 (pin-storage-1-sw-cache-invariant): the durable tier here is the APP store (Dexie IndexedDB),
+ * NOT the SW Cache Storage that PIN-STORAGE-1 governs — like notes, not like `/api/*` runtime-caching. The
+ * network miss still hits `/api/*`, which the SW navigation denylist already excludes from Cache Storage.
  */
 export async function loadBlobBytes(hash: string): Promise<ArrayBuffer> {
-  const cached = bytesCache.get(hash);
-  if (cached) return cached;
-  const res = await fetch(`${BLOB_API}/${hash}`, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`blob bytes load failed (${res.status})`);
-  const bytes = await res.arrayBuffer();
-  bytesCache.set(hash, bytes);
-  return bytes;
+  return fetchBytesCached(currentAccountId(), hash, `${BLOB_API}/${hash}`);
 }
 
 /**
@@ -93,14 +192,17 @@ export async function loadBlobBytes(hash: string): Promise<ArrayBuffer> {
  * Throws on miss (404 = derivative not baked yet / non-image); the caller falls back to the format icon.
  */
 async function loadDerivativeUrl(hash: string, variant: 'thumb' | 'view'): Promise<string> {
-  const cacheKey = `${variant}:${hash}`;
-  const cached = urlCache.get(cacheKey);
-  if (cached) return cached;
-  const res = await fetch(`${BLOB_API}/${hash}/${variant}`, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`blob ${variant} load failed (${res.status})`);
-  const bytes = await res.arrayBuffer();
+  // resourceKey distinguishes the derivative from the original under the same hash (different content).
+  const resourceKey = `${hash}:${variant}`;
+  const accountId = currentAccountId();
+  const urlKey = accountId ? memKey(accountId, resourceKey) : null;
+  if (urlKey) {
+    const cached = urlMem.get(urlKey);
+    if (cached) return cached;
+  }
+  const bytes = await fetchBytesCached(accountId, resourceKey, `${BLOB_API}/${hash}/${variant}`, 'image/webp');
   const url = URL.createObjectURL(new Blob([bytes], { type: 'image/webp' }));
-  urlCache.set(cacheKey, url);
+  if (urlKey) urlMem.set(urlKey, url);
   return url;
 }
 

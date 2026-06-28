@@ -1,4 +1,4 @@
-import Dexie, { type EntityTable } from 'dexie';
+import Dexie, { type EntityTable, type Table } from 'dexie';
 import type { Note, NoteId, NotebookId } from '@deltos/shared';
 import type { NotebookPushEntry, DictionaryPushEntry } from '@deltos/shared';
 
@@ -116,6 +116,31 @@ export interface DictionaryQueueEntry {
   createdAt: string;
 }
 
+/**
+ * A content-addressed local cache of blob bytes (originals + host-baked webp derivatives), so reopening a
+ * PDF/image is instant + offline-capable and never re-races the cold-boot pre-auth window. Bytes are
+ * content-addressed (hash) → immutable → safe to cache indefinitely; the cache layer only ever swaps a
+ * network fetch for a local read, never changes meaning.
+ *
+ * ACCOUNT ISOLATION (HARD, #52 lineage): the PK is the COMPOUND `[accountId+resourceKey]`, so account B's
+ * read for an identical hash lands on a different row and CANNOT see account A's bytes. The lookup ALWAYS
+ * scopes on the resident `accountId` (useAuthStore) — there is no unscoped/global bucket and an unauthed
+ * (`accountId===null`) caller neither reads nor writes. The whole table is dropped by `wipeLocalState`
+ * (db/accountScope.ts) on every account-switch + logout, exactly like notes.
+ *
+ * `resourceKey` = `${hash}` for an original, `${hash}:${variant}` for a `thumb`/`view` derivative (distinct
+ * content under the same hash). LRU is by `lastAccess` (touched on every hit) under a total-size budget.
+ * F7-safe: only bytes + accountId + hash + mime + size are stored — NEVER the bearer/token.
+ */
+export interface BlobCacheRow {
+  accountId: string;     // resident account (data-ownership scope) — half the compound PK
+  resourceKey: string;   // `${hash}` | `${hash}:thumb` | `${hash}:view` — the other half of the PK
+  bytes: ArrayBuffer;    // the immutable blob bytes
+  mime?: string;         // content type (for object-URL typing); absent for raw-bytes (pdf) reads
+  size: number;          // byte length — summed for the LRU budget
+  lastAccess: number;    // epoch ms, bumped on every hit — the LRU ordering key
+}
+
 class DeltosDB extends Dexie {
   notes!: EntityTable<ClientNote, 'id'>;
   syncQueue!: EntityTable<SyncQueueEntry, 'id'>;
@@ -125,6 +150,9 @@ class DeltosDB extends Dexie {
   notebookQueue!: EntityTable<NotebookQueueEntry, 'id'>;
   dictionaryWords!: EntityTable<DictionaryWordRow, 'word'>;
   dictionaryQueue!: EntityTable<DictionaryQueueEntry, 'id'>;
+  // Compound primary key [accountId+resourceKey] → typed via Dexie's Table (EntityTable takes a single
+  // key-property name; a compound key has none, so the key type is the tuple [accountId, resourceKey]).
+  blobCache!: Table<BlobCacheRow, [string, string]>;
 
   constructor() {
     super('deltos');
@@ -160,6 +188,12 @@ class DeltosDB extends Dexie {
       // Custom dictionary (§5.2): the word set (PK = word) + its outbound queue (dedup by recordId=word).
       dictionaryWords: 'word, syncSeq',
       dictionaryQueue: 'id, recordId, createdAt',
+    });
+    this.version(8).stores({
+      // Content-addressed local blob cache: COMPOUND PK [accountId+resourceKey] (account isolation — an
+      // identical hash under a different account is a different row), + an accountId index (scoped sweeps)
+      // and a lastAccess index (LRU eviction by oldest touch).
+      blobCache: '[accountId+resourceKey], accountId, lastAccess',
     });
   }
 }
