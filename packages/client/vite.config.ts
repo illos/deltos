@@ -65,6 +65,9 @@ function gitShortSha(): string {
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(gitShortSha()),
+    // Build timestamp (ISO) so Settings can show WHEN this build was produced — the human-readable
+    // "did my change actually land on this device?" check alongside the git short SHA.
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
   // vite's own UserConfigExport has no `test` key (vitest reads it at runtime); typing it here would
   // pull vitest/config's defineConfig, which resolves a DIFFERENT vite version than the app's and
@@ -103,7 +106,11 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.ts',
-      registerType: 'autoUpdate',
+      // MANUAL update posture (pwa-force-update). 'prompt' (not 'autoUpdate') means registerSW does
+      // NOT auto-apply a new build or auto-reload — a waiting worker is activated ONLY when the user
+      // taps "Update now" in Settings (src/lib/forceUpdate.ts posts SKIP_WAITING to sw.ts). Pairs with
+      // the SW no longer self-skipWaiting()-ing on install. Precache/caching strategy is unchanged.
+      registerType: 'prompt',
       injectManifest: {
         // woff2: precache the everyday fonts (Plex Sans default voice + Plex Mono metadata) at SW
         // install so the first everyday load is instant + offline (UI refresh, Lane 0).
