@@ -44,12 +44,13 @@ const makeDoc = () => ({
   numPages: PAGES,
   getPageDims: vi.fn(async () => ({ width: 600, height: 800 })),
   renderPage,
+  getPageText: vi.fn(async () => ({ items: [] })),
   destroy,
 });
 const openPdf = vi.fn(async () => makeDoc());
 vi.mock('../src/views/pdf/pdfEngine.js', () => ({
   openPdf,
-  RENDER_PRIORITY: { MAIN: 0, THUMBNAIL: 1 },
+  RENDER_PRIORITY: { MAIN: 0, THUMBNAIL: 1, SEARCH: 2 },
 }));
 
 function makeNote(over: Partial<Note>): Note {

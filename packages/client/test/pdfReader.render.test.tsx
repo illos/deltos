@@ -45,11 +45,12 @@ const openPdf = vi.fn(async () => ({
   numPages: 3,
   getPageDims: vi.fn(async () => ({ width: 600, height: 800 })),
   renderPage,
+  getPageText: vi.fn(async () => ({ items: [] })),
   destroy,
 }));
 // RENDER_PRIORITY is imported by PdfReader (the thumbnail rail tags its low-priority renders with it), so the
 // engine mock must re-export it.
-vi.mock('../src/views/pdf/pdfEngine.js', () => ({ openPdf, RENDER_PRIORITY: { MAIN: 0, THUMBNAIL: 1 } }));
+vi.mock('../src/views/pdf/pdfEngine.js', () => ({ openPdf, RENDER_PRIORITY: { MAIN: 0, THUMBNAIL: 1, SEARCH: 2 } }));
 
 function makeNote(over: Partial<Note>): Note {
   return {
@@ -115,6 +116,7 @@ beforeEach(async () => {
     numPages: 3,
     getPageDims: vi.fn(async () => ({ width: 600, height: 800 })),
     renderPage,
+    getPageText: vi.fn(async () => ({ items: [] })),
     destroy,
   });
   vi.stubGlobal('matchMedia', (q: string) => ({ matches: true, media: q, addEventListener() {}, removeEventListener() {} }));

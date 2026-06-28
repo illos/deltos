@@ -27,6 +27,30 @@ export interface PdfPageDims {
   height: number;
 }
 
+/**
+ * One extracted text run from a page (Slice 3 / §5). The `str` is ATTACKER-CONTROLLED text from an untrusted
+ * PDF — it is carried as a plain string and only ever reaches the DOM as a React text node / `textContent`
+ * (never `innerHTML`), so markup inside it stays inert. The geometry is projected into the page's scale-1 CSS-px
+ * box (origin = page top-left); the reader multiplies by the page's display scale to position the inert span.
+ */
+export interface PdfTextItem {
+  /** The text run. UNTRUSTED — render as text only, never as markup. */
+  str: string;
+  /** Left edge in scale-1 CSS px from the page's left. */
+  left: number;
+  /** Top edge in scale-1 CSS px from the page's top. */
+  top: number;
+  /** Run width in scale-1 CSS px. */
+  width: number;
+  /** Font/line height in scale-1 CSS px (drives the span's font-size). */
+  height: number;
+}
+
+/** A page's extracted text (Slice 3 §5.2) — the ordered inert text runs. Cached so re-searching is cheap. */
+export interface PdfPageText {
+  items: PdfTextItem[];
+}
+
 /** A cancelable render of one page into one canvas. */
 export interface PdfRenderHandle {
   /** Resolves when the page has finished painting; rejects with a cancel/parse error. */
@@ -40,7 +64,10 @@ export interface PdfRenderHandle {
  * (HIGH) always preempt pending thumbnails (LOW) for the next free slot, so the thumbnail rail can never starve
  * the page the user is actually reading. There is exactly one worker + one queue for both surfaces.
  */
-export const RENDER_PRIORITY = { MAIN: 0, THUMBNAIL: 1 } as const;
+// SEARCH (Slice 3) is the LOWEST tier — text extraction (getTextContent) for the match index funnels through the
+// SAME single worker + queue, so it can never starve the visible reading pages (MAIN) OR the thumbnail renders
+// (THUMBNAIL). Reading > thumbnails > search.
+export const RENDER_PRIORITY = { MAIN: 0, THUMBNAIL: 1, SEARCH: 2 } as const;
 export type RenderPriority = (typeof RENDER_PRIORITY)[keyof typeof RENDER_PRIORITY];
 
 export interface RenderOptions {
@@ -64,6 +91,12 @@ export interface OpenedPdf {
     cssScale: number,
     opts?: RenderOptions,
   ): PdfRenderHandle;
+  /**
+   * Extract `pageNumber`'s text (Slice 3 §5) via `page.getTextContent()` through the SAME bounded queue at
+   * SEARCH priority (lowest) — never starves reading or thumbnails. The returned strings are UNTRUSTED PDF text;
+   * the caller renders them as inert text only. Cheap relative to rasterizing; the reader caches the result.
+   */
+  getPageText(pageNumber: number): Promise<PdfPageText>;
   /** Cancel everything, destroy the document + terminate the worker, drop all bitmaps (§4.4 teardown). */
   destroy(): Promise<void>;
 }
@@ -80,6 +113,35 @@ const STANDARD_FONT_DATA_URL = '/pdfjs/standard_fonts/';
 
 function effectiveDpr(): number {
   return typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
+}
+
+/**
+ * Project a page's `getTextContent()` result into our inert `PdfTextItem`s (Slice 3 §5.1). Each text-space run
+ * is transformed by the scale-1 page viewport into a CSS-px box (left/top from the page top-left, plus the run
+ * width + font height). We DROP marked-content markers (no `str`) and zero-length runs. The `str` is carried
+ * verbatim and untrusted — it is NEVER interpreted as markup here, only as data the reader renders as text.
+ */
+function projectTextContent(
+  content: { items: ReadonlyArray<unknown> },
+  viewport: { transform: number[] },
+): PdfPageText {
+  const items: PdfTextItem[] = [];
+  for (const raw of content.items) {
+    const it = raw as { str?: string; transform?: number[]; width?: number; height?: number };
+    if (typeof it.str !== 'string' || it.str.length === 0 || !it.transform) continue;
+    // tx = viewport.transform ∘ item.transform → device coords of the run's baseline origin.
+    const tx = pdfjs.Util.transform(viewport.transform, it.transform);
+    const fontHeight = Math.hypot(tx[2] ?? 0, tx[3] ?? 0) || it.height || 0;
+    items.push({
+      str: it.str,
+      left: tx[4] ?? 0,
+      // pdf.js reports the baseline; the span's top is one font-height up.
+      top: (tx[5] ?? 0) - fontHeight,
+      width: it.width ?? 0,
+      height: fontHeight,
+    });
+  }
+  return { items };
 }
 
 /**
@@ -163,6 +225,13 @@ export async function openPdf(data: ArrayBuffer): Promise<OpenedPdf> {
     active--;
     pump();
   };
+  // Generic submit: `start` runs when a slot is free and MUST call `release()` exactly once when its work
+  // settles. Both renderPage (MAIN/THUMBNAIL) and getPageText (SEARCH) submit through this one queue, so all
+  // worker work is priority-ordered and concurrency-bounded together.
+  const enqueue = (priority: number, start: () => void) => {
+    queue.push({ run: start, priority, seq: seqCounter++ });
+    pump();
+  };
 
   let destroyed = false;
 
@@ -241,6 +310,36 @@ export async function openPdf(data: ArrayBuffer): Promise<OpenedPdf> {
           }
         },
       };
+    },
+
+    getPageText(pageNumber: number): Promise<PdfPageText> {
+      return new Promise<PdfPageText>((resolve, reject) => {
+        const start = () => {
+          if (destroyed) {
+            release();
+            reject(new Error('destroyed'));
+            return;
+          }
+          doc
+            .getPage(pageNumber)
+            .then(async (page) => {
+              // The scale-1 viewport gives the transform that projects text-space → page CSS box (§5.1).
+              const viewport = page.getViewport({ scale: 1 });
+              const content = await page.getTextContent();
+              return projectTextContent(content, viewport);
+            })
+            .then((pageText) => {
+              release();
+              resolve(pageText);
+            })
+            .catch((err) => {
+              release();
+              reject(err);
+            });
+        };
+        // SEARCH = lowest priority: text extraction yields to every visible page + every thumbnail render.
+        enqueue(RENDER_PRIORITY.SEARCH, start);
+      });
     },
 
     async destroy(): Promise<void> {
