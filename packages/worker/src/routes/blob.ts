@@ -31,7 +31,7 @@ import { resolvePrincipal } from '../auth.js';
 /** Per-object hard cap. Matches the transcribe final-pass ceiling; raise only with a secSys ruling. */
 const MAX_BLOB_SIZE = 25 * 1024 * 1024;
 /** Per-account total stored bytes. Coarse v1 quota (summed from R2 list); a durable counter is a later add. */
-const ACCOUNT_BLOB_QUOTA = 250 * 1024 * 1024;
+const ACCOUNT_BLOB_QUOTA = 10 * 1024 * 1024 * 1024;
 
 /** Content-types safe to hand back with their real type (images can't execute). Everything else → octet. */
 const SAFE_INLINE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
