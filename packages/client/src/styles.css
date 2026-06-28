@@ -226,6 +226,122 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* ── FileNoteView — the open surface for a file note (file-notes.md §3.2) ───────────
+   The whole note IS a foreign artifact, so this replaces the PM editor: a header (filename + a faint
+   type/size sub), a preview-if-able pane (image → full-view WebP; else large format icon + "no preview"),
+   an action row (Download / Rename / Delete), and a metadata list. Centers to the same column as the
+   editor text. */
+.file-view { align-items: center; }
+.file-view__inner {
+  width: 100%;
+  max-width: 680px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.file-view__header { display: flex; flex-direction: column; gap: 4px; }
+.file-view__title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.file-view__sub {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--secondary);
+  overflow-wrap: anywhere;
+}
+.file-view__rename { display: flex; gap: 8px; align-items: center; }
+.file-view__rename-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 1.05rem; /* ≥16px: avoids iOS focus-zoom */
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.file-view__rename-save {
+  flex-shrink: 0;
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.file-view__preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  background: var(--list);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+  box-sizing: border-box;
+}
+.file-view__image {
+  max-width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  border-radius: 6px;
+}
+.file-view__nopreview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: var(--secondary);
+}
+.file-view__nopreview-label {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--faint);
+}
+.file-view__actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.file-view__action {
+  flex: 1;
+  min-width: 100px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--paper);
+  color: var(--body);
+  font-size: 0.95rem;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.file-view__action:disabled { opacity: 0.5; cursor: default; }
+.file-view__action--primary { background: var(--accent); color: var(--on-accent, #fff); border-color: var(--accent); }
+.file-view__action--danger { color: #e05252; }
+.file-view__metadata {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+.file-view__meta-row { display: flex; gap: 12px; font-size: 0.85rem; }
+.file-view__meta-row dt {
+  flex-shrink: 0;
+  width: 80px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding-top: 1px;
+}
+.file-view__meta-row dd { margin: 0; color: var(--body); overflow-wrap: anywhere; min-width: 0; }
+
 /* Desktop list-drop affordance — the whole list pane rings while an OS file is dragged over it. */
 .home--file-drag {
   outline: 2px dashed var(--accent);

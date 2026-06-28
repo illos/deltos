@@ -39,6 +39,9 @@ import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
 import { ConflictBadgeSlot } from './components/ConflictBadgeSlot.js';
 import { SwipeRow } from './components/SwipeRow.js';
 import { FileNotePill } from './components/FileNotePill.js';
+// Side-effect: register the FileNoteView against resolveNoteView so a file note opens in the viewer (not the
+// PM editor). Tiny module — the viewer itself is a lazy chunk (gate FN-8); see views/registerFileNoteView.ts.
+import './views/registerFileNoteView.js';
 import { NotebookPickerSheet } from './components/NotebookPickerSheet.js';
 import { useAuthStore } from './auth/store.js';
 import { selectBootView } from './auth/shellGate.js';
