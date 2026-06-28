@@ -18,7 +18,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { useAuthStore } from '../../auth/store.js';
 import { db } from '../../db/schema.js';
 import { ensureAccountScope } from '../../db/accountScope.js';
-import { loadBlobBytes, loadThumbUrl, loadViewUrl } from './blobClient.js';
+import { loadBlobBytes, loadBlobUrl, loadThumbUrl, loadViewUrl, resetBlobMemory } from './blobClient.js';
 
 const BLOB_API = '/api/plugin/blob';
 
@@ -184,6 +184,41 @@ describe('content-addressed local blob cache', () => {
     // ensureAccountScope to a DIFFERENT account routes through wipeLocalState (same seam logout uses).
     await ensureAccountScope('someoneElse');
     expect(await db.blobCache.count()).toBe(0);
+    expect(await db.blobCacheMeta.count()).toBe(0); // the size-only sidecar is dropped in lockstep
+  });
+
+  it('resetBlobMemory revokes live object URLs and clears the in-memory bytes/URL tiers', async () => {
+    const revoke = vi.fn();
+    let n = 0;
+    vi.stubGlobal('URL', { createObjectURL: () => `blob:stub-${n++}`, revokeObjectURL: revoke });
+    fetchMock.mockResolvedValue(okResponse(bytesOf(8)));
+
+    await loadBlobUrl('memUrlHash', 'image/png'); // populates urlMem (object URL) + bytesMem
+    await loadBlobUrl('memUrlHash', 'image/png'); // memory HIT — same URL, no second fetch
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await waitForRow('acctA', 'memUrlHash'); // let the fire-and-forget persist land before we clear IDB below
+
+    resetBlobMemory();
+    expect(revoke).toHaveBeenCalledWith('blob:stub-0'); // the live object URL was revoked
+
+    // Memory tiers cleared: with the durable IDB row also gone, the next load is a true MISS → re-fetch,
+    // proving bytesMem was emptied (else it would have served from memory with no fetch).
+    await db.blobCache.clear();
+    await db.blobCacheMeta.clear();
+    fetchMock.mockResolvedValue(okResponse(bytesOf(8)));
+    await loadBlobUrl('memUrlHash', 'image/png');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('the wipe seam (onLocalWipe) releases blob memory: a switch revokes live URLs', async () => {
+    const revoke = vi.fn();
+    vi.stubGlobal('URL', { createObjectURL: () => 'blob:wired', revokeObjectURL: revoke });
+    fetchMock.mockResolvedValue(okResponse(bytesOf(8)));
+    await loadBlobUrl('wiredHash', 'image/png'); // a live object URL now sits in urlMem
+
+    // The account-switch wipe path must fire the registered resetBlobMemory (plugin → core seam).
+    await ensureAccountScope('anotherAccount');
+    expect(revoke).toHaveBeenCalledWith('blob:wired');
   });
 
   it('derivatives (thumb/view) cache under a resourceKey DISTINCT from the original hash', async () => {

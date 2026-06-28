@@ -8,6 +8,7 @@
  */
 import { useAuthStore } from '../../auth/store.js';
 import { db } from '../../db/schema.js';
+import { onLocalWipe } from '../../db/accountScope.js';
 
 const BLOB_API = '/api/plugin/blob';
 
@@ -54,8 +55,34 @@ function memKey(accountId: string, resourceKey: string): string {
   return `${accountId}::${resourceKey}`;
 }
 
-/** Persist bytes for `[accountId+resourceKey]` then LRU-evict to the size budget. Best-effort (fire-and-forget):
- *  a storage error never breaks the read path — the network already returned the bytes. */
+/**
+ * Release the session memory tiers (bytes + object URLs) and `revokeObjectURL` every live `blob:` URL.
+ * Called by the account-scope wipe seam (db/accountScope.ts `onLocalWipe`) on switch/logout so a prior
+ * account's in-memory bytes/URLs don't linger this session (memory hygiene + no leaked object URLs).
+ * Account ISOLATION is already enforced by the per-account PK + the IndexedDB wipe; this is the in-memory
+ * counterpart. Idempotent and safe to call anytime (including in a non-DOM/test env — revoke is guarded).
+ */
+export function resetBlobMemory(): void {
+  for (const url of urlMem.values()) {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      /* no DOM URL in this env (or already revoked) — nothing to release */
+    }
+  }
+  urlMem.clear();
+  bytesMem.clear();
+}
+
+// Register the in-memory release with the core wipe seam. The dependency points plugin → core (core never
+// imports this lazily-split module — see db/mutate.ts), so registering here keeps blobClient OUT of the core
+// bundle while still being released on every account switch/logout. Runs once when this module first loads;
+// a session that never loaded blobClient holds no blob memory, so the absent registration is a correct no-op.
+onLocalWipe(resetBlobMemory);
+
+/** Persist bytes for `[accountId+resourceKey]` (+ its size-only meta mirror) then LRU-evict to the size budget.
+ *  Best-effort (fire-and-forget): a storage error never breaks the read path — the network already returned the
+ *  bytes. The bytes row and its meta row are written in ONE transaction so they can never diverge. */
 async function persistBytes(
   accountId: string,
   resourceKey: string,
