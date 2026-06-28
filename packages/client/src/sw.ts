@@ -2,17 +2,24 @@
 import { precacheAndRoute, createHandlerBoundToURL, type PrecacheEntry } from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { CacheFirst } from 'workbox-strategies';
-import { clientsClaim } from 'workbox-core';
 
 // The plugin injects the precache manifest here at build time.
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<PrecacheEntry | string>;
 };
 
-// Take control as soon as a new SW is ready (paired with registerType: 'autoUpdate') so an
-// installed app never lingers on a stale shell.
-self.skipWaiting();
-clientsClaim();
+// INSTALL-AND-WAIT by default (pwa-force-update). A freshly-installed worker does NOT
+// self.skipWaiting() and does NOT clientsClaim() — so an installed app NEVER auto-swaps the
+// running build on launch/reload. The running build only changes when the user explicitly taps
+// "Update now" in Settings, which posts the SKIP_WAITING message handled below. The precache /
+// runtime caching strategy is deliberately unchanged — this only governs WHEN a waiting worker
+// activates, never WHAT is cached.
+self.addEventListener('message', (event) => {
+  if ((event.data as { type?: string } | null)?.type === 'SKIP_WAITING') {
+    // Runs ONLY in response to the manual "Update now" control — never automatically.
+    void self.skipWaiting();
+  }
+});
 
 // Precache the app shell so launch never depends on the network — the basis of both the
 // near-native cold start and offline boot.

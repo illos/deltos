@@ -20,8 +20,9 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { screen, userEvent } from './renderHelpers.js';
 import { useAuthStore } from '../src/auth/store.js';
 
-// Expose __APP_VERSION__ to jsdom (vite define replaces it at build time).
+// Expose the build-time defines to jsdom (vite `define` replaces them at build time).
 (globalThis as Record<string, unknown>).__APP_VERSION__ = 'test-sha';
+(globalThis as Record<string, unknown>).__BUILD_TIME__ = '2026-06-28T12:00:00.000Z';
 
 // ── Mount helper ─────────────────────────────────────────────────────────────
 

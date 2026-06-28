@@ -19,7 +19,18 @@ import { AppearanceSection } from '../components/AppearanceSection.js';
 import { CustomDictSection } from '../components/CustomDictSection.js';
 import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
 import { useSpellcheck } from '../lib/useSpellcheck.js';
+import { forceUpdate } from '../lib/forceUpdate.js';
 import type { SessionState } from '../auth/store.js';
+
+// Render the injected ISO build timestamp as a compact local date+time so Jim can eyeball
+// "did my latest deploy actually land on this device?". Falls back to the raw value if unparseable.
+function formatBuildTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  const d = new Date(t);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 function sessionLabel(s: SessionState): string {
   switch (s) {
@@ -57,6 +68,43 @@ export function SettingsRoute() {
   const [customKeyboard, setCustomKeyboard] = useCustomKeyboard();
   const [spellcheck, setSpellcheck] = useSpellcheck();
   const [view, setView] = useState<View>({ tag: 'list' });
+
+  // ── App update (pwa-force-update) ──────────────────────────────────────────
+  // Manual ONLY: tapping forces a fresh server check and, if a new build is waiting, activates it
+  // and reloads. Never auto-applies. 'updating' leaves the button busy because a reload is in flight.
+  const [updateStatus, setUpdateStatus] =
+    useState<'idle' | 'checking' | 'updating' | 'latest' | 'offline'>('idle');
+
+  const handleUpdate = () => {
+    if (updateStatus === 'checking' || updateStatus === 'updating') return;
+    setUpdateStatus('checking');
+    forceUpdate()
+      .then((outcome) => {
+        switch (outcome) {
+          case 'updating':
+            setUpdateStatus('updating'); // a reload is in flight; keep the busy state
+            break;
+          case 'offline':
+            setUpdateStatus('offline');
+            break;
+          case 'latest':
+          case 'unsupported':
+            setUpdateStatus('latest');
+            break;
+        }
+      })
+      .catch(() => setUpdateStatus('offline'));
+  };
+
+  const updateBusy = updateStatus === 'checking' || updateStatus === 'updating';
+  const updateLabel =
+    updateStatus === 'checking' ? 'Checking…' : updateStatus === 'updating' ? 'Updating…' : 'Update now';
+  const updateHint =
+    updateStatus === 'latest'
+      ? "You're on the latest version."
+      : updateStatus === 'offline'
+        ? 'Connect to the internet to check for updates.'
+        : null;
 
   // ── Sign out ─────────────────────────────────────────────────────────────
 
@@ -440,6 +488,24 @@ export function SettingsRoute() {
             {__APP_VERSION__}
           </span>
         </div>
+        <div className="settings__row">
+          <span className="settings__row-label">Build</span>
+          <span className="settings__row-value settings__row-value--mono settings__row-value--muted">
+            {formatBuildTime(__BUILD_TIME__)}
+          </span>
+        </div>
+        {/* Manual update — forces a fresh check against the server (the reliable path on iOS) and,
+            if a new build is waiting, activates it and reloads. Never auto-applies. */}
+        <button
+          className="settings__row settings__row--btn"
+          onClick={handleUpdate}
+          disabled={updateBusy}
+          aria-label="Update now"
+        >
+          <span className="settings__row-label">{updateLabel}</span>
+          <span className="settings__row-chevron" aria-hidden>›</span>
+        </button>
+        {updateHint && <p className="settings__row-hint">{updateHint}</p>}
         <div className="settings__row">
           <span className="settings__row-label settings__row-label--lede">
             deltos — your notes, under your control. Local-first, synced, private.

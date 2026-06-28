@@ -22,6 +22,9 @@ createRoot(rootEl).render(
   </StrictMode>,
 );
 
-// Register the service worker (autoUpdate). Offline auth/data are Phase 1; the SW today only
-// precaches the shell so launch and reload work with no network.
+// Register the service worker so the shell precaches and launch/reload work with no network.
+// Posture is MANUAL ('prompt', not autoUpdate): registerSW installs the worker and checks for a
+// new build, but NEVER auto-applies or auto-reloads — a waiting worker is activated only when the
+// user taps "Update now" in Settings (src/lib/forceUpdate.ts). We intentionally ignore the
+// onNeedRefresh callback here: no banner, no popup, no nag — the Settings control is the sole path.
 registerSW({ immediate: true });
