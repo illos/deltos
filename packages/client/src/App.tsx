@@ -36,6 +36,7 @@ import { ComposeNew, Search, Ellipsis, VersionHistory } from './icons/index.js';
 import { SyncIndicator } from './components/SyncIndicator.js';
 import { SessionStatus } from './components/SessionStatus.js';
 import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
+import { UploadProgressHost } from './components/UploadProgressHost.js';
 import { ConflictBadgeSlot } from './components/ConflictBadgeSlot.js';
 import { SwipeRow } from './components/SwipeRow.js';
 import { FileNotePill } from './components/FileNotePill.js';
@@ -384,6 +385,9 @@ function AuthedShell() {
       <>
         <ThreeRegionShell notebookId={notebookId} CollectionView={CollectionView} />
         <ConflictToastHostSlot />
+        {/* Upload-first large-file progress (direct-r2-upload.md §6.3): transient pills for in-flight
+            direct-to-R2 uploads; persists across navigation while a big file streams. */}
+        <UploadProgressHost />
       </>
     );
   }
@@ -488,6 +492,10 @@ function AuthedShell() {
       {/* TOAST-HOST MOUNT SLOT — gruntSys2 fills this with the conflict ToastHost for Part 2.
           Leave the slot; do not build the toast here. */}
       <ConflictToastHostSlot />
+
+      {/* Upload-first large-file progress (direct-r2-upload.md §6.3): transient "uploading… NN%" pills for
+          in-flight direct-to-R2 uploads; persists across route changes while a big file streams. */}
+      <UploadProgressHost />
     </div>
     </DeckHostProvider>
   );

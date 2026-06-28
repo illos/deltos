@@ -5,6 +5,36 @@ import type { ClientNote } from './schema.js';
 import { newNoteId } from '../lib/ids.js';
 import { getDefaultNotebookId } from '../lib/notebooks.js';
 import { useAuthStore } from '../auth/store.js';
+import { DIRECT_R2_THRESHOLD } from '../plugins/attachment/blobLimits.js';
+import { useUploadStore } from '../lib/uploadStore.js';
+
+/**
+ * Route a file-note upload by size (direct-r2-upload.md §6.1). ≤ threshold → the existing buffered
+ * `uploadBlob` (unchanged, incl. the image WebP bake). Over it → `uploadBlobDirect` (presign → XHR PUT
+ * straight to R2 with progress → confirm), registered in the upload-tracking store so the UPLOAD-FIRST
+ * progress UI shows a bar + cancel while the big bytes move. Both yield `{ hash, size }`, so the note minting
+ * below the branch is identical. Both helpers stay dynamic-imported → blobClient/direct-upload code is OUT of
+ * the entry bundle (perf north-star / FN-8); this router only imports a lightweight constant + zustand store.
+ */
+async function uploadFileForNote(file: File): Promise<{ hash: string; size: number }> {
+  // Access lazily per-branch (not an eager destructure) so the buffered path never references the direct
+  // export — keeps a small-file caller (and its tests) decoupled from the direct-upload surface.
+  const blobClient = await import('../plugins/attachment/blobClient.js');
+  if (file.size <= DIRECT_R2_THRESHOLD) return blobClient.uploadBlob(file); // buffered path, unchanged
+  // Direct-to-R2: register a transient progress entry (NOT a note — upload-first), drive the bar from
+  // onProgress, and wire Cancel to the AbortController. The entry is removed on settle (success/fail/cancel);
+  // a failed or cancelled upload mints NO note (the throw propagates out of createFileNote before minting).
+  const controller = new AbortController();
+  const uploadId = useUploadStore.getState().start(file.name, () => controller.abort());
+  try {
+    return await blobClient.uploadBlobDirect(file, {
+      signal: controller.signal,
+      onProgress: (fraction) => useUploadStore.getState().setProgress(uploadId, fraction),
+    });
+  } finally {
+    useUploadStore.getState().finish(uploadId);
+  }
+}
 
 /**
  * The write API for synced notes. Call mutateNotes.* for every note write — never write the
@@ -106,11 +136,12 @@ export const mutateNotes = {
    * first paint (perf north-star / gate FN-8).
    */
   async createFileNote(file: File): Promise<Note> {
-    const [{ uploadBlob }, { buildAttachmentContent, buildAttachmentBlock }] = await Promise.all([
-      import('../plugins/attachment/blobClient.js'),
+    // Size-routed upload (buffered ≤ threshold | direct-to-R2 above it) → the SAME { hash, size }, so
+    // everything below this line (note minting, atomic enqueue) is identical for both paths.
+    const [{ hash, size }, { buildAttachmentContent, buildAttachmentBlock }] = await Promise.all([
+      uploadFileForNote(file),
       import('../plugins/attachment/attachmentBlock.js'),
     ]);
-    const { hash, size } = await uploadBlob(file);
     const now = new Date().toISOString();
     const content = buildAttachmentContent(file, { hash, size });
     const note: Note = {

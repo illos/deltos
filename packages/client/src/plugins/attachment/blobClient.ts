@@ -234,6 +234,112 @@ export async function uploadBlob(file: File): Promise<UploadedBlob> {
   return (await res.json()) as UploadedBlob;
 }
 
+/** What the presign endpoint returns (direct-r2-upload.md §3.1): the URL to PUT to + the EXACT headers to send. */
+interface PresignResponse {
+  url: string;
+  headers: Record<string, string>;
+}
+
+/** Options for {@link uploadBlobDirect}: a progress sink (0..1) + an AbortSignal to cancel the in-flight PUT. */
+export interface DirectUploadOptions {
+  /** Called with fractional progress (loaded/total, 0..1) as the bytes stream to R2. */
+  onProgress?: (fraction: number) => void;
+  /** Abort the upload — aborts the XHR; the promise rejects with an AbortError and NO note is minted. */
+  signal?: AbortSignal;
+}
+
+/** Hex-encode an ArrayBuffer (SHA-256 digest → 64-char lowercase hex), matching the Worker's key/hash form. */
+function bufferToHex(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let hex = '';
+  for (const b of bytes) hex += b.toString(16).padStart(2, '0');
+  return hex;
+}
+
+/**
+ * PUT the file bytes STRAIGHT to R2 over the presigned URL (direct-r2-upload.md §3.2). Uses XMLHttpRequest —
+ * not fetch — because only XHR exposes `upload.onprogress` for a request BODY (fetch has no upload-progress
+ * in browsers). The PUT carries NO bearer: it is authorized by the presigned SigV4 signature, not the deltos
+ * session (R2 has no notion of the session). R2 rejects the object unless the body's SHA-256 matches the
+ * signed `x-amz-checksum-sha256` → a non-2xx (incl. R2's checksum 400) rejects the promise → no note minted.
+ */
+function putToR2(url: string, headers: Record<string, string>, file: File, opts: DirectUploadOptions): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const { signal, onProgress } = opts;
+    if (signal?.aborted) {
+      reject(new DOMException('upload aborted', 'AbortError'));
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+
+    const onAbort = () => xhr.abort();
+    signal?.addEventListener('abort', onAbort);
+    const cleanup = () => signal?.removeEventListener('abort', onAbort);
+
+    xhr.upload.onprogress = (e) => {
+      if (onProgress && e.lengthComputable && e.total > 0) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      cleanup();
+      if (xhr.status >= 200 && xhr.status < 300) {
+        if (onProgress) onProgress(1); // settle the bar at 100% on success
+        resolve();
+      } else {
+        reject(new Error(`direct upload rejected by R2 (${xhr.status})`));
+      }
+    };
+    // A network-level failure (offline, CORS) — direct path is online-only; surface it so no note is minted.
+    xhr.onerror = () => { cleanup(); reject(new Error('direct upload failed (network)')); };
+    xhr.onabort = () => { cleanup(); reject(new DOMException('upload aborted', 'AbortError')); };
+
+    xhr.send(file);
+  });
+}
+
+/**
+ * Upload a LARGE file (> DIRECT_R2_THRESHOLD) STRAIGHT to R2, bypassing the Worker's byte path
+ * (direct-r2-upload.md §3 / §6.2). The sibling of {@link uploadBlob}; returns the SAME `{ hash, size }` shape
+ * so `createFileNote` mints the note path-agnostically. Three steps, the Worker in only steps 1 + 3 (no bytes):
+ *   1. HASH the file client-side (SHA-256 → hex) — the content-address R2 will enforce.
+ *   2. POST /presign (bearer-authed) → a presigned PUT URL + the exact signed headers.
+ *   3. PUT the bytes direct to R2 with upload-progress (XHR), then POST /confirm → `{ hash, size }`.
+ *
+ * PERF / mobile-memory (§8 OQ-3): step 1 reads the whole file into an ArrayBuffer to hash it — acceptable for
+ * v1 (desktop-drop is the only entry; `crypto.subtle` has NO streaming digest). A chunked/WASM streaming hash
+ * is the documented later optimization for multi-hundred-MB mobile uploads; NOT built here.
+ */
+export async function uploadBlobDirect(file: File, opts: DirectUploadOptions = {}): Promise<UploadedBlob> {
+  const mime = file.type || 'application/octet-stream';
+
+  // 1. Client-side content hash. (Whole-file arrayBuffer read — fine for v1; streaming-hash is the §8 OQ-3 later add.)
+  const hash = bufferToHex(await crypto.subtle.digest('SHA-256', await file.arrayBuffer()));
+  if (opts.signal?.aborted) throw new DOMException('upload aborted', 'AbortError');
+
+  // 2. Authorize: the Worker fixes the key to {accountId}/{hash} + signs the PUT (the bytes never touch it).
+  const presignRes = await fetch(`${BLOB_API}/presign`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hash, size: file.size, mime }),
+  });
+  if (!presignRes.ok) throw new Error(`presign failed (${presignRes.status})`);
+  const { url, headers } = (await presignRes.json()) as PresignResponse;
+
+  // 3a. PUT the bytes direct to R2 (XHR, progress + cancel). A reject here (R2 checksum 400 / abort / offline)
+  //     propagates → createFileNote aborts → no note (upload-first: the note is minted only after confirm).
+  await putToR2(url, headers, file, opts);
+
+  // 3b. Record: HEAD-measure the real size + enforce quota post-hoc, returning the SAME shape as uploadBlob.
+  const confirmRes = await fetch(`${BLOB_API}/confirm`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hash, mime }),
+  });
+  if (!confirmRes.ok) throw new Error(`confirm failed (${confirmRes.status})`);
+  return (await confirmRes.json()) as UploadedBlob;
+}
+
 const SAFE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 /** Clamp the object-URL type to a known-safe image (the server already sanitized + sent nosniff). */
