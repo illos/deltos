@@ -16,3 +16,13 @@ packages/client/dev-dist/
 
 # Local deploy/debug screenshots (transient, not source)
 deltos-live-*.png
+
+# Bosun loop runtime state (transient, per-iteration)
+brain/.task-done
+brain/.iter-start
+brain/.deep-clean-state
+brain/objective-queue.jsonl
+brain/.queue-watermark
+.loop-stop
+.loop.log
+.deep-clean.log
