@@ -8,7 +8,11 @@ import { uploadBlob, loadBlobUrl, isInlineRenderableImage } from '../src/plugins
 import { useAuthStore } from '../src/auth/store.js';
 
 beforeEach(() => {
-  useAuthStore.setState({ bearerToken: 'tok-123' });
+  // accountId is required for the content-addressed local cache to engage (no anonymous bucket — the cache
+  // is account-scoped, like notes). A real loaded blob always has a resident account; set one here so the
+  // session-memoization path is exercised. IndexedDB is absent in this jsdom env (no fake-indexeddb import),
+  // so the durable tier is skipped gracefully and the memory tier provides the fetch-once caching asserted.
+  useAuthStore.setState({ bearerToken: 'tok-123', accountId: 'acct-test' });
   const createObjectURL = vi.fn(() => 'blob:cached');
   // jsdom lacks URL.createObjectURL — install a stub.
   (URL as unknown as { createObjectURL: unknown }).createObjectURL = createObjectURL;
