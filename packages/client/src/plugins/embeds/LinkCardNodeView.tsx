@@ -61,7 +61,9 @@ export class LinkCardNodeView implements NodeView {
     this.root.render(<LinkCard {...props} />);
   }
 
-  /** Replace the card node with a paragraph of the URL text carrying a link mark (rung-0 plain link). */
+  /** Replace the card with the URL text carrying a link mark (rung-0 plain link). SPIKE (Mechanic A): the
+   *  card is now an INLINE atom living inside a paragraph, so we replace it with INLINE link-text in place
+   *  (NOT a block paragraph, which would be invalid content inside the wrapping paragraph). */
   private downgrade(url: string): void {
     const pos = this.getPos();
     if (pos === undefined) return;
@@ -69,12 +71,14 @@ export class LinkCardNodeView implements NodeView {
     const here = state.doc.nodeAt(pos);
     if (!here) return;
     const linkType = deltoSchema.marks['link'];
-    const para = deltoSchema.nodes['paragraph']?.create(
-      null,
-      url ? deltoSchema.text(url, linkType ? [linkType.create({ href: url, title: null })] : []) : null,
-    );
-    if (!para) return;
-    this.view.dispatch(state.tr.replaceWith(pos, pos + here.nodeSize, para).scrollIntoView());
+    const tr = url
+      ? state.tr.replaceWith(
+          pos,
+          pos + here.nodeSize,
+          deltoSchema.text(url, linkType ? [linkType.create({ href: url, title: null })] : []),
+        )
+      : state.tr.delete(pos, pos + here.nodeSize);
+    this.view.dispatch(tr.scrollIntoView());
     this.view.focus();
   }
 

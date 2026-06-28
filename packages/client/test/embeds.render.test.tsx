@@ -70,9 +70,13 @@ describe('linkCardPastePlugin — paste-to-card', () => {
 
 describe('LinkCardNodeView — mount + downgrade', () => {
   it('mounts the LinkCard and downgrade replaces the card with a paragraph carrying a link mark', async () => {
+    // SPIKE (Mechanic A): plugin_block is now an INLINE atom → it lives INSIDE a paragraph (the serializer
+    // wraps it on load; here we build that shape by hand). The NodeView still mounts identically.
     const doc = S.node('doc', null, [
       S.node('title', { id: 't' }, [S.text('T')]),
-      S.node('plugin_block', { id: 'c', pluginType: 'link_card', pluginContent: { url: 'https://example.com', title: 'Example' } }),
+      S.node('paragraph', { id: 'wrap' }, [
+        S.node('plugin_block', { id: 'c', pluginType: 'link_card', pluginContent: { url: 'https://example.com', title: 'Example' } }),
+      ]),
     ]);
     const view = new EditorView(document.createElement('div'), {
       state: EditorState.create({ doc, schema: S }),

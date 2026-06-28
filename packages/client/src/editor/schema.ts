@@ -187,9 +187,17 @@ export const deltoSchema = new Schema({
     // the registered plugin owns everything inside via NodeView. No plugin is built here —
     // the seam is shaped now so adding a plugin later requires no schema change.
     // See nodeviews/PluginIsland.ts for the NodeView contract.
+    // SPIKE (block-object-chrome, Mechanic A): re-modelled from a BLOCK atom to an INLINE atom that RENDERS
+    // block-level. As an inline atom the caret treats it like a single character — it sits immediately
+    // before AND after the object, ArrowLeft/Right step across it one position, Backspace/Delete remove it
+    // as ONE unit. It still renders full-width (the NodeView dom is CSS display:block). An inline node must
+    // live inside a textblock, so the serializer wraps a top-level plugin block in a paragraph (and unwraps
+    // on the way back) — see serializer.ts. `draggable` lets PM drag the whole atom; dropCursor places it.
     plugin_block: {
-      group: 'block',
+      inline: true,
+      group: 'inline',
       atom: true,
+      draggable: true,
       attrs: {
         id: { default: null },
         pluginType: { default: '' },
