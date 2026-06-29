@@ -88,6 +88,17 @@ export interface LocalStore {
    */
   putNoteAndEnqueue(note: Note, entry: SyncQueueEntry): Promise<void>;
 
+  /**
+   * Self-heal a corrupt queued note in place (sync-engine repair path): atomically overwrite the
+   * canonical note row's body AND the queue entry's payload body with `repairedBody`. Used when a
+   * queued entry fails client-side push validation (the common case: a non-UUID block id leaked into
+   * the body — GOTCHA-0005 / the render-only id leak) — re-minting the offending ids in the canonical
+   * record + its queued payload makes the entry valid AND stops it re-leaking on the next edit. Leaves
+   * the note's version / queue baseVersion / createdAt untouched (a pure content repair, not a new edit),
+   * so the existing CAS precondition still holds. No-op if the note or queue entry no longer exists.
+   */
+  repairQueueEntry(entryId: string, repairedBody: Note['body']): Promise<void>;
+
   // --- sync-engine reconcile (correctness-critical; mechanics live in the adapter) ---
   /**
    * Push ACCEPTED reconcile (PIN-SYNC-1), atomic: (a) set the note's version + synced status; (b)

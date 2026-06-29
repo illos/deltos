@@ -193,6 +193,21 @@ export const dexieLocalStore: LocalStore = {
     });
   },
 
+  async repairQueueEntry(entryId: string, repairedBody: Note['body']): Promise<void> {
+    // Atomic content-repair over notes + syncQueue (self-heal): re-write the queued note's body in BOTH
+    // the canonical row and the queue entry's payload, so the entry validates AND a future edit builds on
+    // the repaired (valid-UUID) body. Pure content fix — version / baseVersion / createdAt are untouched,
+    // so the CAS precondition the entry was authored at still holds.
+    await db.transaction('rw', db.notes, db.syncQueue, async () => {
+      const entry = await db.syncQueue.get(entryId);
+      if (!entry) return; // entry drained/replaced under us — nothing to repair
+      await db.syncQueue.update(entryId, { payload: { ...entry.payload, body: repairedBody } });
+      await db.notes.where('id').equals(entry.recordId).modify((n: ClientNote) => {
+        n.body = repairedBody;
+      });
+    });
+  },
+
   // --- sync-engine reconcile (relocated mechanics) ---
   async applyAccepted(
     recordId: NoteId,

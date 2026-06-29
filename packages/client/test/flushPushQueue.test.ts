@@ -13,9 +13,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import type { Note, NotebookId, NoteId } from '@deltos/shared';
 
-const NB = 'nb-flush-0000-0000-4000-8000-000000000001' as NotebookId;
-const NOTE_ID = 'note-flush-00-0000-4000-8000-000000000001' as NoteId;
-const NOTE_2 = 'note-flush-00-0000-4000-8000-000000000002' as NoteId;
+const NB = '0d000000-0000-4000-8000-000000000001' as NotebookId;
+const NOTE_ID = '0d000000-0000-4000-8000-000000000002' as NoteId;
+const NOTE_2 = '0d000000-0000-4000-8000-000000000003' as NoteId;
 const NOW = '2026-06-20T12:00:00.000Z';
 
 beforeEach(async () => {

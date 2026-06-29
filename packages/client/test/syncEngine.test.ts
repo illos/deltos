@@ -30,7 +30,10 @@ beforeEach(async () => {
 // We import the engine AFTER setting up fake-indexeddb so Dexie picks up the shim.
 // Dynamic import also lets us re-import with a fresh module state for single-flight tests.
 
-const NB = 'nb-test-00000000-0000-4000-8000-000000000001' as NotebookId;
+// NOTE: ids are real UUIDs — the push path now validates every entry against SyncPushEntrySchema
+// (NoteId/NotebookId/BlockId are all `z.string().uuid()`), so a fake non-UUID fixture id would be
+// quarantined client-side and never reach the mock server. Keep these valid.
+const NB = '11111111-0000-4000-8000-000000000001' as NotebookId;
 const NOW = '2026-06-15T12:00:00.000Z';
 
 function makeNote(id: string, version = 0, title = 'Test note'): Note {
@@ -64,7 +67,7 @@ describe('single-flight guard (PIN-SYNC-1 client gate)', () => {
     let resolvePush!: (v: unknown) => void;
     const pushLatch = new Promise((r) => (resolvePush = r));
 
-    const seedNoteId = 'note-sf-00000000-0000-4000-8000-000000000001';
+    const seedNoteId = '5f000000-0000-4000-8000-000000000001';
 
     global.fetch = vi.fn(async (url: string) => {
       const u = String(url);
@@ -124,7 +127,7 @@ describe('Authorization header (Stream-D, F7 in-memory token)', () => {
     const { useAuthStore } = await import('../src/auth/store.js');
     useAuthStore.setState({ bearerToken: 'grant-tok-abc', accountId: 'auth-acct' });
 
-    const seedId = 'note-auth-00000000-0000-4000-8000-000000000001';
+    const seedId = 'a0000000-0000-4000-8000-000000000001';
     const seen: { push?: string; pull?: string } = {};
 
     global.fetch = vi.fn(async (url: string, init?: RequestInit) => {
@@ -175,7 +178,7 @@ describe('pending-edit pull guard (PIN-SYNC-1 landmine)', () => {
     const { db } = await import('../src/db/schema.js');
     const { mergePull } = await import('../src/lib/syncEngine.js');
 
-    const noteId = 'note-pull-guard-00000000-0000-4000-8000-000000000001';
+    const noteId = 'b0000000-0000-4000-8000-000000000001';
     const localNote = makeNote(noteId, 2, 'My local edit');
     localNote.syncStatus = 'pending';
 
@@ -215,7 +218,7 @@ describe('delete-vs-edit (PIN-SYNC-3): divergent edit retained as a conflict ver
     const { useAuthStore } = await import('../src/auth/store.js');
     useAuthStore.setState({ accountId: 'acct-res', bearerToken: 'tok' }); // session for client-D6 scope
 
-    const noteId = 'note-resurrection-00000000-0000-4000-8000-000000000001';
+    const noteId = 'c0000000-0000-4000-8000-000000000001';
     const localEdit = makeNote(noteId, 1, 'My offline edit');
     await db.notes.put(localEdit);
 
@@ -271,7 +274,7 @@ describe('conflict retains the divergent edit as a version on the SAME id (no-lo
     const { useAuthStore } = await import('../src/auth/store.js');
     useAuthStore.setState({ accountId: 'acct-conf', bearerToken: 'tok' });
 
-    const noteId = 'note-toctou-000000000-0000-4000-8000-000000000001';
+    const noteId = 'd0000000-0000-4000-8000-000000000001';
     const localEdit = makeNote(noteId, 1, 'My unsent edit');
     await db.notes.put(localEdit);
     await db.syncQueue.add({ id: crypto.randomUUID(), recordId: noteId, payload: localEdit, baseVersion: 0, createdAt: NOW });
@@ -327,7 +330,7 @@ describe('queue drain on accept', () => {
     const { db } = await import('../src/db/schema.js');
     const { mutateNotes } = await import('../src/db/mutate.js');
 
-    const noteId = 'note-stale-drain-00000000-0000-4000-8000-000000000001';
+    const noteId = 'e0000000-0000-4000-8000-000000000001';
     // Three edits, distinct createdAt (mutateNotes stamps ISO-now; force ordering explicitly).
     await db.notes.put(makeNote(noteId, 0, 'edit-3'));
     await db.syncQueue.bulkAdd([
@@ -382,10 +385,10 @@ describe('account-scoped push: all queued entries regardless of payload notebook
     // not notebookId. dedupeQueue must not filter by payload.notebookId — a note created on a
     // different device (foreign notebookId) must be pushed in the same batch.
     const { db } = await import('../src/db/schema.js');
-    const NB_B = 'nb-test-00000000-0000-4000-8000-0000000000b2' as NotebookId;
+    const NB_B = '22222222-0000-4000-8000-0000000000b2' as NotebookId;
 
-    const noteA = makeNote('note-a-00000000-0000-4000-8000-000000000001', 0, 'A');
-    const noteB: Note = { ...makeNote('note-b-00000000-0000-4000-8000-000000000001', 0, 'B'), notebookId: NB_B };
+    const noteA = makeNote('aa000000-0000-4000-8000-000000000001', 0, 'A');
+    const noteB: Note = { ...makeNote('bb000000-0000-4000-8000-000000000001', 0, 'B'), notebookId: NB_B };
     await db.notes.bulkPut([noteA, noteB]);
     await db.syncQueue.bulkAdd([
       { id: crypto.randomUUID(), recordId: noteA.id, payload: noteA, baseVersion: 0, createdAt: '2026-06-15T12:00:00.001Z' },
@@ -437,7 +440,7 @@ describe('edit-while-syncing', () => {
     const { db } = await import('../src/db/schema.js');
     const { mutateNotes } = await import('../src/db/mutate.js');
 
-    const noteId = 'note-edit-inflight-00000000-0000-4000-8000-000000000001';
+    const noteId = 'ed000000-0000-4000-8000-000000000001';
     const FIRST = 'First version';
     const SECOND = 'Second version (edit while syncing)';
 
