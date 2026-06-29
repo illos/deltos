@@ -4,6 +4,9 @@ import type { AppEnv, AppContext } from '../context.js';
 import { resolvePrincipal, can, resolvedGrantFor, grantIsLive } from '../auth.js';
 import { callerAccountId } from '../db/accountScope.js';
 import { d1Adapter } from '../db/schema.js';
+import { createAuthStore } from '../db/authStore.js';
+import { fixedWindowAllow } from '../rateLimit.js';
+import { MCP_RATE_LIMIT } from '../authPolicy.js';
 import {
   JSONRPC_VERSION,
   RPC,
@@ -82,6 +85,22 @@ mcp.post('/', async (c) => {
   // 3. Notifications (e.g. notifications/initialized) get a bare 202 ack — never a JSON-RPC response.
   if (isNotification) {
     return c.body(null, 202);
+  }
+
+  // 3b. C RATE-LIMIT (ROAD-0005 P0): coarse per-TOKEN request ceiling — bounds a runaway/abusive client
+  //     (e.g. an agent loop) from hammering the read path / D1. Reuses the authThrottle store as a fixed
+  //     window, keyed per-token (grantId, guaranteed present by the `live` gate above) so one token can't
+  //     exhaust another's budget. Over-limit → JSON-RPC error + HTTP 429. Abuse/cost guard, not a security
+  //     invariant — so it sits AFTER the auth gate (only authenticated callers consume budget).
+  const allowed = await fixedWindowAllow(
+    createAuthStore(d1Adapter(c.env.DB)),
+    `mcp:${grant!.grantId}`,
+    MCP_RATE_LIMIT.limit,
+    MCP_RATE_LIMIT.windowMs,
+    Date.now(),
+  );
+  if (!allowed) {
+    return c.json(rpcError(id, RPC.RATE_LIMITED, 'rate limit exceeded — slow down and retry shortly'), 429);
   }
 
   // 4. Method dispatch.

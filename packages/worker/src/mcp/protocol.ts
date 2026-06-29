@@ -43,6 +43,8 @@ export const RPC = {
   INTERNAL_ERROR: -32603,
   /** -32000..-32099 is the implementation-defined server-error range; we use one for "unauthorized". */
   UNAUTHORIZED: -32001,
+  /** Per-token request ceiling exceeded (ROAD-0005 P0 item C) — also returned with HTTP 429. */
+  RATE_LIMITED: -32029,
 } as const;
 
 export function rpcSuccess(id: JsonRpcId, result: unknown): JsonRpcSuccess {

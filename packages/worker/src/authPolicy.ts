@@ -100,6 +100,14 @@ export const RESET_BACKOFF: BackoffPolicy = { freeAttempts: 2, baseMs: 2000, cap
 export const MINT_BACKOFF: BackoffPolicy = { freeAttempts: 5, baseMs: 1000, capMs: 5 * 60 * 1000 };
 
 /**
+ * Coarse per-token request ceiling for the read-only MCP endpoint (ROAD-0005 P0 item C) — a fixed window
+ * of `limit` requests per `windowMs` per agent token. Bounds a runaway/abusive client (e.g. an agent loop)
+ * from hammering the read path / D1. Generous (stops loops, not legitimate use); an abuse/cost guard, not a
+ * security invariant. Per-token so one token can't exhaust another's budget.
+ */
+export const MCP_RATE_LIMIT = { limit: 600, windowMs: 60_000 } as const;
+
+/**
  * The next-allowed delay (ms from the failing instant) after `failures` total failures under a policy.
  * Returns 0 while within the free-attempt budget, else `min(cap, base * 2^(failures-free-1))`.
  */

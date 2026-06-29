@@ -19,6 +19,8 @@ import { randomUUID } from 'crypto';
 import app from '../src/index.js';
 import type { Env } from '../src/env.js';
 import { signupToken } from './helpers/passwordToken.js';
+import { createAuthStore } from '../src/db/authStore.js';
+import { d1Adapter } from '../src/db/schema.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ALL_MIGRATIONS = [
@@ -233,5 +235,19 @@ describe('MCP server — protocol / auth / tools (POST /api/mcp)', () => {
     const body = (await res.json()) as JsonRpcResult;
     expect(body.result.isError).toBe(true); // not found — indistinguishable from a missing id
     expect(JSON.stringify(body.result)).not.toContain('A private secret note'); // no content leak
+  });
+
+  // --- C RATE-LIMIT (ROAD-0005 P0): per-token request ceiling -----------------------------------
+
+  it('RATE-LIMIT: a token over its per-token request ceiling is 429 (JSON-RPC rate_limited)', async () => {
+    const { token: agentTok, grantId } = await mintAgentToken(env, ownerA, 'mcp-owner-password');
+    // Seed the per-token fixed window AT the limit (window-end in the future) so the next request trips it.
+    const store = createAuthStore(d1Adapter(env.DB));
+    await store.recordThrottleFailure(`mcp:${grantId}`, 600, Date.now() + 60_000, new Date().toISOString());
+
+    const res = await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, agentTok);
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { error?: { code?: number } };
+    expect(body.error?.code).toBe(-32029); // RPC.RATE_LIMITED
   });
 });
