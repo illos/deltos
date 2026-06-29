@@ -109,8 +109,19 @@ type Listener = (state: SyncIndicatorState) => void;
 const listeners = new Set<Listener>();
 let _state: SyncIndicatorState = 'idle';
 
+// Last sync-cycle failure message (diagnostics only). A push/pull throw (e.g. a `push 400` from a
+// malformed queue entry) is otherwise swallowed by runSync's catch into the coarse 'error' state; we
+// retain its message so the diagnostic-snapshot manifest can surface WHY a cycle is wedged. Cleared on
+// any clean cycle. NEVER carries credentials — it's the Error.message string only.
+let _lastError: string | null = null;
+
 export function getSyncState(): SyncIndicatorState {
   return _state;
+}
+
+/** The last sync-cycle error message (or null after a clean cycle). For the diagnostic snapshot. */
+export function getLastSyncError(): string | null {
+  return _lastError;
 }
 
 export function subscribeSyncState(fn: Listener): () => void {
@@ -178,8 +189,10 @@ async function runSync(notebookId: NotebookId, apiBase: string): Promise<void> {
     if (_suspended) return; // suspended mid-cycle (e.g. logout): the push flushed; SKIP the re-populating pull
     await pullUpdates(notebookId, apiBase);
     const remaining = await getStore().queueCount(); // any queue left?
+    _lastError = null; // a clean cycle clears any retained failure
     setState(remaining > 0 ? 'pending' : 'idle');
   } catch (err) {
+    _lastError = err instanceof Error ? err.message : String(err);
     if (err instanceof SyncAuthError) {
       if (err.kind === 'revoked') {
         // #89: the refresh cookie is dead → a full re-login is required. STOP the loop (no point
