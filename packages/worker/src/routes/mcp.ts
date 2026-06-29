@@ -82,16 +82,12 @@ mcp.post('/', async (c) => {
     return c.json(rpcError(id, RPC.UNAUTHORIZED, 'missing or invalid bearer token'), 401);
   }
 
-  // 3. Notifications (e.g. notifications/initialized) get a bare 202 ack — never a JSON-RPC response.
-  if (isNotification) {
-    return c.body(null, 202);
-  }
-
-  // 3b. C RATE-LIMIT (ROAD-0005 P0): coarse per-TOKEN request ceiling — bounds a runaway/abusive client
-  //     (e.g. an agent loop) from hammering the read path / D1. Reuses the authThrottle store as a fixed
-  //     window, keyed per-token (grantId, guaranteed present by the `live` gate above) so one token can't
-  //     exhaust another's budget. Over-limit → JSON-RPC error + HTTP 429. Abuse/cost guard, not a security
-  //     invariant — so it sits AFTER the auth gate (only authenticated callers consume budget).
+  // 3. C RATE-LIMIT (ROAD-0005 P0): coarse per-TOKEN request ceiling — bounds a runaway/abusive client
+  //    (e.g. an agent loop) from hammering the auth/read path / D1. Reuses the authThrottle store as a
+  //    fixed window, keyed per-token (grantId, guaranteed present by the `live` gate above) so one token
+  //    can't exhaust another's budget. Meters EVERY authenticated request — INCLUDING notifications — so a
+  //    notification flood can't pound the auth/D1 read path uncapped (it sits ABOVE the notification ack).
+  //    After the auth gate (only authenticated callers consume budget); over-limit → JSON-RPC error + 429.
   const allowed = await fixedWindowAllow(
     createAuthStore(d1Adapter(c.env.DB)),
     `mcp:${grant!.grantId}`,
@@ -103,7 +99,12 @@ mcp.post('/', async (c) => {
     return c.json(rpcError(id, RPC.RATE_LIMITED, 'rate limit exceeded — slow down and retry shortly'), 429);
   }
 
-  // 4. Method dispatch.
+  // 4. Notifications (e.g. notifications/initialized) get a bare 202 ack — never a JSON-RPC response.
+  if (isNotification) {
+    return c.body(null, 202);
+  }
+
+  // 5. Method dispatch.
   switch (req.method) {
     case 'initialize':
       return c.json(

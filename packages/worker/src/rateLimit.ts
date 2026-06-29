@@ -22,6 +22,11 @@ export async function fixedWindowAllow(
     await store.recordThrottleFailure(bucket, 1, nowMs + windowMs, at); // start a fresh window
     return true;
   }
+  if (rec.failures >= limit) {
+    // Already at the ceiling for this window — deny WITHOUT another write, so a flood neither amplifies
+    // D1 writes nor grows the counter unboundedly. It self-resets at window roll-over (branch above).
+    return false;
+  }
   const count = rec.failures + 1;
   await store.recordThrottleFailure(bucket, count, rec.nextAllowedMs, at);
   return count <= limit;

@@ -250,4 +250,13 @@ describe('MCP server — protocol / auth / tools (POST /api/mcp)', () => {
     const body = (await res.json()) as { error?: { code?: number } };
     expect(body.error?.code).toBe(-32029); // RPC.RATE_LIMITED
   });
+
+  it('RATE-LIMIT also meters NOTIFICATIONS — no unmetered 202 work path', async () => {
+    const { token: agentTok, grantId } = await mintAgentToken(env, ownerA, 'mcp-owner-password');
+    const store = createAuthStore(d1Adapter(env.DB));
+    await store.recordThrottleFailure(`mcp:${grantId}`, 600, Date.now() + 60_000, new Date().toISOString());
+    // A notification (no id) is now gated by the window too — it must NOT slip through as a 202.
+    const res = await rpc(env, { jsonrpc: '2.0', method: 'notifications/initialized' }, agentTok);
+    expect(res.status).toBe(429);
+  });
 });
