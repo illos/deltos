@@ -35,9 +35,12 @@ import { createAuthStore } from '../src/db/authStore.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const migrations = ['0000_baseline.sql', '0001_stream-b-sync.sql', '0002_stream-a-auth.sql'].map((f) =>
-  readFileSync(join(__dirname, '../migrations', f), 'utf8'),
-);
+const migrations = [
+  '0000_baseline.sql',
+  '0001_stream-b-sync.sql',
+  '0002_stream-a-auth.sql',
+  '0013_agent-token-label.sql', // grants.label — required by insertAgentGrant (standalone ADD COLUMN)
+].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function sqliteAdapter(db: Database.Database): DbAdapter {
   return {
@@ -255,6 +258,33 @@ describe('mintGrant / resolveGrantByTokenHash — adversarial (secSys)', () => {
     const resolved = await store.resolveGrantByTokenHash('h-exp');
     expect(resolved).not.toBeNull();
     expect(resolved!.expiresAtMs).toBe(1);
+  });
+
+  // H3 (ROAD-0005 P0): revoke-all must kill AGENT tokens too (non-expiring → revocation is the ONLY
+  // control), not just owner sessions — and must stay account-scoped (another account is untouched).
+  it('revokeGrantsByAccount sweeps agent grants AND owner sessions for the account, but NOT another account', async () => {
+    await store.mintGrant({
+      grantId: 'g-owner-a', tokenHash: 'h-owner-a',
+      principal: owner(FP_A), mintedByKeyId: 'k1',
+      resource: workspaceResource(), scope: scopes('read'),
+      expiresAtMs: null, createdAt: '2025-01-01T00:00:00Z',
+    });
+    await store.insertAgentGrant({
+      grantId: 'g-agent-a', tokenHash: 'h-agent-a', accountId: FP_A, label: null,
+      resource: workspaceResource(), scope: scopes('read'), createdAt: '2025-01-01T00:00:00Z',
+    });
+    await store.insertAgentGrant({
+      grantId: 'g-agent-b', tokenHash: 'h-agent-b', accountId: FP_B, label: null,
+      resource: workspaceResource(), scope: scopes('read'), createdAt: '2025-01-01T00:00:00Z',
+    });
+
+    await store.revokeGrantsByAccount(FP_A, '2025-06-01T00:00:00Z');
+
+    // FP_A's owner session AND agent token are both revoked (the H3 fix)...
+    expect((await store.resolveGrantByTokenHash('h-owner-a'))!.revokedAt).not.toBeNull();
+    expect((await store.resolveGrantByTokenHash('h-agent-a'))!.revokedAt).not.toBeNull();
+    // ...but FP_B's agent token is untouched — the sweep is account-scoped, not global.
+    expect((await store.resolveGrantByTokenHash('h-agent-b'))!.revokedAt).toBeNull();
   });
 
   it('corrupted scope JSON in DB → resolveGrantByTokenHash throws fail-closed rather than returning garbage', async () => {

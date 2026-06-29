@@ -926,10 +926,14 @@ export function createAuthStore(db: DbAdapter): AuthStore {
     async revokeGrantsByAccount(accountId, revokedAt) {
       // Owner session grants carry principalId = accountId (the re-point). Killing them completes a
       // revoke-all so a stolen in-memory access token also dies, not just the refresh families.
+      // H3 (ROAD-0005 P0): ALSO sweep principalKind='agent'. Agent tokens carry principalId = owner
+      // accountId and are non-expiring BY DESIGN (no TTL — revocability is the control, Jim 2026-06-29),
+      // so a credential change / revoke-all MUST kill outstanding agent tokens too — otherwise a leaked
+      // token survives the exact "I think I'm compromised, reset everything" action meant to kill it.
       await db.batch([
         {
           sql: `UPDATE grants SET revokedAt = ?
-                 WHERE principalKind = 'owner' AND principalId = ? AND revokedAt IS NULL`,
+                 WHERE principalKind IN ('owner', 'agent') AND principalId = ? AND revokedAt IS NULL`,
           params: [revokedAt, accountId],
         },
       ]);
