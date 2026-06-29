@@ -12,7 +12,7 @@ import 'fake-indexeddb/auto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Note, NotebookId } from '@deltos/shared';
 
-const NB = 'nb-test-00000000-0000-4000-8000-000000000001' as NotebookId;
+const NB = '0e000000-0000-4000-8000-000000000001' as NotebookId;
 const NOW = '2026-06-15T12:00:00.000Z';
 
 function res(status: number, body: unknown = {}): Response {
@@ -49,8 +49,8 @@ describe('sync auth recovery — expired access token (403) self-heals without a
 
     useAuthStore.setState({ accountId: 'acct-1', bearerToken: 'stale-token', sessionState: 'active', isAuthed: true });
 
-    await db.notes.put(makeNote('note-1', 0));
-    await db.syncQueue.add({ id: crypto.randomUUID(), recordId: 'note-1', payload: makeNote('note-1', 0), baseVersion: 0, createdAt: NOW });
+    await db.notes.put(makeNote('0e000000-0000-4000-8000-000000000002', 0));
+    await db.syncQueue.add({ id: crypto.randomUUID(), recordId: '0e000000-0000-4000-8000-000000000002', payload: makeNote('0e000000-0000-4000-8000-000000000002', 0), baseVersion: 0, createdAt: NOW });
 
     let pushCalls = 0;
     let refreshCalls = 0;
@@ -63,7 +63,7 @@ describe('sync auth recovery — expired access token (403) self-heals without a
       if (u.includes('/sync/push')) {
         pushCalls++;
         if (pushCalls === 1) return res(403, { error: { code: 'forbidden' } }); // expired access token
-        return res(200, { results: [{ outcome: 'accepted', id: 'note-1', version: 1 }], notebookResults: [], dictionaryResults: [] });
+        return res(200, { results: [{ outcome: 'accepted', id: '0e000000-0000-4000-8000-000000000002', version: 1 }], notebookResults: [], dictionaryResults: [] });
       }
       if (u.includes('/sync/pull')) return res(200, { notes: [], notebooks: [], dictionaryWords: [], nextCursor: 0, hasMore: false });
       throw new Error('unexpected url ' + u);
@@ -85,8 +85,8 @@ describe('sync auth recovery — expired access token (403) self-heals without a
     const { syncNow, getSyncState } = await import('../src/lib/syncEngine.js');
 
     useAuthStore.setState({ accountId: 'acct-1', bearerToken: 'stale-token', sessionState: 'active', isAuthed: true });
-    await db.notes.put(makeNote('note-2', 0));
-    await db.syncQueue.add({ id: crypto.randomUUID(), recordId: 'note-2', payload: makeNote('note-2', 0), baseVersion: 0, createdAt: NOW });
+    await db.notes.put(makeNote('0e000000-0000-4000-8000-000000000003', 0));
+    await db.syncQueue.add({ id: crypto.randomUUID(), recordId: '0e000000-0000-4000-8000-000000000003', payload: makeNote('0e000000-0000-4000-8000-000000000003', 0), baseVersion: 0, createdAt: NOW });
 
     global.fetch = vi.fn(async (url: string | URL) => {
       const u = String(url);

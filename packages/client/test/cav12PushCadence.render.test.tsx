@@ -38,9 +38,9 @@ afterEach(() => {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-const NB = 'nb-cav12-00000000-0000-4000-8000-000000000001' as NotebookId;
+const NB = '10000000-0000-4000-8000-000000000001' as NotebookId;
 const NOW = '2026-06-16T10:00:00.000Z';
-const NOTE_ID = 'note-cav12-0000-0000-4000-8000-000000000001' as NoteId;
+const NOTE_ID = '10000000-0000-4000-8000-000000000002' as NoteId;
 
 function makeNote(id: string, version = 0, title = 'Test note'): Note {
   return {

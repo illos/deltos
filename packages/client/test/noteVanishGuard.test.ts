@@ -21,8 +21,8 @@ import 'fake-indexeddb/auto';
 import { isTrashed } from '@deltos/shared';
 import type { Note, NotebookId, NoteId } from '@deltos/shared';
 
-const NB = 'nb-vanish-0000-0000-4000-8000-000000000001' as NotebookId;
-const NOTE_ID = 'note-vanish-00-0000-4000-8000-000000000001' as NoteId;
+const NB = '0b000000-0000-4000-8000-000000000001' as NotebookId;
+const NOTE_ID = '0b000000-0000-4000-8000-000000000002' as NoteId;
 const NOW = '2026-06-20T12:00:00.000Z';
 
 beforeEach(async () => {

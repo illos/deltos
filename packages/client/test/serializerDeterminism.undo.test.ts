@@ -28,7 +28,20 @@ import { HISTORY_GROUP_DELAY_MS } from '../src/editor/ProseMirrorEditor.js';
 import { spineToPmDoc, pmDocToSpine } from '../src/editor/serializer.js';
 
 // ── Fixtures: one spine per "broken" content kind ────────────────────────────────
-const id = (n: string) => n as BlockId;
+// Block ids MUST be real UUIDs: pmDocToSpine now sanitizes the spine at its boundary, re-minting any
+// non-UUID id (the render-only `~w`/`~q`/`~empty` leak fix). A friendly fixture id like 'list-1' would
+// therefore be re-minted on the round-trip and break the data-unchanged assertion — so map each friendly
+// name to a STABLE valid UUID. (Realistic: real block ids are always crypto.randomUUID().)
+const _idMap = new Map<string, BlockId>();
+let _idSeq = 0;
+const id = (n: string): BlockId => {
+  let v = _idMap.get(n);
+  if (!v) {
+    v = `00000000-0000-4000-8000-${(++_idSeq).toString(16).padStart(12, '0')}` as BlockId;
+    _idMap.set(n, v);
+  }
+  return v;
+};
 
 const LIST: BlockBody = [
   { id: id('list-1'), type: 'list', content: { ordered: false }, children: [

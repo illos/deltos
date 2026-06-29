@@ -2,8 +2,8 @@ import { getStore } from '../db/store.js';
 import { useAuthStore } from '../auth/store.js';
 import { showConflictToast } from './toastEvents.js';
 import type { SyncQueueEntry, NotebookQueueEntry, NotebookRow, DictionaryQueueEntry, DictionaryWordRow } from '../db/schema.js';
-import type { Note, NoteId, NotebookId } from '@deltos/shared';
-import { NoteResponseSchema } from '@deltos/shared';
+import type { Note, NoteId, NotebookId, BlockBody, SyncPushEntry } from '@deltos/shared';
+import { NoteResponseSchema, SyncPushEntrySchema } from '@deltos/shared';
 import type {
   SyncPushRequest,
   SyncPushResponse,
@@ -13,6 +13,7 @@ import type {
   SyncDictionaryWord,
   NotebookPushResult,
 } from '@deltos/shared';
+import { sanitizeBlockIds } from '../editor/serializer.js';
 import { useNotebookStore } from './notebookStore.js';
 
 /**
@@ -115,13 +116,24 @@ let _state: SyncIndicatorState = 'idle';
 // any clean cycle. NEVER carries credentials — it's the Error.message string only.
 let _lastError: string | null = null;
 
+// Last push QUARANTINE message (Fix B). Distinct from `_lastError` (a transient cycle throw, cleared on
+// the next clean cycle) because a quarantine is a PERSISTENT condition — the unpushable entry stays in the
+// queue and is re-evaluated every push. Set/cleared at the top of each push's validate loop so it always
+// reflects the CURRENT state: a message while an entry is quarantined, null once it's gone. Never carries
+// credentials (the entry's recordId + the schema issue message only).
+let _lastQuarantine: string | null = null;
+
 export function getSyncState(): SyncIndicatorState {
   return _state;
 }
 
-/** The last sync-cycle error message (or null after a clean cycle). For the diagnostic snapshot. */
+/**
+ * The last sync diagnostic message (or null when healthy). Prefers a live cycle error; falls back to a
+ * standing push-quarantine condition (an entry that can't be made schema-valid and was isolated so it
+ * can't wedge the rest). For the diagnostic snapshot.
+ */
 export function getLastSyncError(): string | null {
-  return _lastError;
+  return _lastError ?? _lastQuarantine;
 }
 
 export function subscribeSyncState(fn: Listener): () => void {
@@ -238,6 +250,26 @@ async function dedupeQueue(): Promise<SyncQueueEntry[]> {
   return [...byNote.values()];
 }
 
+/**
+ * Build the wire {@link SyncPushEntry} for a queued note. `wireBaseVersion` is the re-stamped CAS base
+ * (the current local version, see below); the INSERT-vs-UPDATE notebook signal still keys on the entry's
+ * STORED baseVersion / isMove (the queue entry's authored intent), not the re-stamped wire base.
+ */
+function buildPushEntry(e: SyncQueueEntry, wireBaseVersion: number): SyncPushEntry {
+  return {
+    id: e.payload.id,
+    // INSERT (stored baseVersion 0) always declares its notebook; plain UPDATE omits so the server keeps
+    // the existing assignment; an explicit move sets isMove in the queue entry (putNoteAndEnqueue).
+    ...(e.baseVersion === 0 || e.isMove ? { notebookId: e.payload.notebookId } : {}),
+    draft: {
+      title: e.payload.title,
+      properties: e.payload.properties,
+      body: e.payload.body,
+    },
+    baseVersion: wireBaseVersion,
+  } as SyncPushEntry;
+}
+
 async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void> {
   const entries = await dedupeQueue();
   if (entries.length === 0) return;
@@ -257,22 +289,44 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
     baseFor.set(e.id, cur ? cur.version : e.baseVersion);
   }
 
+  // VALIDATE → REPAIR → QUARANTINE (resilience: one bad note must NEVER wedge all sync). Build each wire
+  // entry and check it against the SAME SyncPushEntrySchema the worker enforces, BEFORE sending — so the
+  // server can never 400 the batch on a validation failure and stall every other queued edit behind it.
+  // The known, fixable corruption is a non-UUID block id leaked into payload.body (the render-only id
+  // leak — GOTCHA-0005): re-mint the offending ids in the canonical note + its queued payload (self-heal,
+  // so it never re-leaks), then re-validate. An entry that STILL can't be made valid (e.g. a corrupt note
+  // id, which can't be re-minted without losing identity) is QUARANTINED — skipped from the batch and
+  // recorded via getLastSyncError — so the good entries always drain. The retained createdAt/baseVersion/
+  // version of each entry are untouched by the repair (a pure content fix), so all CAS preconditions hold.
+  const prepared: Array<{ entry: SyncQueueEntry; push: SyncPushEntry }> = [];
+  _lastQuarantine = null; // recomputed below — reflects the CURRENT push's quarantines, not a stale one
+  for (const original of entries) {
+    const wireBase = baseFor.get(original.id) ?? original.baseVersion;
+    let entry = original;
+    let push = buildPushEntry(entry, wireBase);
+    if (!SyncPushEntrySchema.safeParse(push).success) {
+      // REPAIR the common case: re-mint non-UUID block ids in the body (recursively, incl. children).
+      const repairedBody = sanitizeBlockIds((entry.payload.body ?? []) as BlockBody);
+      await getStore().repairQueueEntry(entry.id, repairedBody); // persist self-heal: note row + queue payload
+      entry = { ...entry, payload: { ...entry.payload, body: repairedBody } };
+      push = buildPushEntry(entry, wireBase);
+    }
+    const checked = SyncPushEntrySchema.safeParse(push);
+    if (checked.success) {
+      prepared.push({ entry, push: checked.data });
+    } else {
+      // QUARANTINE — unrepairable; skip it so it can't 400 the batch. Surfaced for the diagnostic snapshot.
+      _lastQuarantine = `sync: quarantined unpushable note ${entry.recordId} — ${checked.error.issues[0]?.message ?? 'schema-invalid'}`;
+      console.warn(_lastQuarantine, checked.error.issues);
+    }
+  }
+  if (prepared.length === 0) return; // nothing valid to send (all quarantined) — don't POST an empty batch
+
   const BATCH = 50; // keep payloads reasonable
-  for (let i = 0; i < entries.length; i += BATCH) {
-    const batch = entries.slice(i, i + BATCH);
+  for (let i = 0; i < prepared.length; i += BATCH) {
+    const batch = prepared.slice(i, i + BATCH);
     const body: SyncPushRequest = {
-      entries: batch.map((e) => ({
-        id: e.payload.id,
-        // INSERT (baseVersion 0) always declares its notebook; plain UPDATE omits so the server keeps the
-        // existing assignment; an explicit move sets isMove in the queue entry (detected in putNoteAndEnqueue).
-        ...(e.baseVersion === 0 || e.isMove ? { notebookId: e.payload.notebookId } : {}),
-        draft: {
-          title: e.payload.title,
-          properties: e.payload.properties,
-          body: e.payload.body,
-        },
-        baseVersion: baseFor.get(e.id) ?? e.baseVersion,
-      })),
+      entries: batch.map((p) => p.push),
       notebookEntries: [],
       dictionaryEntries: [],
     };
@@ -292,7 +346,7 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
     // in the store (applyAccepted vs applyConflict) and MUST NOT be unified.
     for (const result of json.results) {
       // The single (latest-wins deduped) entry we actually pushed for this note.
-      const pushed = batch.find((e) => e.payload.id === result.id);
+      const pushed = batch.find((p) => p.entry.payload.id === result.id)?.entry;
 
       if (result.outcome === 'accepted') {
         if (pushed) {

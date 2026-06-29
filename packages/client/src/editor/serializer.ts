@@ -1,5 +1,6 @@
 import type { Node as PmNode, Schema } from 'prosemirror-model';
 import type { Block, BlockBody, BlockId } from '@deltos/shared';
+import { BlockIdSchema } from '@deltos/shared';
 import { newBlockId } from '../lib/ids.js';
 
 /**
@@ -337,6 +338,53 @@ export function extractTitleFromDoc(doc: PmNode): string {
   return first?.type.name === 'title' ? first.textContent : '';
 }
 
+// ── Spine block-id sanitization (the load-bearing fix for the render-only id leak) ───────────
+//
+// spineToPmDoc emits DETERMINISTIC render-only ids for wrapper/inner nodes — a plugin-block wrapper
+// paragraph `${atomId}~w`, a blockquote first paragraph `${quoteId}~q`, an empty-list fallback item
+// `${listId}~empty` — so the #90 reconcile echo-guard (`incoming.eq(doc)`) short-circuits and undo
+// survives autosave (GOTCHA-0005 / serializerDeterminism.undo.test.ts). Those ids are normally DISCARDED
+// on the way back: pmDocToSpine keys each spine block on the PARENT's persisted id. But when such a
+// wrapper paragraph is ORPHANED — e.g. a plugin/attachment atom is deleted, leaving the empty
+// `${atomId}~w` paragraph behind — pmDocToSpine serializes it as a plain paragraph that STILL carries the
+// `~w` id, leaking a non-UUID into the persisted/synced spine. The spine's BlockIdSchema is a strict UUID,
+// so ONE such block fails SyncPushEntrySchema → the worker 400s the WHOLE push batch → every queued edit
+// wedges behind it (the confirmed prod incident). Re-minting any non-UUID id at THIS boundary (the single
+// place PM nodes become the persisted spine) catches `~w`/`~q`/`~empty` AND any other malformed id,
+// permanently.
+//
+// Idempotency / undo are preserved: a VALID UUID is returned UNCHANGED (no re-mint), so a clean note —
+// whose blocks all carry real UUIDs — round-trips byte-for-byte and the undo-determinism guarantee holds.
+// Re-minting only ever fires for a genuinely-non-UUID id, which a normal note never produces. Only the
+// OUTPUT side (pmDocToSpine) sanitizes; spineToPmDoc keeps emitting the deterministic render-only ids the
+// reconcile guard relies on.
+
+/** True iff `id` is a valid spine block id (a UUID per BlockIdSchema). */
+export function isValidBlockId(id: unknown): id is BlockId {
+  return BlockIdSchema.safeParse(id).success;
+}
+
+function sanitizeBlock(block: Block): Block {
+  const id: BlockId = isValidBlockId(block.id) ? block.id : newBlockId();
+  let children = block.children;
+  if (children) {
+    const next = children.map(sanitizeBlock);
+    // Preserve reference identity (and thus value-stability) when nothing in the subtree changed.
+    if (next.some((c, i) => c !== children![i])) children = next;
+  }
+  if (id === block.id && children === block.children) return block;
+  return children === undefined ? { ...block, id } : { ...block, id, children };
+}
+
+/**
+ * Re-mint every non-UUID block id (recursively, including nested children) so the spine NEVER carries a
+ * render-only / malformed id. A no-op (value-stable) for a clean note — see the block comment above. Also
+ * reused by the sync engine to REPAIR an already-leaked queued note in place (self-heal).
+ */
+export function sanitizeBlockIds(blocks: BlockBody): BlockBody {
+  return blocks.map(sanitizeBlock);
+}
+
 /**
  * Convert the ProseMirror document to the spine block body.
  * Skips the first `title` node — the title is extracted via extractTitleFromDoc().
@@ -351,7 +399,9 @@ export function pmDocToSpine(doc: PmNode): BlockBody {
       else blocks.push(converted);
     }
   });
-  return blocks;
+  // Sanitize at THE boundary: a non-UUID block id (e.g. an orphaned `${id}~w` wrapper paragraph) must
+  // never reach the persisted/synced spine, or it 400s the whole push batch and wedges all sync.
+  return sanitizeBlockIds(blocks);
 }
 
 // ── Spine → PM doc ────────────────────────────────────────────────────────────────────────

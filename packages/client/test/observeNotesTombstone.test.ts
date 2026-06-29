@@ -17,9 +17,9 @@ import { getStore } from '../src/db/store.js';
 import { resolveConflict } from '../src/db/conflict.js';
 import type { ClientNote } from '../src/db/schema.js';
 
-const NB = 'nb-obs-00000000-0000-4000-8000-000000000001' as NotebookId;
+const NB = '0f000000-0000-4000-8000-000000000001' as NotebookId;
 const NOW = '2026-06-16T10:00:00.000Z';
-const NOTE_ID = 'note-obs-0000-0000-4000-8000-000000000001' as NoteId;
+const NOTE_ID = '0f000000-0000-4000-8000-000000000002' as NoteId;
 
 beforeEach(async () => {
   const { db } = await import('../src/db/schema.js');

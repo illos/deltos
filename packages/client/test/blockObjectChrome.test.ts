@@ -88,10 +88,13 @@ describe('Mechanic A — migration shape + lossless round-trip (storage is the s
   // The "migration" is the serializer itself: storage is the spine (top-level plugin Block, unchanged shape),
   // and spineToPmDoc rebuilds the PM doc on every open — wrapping the inline atom in a paragraph. So there is
   // NO stored-data migration and A6 (which migrates a plugin's PAYLOAD, not the doc tree) is not involved.
+  // Block ids MUST be real UUIDs: pmDocToSpine now sanitizes the spine at its boundary (the render-only
+  // id-leak fix), re-minting any non-UUID id. A friendly 'b1' would be re-minted and break the lossless
+  // round-trip assertion below — so use real UUIDs (which is what production block ids always are).
   const legacy: BlockBody = [
-    { id: 'b1', type: 'paragraph', content: { segments: [{ text: 'hello' }] } },
-    { id: 'b2', type: 'attachment', content: { name: 'f.png', mime: 'image/png' } }, // a top-level plugin block
-    { id: 'b3', type: 'paragraph', content: { segments: [{ text: 'world' }] } },
+    { id: '0b100000-0000-4000-8000-000000000001' as BlockBody[number]['id'], type: 'paragraph', content: { segments: [{ text: 'hello' }] } },
+    { id: '0b100000-0000-4000-8000-000000000002' as BlockBody[number]['id'], type: 'attachment', content: { name: 'f.png', mime: 'image/png' } }, // a top-level plugin block
+    { id: '0b100000-0000-4000-8000-000000000003' as BlockBody[number]['id'], type: 'paragraph', content: { segments: [{ text: 'world' }] } },
   ];
 
   it('spineToPmDoc wraps a top-level plugin block in a paragraph (the on-open migration)', () => {
@@ -118,12 +121,12 @@ describe('Mechanic A — migration shape + lossless round-trip (storage is the s
       S.node('title', { id: 't' }, [S.text('T')]),
       S.node('paragraph', { id: 'p' }, [
         S.text('a'),
-        S.node('plugin_block', { id: 'c', pluginType: 'attachment', pluginContent: { name: 'f.png' } }),
+        S.node('plugin_block', { id: '0b100000-0000-4000-8000-00000000000c', pluginType: 'attachment', pluginContent: { name: 'f.png' } }),
         S.text('b'),
       ]),
     ]);
     const back = pmDocToSpine(doc);
     expect(back.map((b) => b.type)).toEqual(['paragraph', 'attachment', 'paragraph']);
-    expect(back[1]!.id).toBe('c'); // the atom's id survives
+    expect(back[1]!.id).toBe('0b100000-0000-4000-8000-00000000000c'); // the atom's id (a valid UUID) survives
   });
 });
