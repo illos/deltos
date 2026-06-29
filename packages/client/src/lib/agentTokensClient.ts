@@ -27,6 +27,8 @@ export class AgentTokenError extends Error {
   constructor(
     message: string,
     readonly status?: number,
+    /** Server error code (e.g. 'password_invalid') — set for step-up failures so the UI can target the field. */
+    readonly code?: string,
   ) {
     super(message);
     this.name = 'AgentTokenError';
@@ -43,7 +45,16 @@ function authHeader(): Record<string, string> {
  * token · 401 = defensive · 503 = absent-bearer cold-boot) it re-mints the in-memory bearer ONCE and retries.
  * A re-mint that can't restore a usable bearer ('revoked'/'offline') surfaces a typed AgentTokenError.
  */
-async function authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
+async function authedFetch(
+  path: string,
+  init: RequestInit = {},
+  opts: { remintOn401?: boolean } = {},
+): Promise<Response> {
+  // On the MINT route a 401 means a STEP-UP failure (wrong/missing password), NOT an expired bearer —
+  // an expired access token is a 403 and an absent one a 503. So mint passes remintOn401:false to keep a
+  // step-up rejection from being swallowed by a bearer re-mint + silent retry (which would mask it as
+  // "session expired"). All other calls keep the defensive 401→re-mint behavior.
+  const remintOn401 = opts.remintOn401 ?? true;
   const send = () =>
     fetch(`${BASE}${path}`, { ...init, headers: { ...(init.headers ?? {}), ...authHeader() } });
   let res: Response;
@@ -52,7 +63,8 @@ async function authedFetch(path: string, init: RequestInit = {}): Promise<Respon
   } catch {
     throw new AgentTokenError('Could not reach the server — check your connection.');
   }
-  if (res.status !== 401 && res.status !== 403 && res.status !== 503) return res;
+  const authReject = (res.status === 401 && remintOn401) || res.status === 403 || res.status === 503;
+  if (!authReject) return res;
   const outcome = await useAuthStore.getState().remintBearer();
   if (outcome !== 'ok') {
     throw new AgentTokenError(
@@ -81,19 +93,57 @@ export async function listAgentTokens(): Promise<AgentToken[]> {
   return Array.isArray(data.tokens) ? data.tokens : [];
 }
 
+/** Turn a step-up error code (or none) into a human message keyed to the field at fault. */
+function stepUpMessage(code?: string): string {
+  switch (code) {
+    case 'password_required':
+      return 'Enter your password to generate a token.';
+    case 'password_invalid':
+      return 'That password is incorrect.';
+    case 'totp_required':
+      return 'Enter your two-factor code.';
+    case 'totp_invalid':
+      return 'That two-factor code is not valid.';
+    default:
+      return 'Re-authentication failed — check your password and try again.';
+  }
+}
+
+async function readErrorCode(res: Response): Promise<string | undefined> {
+  try {
+    const body = (await res.json()) as { error?: { code?: string } };
+    return body.error?.code;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Mint a new read-only agent token. The raw `token` is returned ONCE — capture it now, it is never
- * re-served. v1 sends only an optional label; the server clamps scope to read-only regardless, so the UI
- * needs no scope picker.
+ * Mint a new read-only agent token. Requires STEP-UP re-auth (H1): `password` always, plus `totp` when
+ * the account has 2FA. The raw `token` is returned ONCE — capture it now, it is never re-served. The
+ * server clamps scope to read-only regardless, so the UI needs no scope picker. A step-up failure surfaces
+ * as an AgentTokenError with status 401 and the server `code` so the caller can target the right field.
  */
-export async function mintAgentToken(label?: string): Promise<MintAgentTokenResponse> {
-  const trimmed = label?.trim();
-  const body: MintAgentTokenRequest = trimmed ? { label: trimmed } : {};
-  const res = await authedFetch('', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+export async function mintAgentToken(params: {
+  label?: string;
+  password: string;
+  totp?: string;
+}): Promise<MintAgentTokenResponse> {
+  const trimmed = params.label?.trim();
+  const body: MintAgentTokenRequest = {
+    password: params.password,
+    ...(trimmed ? { label: trimmed } : {}),
+    ...(params.totp ? { totp: params.totp } : {}),
+  };
+  const res = await authedFetch(
+    '',
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    { remintOn401: false },
+  );
+  if (res.status === 401) {
+    const code = await readErrorCode(res);
+    throw new AgentTokenError(stepUpMessage(code), 401, code);
+  }
   if (!res.ok) throw new AgentTokenError(`Could not generate a token (${res.status}).`, res.status);
   return readJson<MintAgentTokenResponse>(res);
 }

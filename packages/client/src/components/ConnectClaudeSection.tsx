@@ -18,6 +18,7 @@ import {
   AgentTokenError,
   type AgentToken,
 } from '../lib/agentTokensClient.js';
+import { useAuthStore } from '../auth/store.js';
 
 function formatDate(iso: string): string {
   const t = Date.parse(iso);
@@ -36,10 +37,14 @@ function messageFor(err: unknown): string {
   return 'Something went wrong — try again.';
 }
 
-/** The generate sub-flow: idle → naming (optional label) → minting → minted (token shown once) | error. */
+/**
+ * The generate sub-flow: idle → form (label + STEP-UP re-auth) → minting → minted (token shown once) |
+ * error. The `form` step collects the H1 step-up factors (password always; a TOTP code when 2FA is on);
+ * a step-up rejection returns to `form` with an inline `error` so the entered fields are not lost.
+ */
 type GenState =
   | { tag: 'idle' }
-  | { tag: 'naming'; label: string }
+  | { tag: 'form'; label: string; password: string; totp: string; error: string | null }
   | { tag: 'minting' }
   | { tag: 'minted'; token: string; label: string | null }
   | { tag: 'error'; message: string };
@@ -51,6 +56,7 @@ export function ConnectClaudeSection() {
   const [copied, setCopied] = useState(false);
   const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
+  const totpEnabled = useAuthStore((s) => s.totpEnabled);
 
   const refresh = useCallback(async () => {
     setLoadError(null);
@@ -66,15 +72,30 @@ export function ConnectClaudeSection() {
     void refresh();
   }, [refresh]);
 
-  const handleGenerate = async (label: string) => {
+  const submitForm = async (form: { label: string; password: string; totp: string }) => {
+    if (!form.password) {
+      setGen({ tag: 'form', ...form, error: 'Enter your password to generate a token.' });
+      return;
+    }
     setGen({ tag: 'minting' });
     setCopied(false);
     try {
-      const res = await mintAgentToken(label);
+      const totp = form.totp.trim();
+      const res = await mintAgentToken({
+        label: form.label,
+        password: form.password,
+        ...(totp ? { totp } : {}),
+      });
       setGen({ tag: 'minted', token: res.token, label: res.label });
       void refresh(); // the new token appears in the list immediately (without its secret)
     } catch (err) {
-      setGen({ tag: 'error', message: messageFor(err) });
+      // Step-up failure (wrong password / code) → stay in the form with an inline error so the label and
+      // entered fields survive; any other failure → the generic error state with a retry.
+      if (err instanceof AgentTokenError && err.status === 401) {
+        setGen({ tag: 'form', ...form, error: err.message });
+      } else {
+        setGen({ tag: 'error', message: messageFor(err) });
+      }
     }
   };
 
@@ -113,27 +134,51 @@ export function ConnectClaudeSection() {
       {gen.tag === 'idle' && (
         <button
           className="settings__action settings__action--primary"
-          onClick={() => setGen({ tag: 'naming', label: '' })}
+          onClick={() => setGen({ tag: 'form', label: '', password: '', totp: '', error: null })}
         >
           Generate token
         </button>
       )}
 
-      {gen.tag === 'naming' && (
-        <div className="settings__row">
+      {gen.tag === 'form' && (
+        <div className="settings__row settings__row--btn-group">
+          <p className="settings__row-hint">Confirm your password to generate a token.</p>
           <input
             className="settings__label-input"
             type="text"
             value={gen.label}
-            onChange={(e) => setGen({ tag: 'naming', label: e.target.value })}
+            onChange={(e) => setGen({ ...gen, label: e.target.value })}
             placeholder="Label (optional) — e.g. Claude Desktop"
             aria-label="Token label"
             maxLength={200}
             autoFocus
           />
+          <input
+            className="settings__label-input"
+            type="password"
+            value={gen.password}
+            onChange={(e) => setGen({ ...gen, password: e.target.value, error: null })}
+            placeholder="Your password"
+            aria-label="Your password"
+            autoComplete="current-password"
+          />
+          {totpEnabled && (
+            <input
+              className="settings__label-input"
+              type="text"
+              inputMode="numeric"
+              value={gen.totp}
+              onChange={(e) => setGen({ ...gen, totp: e.target.value, error: null })}
+              placeholder="Two-factor code"
+              aria-label="Two-factor code"
+              autoComplete="one-time-code"
+              maxLength={6}
+            />
+          )}
+          {gen.error && <p className="settings__error">{gen.error}</p>}
           <button
             className="settings__row-action"
-            onClick={() => void handleGenerate(gen.label)}
+            onClick={() => void submitForm({ label: gen.label, password: gen.password, totp: gen.totp })}
             aria-label="Create token"
           >
             Create
@@ -181,7 +226,10 @@ export function ConnectClaudeSection() {
       {gen.tag === 'error' && (
         <div className="settings__row settings__row--btn-group">
           <p className="settings__error">{gen.message}</p>
-          <button className="settings__row-action" onClick={() => setGen({ tag: 'naming', label: '' })}>
+          <button
+            className="settings__row-action"
+            onClick={() => setGen({ tag: 'form', label: '', password: '', totp: '', error: null })}
+          >
             Try again
           </button>
         </div>

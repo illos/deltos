@@ -74,7 +74,10 @@ function mockAuthStore() {
 
 // ── Fetch mock: routes /api/agent-tokens by method over a mutable in-memory list ─
 
-function installFetchMock(initial: AgentToken[], opts: { listStatus?: number } = {}) {
+function installFetchMock(
+  initial: AgentToken[],
+  opts: { listStatus?: number; mintStatus?: number; mintErrorCode?: string } = {},
+) {
   let tokens = [...initial];
   let minted = 0;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -88,6 +91,13 @@ function installFetchMock(initial: AgentToken[], opts: { listStatus?: number } =
         return new Response(JSON.stringify({ tokens }), { status: 200 });
       }
       if (method === 'POST') {
+        if (opts.mintStatus && opts.mintStatus !== 201) {
+          // Step-up rejection (H1): the server 401s with an error code; nothing is minted.
+          return new Response(
+            JSON.stringify({ error: { code: opts.mintErrorCode ?? 'password_invalid', message: 'nope' } }),
+            { status: opts.mintStatus },
+          );
+        }
         minted += 1;
         const body = init?.body ? (JSON.parse(init.body as string) as { label?: string }) : {};
         const created: AgentToken = {
@@ -177,6 +187,7 @@ describe('CC-R2 — generate flow shows the raw token exactly once', () => {
 
     await user.click(s.getByRole('button', { name: 'Generate token' }));
     await user.type(s.getByLabelText('Token label'), 'Claude Code');
+    await user.type(s.getByLabelText('Your password'), 'alice-password'); // H1 step-up
     await user.click(s.getByRole('button', { name: 'Create token' }));
 
     // The once-shown raw token appears in the copyable field.
@@ -191,7 +202,10 @@ describe('CC-R2 — generate flow shows the raw token exactly once', () => {
       ([, init]) => (init as RequestInit | undefined)?.method === 'POST',
     );
     expect(postCall).toBeDefined();
-    expect(JSON.parse((postCall![1] as RequestInit).body as string)).toEqual({ label: 'Claude Code' });
+    expect(JSON.parse((postCall![1] as RequestInit).body as string)).toEqual({
+      label: 'Claude Code',
+      password: 'alice-password',
+    });
   });
 });
 
@@ -207,6 +221,7 @@ describe('CC-R3 — copy writes the token to the clipboard', () => {
     await waitFor(() => expect(s.queryByText(/No connections yet/i)).not.toBeNull());
 
     await user.click(s.getByRole('button', { name: 'Generate token' }));
+    await user.type(s.getByLabelText('Your password'), 'alice-password'); // H1 step-up
     await user.click(s.getByRole('button', { name: 'Create token' }));
 
     await waitFor(() => expect(s.queryByLabelText('Agent token')).not.toBeNull());
@@ -256,5 +271,27 @@ describe('CC-R5 — list load error', () => {
       expect(s.queryByText(/Could not load connections/i)).not.toBeNull();
     });
     expect(s.queryByRole('button', { name: 'Retry' })).not.toBeNull();
+  });
+});
+
+// ── CC-R6 ───────────────────────────────────────────────────────────────────
+
+describe('CC-R6 — step-up rejection keeps the form (H1)', () => {
+  it('a wrong password (401) shows the message inline, keeps the form, and mints no token', async () => {
+    const user = userEvent.setup();
+    installFetchMock([], { mintStatus: 401, mintErrorCode: 'password_invalid' });
+    await mountSettings();
+
+    const s = section();
+    await waitFor(() => expect(s.queryByText(/No connections yet/i)).not.toBeNull());
+
+    await user.click(s.getByRole('button', { name: 'Generate token' }));
+    await user.type(s.getByLabelText('Your password'), 'wrong-password');
+    await user.click(s.getByRole('button', { name: 'Create token' }));
+
+    // Inline step-up error appears; the form (password field) is still up; NO token shown.
+    await waitFor(() => expect(s.queryByText(/password is incorrect/i)).not.toBeNull());
+    expect(s.queryByLabelText('Your password')).not.toBeNull();
+    expect(s.queryByLabelText('Agent token')).toBeNull();
   });
 });
