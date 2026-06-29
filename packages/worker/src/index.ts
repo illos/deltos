@@ -31,6 +31,7 @@ import { passwordAuth } from './routes/passwordAuth.js';
 import { transcribe } from './routes/transcribe.js';
 import { unfurl } from './routes/unfurl.js';
 import { blob } from './routes/blob.js';
+import { agentTokens } from './routes/agentTokens.js';
 
 const app = new Hono<AppEnv>();
 
@@ -104,6 +105,16 @@ app.route('/api/unfurl', unfurl);
 // ---------------------------------------------------------------------------
 
 app.route('/api/plugin/blob', blob);
+
+// ---------------------------------------------------------------------------
+// Agent-token surface (llm-mcp-integration.md §5) — owner-authed mint/list/revoke of the long-lived
+// READ-ONLY credential a remote MCP connector (Claude) bears. An agent token is just a `grants` row with
+// principalKind='agent', non-expiring, scope-clamped read-only, principalId = the owner's accountId. All
+// three routes run through the same guard() chokepoint with op 'share', which an agent token's read-only
+// scope can never satisfy — so an agent can never mint/list/revoke tokens itself.
+// ---------------------------------------------------------------------------
+
+app.route('/api/agent-tokens', agentTokens);
 
 // ---------------------------------------------------------------------------
 // Helpers

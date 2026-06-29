@@ -195,6 +195,52 @@ export interface AuthStore {
   /** Revoke a single grant by its row id (capability / single-grant revoke). Idempotent. */
   revokeGrant(grantId: string): Promise<void>;
 
+  // --- agent tokens (llm-mcp-integration.md §5, label column migration 0013) ----------------------
+  // An agent token is a `grants` row with principalKind='agent', non-expiring (expiresAtMs NULL),
+  // scope CLAMPED read-only at mint, principalId = the OWNER's accountId (so the data layer scopes it to
+  // that account and the can() ownership belt matches). These three methods are account-scoped by
+  // construction — the route NEVER trusts a body accountId; it passes the server-derived principal.id.
+
+  /**
+   * Persist a freshly-minted agent grant. The token is already HASHED by the caller (F6) and the scope is
+   * already CLAMPED read-only. `accountId` is the OWNER's `principal.id` (server-derived) — it lands in
+   * `principalId` so reads scope to that account. expiresAtMs is always NULL (non-expiring); mintedByKeyId
+   * NULL (not device-key-scoped). `label` is optional/cosmetic.
+   */
+  insertAgentGrant(row: {
+    grantId: string;
+    tokenHash: string;
+    accountId: string;
+    label: string | null;
+    resource: Resource;
+    scope: Scope[]; // already CLAMPED read-only at the route
+    createdAt: string; // ISO-8601 Z
+  }): Promise<void>;
+
+  /**
+   * List an account's ACTIVE (revokedAt IS NULL) agent grants. Returns ONLY non-secret metadata — never
+   * the tokenHash, never the raw token (which is unrecoverable anyway). Account-scoped on principalId.
+   */
+  listAgentGrantsForAccount(accountId: string): Promise<
+    Array<{
+      grantId: string;
+      label: string | null;
+      scope: Scope[];
+      resourceKind: 'workspace' | 'notebook';
+      resourceId: string | null;
+      createdAt: string;
+    }>
+  >;
+
+  /**
+   * BOLA-CRITICAL revoke: set revokedAt on an agent grant ONLY when it is owned by `accountId`. The
+   * account match is IN the WHERE clause, so account B can never revoke account A's token — a non-matching
+   * (grantId, accountId) revokes zero rows and the route maps that to 404 (no existence disclosure).
+   * Returns the rows affected so the route can distinguish "revoked" from "not yours / not found".
+   * Scoped to principalKind='agent' so this can never touch an owner session grant.
+   */
+  revokeAgentGrantForAccount(grantId: string, accountId: string): Promise<number>;
+
   /**
    * Per-device revocation (PIN-ID-5), atomic in one batch: revoke the device row (blocks FUTURE
    * session mints via the session route's getDevice revoked-check) AND that device's OUTSTANDING
@@ -574,6 +620,69 @@ export function createAuthStore(db: DbAdapter): AuthStore {
           params: [now, grantId],
         },
       ]);
+    },
+
+    async insertAgentGrant(row) {
+      const resourceId = row.resource.kind === 'workspace' ? null : row.resource.id;
+      await db.batch([
+        {
+          sql: `INSERT INTO grants
+                  (grantId, tokenHash, principalKind, principalId, mintedByKeyId,
+                   resourceKind, resourceId, scope, expiresAtMs, revokedAt, createdAt, label)
+                VALUES (?, ?, 'agent', ?, NULL, ?, ?, ?, NULL, NULL, ?, ?)`,
+          params: [
+            row.grantId,
+            row.tokenHash,
+            row.accountId, // principalId = OWNER accountId (server-derived; reads scope to this account)
+            row.resource.kind,
+            resourceId,
+            JSON.stringify(row.scope), // already CLAMPED read-only at the route
+            row.createdAt,
+            row.label,
+          ],
+        },
+      ]);
+    },
+
+    async listAgentGrantsForAccount(accountId) {
+      const rows = await db.all<{
+        grantId: string;
+        label: string | null;
+        scope: string;
+        resourceKind: string;
+        resourceId: string | null;
+        createdAt: string;
+      }>(
+        `SELECT grantId, label, scope, resourceKind, resourceId, createdAt
+           FROM grants
+          WHERE principalKind = 'agent' AND principalId = ? AND revokedAt IS NULL
+          ORDER BY createdAt`,
+        [accountId],
+      );
+      return rows.map((r) => ({
+        grantId: r.grantId,
+        label: r.label,
+        // Parse + re-validate the stored scope at this read boundary (fail-closed on a malformed row).
+        scope: ScopeArraySchema.parse(JSON.parse(r.scope)),
+        // resourceKind is constrained to workspace|notebook at mint (agent tokens never scope to a note).
+        resourceKind: (r.resourceKind === 'notebook' ? 'notebook' : 'workspace') as 'workspace' | 'notebook',
+        resourceId: r.resourceId,
+        createdAt: r.createdAt,
+      }));
+    },
+
+    async revokeAgentGrantForAccount(grantId, accountId) {
+      // The account match is IN the WHERE — a row owned by another account matches zero rows (BOLA). Scoped
+      // to principalKind='agent' so it can never revoke an owner session grant. Idempotent re-revoke = 0 rows.
+      const now = new Date().toISOString();
+      const [res] = await db.batch([
+        {
+          sql: `UPDATE grants SET revokedAt = ?
+                 WHERE grantId = ? AND principalKind = 'agent' AND principalId = ? AND revokedAt IS NULL`,
+          params: [now, grantId, accountId],
+        },
+      ]);
+      return res?.rowsWritten ?? 0;
     },
 
     async revokeByKeyId(keyId) {
