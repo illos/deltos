@@ -11,13 +11,14 @@
  * Copy A (at-rest disclosure) on the form step; copy B (phrase = master key) inside PhraseStep;
  * copy D (anti-lockout reassurance) at the TOTP-setup step. planSys @2cd2958.
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { useAuthStore } from '../auth/store.js';
 import type { RegisterResult, TotpSetupResult, TotpVerifyResult } from '../auth/store.js';
 import { Disclosure } from '../components/Disclosure.js';
 import { PhraseStep } from '../components/PhraseStep.js';
+import { Turnstile, turnstileEnabled, type TurnstileHandle } from '../components/Turnstile.js';
 
 type Step =
   | { tag: 'form'; error?: string }
@@ -44,14 +45,20 @@ export function RegisterRoute() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  // Turnstile token for the gated /signup call (null until solved; inert when no sitekey is configured).
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const turnstileRef = useRef<TurnstileHandle | null>(null);
 
   const handleRegister = () => {
     if (password !== confirm) { setStep({ tag: 'form', error: "Passwords don't match" }); return; }
     if (password.length < 8) { setStep({ tag: 'form', error: 'Password must be at least 8 characters' }); return; }
     beginAuth(); // P0 latch — pins the gate to this route until finalizeAuth
     setStep({ tag: 'busy', msg: 'Creating your account…' });
-    register(username.trim(), password).then((result) => {
-      if (!result.ok) { setStep({ tag: 'form', error: registerErrorMsg(result.code) }); return; }
+    register(username.trim(), password, turnstileToken ?? undefined).then((result) => {
+      if (!result.ok) {
+        turnstileRef.current?.reset(); // spent token — re-challenge for the retry
+        setStep({ tag: 'form', error: registerErrorMsg(result.code) }); return;
+      }
       // Option-B single-hash signup: signup no longer returns a phrase (it doesn't hash a verifier —
       // free-plan CPU). Mint+show it via establishRecovery (/recovery/rotate), exactly as the
       // forced-phrase flow does. finalizeAuth (which guards on an established verifier) runs only
@@ -233,10 +240,12 @@ export function RegisterRoute() {
 
       {formError && <p className="auth__error">{formError}</p>}
 
+      <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />
+
       <button
         className="auth__btn auth__btn--primary"
         onClick={handleRegister}
-        disabled={!username.trim() || !password || !confirm}
+        disabled={!username.trim() || !password || !confirm || (turnstileEnabled && !turnstileToken)}
       >
         Create account
       </button>

@@ -11,11 +11,12 @@
  * Uniform error on invalid credentials (no username enumeration). totp_required triggers the
  * inline TOTP field; the route re-calls login(username, password, code) with the code.
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../auth/store.js';
 import type { LoginResult } from '../auth/store.js';
 import { Disclosure } from '../components/Disclosure.js';
+import { Turnstile, turnstileEnabled, type TurnstileHandle } from '../components/Turnstile.js';
 
 type Step =
   | { tag: 'form'; error?: string }
@@ -39,11 +40,18 @@ export function LoginRoute() {
   const [step, setStep] = useState<Step>({ tag: 'form' });
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  // Turnstile token (null until solved). When the widget is disabled (no sitekey) it stays null and
+  // never gates submit — the server gate is inert too, so the pair degrades cleanly.
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const turnstileRef = useRef<TurnstileHandle | null>(null);
 
   const handleLogin = () => {
     beginAuth();
     setStep({ tag: 'busy' });
-    login(username.trim(), password).then(async (result) => {
+    login(username.trim(), password, undefined, turnstileToken ?? undefined).then(async (result) => {
+      // A spent Turnstile token is single-use — re-challenge on any non-entry outcome so a retry
+      // (wrong password, totp prompt) carries a fresh token rather than replaying the consumed one.
+      if (!(result.ok && !result.recoveryRequired)) turnstileRef.current?.reset();
       if (result.ok) {
         if (result.recoveryRequired) {
           // Forced-phrase belt: account has no finalized phrase — route there before entry.
@@ -68,7 +76,10 @@ export function LoginRoute() {
   const handleTotpSubmit = () => {
     if (step.tag !== 'totp') return;
     setStep({ ...step, submitting: true, error: undefined });
-    login(step.username, step.password, step.code).then(async (result) => {
+    // The server gate runs on EVERY /login call (incl. this second, code-carrying one), so this re-call
+    // needs its own fresh Turnstile token — the totp screen re-renders the widget for that.
+    login(step.username, step.password, step.code, turnstileToken ?? undefined).then(async (result) => {
+      if (!result.ok) turnstileRef.current?.reset();
       if (!step || step.tag !== 'totp') return;
       if (result.ok) {
         if (result.recoveryRequired) {
@@ -119,10 +130,11 @@ export function LoginRoute() {
           autoFocus
         />
         {step.error && <p className="auth__error">{step.error}</p>}
+        <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />
         <button
           className="auth__btn auth__btn--primary"
           onClick={handleTotpSubmit}
-          disabled={step.code.length < 6 || step.submitting}
+          disabled={step.code.length < 6 || step.submitting || (turnstileEnabled && !turnstileToken)}
         >
           {step.submitting ? 'Verifying…' : 'Verify'}
         </button>
@@ -158,15 +170,17 @@ export function LoginRoute() {
         placeholder="Password"
         autoComplete="current-password"
         aria-label="Password"
-        onKeyDown={(e) => { if (e.key === 'Enter' && username.trim() && password) handleLogin(); }}
+        onKeyDown={(e) => { if (e.key === 'Enter' && username.trim() && password && !(turnstileEnabled && !turnstileToken)) handleLogin(); }}
       />
 
       {formError && <p className="auth__error">{formError}</p>}
 
+      <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />
+
       <button
         className="auth__btn auth__btn--primary"
         onClick={handleLogin}
-        disabled={!username.trim() || !password}
+        disabled={!username.trim() || !password || (turnstileEnabled && !turnstileToken)}
       >
         Sign in
       </button>

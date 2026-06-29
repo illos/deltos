@@ -1689,6 +1689,17 @@ a.auth__link { display: inline; }
 }
 @keyframes auth-spin { to { transform: rotate(360deg); } }
 
+/* Cloudflare Turnstile widget (anti-abuse gate on login/signup/reset). The widget renders its own
+   fixed-size iframe (~300×65); center it in the auth column. Empty/zero-height when no sitekey is
+   configured (the component renders nothing), so it costs no layout in the inert build. */
+.auth__turnstile {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  min-height: 0;
+}
+.auth__turnstile:empty { display: none; }
+
 /* 24-word recovery phrase grid */
 .auth__phrase {
   display: grid;

@@ -5,10 +5,11 @@
  * error — wrong username/phrase returns the same message (no confirmation of whether the
  * username exists). On success the server revokes all sessions and signs in with the new password.
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../auth/store.js';
 import type { ResetResult } from '../auth/store.js';
+import { Turnstile, turnstileEnabled, type TurnstileHandle } from '../components/Turnstile.js';
 
 type Step =
   | { tag: 'form'; error?: string }
@@ -32,13 +33,17 @@ export function ResetRoute() {
   const [phrase, setPhrase] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  // Turnstile token for the gated /reset call (null until solved; inert when no sitekey is configured).
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const turnstileRef = useRef<TurnstileHandle | null>(null);
 
   const handleReset = () => {
     if (newPassword !== confirm) { setStep({ tag: 'form', error: "Passwords don't match" }); return; }
     if (newPassword.length < 8) { setStep({ tag: 'form', error: 'Password must be at least 8 characters' }); return; }
     beginAuth();
     setStep({ tag: 'busy' });
-    resetWithPhrase(username.trim(), phrase.trim(), newPassword).then(async (result) => {
+    resetWithPhrase(username.trim(), phrase.trim(), newPassword, turnstileToken ?? undefined).then(async (result) => {
+      if (!result.ok) turnstileRef.current?.reset(); // spent token — re-challenge for the retry
       if (result.ok) {
         // Password is changed. Try to finalize a session — but /reset mints no session cookie
         // by design, so /finalize may 503. Treat any finalize failure as graceful degradation:
@@ -142,10 +147,12 @@ export function ResetRoute() {
         back on in Settings afterward. This will also sign you out on every device.
       </p>
 
+      <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />
+
       <button
         className="auth__btn auth__btn--primary"
         onClick={handleReset}
-        disabled={!username.trim() || !phrase.trim() || !newPassword || !confirm}
+        disabled={!username.trim() || !phrase.trim() || !newPassword || !confirm || (turnstileEnabled && !turnstileToken)}
       >
         Reset password
       </button>
