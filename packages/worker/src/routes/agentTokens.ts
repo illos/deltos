@@ -13,6 +13,7 @@ import { d1Adapter } from '../db/schema.js';
 import { hashToken, randomToken } from '../authCrypto.js';
 import { stampAccountId } from '../db/accountScope.js';
 import { verifyStepUp } from '../stepUp.js';
+import { MINT_BACKOFF, backoffDelayMs } from '../authPolicy.js';
 
 /**
  * Agent-token surface (llm-mcp-integration.md §5) — three OWNER-authed routes that mint, list, and revoke
@@ -57,12 +58,35 @@ agentTokens.post(
       const store = createAuthStore(d1Adapter(c.env.DB));
       // The owning account is the AUTHENTICATED owner's principal.id — server-derived, never the body.
       const accountId = stampAccountId(principal);
+      const nowMs = Date.now();
 
-      // H1 STEP-UP (ROAD-0005 P0): a live session bearer is NOT enough to mint a long-lived, non-expiring
-      // read-all credential — re-prove the human (password, + TOTP if 2FA is on). Fail-closed: any failure
-      // returns the apiError unchanged and NO grant is minted. Runs BEFORE any token generation.
-      const stepUp = await verifyStepUp(c, store, accountId, { password: req.password, totp: req.totp }, Date.now());
-      if (stepUp) return stepUp;
+      // C RATE-LIMIT (ROAD-0005 P0): per-account backoff GATE that runs BEFORE the step-up Argon2
+      // (gate-before-hash) — caps password-guessing by a borrowed live session + the Argon2-per-attempt
+      // CPU-amplification lever (H1 review MED). Reuses the existing authThrottle store.
+      const bucket = `mint:${accountId}`;
+      const throttle = await store.getThrottle(bucket);
+      if (throttle && nowMs < throttle.nextAllowedMs) {
+        return apiError(c, 429, 'too_many_attempts', 'too many attempts — try again shortly');
+      }
+
+      // H1 STEP-UP: a live session bearer is NOT enough to mint a long-lived, non-expiring read-all
+      // credential — re-prove the human (password, + TOTP if 2FA is on). Fail-closed: any failure returns
+      // the apiError unchanged and NO grant is minted. Runs BEFORE any token generation.
+      const stepUp = await verifyStepUp(c, store, accountId, { password: req.password, totp: req.totp }, nowMs);
+      if (stepUp) {
+        // A wrong factor (401) counts toward the backoff; config/prompt failures (503) do not.
+        if (stepUp.status === 401) {
+          const failures = ((await store.getThrottle(bucket))?.failures ?? 0) + 1;
+          await store.recordThrottleFailure(
+            bucket,
+            failures,
+            nowMs + backoffDelayMs(MINT_BACKOFF, failures),
+            new Date(nowMs).toISOString(),
+          );
+        }
+        return stepUp;
+      }
+      await store.clearThrottle(bucket); // success — reset the per-account backoff
 
       const now = new Date().toISOString();
 

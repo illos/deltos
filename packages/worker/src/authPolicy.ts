@@ -92,6 +92,14 @@ export const LOGIN_BACKOFF: BackoffPolicy = { freeAttempts: 5, baseMs: 1000, cap
 export const RESET_BACKOFF: BackoffPolicy = { freeAttempts: 2, baseMs: 2000, capMs: 15 * 60 * 1000 };
 
 /**
+ * Per-account backoff for the authenticated agent-token MINT route (ROAD-0005 P0 item C). Runs BEFORE the
+ * step-up Argon2 in `verifyStepUp` (gate-before-hash). Reaching mint already needs a valid session, so this
+ * is not anonymous brute-force — it caps a borrowed/half-trusted live session guessing the step-up password
+ * and removes the Argon2-per-attempt CPU-amplification lever (the H1 review MED). Same shape as login.
+ */
+export const MINT_BACKOFF: BackoffPolicy = { freeAttempts: 5, baseMs: 1000, capMs: 5 * 60 * 1000 };
+
+/**
  * The next-allowed delay (ms from the failing instant) after `failures` total failures under a policy.
  * Returns 0 while within the free-attempt budget, else `min(cap, base * 2^(failures-free-1))`.
  */

@@ -264,4 +264,32 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
     expect(res.status).toBe(201);
     expect(agentGrantCount(raw)).toBe(1);
   });
+
+  // ── C RATE-LIMIT (ROAD-0005 P0): per-account mint backoff, gate-before-hash ─────────────────────────
+  it('RATE-LIMIT: a backed-off account is gated (429) BEFORE the step-up hash, even with the CORRECT password', async () => {
+    // Seed the per-account mint backoff into the future, then mint with the CORRECT password: the gate must
+    // 429 before verifyStepUp's Argon2 even runs (gate-before-hash), so nothing is minted.
+    const store = createAuthStore(d1Adapter(env.DB));
+    await store.recordThrottleFailure(`mint:${accountId}`, 6, Date.now() + 60_000, new Date().toISOString());
+
+    const res = await mint(env, { label: 'blocked' }, token);
+    expect(res.status).toBe(429);
+    expect(agentGrantCount(raw)).toBe(0);
+  });
+
+  it('RATE-LIMIT: a wrong-password mint records a backoff failure for the account', async () => {
+    const res = await post(env, '/api/agent-tokens', { password: 'wrong-password' }, token);
+    expect(res.status).toBe(401);
+    const t = await createAuthStore(d1Adapter(env.DB)).getThrottle(`mint:${accountId}`);
+    expect(t?.failures).toBe(1);
+  });
+
+  it('RATE-LIMIT: a successful mint clears the per-account backoff', async () => {
+    const store = createAuthStore(d1Adapter(env.DB));
+    // A past nextAllowedMs → not gated; the success path should still clear the row.
+    await store.recordThrottleFailure(`mint:${accountId}`, 3, Date.now() - 1000, new Date().toISOString());
+    const res = await mint(env, { label: 'ok' }, token);
+    expect(res.status).toBe(201);
+    expect(await store.getThrottle(`mint:${accountId}`)).toBeNull();
+  });
 });
