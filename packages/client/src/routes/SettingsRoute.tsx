@@ -96,6 +96,20 @@ export function SettingsRoute() {
       .catch(() => setUpdateStatus('offline'));
   };
 
+  // ── Diagnostic snapshot (dev troubleshooting) ──────────────────────────────
+  // Dynamically imports the snapshot builder + fflate ON CLICK (FN-8 lazy-split) so neither rides the
+  // entry chunk. Builds a zip of local IndexedDB + env (token/secret/key redacted) and downloads it.
+  const [snapshotStatus, setSnapshotStatus] = useState<'idle' | 'building' | 'error'>('idle');
+
+  const handleExportSnapshot = () => {
+    if (snapshotStatus === 'building') return;
+    setSnapshotStatus('building');
+    import('../lib/diagnosticSnapshot.js')
+      .then((m) => m.exportDiagnosticSnapshot())
+      .then(() => setSnapshotStatus('idle'))
+      .catch(() => setSnapshotStatus('error'));
+  };
+
   const updateBusy = updateStatus === 'checking' || updateStatus === 'updating';
   const updateLabel =
     updateStatus === 'checking' ? 'Checking…' : updateStatus === 'updating' ? 'Updating…' : 'Update now';
@@ -545,6 +559,28 @@ export function SettingsRoute() {
             {spellcheck ? 'On' : 'Off'}
           </span>
         </button>
+      </section>
+
+      {/* Section — Diagnostics: hand a local-state snapshot to support for troubleshooting. */}
+      <section className="settings__section" aria-label="Diagnostics">
+        <h2 className="settings__section-title">Diagnostics</h2>
+        <button
+          className="settings__row settings__row--btn"
+          onClick={handleExportSnapshot}
+          disabled={snapshotStatus === 'building'}
+          aria-label="Export snapshot"
+        >
+          <span className="settings__row-label">
+            {snapshotStatus === 'building' ? 'Building…' : 'Export snapshot'}
+          </span>
+          <span className="settings__row-chevron" aria-hidden>›</span>
+        </button>
+        <p className="settings__row-hint">
+          Includes your notes + app state for troubleshooting. Excludes passwords, tokens, and keys.
+        </p>
+        {snapshotStatus === 'error' && (
+          <p className="settings__error">Could not build the snapshot — try again.</p>
+        )}
       </section>
     </div>
   );
