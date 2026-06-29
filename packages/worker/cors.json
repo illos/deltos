@@ -1,9 +1,13 @@
-[
-  {
-    "AllowedOrigins": ["https://deltos.blackgate.studio"],
-    "AllowedMethods": ["PUT"],
-    "AllowedHeaders": ["content-type", "x-amz-checksum-sha256"],
-    "ExposeHeaders": ["ETag"],
-    "MaxAgeSeconds": 3600
-  }
-]
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": ["https://deltos.blackgate.studio"],
+        "methods": ["PUT"],
+        "headers": ["content-type", "x-amz-checksum-sha256"]
+      },
+      "exposeHeaders": ["ETag"],
+      "maxAgeSeconds": 3600
+    }
+  ]
+}
