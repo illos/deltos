@@ -75,6 +75,33 @@ export function principalForGrant(grant: ResolvedGrant): RequestPrincipal {
   return { kind: grant.principal.kind, id: grant.principal.id, verification };
 }
 
+/**
+ * Token LIVENESS — the two fail-closed gates that do not depend on the requested (op, resource):
+ *   - revoked (revokedAt present)  → not live (PIN-ID-5, no validity window)
+ *   - expired (expiresAtMs <= now) → not live. NUMERIC instant compare, NEVER lexical (AUTH-1).
+ * Shared by {@link grantAllows} (the per-op chokepoint) and the transport-level auth gate of the MCP
+ * route, so "is this bearer still usable at all" is decided ONE way. `nowMs` is the SERVER clock.
+ */
+export function grantIsLive(
+  grant: Pick<ResolvedGrant, 'revokedAt' | 'expiresAtMs'>,
+  nowMs: number,
+): boolean {
+  if (grant.revokedAt !== null) return false;
+  if (grant.expiresAtMs !== null && grant.expiresAtMs <= nowMs) return false;
+  return true;
+}
+
+/**
+ * The grant a `resolvePrincipal` call attached to this principal (the resolved row, out-of-band in the
+ * request-scoped WeakMap), or undefined if the principal carries no resolved grant (the dev `unverified`
+ * stub, or a principal built outside the real resolution path). The MCP transport gate reads this to
+ * reject a revoked/expired bearer at the door (401) using {@link grantIsLive}, instead of leaking the
+ * decision into a per-tool `can()` deny.
+ */
+export function resolvedGrantFor(principal: RequestPrincipal): ResolvedGrant | undefined {
+  return resolvedGrants.get(principal);
+}
+
 /** Does a grant resource authorize the requested one? A workspace grant covers everything; else exact. */
 function resourceCovers(granted: Resource, requested: Resource): boolean {
   // v1: a workspace grant authorizes any resource; finer grants match exactly. Notebook→note
@@ -107,8 +134,7 @@ export function grantAllows(
   nowMs: number,
   resourceAccountId?: string | null,
 ): boolean {
-  if (grant.revokedAt !== null) return false;
-  if (grant.expiresAtMs !== null && grant.expiresAtMs <= nowMs) return false;
+  if (!grantIsLive(grant, nowMs)) return false;
   if (!grant.scope.includes(op)) return false;
   if (!resourceCovers(grant.resource, resource)) return false;
   if (resourceAccountId !== undefined) {

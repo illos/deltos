@@ -8,12 +8,12 @@ import {
   SearchQuerySchema,
   API_ROUTES,
 } from '@deltos/shared';
-import type { Resource, NoteResponse } from '@deltos/shared';
+import type { Resource } from '@deltos/shared';
 import type { Env } from './env.js';
 import { guard, apiError, type AppContext } from './http.js';
 import type { AppEnv } from './context.js';
 import { d1Adapter } from './db/schema.js';
-import type { NoteRow } from './db/schema.js';
+import { noteRowToResponse, noteRowToSummary } from './present.js';
 import {
   insertNote,
   patchNote,
@@ -32,6 +32,7 @@ import { transcribe } from './routes/transcribe.js';
 import { unfurl } from './routes/unfurl.js';
 import { blob } from './routes/blob.js';
 import { agentTokens } from './routes/agentTokens.js';
+import { mcp } from './routes/mcp.js';
 
 const app = new Hono<AppEnv>();
 
@@ -117,6 +118,16 @@ app.route('/api/plugin/blob', blob);
 app.route('/api/agent-tokens', agentTokens);
 
 // ---------------------------------------------------------------------------
+// Remote MCP server (llm-mcp-integration.md §6) — JSON-RPC 2.0 over a stateless Streamable-HTTP POST,
+// READ-ONLY. A thin protocol adapter consumed by claude.ai / Claude Desktop / Claude Code, bearing the
+// agent token (§5). Every tool dispatches to the SAME account-scoped data readers + the SAME can()
+// chokepoint the PWA uses, so account isolation is inherited; the endpoint is bearer-gated for every
+// method. Server-resident (§4): adds zero to the client bundle.
+// ---------------------------------------------------------------------------
+
+app.route('/api/mcp', mcp);
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -134,24 +145,6 @@ function asObject(v: unknown): Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
     ? (v as Record<string, unknown>)
     : {};
-}
-
-/**
- * Convert a DB row to the NoteResponse wire shape.
- * The server always returns `syncStatus: 'synced'` — it is client-side-only state.
- */
-function rowToResponse(row: NoteRow): NoteResponse {
-  return {
-    id: row.id as NoteResponse['id'],
-    notebookId: row.notebookId as NoteResponse['notebookId'],
-    title: row.title,
-    properties: JSON.parse(row.properties) as NoteResponse['properties'],
-    body: JSON.parse(row.body) as NoteResponse['body'],
-    version: row.version,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    syncStatus: 'synced',
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -182,7 +175,7 @@ app.post(
       if (outcome.outcome === 'conflict') {
         return apiError(c, 400, 'conflict', 'a note with this id already exists');
       }
-      return c.json(rowToResponse(outcome.row), 201);
+      return c.json(noteRowToResponse(outcome.row), 201);
     },
   }),
 );
@@ -201,7 +194,7 @@ app.get(
       // from not-found (no cross-account existence oracle).
       const row = await getNoteForAccount(db, callerAccountId(principal), req.id);
       if (!row) return apiError(c, 404, 'not_found', 'note not found');
-      return c.json(rowToResponse(row));
+      return c.json(noteRowToResponse(row));
     },
   }),
 );
@@ -232,7 +225,7 @@ app.patch(
       const outcome = await patchNote(db, req.id, lookup.notebookId, accountId, patch, req.expectedVersion, now);
       if (outcome.outcome === 'not_found') return apiError(c, 404, 'not_found', 'note not found');
       if (outcome.outcome === 'conflict') return apiError(c, 409, 'conflict', 'version mismatch — note was modified concurrently');
-      return c.json(rowToResponse(outcome.row));
+      return c.json(noteRowToResponse(outcome.row));
     },
   }),
 );
@@ -323,7 +316,7 @@ app.post(
       );
       if (outcome.outcome === 'not_found') return apiError(c, 404, 'not_found', 'note not found');
       if (outcome.outcome === 'conflict') return apiError(c, 409, 'conflict', 'version mismatch');
-      return c.json(rowToResponse(outcome.row));
+      return c.json(noteRowToResponse(outcome.row));
     },
   }),
 );
@@ -358,7 +351,7 @@ app.put(
       );
       if (outcome.outcome === 'not_found') return apiError(c, 404, 'not_found', 'note not found');
       if (outcome.outcome === 'conflict') return apiError(c, 409, 'conflict', 'version mismatch');
-      return c.json(rowToResponse(outcome.row));
+      return c.json(noteRowToResponse(outcome.row));
     },
   }),
 );

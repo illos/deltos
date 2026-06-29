@@ -169,3 +169,17 @@ export async function deleteNotebook(
 export async function notesInNotebook(db: DbAdapter, accountId: string, notebookId: string): Promise<NoteRow[]> {
   return db.all<NoteRow>(`SELECT * FROM notes WHERE accountId = ? AND notebookId = ?`, [accountId, notebookId]);
 }
+
+/**
+ * List the account's LIVE notebooks, most-recently-touched first. The single account-scoped read the
+ * MCP `list_notebooks` tool reuses — same `WHERE accountId = ? AND deletedAt IS NULL` isolation the rest
+ * of the notebook path holds (the client otherwise only ever learns notebooks via the sync pull stream;
+ * there is no REST list route to share, so this thin reader is the §6 "tiny new work"). `accountId` is
+ * always the server-derived principal.id — never a client-asserted value.
+ */
+export async function listNotebooksForAccount(db: DbAdapter, accountId: string): Promise<NotebookRow[]> {
+  return db.all<NotebookRow>(
+    `SELECT * FROM notebooks WHERE accountId = ? AND deletedAt IS NULL ORDER BY updatedAt DESC`,
+    [accountId],
+  );
+}
