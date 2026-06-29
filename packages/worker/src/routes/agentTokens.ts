@@ -12,6 +12,7 @@ import { createAuthStore } from '../db/authStore.js';
 import { d1Adapter } from '../db/schema.js';
 import { hashToken, randomToken } from '../authCrypto.js';
 import { stampAccountId } from '../db/accountScope.js';
+import { verifyStepUp } from '../stepUp.js';
 
 /**
  * Agent-token surface (llm-mcp-integration.md §5) — three OWNER-authed routes that mint, list, and revoke
@@ -56,6 +57,13 @@ agentTokens.post(
       const store = createAuthStore(d1Adapter(c.env.DB));
       // The owning account is the AUTHENTICATED owner's principal.id — server-derived, never the body.
       const accountId = stampAccountId(principal);
+
+      // H1 STEP-UP (ROAD-0005 P0): a live session bearer is NOT enough to mint a long-lived, non-expiring
+      // read-all credential — re-prove the human (password, + TOTP if 2FA is on). Fail-closed: any failure
+      // returns the apiError unchanged and NO grant is minted. Runs BEFORE any token generation.
+      const stepUp = await verifyStepUp(c, store, accountId, { password: req.password, totp: req.totp }, Date.now());
+      if (stepUp) return stepUp;
+
       const now = new Date().toISOString();
 
       // CLAMP read-only at mint (fail-closed): any write/create/delete/share verb is dropped here.

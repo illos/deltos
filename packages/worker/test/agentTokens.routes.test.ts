@@ -75,6 +75,13 @@ const get = (env: Env, path: string, token: string) =>
 const del = (env: Env, path: string, token: string) =>
   app.request(path, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }, env);
 
+/** Owner mint — H1 (ROAD-0005 P0) requires the step-up password (the account password) in the body. */
+const OWNER_PW = 'agent-tokens-password';
+const mint = (env: Env, body: Record<string, unknown>, tok: string) =>
+  post(env, '/api/agent-tokens', { password: OWNER_PW, ...body }, tok);
+const agentGrantCount = (raw: Database.Database) =>
+  (raw.prepare("SELECT COUNT(*) AS n FROM grants WHERE principalKind = 'agent'").get() as { n: number }).n;
+
 interface MintResponse {
   token: string;
   grantId: string;
@@ -108,7 +115,7 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
   });
 
   it('mint inserts a correct grant shape, returns the raw token ONCE, stores ONLY the hash', async () => {
-    const res = await post(env, '/api/agent-tokens', { label: 'Claude Desktop' }, token);
+    const res = await mint(env, { label: 'Claude Desktop' }, token);
     expect(res.status).toBe(201);
     const body = (await res.json()) as MintResponse;
 
@@ -136,14 +143,14 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
   });
 
   it('CLAMP: write/create/delete/share scopes are dropped at mint (fail-closed read-only)', async () => {
-    const res = await post(env, '/api/agent-tokens', { scope: ['read', 'write', 'create', 'delete', 'share'] }, token);
+    const res = await mint(env, { scope: ['read', 'write', 'create', 'delete', 'share'] }, token);
     expect(res.status).toBe(201);
     const body = (await res.json()) as MintResponse;
     expect(body.scope).toEqual(['read']); // only the read-only verb survived
   });
 
   it('mint with notebookId scopes the grant to that notebook', async () => {
-    const res = await post(env, '/api/agent-tokens', { notebookId: NOTEBOOK, scope: ['read'] }, token);
+    const res = await mint(env, { notebookId: NOTEBOOK, scope: ['read'] }, token);
     expect(res.status).toBe(201);
     const body = (await res.json()) as MintResponse;
     expect(body.resourceKind).toBe('notebook');
@@ -151,8 +158,8 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
   });
 
   it('list returns active tokens WITHOUT the token/hash, and is account-scoped', async () => {
-    await post(env, '/api/agent-tokens', { label: 'one' }, token);
-    await post(env, '/api/agent-tokens', { label: 'two' }, token);
+    await mint(env, { label: 'one' }, token);
+    await mint(env, { label: 'two' }, token);
 
     const res = await get(env, '/api/agent-tokens', token);
     expect(res.status).toBe(200);
@@ -173,7 +180,7 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
   });
 
   it('revoke sets revokedAt and drops the token from the active list', async () => {
-    const minted = (await (await post(env, '/api/agent-tokens', { label: 'doomed' }, token)).json()) as MintResponse;
+    const minted = (await (await mint(env, { label: 'doomed' }, token)).json()) as MintResponse;
 
     const res = await del(env, `/api/agent-tokens/${minted.grantId}`, token);
     expect(res.status).toBe(200);
@@ -186,7 +193,7 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
   });
 
   it('🚨 BOLA: account B cannot see or revoke account A\'s token (404, A\'s token survives)', async () => {
-    const minted = (await (await post(env, '/api/agent-tokens', { label: 'A-secret' }, token)).json()) as MintResponse;
+    const minted = (await (await mint(env, { label: 'A-secret' }, token)).json()) as MintResponse;
     const { token: tokenB } = await signupToken(env, 'agent-attacker', 'agent-tokens-password-B');
 
     // B cannot revoke A's grant — 404 (not 403: no existence disclosure).
@@ -206,7 +213,7 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
   });
 
   it('a minted agent token resolves to a CAPABILITY principal: can(read) ALLOWS, can(write) DENIES', async () => {
-    const minted = (await (await post(env, '/api/agent-tokens', { scope: ['read', 'search'] }, token)).json()) as MintResponse;
+    const minted = (await (await mint(env, { scope: ['read', 'search'] }, token)).json()) as MintResponse;
 
     const store = createAuthStore(d1Adapter(env.DB));
     const principal = await resolvePrincipal(ctxWithBearer(minted.token), store);
@@ -224,7 +231,7 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
   });
 
   it('an agent token can NEVER mint / list / revoke tokens (the routes require op share → 403)', async () => {
-    const minted = (await (await post(env, '/api/agent-tokens', {}, token)).json()) as MintResponse;
+    const minted = (await (await mint(env, {}, token)).json()) as MintResponse;
     const agentBearer = minted.token;
 
     const mintRes = await post(env, '/api/agent-tokens', { label: 'nested' }, agentBearer);
@@ -237,5 +244,24 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
     // And the owner's token is untouched by the failed agent revoke attempt.
     const row = raw.prepare('SELECT revokedAt FROM grants WHERE grantId = ?').get(minted.grantId) as { revokedAt: string | null };
     expect(row.revokedAt).toBeNull();
+  });
+
+  // ── H1 STEP-UP (ROAD-0005 P0): minting requires fresh re-auth, not just a live session bearer ──────
+  it('STEP-UP: mint with NO password is rejected (401) and mints NO grant (fail-closed)', async () => {
+    const res = await post(env, '/api/agent-tokens', { label: 'no-stepup' }, token);
+    expect(res.status).toBe(401);
+    expect(agentGrantCount(raw)).toBe(0); // nothing minted
+  });
+
+  it('STEP-UP: a WRONG password is rejected (401) and mints NO grant', async () => {
+    const res = await post(env, '/api/agent-tokens', { label: 'wrong-pw', password: 'not-the-password' }, token);
+    expect(res.status).toBe(401);
+    expect(agentGrantCount(raw)).toBe(0);
+  });
+
+  it('STEP-UP: the CORRECT account password authorizes the mint (201)', async () => {
+    const res = await mint(env, { label: 'with-stepup' }, token);
+    expect(res.status).toBe(201);
+    expect(agentGrantCount(raw)).toBe(1);
   });
 });

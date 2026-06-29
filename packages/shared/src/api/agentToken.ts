@@ -41,6 +41,11 @@ export const MintAgentTokenRequestSchema = z
     label: z.string().max(200).optional(),
     scope: z.array(ScopeSchema).optional(),
     notebookId: NotebookIdSchema.optional(),
+    // H1 STEP-UP (ROAD-0005 P0): minting a long-lived, non-expiring read-all credential requires fresh
+    // re-auth — a live session bearer is not enough. `password` always; `totp` when 2FA is enabled. These
+    // are verified + discarded server-side (never stored). See worker `verifyStepUp`.
+    password: z.string().min(1).optional(),
+    totp: z.string().optional(),
   })
   .strict();
 export type MintAgentTokenRequest = z.infer<typeof MintAgentTokenRequestSchema>;

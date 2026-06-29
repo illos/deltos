@@ -67,11 +67,11 @@ const rpc = (env: Env, payload: unknown, token?: string) =>
   }, env);
 
 /** Mint a read-only agent token for the owner holding `ownerToken`. */
-async function mintAgentToken(env: Env, ownerToken: string): Promise<{ token: string; grantId: string }> {
+async function mintAgentToken(env: Env, ownerToken: string, ownerPassword: string): Promise<{ token: string; grantId: string }> {
   const res = await app.request('/api/agent-tokens', {
     method: 'POST',
     headers: { 'content-type': 'application/json', Authorization: `Bearer ${ownerToken}` },
-    body: JSON.stringify({ label: 'test-mcp' }),
+    body: JSON.stringify({ label: 'test-mcp', password: ownerPassword }), // H1 step-up: mint requires re-auth
   }, env);
   return (await res.json()) as { token: string; grantId: string };
 }
@@ -100,7 +100,7 @@ describe('MCP server — protocol / auth / tools (POST /api/mcp)', () => {
     for (const m of ALL_MIGRATIONS) raw.exec(m);
     env = makeEnv(raw);
     ({ token: ownerA, accountId: accountA } = await signupToken(env, 'mcp-owner', 'mcp-owner-password'));
-    ({ token: agentA } = await mintAgentToken(env, ownerA));
+    ({ token: agentA } = await mintAgentToken(env, ownerA, 'mcp-owner-password'));
   });
 
   // --- protocol ---------------------------------------------------------------------------------
@@ -168,7 +168,7 @@ describe('MCP server — protocol / auth / tools (POST /api/mcp)', () => {
   });
 
   it('a REVOKED agent token is rejected 401', async () => {
-    const { token, grantId } = await mintAgentToken(env, ownerA);
+    const { token, grantId } = await mintAgentToken(env, ownerA, 'mcp-owner-password');
     // sanity: works before revoke
     expect((await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, token)).status).toBe(200);
     // revoke via the owner route
@@ -227,7 +227,7 @@ describe('MCP server — protocol / auth / tools (POST /api/mcp)', () => {
   it('🚨 BOLA: account B\'s agent token cannot get_note account A\'s note (not found, no leak)', async () => {
     const aNoteId = await createNote(env, ownerA, 'A private secret note');
     const { token: ownerB } = await signupToken(env, 'mcp-attacker', 'mcp-attacker-password');
-    const { token: agentB } = await mintAgentToken(env, ownerB);
+    const { token: agentB } = await mintAgentToken(env, ownerB, 'mcp-attacker-password');
 
     const res = await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_note', arguments: { id: aNoteId } } }, agentB);
     const body = (await res.json()) as JsonRpcResult;
