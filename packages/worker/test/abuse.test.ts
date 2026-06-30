@@ -84,6 +84,18 @@ describe('chargeUsage (Tier-2 denial-of-wallet)', () => {
     expect(row.count).toBe(3);
   });
 
+  it('is a HARD ceiling — repeated calls past the cap never push the counter above cap', async () => {
+    const results: boolean[] = [];
+    for (let i = 0; i < 6; i++) {
+      results.push((await store.chargeUsage('acct-1', 'mcp', '2026-06-30', 2, ISO)).allowed);
+    }
+    expect(results).toEqual([true, true, false, false, false, false]); // exactly `cap` (=2) charges succeed
+    const row = raw
+      .prepare('SELECT count FROM usageCounter WHERE accountId=? AND metric=? AND dayBucket=?')
+      .get('acct-1', 'mcp', '2026-06-30') as { count: number };
+    expect(row.count).toBe(2); // guarded UPSERT made the over-cap calls true no-ops — count never exceeds cap
+  });
+
   it('isolates by account, metric, and day', async () => {
     await store.chargeUsage('acct-1', 'transcribe', '2026-06-30', 1, ISO); // acct-1 transcribe maxed
     // a different account is unaffected

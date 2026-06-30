@@ -459,10 +459,10 @@ export interface AuthStore {
 
   /**
    * ROAD-0005 P4 denial-of-wallet (Tier 2) — charge ONE unit of `metric` to (accountId, dayBucket) IFF the
-   * day's running count is below `cap`. Returns `{ allowed:false, count }` (without charging) once the
-   * budget is spent. The read-then-conditional-bump has a small race under concurrency that may let the
-   * count slightly exceed `cap`; accepted for a COARSE cost ceiling (it never under-counts to the point of
-   * defeating the guard). Upsert into `usageCounter` (migration 0016).
+   * day's running count is below `cap`. Returns `{ allowed:false, count:cap }` (without charging) once the
+   * budget is spent. ATOMIC: a single guarded UPSERT (`ON CONFLICT … WHERE count < cap … RETURNING count`),
+   * so the counter is a HARD ceiling that can never exceed `cap` even under a concurrent burst — no
+   * read-then-write race. Upsert into `usageCounter` (migration 0016).
    */
   chargeUsage(
     accountId: string,
@@ -1174,23 +1174,25 @@ export function createAuthStore(db: DbAdapter): AuthStore {
     },
 
     async chargeUsage(accountId, metric, dayBucket, cap, updatedAt) {
+      // ATOMIC charge in a SINGLE statement so the cap is a HARD ceiling even under a concurrent burst
+      // (no read-then-write race): the ON CONFLICT guard `WHERE count < cap` makes the increment a no-op
+      // once the cap is reached, so the counter can never exceed `cap`. RETURNING yields the post-charge
+      // count on a successful charge; when the guard blocks an at-cap row, the UPSERT touches nothing and
+      // RETURNING produces NO row — that absence IS the deny signal. (A brand-new row is always inserted
+      // at count=1; safe because every `cap` is >= 1.) `count >= cap` semantics: exactly `cap` charges
+      // succeed per (account, metric, day).
       const row = await db.first<{ count: number }>(
-        `SELECT count FROM usageCounter WHERE accountId = ? AND metric = ? AND dayBucket = ?`,
-        [accountId, metric, dayBucket],
+        `INSERT INTO usageCounter (accountId, metric, dayBucket, count, updatedAt)
+              VALUES (?, ?, ?, 1, ?)
+              ON CONFLICT(accountId, metric, dayBucket) DO UPDATE SET
+                count = count + 1,
+                updatedAt = excluded.updatedAt
+              WHERE count < ?
+         RETURNING count`,
+        [accountId, metric, dayBucket, updatedAt, cap],
       );
-      const current = row?.count ?? 0;
-      if (current >= cap) return { allowed: false, count: current };
-      await db.batch([
-        {
-          sql: `INSERT INTO usageCounter (accountId, metric, dayBucket, count, updatedAt)
-                VALUES (?, ?, ?, 1, ?)
-                ON CONFLICT(accountId, metric, dayBucket) DO UPDATE SET
-                  count = count + 1,
-                  updatedAt = excluded.updatedAt`,
-          params: [accountId, metric, dayBucket, updatedAt],
-        },
-      ]);
-      return { allowed: true, count: current + 1 };
+      if (row) return { allowed: true, count: row.count };
+      return { allowed: false, count: cap };
     },
 
     async pruneUsage(beforeDayBucket) {
