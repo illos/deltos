@@ -30,6 +30,7 @@ const ALL_MIGRATIONS = [
   '0007_reconcile-account-sync-seq.sql', '0008_notebooks.sql', '0009_backfill-default-notebooks.sql',
   '0010_nullable-notebookid-all-notes.sql', '0011_drop-isdefault-notebooksyncseg-notes_pull.sql',
   '0012_custom-dictionary.sql', '0013_agent-token-label.sql', '0014_grant-family-link.sql',
+  '0015_audit-log.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function d1Over(raw: Database.Database): D1Database {
@@ -254,5 +255,86 @@ describe('P3 audit — lifecycle + chokepoint events', () => {
     expect(r.token.length).toBeGreaterThan(0);
     const login = await post(env, '/api/auth/login', { username: 'unbound', password: OWNER_PW });
     expect(login.status).toBe(200);
+  });
+});
+
+/**
+ * The D1 PROJECTION + the user-facing read route (GET /api/audit/recent). The projection takes only the
+ * security-meaningful subset (auth + mcp + any deny) — NOT the owner's routine rest-allow chatter — and
+ * the read route is owner-only (op:'share' → agent tokens 403) and account-scoped (BOLA).
+ */
+describe('P3 audit — D1 projection + the "Account activity" read route', () => {
+  let raw: Database.Database;
+  beforeEach(() => {
+    raw = new Database(':memory:');
+    for (const m of ALL_MIGRATIONS) raw.exec(m);
+  });
+
+  const recent = (env: Env, token: string) =>
+    app.request('/api/audit/recent', { headers: { Authorization: `Bearer ${token}` } }, env);
+
+  interface ActivityEvent {
+    id: number; ts: string; surface: string; action: string; result: string;
+    principalKind: string; resourceKind: string | null; detail: string | null;
+  }
+  const eventsOf = async (res: Response) =>
+    ((await res.json()) as { events: ActivityEvent[] }).events;
+
+  it('projects a LOGIN into the feed and the owner can read it back (newest-first, account-scoped)', async () => {
+    const env = makeEnv(raw); // AUDIT unbound is fine — the D1 projection does not depend on AE
+    const { token } = await signupToken(env, 'feed-owner', OWNER_PW);
+    await post(env, '/api/auth/login', { username: 'feed-owner', password: OWNER_PW });
+    const res = await recent(env, token);
+    expect(res.status).toBe(200);
+    const events = await eventsOf(res);
+    const login = events.find((e) => e.action === 'login' && e.result === 'allow');
+    expect(login).toBeDefined();
+    expect(login!.surface).toBe('auth');
+    // The response carries no secret (no credentialRef/token field leaks through the projection view).
+    expect(JSON.stringify(events)).not.toContain('credentialRef');
+  });
+
+  it('projects agent MINT + the agent\'s MCP access into the OWNER feed, but NOT routine rest-allow', async () => {
+    const env = makeEnv(raw);
+    const { token } = await signupToken(env, 'feed-mcp', OWNER_PW);
+    const agent = (await (await post(env, '/api/agent-tokens', { password: OWNER_PW }, token)).json()) as { token: string };
+    // An agent reads via MCP (projected) ...
+    await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_notebooks', arguments: {} } }, agent.token);
+    // ... and the owner makes a routine rest-allow call (listing tokens) — must NOT be projected.
+    await app.request('/api/agent-tokens', { headers: { Authorization: `Bearer ${token}` } }, env);
+
+    const events = await eventsOf(await recent(env, token));
+    expect(events.some((e) => e.action === 'token.mint' && e.result === 'allow')).toBe(true);
+    expect(events.some((e) => e.surface === 'mcp')).toBe(true);
+    // The owner's own rest-allow share/read traffic stays AE-only — never in the readable feed.
+    expect(events.some((e) => e.surface === 'rest' && e.result === 'allow')).toBe(false);
+  });
+
+  it('projects a DENY (failed login on a known account) so the owner can catch it live', async () => {
+    const env = makeEnv(raw);
+    const { token } = await signupToken(env, 'feed-deny', OWNER_PW);
+    await post(env, '/api/auth/login', { username: 'feed-deny', password: 'wrong-password' });
+    const events = await eventsOf(await recent(env, token));
+    expect(events.some((e) => e.action === 'login' && e.result === 'deny')).toBe(true);
+  });
+
+  it('BOLA: account B never sees account A\'s activity', async () => {
+    const env = makeEnv(raw);
+    await signupToken(env, 'feed-a', OWNER_PW);
+    await post(env, '/api/auth/login', { username: 'feed-a', password: OWNER_PW });
+    const { token: tokenB } = await signupToken(env, 'feed-b', OWNER_PW);
+    await post(env, '/api/auth/login', { username: 'feed-b', password: OWNER_PW });
+    const events = await eventsOf(await recent(env, tokenB));
+    // Both A and B logged in (one allow-login projected each, scoped to its own account). B's feed must
+    // contain EXACTLY its own (1) — if account-scoping leaked, A's would show too and the count would be 2.
+    expect(events.filter((e) => e.action === 'login' && e.result === 'allow').length).toBe(1);
+  });
+
+  it('OWNER-ONLY: an agent token is FORBIDDEN from reading the audit feed (op:share excludes agents)', async () => {
+    const env = makeEnv(raw);
+    const { token } = await signupToken(env, 'feed-guard', OWNER_PW);
+    const agent = (await (await post(env, '/api/agent-tokens', { password: OWNER_PW }, token)).json()) as { token: string };
+    const res = await recent(env, agent.token);
+    expect(res.status).toBe(403);
   });
 });

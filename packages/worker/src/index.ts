@@ -33,6 +33,7 @@ import { transcribe } from './routes/transcribe.js';
 import { unfurl } from './routes/unfurl.js';
 import { blob } from './routes/blob.js';
 import { agentTokens } from './routes/agentTokens.js';
+import { auditRoutes } from './routes/audit.js';
 import { mcp } from './routes/mcp.js';
 
 const app = new Hono<AppEnv>();
@@ -93,6 +94,14 @@ app.route('/api/auth', passwordAuth);
 // ---------------------------------------------------------------------------
 
 app.route('/api/auth/sessions', sessions);
+
+// ---------------------------------------------------------------------------
+// Account-activity surface (ROAD-0005 P3 — the user-facing audit view). Owner-authed read of the account's
+// recent security events from the `auditLog` D1 projection (the live trust surface). op:'share' so agent
+// tokens 403 — a connected AI can never read the owner's access history. BOLA-scoped on server accountId.
+// ---------------------------------------------------------------------------
+
+app.route('/api/audit', auditRoutes);
 
 // ---------------------------------------------------------------------------
 // Voice-to-text TRANSCRIBE route (custom-keyboard spec §6, stage 2) — authenticated Workers AI Whisper.

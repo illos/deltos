@@ -400,7 +400,7 @@ passwordAuth.post('/login', async (c) => {
     // P3 audit: a failed login (unknown user OR wrong password) — a brute-force / spray signal. accountId
     // is recorded only when the username resolved (wrong-password); empty for an unknown user. The 401
     // body stays UNIFORM (no oracle) — the audit log is internal, never an enumeration surface.
-    audit(c, {
+    await audit(c, {
       surface: 'auth',
       action: 'login',
       result: 'deny',
@@ -444,7 +444,7 @@ passwordAuth.post('/login', async (c) => {
     if (!totp.ok) {
       // Wrong code → a real second-factor failure; record it (brute-force protection on the 6-digit code).
       await recordFailure(s, bucket, LOGIN_BACKOFF, nowMs);
-      audit(c, {
+      await audit(c, {
         surface: 'auth',
         action: 'login',
         result: 'deny',
@@ -478,7 +478,7 @@ passwordAuth.post('/login', async (c) => {
   }
   // P3 audit: a successful login. credentialRef = the new session family (so a later session.revoke /
   // access line ties back here); detail flags whether the second factor was exercised.
-  audit(c, {
+  await audit(c, {
     surface: 'auth',
     action: 'login',
     result: 'allow',

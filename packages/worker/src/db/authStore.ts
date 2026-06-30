@@ -51,6 +51,28 @@ export type ClaimUsernameResult =
 
 const ScopeArraySchema = z.array(ScopeSchema);
 
+/** A row to append to the P3 `auditLog` projection (the user-facing audit mirror). */
+export interface AuditLogRow {
+  accountId: string;
+  ts: string;
+  surface: string;
+  action: string;
+  result: string;
+  principalKind: string;
+  credentialRef: string | null;
+  resourceKind: string | null;
+  resourceId: string | null;
+  ip: string | null;
+  country: string | null;
+  userAgent: string | null;
+  detail: string | null;
+}
+
+/** A read-back audit entry for the "Account activity" view (the auto-increment id doubles as a stable key). */
+export interface AuditLogEntry extends AuditLogRow {
+  id: number;
+}
+
 export interface AuthStore {
   /** Persist a freshly-minted, UNCONSUMED challenge. */
   createChallenge(row: {
@@ -412,6 +434,19 @@ export interface AuthStore {
 
   /** The refresh family an access grant belongs to (Phase 2 current-session detection), or null. */
   getGrantFamilyId(grantId: string): Promise<string | null>;
+
+  /**
+   * P3 audit projection (ROAD-0005) — append ONE row to the user-facing `auditLog` D1 mirror. The
+   * tamper-proof record is the AE dataset (audit.ts); this is the queryable copy for the "Account
+   * activity" view. Called only for the security-meaningful subset (audit.ts decides what projects).
+   */
+  insertAuditLog(row: AuditLogRow): Promise<void>;
+
+  /**
+   * The account's recent activity, newest-first, capped at `limit`. Account-scoped on accountId (BOLA-safe:
+   * a caller sees ONLY their own events). Feeds the lazy "Account activity" Settings view.
+   */
+  listAuditLogForAccount(accountId: string, limit: number): Promise<AuditLogEntry[]>;
 
   /** Read the abuse-throttle bucket (gate-before-hash), or null if the bucket is clean. */
   getThrottle(bucket: string): Promise<{ failures: number; nextAllowedMs: number } | null>;
@@ -1055,6 +1090,37 @@ export function createAuthStore(db: DbAdapter): AuthStore {
         [grantId],
       );
       return row?.familyId ?? null;
+    },
+
+    async insertAuditLog(row) {
+      await db.batch([
+        {
+          sql: `INSERT INTO auditLog
+                  (accountId, ts, surface, action, result, principalKind, credentialRef,
+                   resourceKind, resourceId, ip, country, userAgent, detail)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          params: [
+            row.accountId, row.ts, row.surface, row.action, row.result, row.principalKind,
+            row.credentialRef, row.resourceKind, row.resourceId, row.ip, row.country,
+            row.userAgent, row.detail,
+          ],
+        },
+      ]);
+    },
+
+    async listAuditLogForAccount(accountId, limit) {
+      // Account-scoped (BOLA-safe) + newest-first via the (accountId, id DESC) index. `limit` is bounded
+      // by the route so a caller can't request an unbounded scan.
+      const rows = await db.all<AuditLogEntry>(
+        `SELECT id, accountId, ts, surface, action, result, principalKind, credentialRef,
+                resourceKind, resourceId, ip, country, userAgent, detail
+           FROM auditLog
+          WHERE accountId = ?
+          ORDER BY id DESC
+          LIMIT ?`,
+        [accountId, limit],
+      );
+      return rows;
     },
 
     async getThrottle(bucket) {

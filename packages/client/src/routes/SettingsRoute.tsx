@@ -19,6 +19,7 @@ import { AppearanceSection } from '../components/AppearanceSection.js';
 import { CustomDictSection } from '../components/CustomDictSection.js';
 import { ConnectClaudeSection } from '../components/ConnectClaudeSection.js';
 import { SessionsSection } from '../components/SessionsSection.js';
+import { ActivitySection } from '../components/ActivitySection.js';
 import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
 import { useSpellcheck } from '../lib/useSpellcheck.js';
 import { forceUpdate } from '../lib/forceUpdate.js';
@@ -501,6 +502,10 @@ export function SettingsRoute() {
 
       {/* Section — Connect to Claude (llm-mcp-integration.md §5; lazy off-track via the lazy SettingsRoute) */}
       <ConnectClaudeSection />
+
+      {/* Section — Account activity (ROAD-0005 P3; the user-facing audit view — a live trust surface).
+          Sits below the kill-switches it points at (Active sessions / Connect to Claude). */}
+      <ActivitySection />
 
       {/* Section 3 — About */}
       <section className="settings__section" aria-label="About">

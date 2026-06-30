@@ -1058,6 +1058,8 @@
 }
 
 .settings__row-meta--muted { color: var(--secondary); }
+/* Account-activity (P3): flag a blocked/denied event for the eye without alarm-coloring the whole row. */
+.settings__row-meta--warn { color: var(--danger, #c0392b); font-weight: 600; }
 
 .settings__row-chevron {
   color: var(--secondary);

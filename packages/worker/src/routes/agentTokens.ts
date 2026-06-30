@@ -86,7 +86,7 @@ agentTokens.post(
           );
           // P3 lifecycle: a live session that failed the mint step-up — a high-value security signal
           // (a borrowed session attempting to mint a read-all credential without the password/2FA).
-          audit(c, {
+          await audit(c, {
             surface: 'auth',
             action: 'token.mint',
             result: 'deny',
@@ -125,7 +125,7 @@ agentTokens.post(
 
       // P3 lifecycle: a new long-lived read-all credential was minted. The new grantId is the
       // credentialRef so a later revoke / agent-access line ties back to this birth event.
-      audit(c, {
+      await audit(c, {
         surface: 'auth',
         action: 'token.mint',
         result: 'allow',
@@ -192,7 +192,7 @@ agentTokens.delete(
       }
       // P3 lifecycle: an agent credential was revoked. detail = the revoked grantId (the credential the
       // act targets); credentialRef = the acting session that performed the revoke.
-      audit(c, {
+      await audit(c, {
         surface: 'auth',
         action: 'token.revoke',
         result: 'allow',

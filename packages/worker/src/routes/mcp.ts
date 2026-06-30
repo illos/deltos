@@ -158,7 +158,7 @@ async function handleToolsCall(
   const allowed = await can(principal, tool.op, toolResource);
   // P3 audit: the MCP/agent path is exactly the "compromised client" case — record every tool-call
   // decision (allow + deny), tagged surface:'mcp', so the connected-AI access trail is queryable on its own.
-  audit(c, {
+  await audit(c, {
     surface: 'mcp',
     action: tool.op,
     result: allowed ? 'allow' : 'deny',

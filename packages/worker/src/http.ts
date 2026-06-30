@@ -104,7 +104,7 @@ export function guard<TReq>(cfg: GuardConfig<TReq>, deps: GuardDeps = {}) {
     const allowed = await check(principal, cfg.op, resource);
     // P3 audit: record the authorization DECISION (allow + deny) at the chokepoint — the security-truth
     // event for every authenticated REST/sync access. Fire-and-forget; never affects the response.
-    audit(c, {
+    await audit(c, {
       surface: 'rest',
       action: cfg.op,
       result: allowed ? 'allow' : 'deny',
