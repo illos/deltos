@@ -81,3 +81,45 @@ describe('guard chokepoint ordering', () => {
     expect(handle).toHaveBeenCalledOnce();
   });
 });
+
+/**
+ * Tier-1 coarse per-principal request-rate ceiling (ROAD-0005 P4). The gate sits AFTER the F13 tripwire
+ * and BEFORE `can()` + the handler, keyed on `principal.id`. It fails OPEN — an unbound or throwing
+ * limiter must never block legitimate traffic.
+ */
+describe('guard Tier-1 request-rate ceiling', () => {
+  // A devEnv (F13 allowlist member, so the unverified stub passes the tripwire) carrying an injected
+  // native rate-limit binding stub.
+  const rateEnv = (limiter: unknown) =>
+    ({ DB: {}, ENVIRONMENT: 'development', API_RATE_LIMITER: limiter }) as unknown as Env;
+
+  it('returns 429 rate_limited and reaches NEITHER can() nor the handler when over the ceiling', async () => {
+    const check = vi.fn(async () => true);
+    const handle = vi.fn((_req: unknown, c: AppContext) => c.json({ ok: true }));
+    const app = appWith({ can: check }, handle);
+    const env = rateEnv({ limit: async () => ({ success: false }) });
+    const res = await app.request(`/t/${uuid(1)}`, {}, env);
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({ error: { code: 'rate_limited' } });
+    expect(check).not.toHaveBeenCalled();
+    expect(handle).not.toHaveBeenCalled();
+  });
+
+  it('proceeds normally when the limiter reports under the ceiling', async () => {
+    const handle = vi.fn((_req: unknown, c: AppContext) => c.json({ ok: true }));
+    const app = appWith({ can: async () => true }, handle);
+    const env = rateEnv({ limit: async () => ({ success: true }) });
+    const res = await app.request(`/t/${uuid(1)}`, {}, env);
+    expect(res.status).toBe(200);
+    expect(handle).toHaveBeenCalledOnce();
+  });
+
+  it('FAILS OPEN — an unbound limiter binding proceeds normally', async () => {
+    const handle = vi.fn((_req: unknown, c: AppContext) => c.json({ ok: true }));
+    const app = appWith({ can: async () => true }, handle);
+    // devEnv has no API_RATE_LIMITER → principalRateAllow returns true (allow).
+    const res = await app.request(`/t/${uuid(1)}`, {}, devEnv);
+    expect(res.status).toBe(200);
+    expect(handle).toHaveBeenCalledOnce();
+  });
+});

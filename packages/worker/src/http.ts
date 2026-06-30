@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import type { CanCheck, Op, Resource, RequestPrincipal } from '@deltos/shared';
 import { resolvePrincipal, can } from './auth.js';
+import { principalRateAllow } from './rateLimit.js';
 import { audit, credentialRefOf } from './audit.js';
 import type { AppContext } from './context.js';
 
@@ -98,6 +99,22 @@ export function guard<TReq>(cfg: GuardConfig<TReq>, deps: GuardDeps = {}) {
         503,
         'auth_not_configured',
         'refusing an unverified principal outside an explicit non-prod environment',
+      );
+    }
+    // Tier-1 coarse per-principal request-rate ceiling (ROAD-0005 P4). Keyed on `principal.id` (the
+    // server-derived account) — only here, AFTER the F13 tripwire has confirmed a verified principal,
+    // so we never bucket on an unverified stub. This is a coarse abuse/DoS ceiling on the hot REST/sync
+    // surface: the binding is in-memory (one edge call, NO D1 write) so it doesn't regress load-feel, and
+    // it FAILS OPEN (unbound/throws → allow). It is NOT the denial-of-wallet cost cap — that is the durable
+    // D1 `usageCounter` on the paid endpoints. No audit() for the 429: Tier-1 is coarse/fail-open, not an
+    // authz event.
+    const underRate = await principalRateAllow(c.env.API_RATE_LIMITER, principal.id);
+    if (!underRate) {
+      return apiError(
+        c,
+        429,
+        'rate_limited',
+        'request rate ceiling exceeded — slow down and retry shortly',
       );
     }
     const resource = cfg.resource(parsed.data);
