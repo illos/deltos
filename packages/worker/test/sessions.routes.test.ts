@@ -224,7 +224,7 @@ describe('active sessions — list / revoke-one / signout-others (route + chokep
     expect(await listSessions(env, a.token)).toHaveLength(3);
 
     // Mint an agent token (NULL familyId) — it MUST survive signout-others.
-    const minted = (await (await post(env, '/api/agent-tokens', { label: 'Claude' }, authed(a.token))).json()) as { grantId: string };
+    const minted = (await (await post(env, '/api/agent-tokens', { label: 'Claude', password: a.password }, authed(a.token))).json()) as { grantId: string }; // H1: mint needs step-up password
     const currentFamily = (await listSessions(env, a.token)).find((s) => s.current)!.familyId;
 
     const res = await post(env, '/api/auth/sessions/signout-others', {}, authed(a.token));
@@ -251,7 +251,7 @@ describe('active sessions — list / revoke-one / signout-others (route + chokep
   it('an agent token can NEVER list or revoke sessions (op share → 403)', async () => {
     const { handle: a } = await loginSession(env, 'heidi');
     const aFamily = (await listSessions(env, a.token))[0].familyId;
-    const agent = (await (await post(env, '/api/agent-tokens', {}, authed(a.token))).json()) as { token: string };
+    const agent = (await (await post(env, '/api/agent-tokens', { password: a.password }, authed(a.token))).json()) as { token: string }; // H1: mint needs step-up password
 
     expect((await get(env, '/api/auth/sessions', agent.token)).status).toBe(403);
     expect((await del(env, `/api/auth/sessions/${aFamily}`, agent.token)).status).toBe(403);
