@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv, AppContext } from '../context.js';
 import { apiError, NON_PROD_ENVIRONMENTS } from '../http.js';
 import { resolvePrincipal } from '../auth.js';
+import { chargeUsage, quotaExceeded } from '../usage.js';
 
 /** Max HTML bytes to stream from the target — we only need the <head>. */
 const MAX_HTML_BYTES = 256 * 1024;
@@ -37,9 +38,10 @@ unfurl.get('/', async (c: AppContext) => {
   //    dev-only principal is refused outside an explicit non-prod environment. No un-authed
   //    caller reaches any fetch (which is paid egress).
   //
-  //    DEFERRED — per-account durable throttle (same class as transcribe §6 ruling): KV cache
-  //    covers re-fetch of the SAME url, but unique-URL flooding is unthrottled at this layer.
-  //    HARD-required before >1 user; low risk at solo-dogfood scale.
+  //    ENFORCED (Tier-2, ROAD-0005 P4) — per-account durable daily quota (denial-of-wallet): every
+  //    valid unfurl now charges the server-derived account (step 4 below). The KV cache covers re-fetch
+  //    of the SAME url, but unique-URL flooding — which the cache can't absorb — is now bounded by the
+  //    daily cap. This closes the deferral that flagged a per-account throttle as HARD-required before >1 user.
   const principal = await resolvePrincipal(c);
   if (
     principal.verification.method === 'unverified' &&
@@ -68,14 +70,24 @@ unfurl.get('/', async (c: AppContext) => {
     return apiError(c, 400, 'invalid_url', ssrfErr);
   }
 
-  // 4. KV cache lookup (gracefully skipped when UNFURL_CACHE is unbound).
+  // 4. Tier-2 denial-of-wallet daily quota (ROAD-0005 P4). Charge the server-derived account (principal.id —
+  //    BOLA-safe) AFTER the cheap input/SSRF rejection and BEFORE the cache lookup + any paid egress fetch.
+  //    Charging ahead of the KV cache means a cache HIT (which incurs no egress) still counts — intended: the
+  //    cap bounds TOTAL calls, the real lever against unique-URL flooding the cache can't absorb. Fail-CLOSED:
+  //    a chargeUsage D1 error throws rather than allows, the correct posture for the cost guard.
+  const decision = await chargeUsage(c, principal.id, 'unfurl');
+  if (!decision.allowed) {
+    return quotaExceeded(c, decision);
+  }
+
+  // 5. KV cache lookup (gracefully skipped when UNFURL_CACHE is unbound).
   const cacheKey = toCacheKey(parsed);
   if (c.env.UNFURL_CACHE) {
     const cached = (await c.env.UNFURL_CACHE.get(cacheKey, 'json')) as UnfurlResult | null;
     if (cached) return c.json(cached);
   }
 
-  // 5. Fetch, following redirects manually so every hop is re-checked for SSRF.
+  // 6. Fetch, following redirects manually so every hop is re-checked for SSRF.
   let html: string;
   let finalUrl: string;
   try {
@@ -88,10 +100,10 @@ unfurl.get('/', async (c: AppContext) => {
     return apiError(c, 502, 'fetch_failed', 'could not retrieve the target URL');
   }
 
-  // 6. Parse og: / standard meta tags.
+  // 7. Parse og: / standard meta tags.
   const result = parseMetadata(html, finalUrl);
 
-  // 7. Cache and return.
+  // 8. Cache and return.
   if (c.env.UNFURL_CACHE) {
     await c.env.UNFURL_CACHE.put(cacheKey, JSON.stringify(result), {
       expirationTtl: CACHE_TTL_SECONDS,

@@ -215,4 +215,34 @@ describe('POST /api/transcribe — voice-to-text (spec §6)', () => {
     expect(res.status).toBe(502);
     expect((await res.json() as { error: { code: string } }).error.code).toBe('transcription_failed');
   });
+
+  it('over the daily quota: 429 quota_exceeded BEFORE any (paid) inference (Tier-2 denial-of-wallet, ROAD-0005 P4)', async () => {
+    const raw = freshDb();
+    const today = new Date().toISOString().slice(0, 10); // today's UTC day bucket
+    // Pre-seed the durable counter AT the cap for the dev account (principal.id = 'local-account' for the
+    // non-prod unverified principal) so the very next call is over budget — no need to make 1000 real calls.
+    raw
+      .prepare(`INSERT INTO usageCounter (accountId, metric, dayBucket, count, updatedAt) VALUES (?, 'transcribe', ?, 1000, ?)`)
+      .run('local-account', today, new Date().toISOString());
+
+    const { ai } = stubAI();
+    const res = await postAudio(makeEnv({ AI: ai as unknown as Ai }, raw), fakeAudio());
+    expect(res.status).toBe(429);
+    expect((await res.json() as { error: { code: string } }).error.code).toBe('quota_exceeded');
+    expect(ai.run).not.toHaveBeenCalled(); // charged BEFORE buffering/inference — no paid work on a rejected call
+  });
+
+  it('under quota: a normal call succeeds AND bumps the durable usageCounter row (Tier-2 charge)', async () => {
+    const raw = freshDb();
+    const today = new Date().toISOString().slice(0, 10);
+    const { ai } = stubAI({ text: 'metered transcript' });
+    const res = await postAudio(makeEnv({ AI: ai as unknown as Ai }, raw), fakeAudio());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ transcript: 'metered transcript' });
+    // The charge incremented the per-account/per-UTC-day counter from 0 → 1.
+    const row = raw
+      .prepare(`SELECT count FROM usageCounter WHERE accountId = ? AND metric = ? AND dayBucket = ?`)
+      .get('local-account', 'transcribe', today) as { count: number } | undefined;
+    expect(row?.count).toBe(1);
+  });
 });

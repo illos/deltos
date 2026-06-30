@@ -531,4 +531,42 @@ describe('GET /api/unfurl — route integration', () => {
     },
     T,
   );
+
+  it('over the daily quota: 429 quota_exceeded BEFORE any fetch (Tier-2 denial-of-wallet, ROAD-0005 P4)', async () => {
+    const raw = freshDb();
+    const today = new Date().toISOString().slice(0, 10); // today's UTC day bucket
+    // Pre-seed AT the unfurl cap for the dev account (principal.id = 'local-account') so the next call is over budget.
+    raw
+      .prepare(`INSERT INTO usageCounter (accountId, metric, dayBucket, count, updatedAt) VALUES (?, 'unfurl', ?, 2000, ?)`)
+      .run('local-account', today, new Date().toISOString());
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await getUnfurl(makeEnv({}, raw), 'https://example.com/');
+    expect(res.status).toBe(429);
+    expect((await res.json() as { error: { code: string } }).error.code).toBe('quota_exceeded');
+    expect(fetchMock).not.toHaveBeenCalled(); // charged before the cache lookup + egress fetch
+  });
+
+  it('under quota: a normal call succeeds AND bumps the durable usageCounter row (Tier-2 charge)', async () => {
+    const raw = freshDb();
+    const today = new Date().toISOString().slice(0, 10);
+    const html = ogHtml({ title: 'Metered Page' });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(html, { status: 200, headers: { 'content-type': 'text/html' } }),
+      ),
+    );
+
+    const res = await getUnfurl(makeEnv({}, raw), 'https://example.com/metered');
+    expect(res.status).toBe(200);
+    expect((await res.json() as { title: string }).title).toBe('Metered Page');
+    // The charge incremented the per-account/per-UTC-day counter from 0 → 1.
+    const row = raw
+      .prepare(`SELECT count FROM usageCounter WHERE accountId = ? AND metric = ? AND dayBucket = ?`)
+      .get('local-account', 'unfurl', today) as { count: number } | undefined;
+    expect(row?.count).toBe(1);
+  });
 });
