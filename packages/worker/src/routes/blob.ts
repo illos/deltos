@@ -4,6 +4,7 @@ import type { AppEnv, AppContext } from '../context.js';
 import type { Env } from '../env.js';
 import { apiError, NON_PROD_ENVIRONMENTS } from '../http.js';
 import { resolvePrincipal } from '../auth.js';
+import { chargeUsage, quotaExceeded } from '../usage.js';
 
 /**
  * BLOB host capability (docs/specs/plugin-support.md §7, A4 #126) — the first SERVER-ENFORCED plugin host
@@ -25,8 +26,8 @@ import { resolvePrincipal } from '../auth.js';
  *      sanitizes the content-type (html/svg/xml → octet-stream) so a stored file can never execute as
  *      active content on the app origin. (Inline preview is the CLIENT fetching bytes + an object URL.)
  *   4. Per-account QUOTA + per-object SIZE cap enforced HERE (the host, never the plugin). Durable
- *      per-account RATE limiting is deferred pre-real-users (cf. the transcribe-throttle ruling) but
- *      HARD-required before >1 user — flagged, not silently skipped.
+ *      per-account RATE limiting is now ENFORCED (Tier-2 daily blobWrite quota, ROAD-0005 P4) on the WRITE
+ *      paths (buffered upload + presign) — the deferral the transcribe-throttle ruling flagged is closed.
  */
 
 /** Per-object hard cap. Matches the transcribe final-pass ceiling; raise only with a secSys ruling. */
@@ -175,6 +176,11 @@ blob.post('/', async (c: AppContext) => {
     return apiError(c, 400, 'hash_mismatch', 'declared content hash does not match the uploaded bytes');
   }
 
+  // Tier-2 denial-of-wallet daily quota (ROAD-0005 P4): meter the WRITE operation on the server-derived
+  // account BEFORE touching R2; over-cap → 429 until the UTC day rolls. Fail-CLOSED.
+  const decision = await chargeUsage(c, accountId, 'blobWrite');
+  if (!decision.allowed) return quotaExceeded(c, decision);
+
   const key = `${accountId}/${hash}`;
   const mime = c.req.header('x-blob-mime') ?? c.req.header('content-type') ?? 'application/octet-stream';
 
@@ -247,6 +253,12 @@ blob.post('/presign', async (c: AppContext) => {
   if (typeof mime !== 'string' || mime.length === 0) {
     return apiError(c, 400, 'invalid_request', 'mime is required');
   }
+
+  // Tier-2 denial-of-wallet daily quota (ROAD-0005 P4): meter the presign (= a WRITE intent) on the
+  // server-derived account BEFORE signing; over-cap → 429 until the UTC day rolls. Fail-CLOSED. Charging
+  // presign covers the upload — /confirm is a cheap finalize and is NOT metered.
+  const decision = await chargeUsage(c, accountId, 'blobWrite');
+  if (!decision.allowed) return quotaExceeded(c, decision);
 
   // Advisory pre-flight quota (§3.1): block an obviously-over-quota upload BEFORE it starts. The DECLARED size is
   // client-claimed; the AUTHORITATIVE enforcement is the post-hoc HEAD in /confirm (§3.3). Courtesy gate only.

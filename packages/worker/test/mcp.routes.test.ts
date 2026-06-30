@@ -262,4 +262,30 @@ describe('MCP server — protocol / auth / tools (POST /api/mcp)', () => {
     const res = await rpc(env, { jsonrpc: '2.0', method: 'notifications/initialized' }, agentTok);
     expect(res.status).toBe(429);
   });
+
+  // --- D DAILY QUOTA (ROAD-0005 P4, Tier-2): per-ACCOUNT denial-of-wallet ceiling ----------------
+
+  it('DAILY QUOTA: an account over its daily MCP ceiling is 429 (JSON-RPC rate_limited) across all its tokens', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    // Pre-seed the per-ACCOUNT mcp counter AT the cap (50000/day, DAILY_QUOTA.mcp). The cap is keyed on the
+    // OWNING account (principal.id = accountA), so any of the account's tokens is over budget.
+    raw.prepare(
+      `INSERT INTO usageCounter (accountId, metric, dayBucket, count, updatedAt) VALUES (?, 'mcp', ?, 50000, ?)`,
+    ).run(accountA, today, new Date().toISOString());
+
+    const res = await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_notebooks', arguments: {} } }, agentA);
+    expect(res.status).toBe(429);
+    const body = (await res.json()) as { error?: { code?: number } };
+    expect(body.error?.code).toBe(-32029); // RPC.RATE_LIMITED
+  });
+
+  it('DAILY QUOTA: a call under the daily ceiling succeeds and increments the per-account mcp counter', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, agentA);
+    expect(res.status).toBe(200);
+    const row = raw
+      .prepare('SELECT count FROM usageCounter WHERE accountId=? AND metric=? AND dayBucket=?')
+      .get(accountA, 'mcp', today) as { count: number } | undefined;
+    expect(row?.count).toBe(1);
+  });
 });

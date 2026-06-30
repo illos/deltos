@@ -198,6 +198,33 @@ describe('POST /api/plugin/blob/presign — authorize a direct-to-R2 PUT (DR-1 /
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('quota_exceeded');
   });
 
+  it('Tier-2 (ROAD-0005 P4): 429 quota_exceeded once the daily blobWrite cap is reached — before signing', async () => {
+    const raw = freshDb();
+    const { bucket } = stubR2();
+    const env = makeEnv({ BLOBS: bucket }, raw);
+    const today = new Date().toISOString().slice(0, 10);
+    // Pre-seed the dev account's counter AT the cap (2000/day) so the presign is over budget.
+    raw.prepare(
+      `INSERT INTO usageCounter (accountId, metric, dayBucket, count, updatedAt) VALUES (?, 'blobWrite', ?, 2000, ?)`,
+    ).run('local-account', today, new Date().toISOString());
+    const res = await presign(env, { hash: HASH, size: BIG, mime: 'application/pdf' });
+    expect(res.status).toBe(429);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('quota_exceeded');
+  });
+
+  it('Tier-2: a presign under quota succeeds and increments the usageCounter blobWrite row', async () => {
+    const raw = freshDb();
+    const { bucket } = stubR2();
+    const env = makeEnv({ BLOBS: bucket }, raw);
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await presign(env, { hash: HASH, size: BIG, mime: 'application/pdf' });
+    expect(res.status).toBe(200);
+    const row = raw
+      .prepare('SELECT count FROM usageCounter WHERE accountId=? AND metric=? AND dayBucket=?')
+      .get('local-account', 'blobWrite', today) as { count: number } | undefined;
+    expect(row?.count).toBe(1);
+  });
+
   it('fail-closed when the R2 S3 credentials are unset → 503', async () => {
     const { bucket } = stubR2();
     const env = makeEnv({ BLOBS: bucket, R2_ACCESS_KEY_ID: undefined, R2_SECRET_ACCESS_KEY: undefined });

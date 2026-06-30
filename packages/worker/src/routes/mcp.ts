@@ -8,6 +8,7 @@ import { d1Adapter } from '../db/schema.js';
 import { createAuthStore } from '../db/authStore.js';
 import { fixedWindowAllow } from '../rateLimit.js';
 import { MCP_RATE_LIMIT } from '../authPolicy.js';
+import { dayBucket, DAILY_QUOTA } from '../abusePolicy.js';
 import {
   JSONRPC_VERSION,
   RPC,
@@ -89,8 +90,9 @@ mcp.post('/', async (c) => {
   //    can't exhaust another's budget. Meters EVERY authenticated request — INCLUDING notifications — so a
   //    notification flood can't pound the auth/D1 read path uncapped (it sits ABOVE the notification ack).
   //    After the auth gate (only authenticated callers consume budget); over-limit → JSON-RPC error + 429.
+  const store = createAuthStore(d1Adapter(c.env.DB));
   const allowed = await fixedWindowAllow(
-    createAuthStore(d1Adapter(c.env.DB)),
+    store,
     `mcp:${grant!.grantId}`,
     MCP_RATE_LIMIT.limit,
     MCP_RATE_LIMIT.windowMs,
@@ -98,6 +100,22 @@ mcp.post('/', async (c) => {
   );
   if (!allowed) {
     return c.json(rpcError(id, RPC.RATE_LIMITED, 'rate limit exceeded — slow down and retry shortly'), 429);
+  }
+
+  // 3. D DAILY QUOTA (ROAD-0005 P4, Tier-2): durable per-ACCOUNT, per-UTC-day denial-of-wallet ceiling on
+  //    top of the per-TOKEN window above. principal.id is the SERVER-derived owning account — for an agent
+  //    token this is the owner's accountId, so the cap bounds total daily spend ACROSS all of the account's
+  //    tokens (a fresh token can't reset the budget). Fail-CLOSED. Over-cap → JSON-RPC error + 429 until the
+  //    day rolls. Reuses the store already built for the per-token check.
+  const quota = await store.chargeUsage(
+    principal.id,
+    'mcp',
+    dayBucket(Date.now()),
+    DAILY_QUOTA.mcp,
+    new Date().toISOString(),
+  );
+  if (!quota.allowed) {
+    return c.json(rpcError(id, RPC.RATE_LIMITED, 'daily request quota reached — retry after UTC midnight'), 429);
   }
 
   // 4. Notifications (e.g. notifications/initialized) get a bare 202 ack — never a JSON-RPC response.

@@ -354,3 +354,40 @@ describe('file-notes Slice 1 — dual-WebP pre-bake + inline derivative routes',
     expect((await getVariant(env, hash, 'view', { Authorization: `Bearer ${tokenB}` })).status).toBe(404);
   }, T);
 });
+
+/**
+ * ROAD-0005 P4 (Tier-2) — denial-of-wallet daily blobWrite quota. The buffered upload meters one blobWrite
+ * unit per call BEFORE touching R2; at the per-account/per-UTC-day cap it 429s (`quota_exceeded`) until the
+ * day rolls. The dev unverified principal is `local-account` (auth.ts), so that is the metered account here.
+ */
+describe('POST /api/plugin/blob — Tier-2 daily blobWrite quota', () => {
+  const today = () => new Date().toISOString().slice(0, 10);
+
+  it('429 quota_exceeded once the daily blobWrite cap is reached', async () => {
+    const raw = freshDb();
+    const { bucket } = stubR2();
+    const env = makeEnv({ BLOBS: bucket }, raw);
+    // Pre-seed the counter AT the cap (2000/day, abusePolicy DAILY_QUOTA.blobWrite) so the next write is over.
+    raw.prepare(
+      `INSERT INTO usageCounter (accountId, metric, dayBucket, count, updatedAt) VALUES (?, 'blobWrite', ?, 2000, ?)`,
+    ).run('local-account', today(), new Date().toISOString());
+
+    const res = await upload(env, bytes(256));
+    expect(res.status).toBe(429);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('quota_exceeded');
+  });
+
+  it('a normal upload under quota succeeds and increments the usageCounter row', async () => {
+    const raw = freshDb();
+    const { bucket } = stubR2();
+    const env = makeEnv({ BLOBS: bucket }, raw);
+
+    const res = await upload(env, bytes(256));
+    expect(res.status).toBe(200);
+
+    const row = raw
+      .prepare('SELECT count FROM usageCounter WHERE accountId=? AND metric=? AND dayBucket=?')
+      .get('local-account', 'blobWrite', today()) as { count: number } | undefined;
+    expect(row?.count).toBe(1);
+  });
+});
