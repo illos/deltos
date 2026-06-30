@@ -456,6 +456,30 @@ export interface AuthStore {
 
   /** Clear a throttle bucket after a successful auth (so a legit user is never progressively slowed). */
   clearThrottle(bucket: string): Promise<void>;
+
+  /**
+   * ROAD-0005 P4 denial-of-wallet (Tier 2) — charge ONE unit of `metric` to (accountId, dayBucket) IFF the
+   * day's running count is below `cap`. Returns `{ allowed:false, count }` (without charging) once the
+   * budget is spent. The read-then-conditional-bump has a small race under concurrency that may let the
+   * count slightly exceed `cap`; accepted for a COARSE cost ceiling (it never under-counts to the point of
+   * defeating the guard). Upsert into `usageCounter` (migration 0016).
+   */
+  chargeUsage(
+    accountId: string,
+    metric: string,
+    dayBucket: string,
+    cap: number,
+    updatedAt: string,
+  ): Promise<{ allowed: boolean; count: number }>;
+
+  /** Reap `usageCounter` rows whose dayBucket is strictly before `beforeDayBucket` ('YYYY-MM-DD'). */
+  pruneUsage(beforeDayBucket: string): Promise<void>;
+
+  /**
+   * Reap `auditLog` (the D1 PROJECTION mirror) rows older than `beforeIso`. The append-only AE dataset is
+   * the forensic truth and is NEVER pruned — only this readable D1 copy is bounded (retention sweep).
+   */
+  pruneAuditLog(beforeIso: string): Promise<void>;
 }
 
 /** A password credential record (migration 0004). `totpEnabled` is the 0/1 column surfaced as a boolean. */
@@ -1147,6 +1171,36 @@ export function createAuthStore(db: DbAdapter): AuthStore {
 
     async clearThrottle(bucket) {
       await db.batch([{ sql: `DELETE FROM authThrottle WHERE bucket = ?`, params: [bucket] }]);
+    },
+
+    async chargeUsage(accountId, metric, dayBucket, cap, updatedAt) {
+      const row = await db.first<{ count: number }>(
+        `SELECT count FROM usageCounter WHERE accountId = ? AND metric = ? AND dayBucket = ?`,
+        [accountId, metric, dayBucket],
+      );
+      const current = row?.count ?? 0;
+      if (current >= cap) return { allowed: false, count: current };
+      await db.batch([
+        {
+          sql: `INSERT INTO usageCounter (accountId, metric, dayBucket, count, updatedAt)
+                VALUES (?, ?, ?, 1, ?)
+                ON CONFLICT(accountId, metric, dayBucket) DO UPDATE SET
+                  count = count + 1,
+                  updatedAt = excluded.updatedAt`,
+          params: [accountId, metric, dayBucket, updatedAt],
+        },
+      ]);
+      return { allowed: true, count: current + 1 };
+    },
+
+    async pruneUsage(beforeDayBucket) {
+      await db.batch([
+        { sql: `DELETE FROM usageCounter WHERE dayBucket < ?`, params: [beforeDayBucket] },
+      ]);
+    },
+
+    async pruneAuditLog(beforeIso) {
+      await db.batch([{ sql: `DELETE FROM auditLog WHERE ts < ?`, params: [beforeIso] }]);
     },
   };
 }

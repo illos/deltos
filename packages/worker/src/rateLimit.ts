@@ -1,4 +1,29 @@
 import type { AuthStore } from './db/authStore.js';
+import type { Env } from './env.js';
+
+/**
+ * Tier-1 coarse per-principal request-rate ceiling over the native Workers rate-limit binding
+ * (`env.API_RATE_LIMITER`, configured in wrangler.jsonc; ROAD-0005 P4). One in-memory edge call, NO D1
+ * write — so it can sit on the hot REST/sync chokepoint (`guard()`) without regressing load-feel.
+ *
+ * FAIL-OPEN by design: this is a coarse abuse/DoS ceiling, NOT a security invariant and NOT the cost cap
+ * (the durable D1 `usageCounter`, `usage.ts`, is the hard denial-of-wallet guard). The binding is per-colo
+ * + eventually-consistent ("intentionally not an accurate accounting system" — CF docs); letting an
+ * unbound binding (tests) or a transient limiter error through is correct — it must never block legitimate
+ * traffic. Returns true (allow) when the binding is absent or throws.
+ */
+export async function principalRateAllow(
+  limiter: Env['API_RATE_LIMITER'],
+  key: string,
+): Promise<boolean> {
+  if (!limiter) return true;
+  try {
+    const { success } = await limiter.limit({ key });
+    return success;
+  } catch {
+    return true;
+  }
+}
 
 /**
  * Fixed-window request rate-limit over the `authThrottle` store, reused as a counter (ROAD-0005 P0 item C):

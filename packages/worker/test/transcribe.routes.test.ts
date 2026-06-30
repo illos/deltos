@@ -33,7 +33,8 @@ const migrations = [
   '0012_custom-dictionary.sql',
   '0013_agent-token-label.sql',
   '0014_grant-family-link.sql',
-  '0015_audit-log.sql',].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
+  '0015_audit-log.sql',
+  '0016_usage-counter.sql',].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function d1Over(raw: Database.Database): D1Database {
   const prepare = (sql: string) => {

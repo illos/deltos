@@ -88,6 +88,24 @@
   "r2_buckets": [
     { "binding": "BLOBS", "bucket_name": "deltos-blobs" },
   ],
+  // Coarse per-principal request-RATE ceiling for the authenticated surface (ROAD-0005 P4, Tier 1). The
+  // native Workers rate-limit binding — in-memory, per-colo, NO D1 write — checked at the REST/sync
+  // chokepoint (guard()) and the MCP dispatcher, keyed by principal. 200 req / 10s ≈ 1200/min per
+  // principal per colo: generous vs. legit sync (~30/min) but stops a runaway/abusive client. period
+  // must be 10 or 60 (binding constraint). NOT the cost cap — that's the durable D1 usageCounter (Tier 2).
+  "ratelimits": [
+    {
+      "name": "API_RATE_LIMITER",
+      "namespace_id": "2001",
+      "simple": { "limit": 200, "period": 10 },
+    },
+  ],
+  // Scheduled retention prune (ROAD-0005 P4, Tier 3) — index.ts `scheduled()` reaps the D1 mirrors: the
+  // user-facing `auditLog` projection (>90d) and the `usageCounter` daily counters (>7d). The append-only
+  // AE audit dataset is the forensic truth and is NEVER pruned. Daily at 04:00 UTC (low-traffic).
+  "triggers": {
+    "crons": ["0 4 * * *"],
+  },
   //
   // Reserved per the locked architecture — NOT wired in Phase 0:
   //   - Durable Objects (live collaboration's promote-to-DO seam; the E2EE relay)

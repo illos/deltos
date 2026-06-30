@@ -35,6 +35,12 @@ import { blob } from './routes/blob.js';
 import { agentTokens } from './routes/agentTokens.js';
 import { auditRoutes } from './routes/audit.js';
 import { mcp } from './routes/mcp.js';
+import { createAuthStore } from './db/authStore.js';
+import {
+  AUDIT_LOG_RETENTION_DAYS,
+  USAGE_COUNTER_RETENTION_DAYS,
+  dayBucket,
+} from './abusePolicy.js';
 
 const app = new Hono<AppEnv>();
 
@@ -379,4 +385,31 @@ app.put(
 // Unknown /api/* paths get a JSON 404, never an HTML page.
 app.notFound((c) => apiError(c as AppContext, 404, 'not_found', 'no such API route'));
 
-export default app;
+/**
+ * ROAD-0005 P4 (Tier 3) — retention prune for the D1 mirrors. Bounds the user-facing `auditLog` projection
+ * and the `usageCounter` daily counters so they stay small + cheap. The append-only AE audit dataset (the
+ * forensic truth) is NEVER touched here. Cutoffs come from `abusePolicy.ts`. Errors are swallowed by the
+ * scheduled wrapper's `waitUntil` — a failed prune must never be load-bearing.
+ */
+async function pruneRetention(env: Env): Promise<void> {
+  const store = createAuthStore(d1Adapter(env.DB));
+  const nowMs = Date.now();
+  const dayMs = 24 * 60 * 60 * 1000;
+  await store.pruneAuditLog(new Date(nowMs - AUDIT_LOG_RETENTION_DAYS * dayMs).toISOString());
+  await store.pruneUsage(dayBucket(nowMs - USAGE_COUNTER_RETENTION_DAYS * dayMs));
+}
+
+// The default export carries BOTH entrypoints. We attach `scheduled` to the Hono `app` itself (rather than
+// wrapping it in a fresh `{ fetch, scheduled }` object) so the app keeps its `.fetch`/`.request` surface —
+// the test harness drives routes via `app.request(...)`, and the runtime reads `.fetch` + `.scheduled` off
+// the same object. `app.fetch` is already account-bound by Hono, so `this` resolves correctly.
+const worker = app as typeof app & {
+  scheduled: (controller: ScheduledController, env: Env, ctx: ExecutionContext) => void;
+};
+/** Cron entrypoint (wrangler.jsonc `triggers.crons`) — fire-and-forget the retention prune (P4 Tier 3). */
+worker.scheduled = (_controller, env, ctx) => {
+  ctx.waitUntil(pruneRetention(env));
+};
+
+export default worker;
+

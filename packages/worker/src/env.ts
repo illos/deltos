@@ -1,9 +1,28 @@
 /**
+ * The native Workers Rate Limiting binding (ROAD-0005 P4, Tier 1). Declared locally because the type is
+ * not in the pinned `@cloudflare/workers-types`. `limit({ key })` returns `{ success }`: false once the
+ * key exceeds its configured window (wrangler.jsonc `ratelimits`). Per-colo + eventually-consistent — a
+ * coarse abuse ceiling, never an exact accountant. See `rateLimit.ts#principalRateAllow`.
+ */
+export interface RateLimit {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
+/**
  * Worker bindings. D1 + Workers AI (voice-to-text, §6). Durable Objects (collab / E2EE relay) and R2
  * (blob store) remain reserved by the architecture and intentionally absent.
  */
 export interface Env {
   DB: D1Database;
+  /**
+   * Coarse per-principal request-RATE ceiling for the authenticated surface (ROAD-0005 P4, Tier 1). The
+   * native Workers rate-limit binding — one in-memory edge check per request, NO D1 write, so it sits on
+   * the hot REST/sync chokepoint (`guard()`) without regressing load-feel. Bounds a runaway/abusive
+   * client; NOT the cost cap (that is the durable D1 `usageCounter`, Tier 2). Optional in the type so unit
+   * tests omit it; when UNBOUND `principalRateAllow` fails OPEN (a coarse ceiling must never block legit
+   * traffic). Configured in wrangler.jsonc under `ratelimits`.
+   */
+  API_RATE_LIMITER?: RateLimit;
   /**
    * Workers AI binding (custom-keyboard spec §6 — voice-to-text). Powers POST /api/transcribe (Whisper
    * `@cf/openai/whisper-large-v3-turbo`); the same binding is reused by the later advanced-LLM spellcheck
