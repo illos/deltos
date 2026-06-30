@@ -28,6 +28,7 @@ import {
 } from './db/accountScope.js';
 import { sync } from './routes/sync.js';
 import { passwordAuth } from './routes/passwordAuth.js';
+import { sessions } from './routes/sessions.js';
 import { transcribe } from './routes/transcribe.js';
 import { unfurl } from './routes/unfurl.js';
 import { blob } from './routes/blob.js';
@@ -82,6 +83,16 @@ app.route('/api/sync', sync);
 // ---------------------------------------------------------------------------
 
 app.route('/api/auth', passwordAuth);
+
+// ---------------------------------------------------------------------------
+// Active-sessions surface (Phase 2 — sessions management) — owner-authed list / revoke-one /
+// sign-out-others over the durable refresh SESSIONS (logged-in devices). Mounted UNDER /api/auth so it
+// rides the auth surface; every route runs the same guard() chokepoint with op 'share', which an agent
+// token's read-only scope can never satisfy — so a connected MCP/agent credential can never enumerate or
+// revoke the human's sessions. Every store call is BOLA-scoped on the server-derived accountId.
+// ---------------------------------------------------------------------------
+
+app.route('/api/auth/sessions', sessions);
 
 // ---------------------------------------------------------------------------
 // Voice-to-text TRANSCRIBE route (custom-keyboard spec §6, stage 2) — authenticated Workers AI Whisper.

@@ -50,7 +50,9 @@ const ALL_MIGRATIONS = [
   '0009_backfill-default-notebooks.sql',
   '0010_nullable-notebookid-all-notes.sql',
   '0011_drop-isdefault-notebooksyncseg-notes_pull.sql',
-  '0012_custom-dictionary.sql',].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
+  '0012_custom-dictionary.sql',
+  '0013_agent-token-label.sql',
+  '0014_grant-family-link.sql',].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 const ISO_AUD = 'deltos.isolation';
 

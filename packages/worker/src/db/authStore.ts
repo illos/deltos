@@ -175,6 +175,10 @@ export interface AuthStore {
     resource: Resource;
     scope: Scope[]; // already CLAMPED at mint (F5)
     expiresAtMs: number | null; // epoch-millis; NULL = no expiry
+    // The refresh SESSION family this access grant belongs to (Phase 2 — sessions management, migration
+    // 0014). NULL for grants not minted by a session (e.g. agent tokens go through insertAgentGrant, which
+    // never lists familyId). Lets revokeSessionFamilyForAccount kill this grant when its session is revoked.
+    familyId?: string | null;
     createdAt: string; // ISO-8601 Z
   }): Promise<void>;
 
@@ -347,6 +351,9 @@ export interface AuthStore {
     expiresAtMs: number;
     rotatedAt: string | null;
     revokedAt: string | null;
+    // The device label captured at the ORIGINAL fresh-device login. Returned so a rotation can carry it
+    // forward into the successor row (the label is uniform across a family). NULL for pre-label sessions.
+    label: string | null;
   } | null>;
 
   /** Mark a refresh token spent by a rotation (its successor now exists). Idempotent on rotatedAt. */
@@ -364,6 +371,47 @@ export interface AuthStore {
 
   /** Revoke an account's outstanding access grants (owner session tokens) — completes a revoke-all. */
   revokeGrantsByAccount(accountId: string, revokedAt: string): Promise<void>;
+
+  // --- sessions management (Phase 2 — "Active sessions", migration 0014) --------------------------
+  // The list / revoke-one / sign-out-others surface. Every method here is BOLA-scoped on the SERVER-
+  // derived caller `accountId` (never a body/path field): a caller can only see/revoke ITS OWN sessions.
+  // The 0014 grant.familyId link lets a session revoke ALSO kill that session's outstanding access token
+  // in the same batch (immediate, not after the access-token TTL). Agent tokens carry NULL familyId, so
+  // the "others" sweep (which targets owner grants with a non-NULL familyId) can never touch them.
+
+  /**
+   * One row per ACTIVE refresh family for the account — a family with a live HEAD (rotatedAt IS NULL AND
+   * revokedAt IS NULL AND expiresAtMs > now). `createdAtMs` = MIN(issuedAtMs) over the family (the ORIGINAL
+   * login instant, not the last rotation); `label` = MAX(label) (uniform across a family; MAX skips NULLs).
+   * Account-scoped on accountId. Ordered newest-first.
+   */
+  listRefreshSessionsForAccount(
+    accountId: string,
+    serverNowMs: number,
+  ): Promise<Array<{ familyId: string; label: string | null; createdAtMs: number }>>;
+
+  /**
+   * BOLA-CRITICAL revoke-one (a session). In ONE batch: revoke every non-revoked refresh row in the family
+   * AND the family's outstanding access grant — both scoped to `accountId`/`principalId` so account B can
+   * never revoke account A's session (a non-matching family revokes ZERO refresh rows → the route 404s, no
+   * existence disclosure). Returns the number of REFRESH rows revoked (the existence/ownership signal).
+   */
+  revokeSessionFamilyForAccount(familyId: string, accountId: string, revokedAt: string): Promise<number>;
+
+  /**
+   * Sign-out-OTHERS: revoke every refresh family for the account EXCEPT `exceptFamilyId`, and every
+   * OWNER access grant linked to a (non-NULL, != current) family. Agent tokens (NULL familyId) are
+   * untouched, and the current session's own refresh + grant survive. Returns the number of OTHER refresh
+   * rows revoked.
+   */
+  revokeOtherSessionsForAccount(
+    accountId: string,
+    exceptFamilyId: string,
+    revokedAt: string,
+  ): Promise<number>;
+
+  /** The refresh family an access grant belongs to (Phase 2 current-session detection), or null. */
+  getGrantFamilyId(grantId: string): Promise<string | null>;
 
   /** Read the abuse-throttle bucket (gate-before-hash), or null if the bucket is clean. */
   getThrottle(bucket: string): Promise<{ failures: number; nextAllowedMs: number } | null>;
@@ -555,8 +603,8 @@ export function createAuthStore(db: DbAdapter): AuthStore {
         {
           sql: `INSERT INTO grants
                   (grantId, tokenHash, principalKind, principalId, mintedByKeyId,
-                   resourceKind, resourceId, scope, expiresAtMs, revokedAt, createdAt)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+                   resourceKind, resourceId, scope, expiresAtMs, revokedAt, createdAt, familyId)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
           params: [
             row.grantId,
             row.tokenHash,
@@ -568,6 +616,7 @@ export function createAuthStore(db: DbAdapter): AuthStore {
             JSON.stringify(row.scope),
             row.expiresAtMs,
             row.createdAt,
+            row.familyId ?? null, // links the access grant to its refresh session family (0014); NULL otherwise
           ],
         },
       ]);
@@ -887,8 +936,9 @@ export function createAuthStore(db: DbAdapter): AuthStore {
         expiresAtMs: number;
         rotatedAt: string | null;
         revokedAt: string | null;
+        label: string | null;
       }>(
-        `SELECT familyId, accountId, expiresAtMs, rotatedAt, revokedAt
+        `SELECT familyId, accountId, expiresAtMs, rotatedAt, revokedAt, label
            FROM refreshSessions WHERE tokenHash = ?`,
         [tokenHash],
       );
@@ -937,6 +987,74 @@ export function createAuthStore(db: DbAdapter): AuthStore {
           params: [revokedAt, accountId],
         },
       ]);
+    },
+
+    // --- sessions management (Phase 2 — migration 0014) -------------------------------------------
+
+    async listRefreshSessionsForAccount(accountId, serverNowMs) {
+      // One query: pick the families whose HEAD is live (unrotated, unrevoked, unexpired), then aggregate
+      // the WHOLE family for the original-login instant (MIN issuedAtMs) + the uniform label (MAX skips
+      // NULLs). Account-scoped on accountId in BOTH the inner liveness filter and the outer aggregate so
+      // it is BOLA-safe by construction. newest-first.
+      const rows = await db.all<{ familyId: string; createdAtMs: number; label: string | null }>(
+        `SELECT familyId, MIN(issuedAtMs) AS createdAtMs, MAX(label) AS label
+           FROM refreshSessions
+          WHERE accountId = ? AND familyId IN (
+            SELECT familyId FROM refreshSessions
+             WHERE accountId = ? AND rotatedAt IS NULL AND revokedAt IS NULL AND expiresAtMs > ?)
+          GROUP BY familyId
+          ORDER BY createdAtMs DESC`,
+        [accountId, accountId, serverNowMs],
+      );
+      return rows.map((r) => ({ familyId: r.familyId, label: r.label, createdAtMs: r.createdAtMs }));
+    },
+
+    async revokeSessionFamilyForAccount(familyId, accountId, revokedAt) {
+      // ONE batch = ONE transaction. The refresh-row UPDATE carries the account match IN its WHERE, so a
+      // family owned by another account revokes ZERO refresh rows (BOLA) — and the returned count (from the
+      // refresh UPDATE only) is what the route 404s on. The grant UPDATE kills the session's outstanding
+      // access token immediately (scoped to principalId=accountId + this familyId).
+      const [refreshRes] = await db.batch([
+        {
+          sql: `UPDATE refreshSessions SET revokedAt = ?
+                 WHERE familyId = ? AND accountId = ? AND revokedAt IS NULL`,
+          params: [revokedAt, familyId, accountId],
+        },
+        {
+          sql: `UPDATE grants SET revokedAt = ?
+                 WHERE familyId = ? AND principalId = ? AND revokedAt IS NULL`,
+          params: [revokedAt, familyId, accountId],
+        },
+      ]);
+      return refreshRes?.rowsWritten ?? 0;
+    },
+
+    async revokeOtherSessionsForAccount(accountId, exceptFamilyId, revokedAt) {
+      // Revoke every OTHER family's refresh rows + their linked OWNER access grants in one batch. The grant
+      // sweep is gated on `familyId IS NOT NULL AND familyId != current` so it can NEVER touch an agent
+      // token (NULL familyId) nor the current session. Returns the count of OTHER refresh rows revoked.
+      const [refreshRes] = await db.batch([
+        {
+          sql: `UPDATE refreshSessions SET revokedAt = ?
+                 WHERE accountId = ? AND familyId != ? AND revokedAt IS NULL`,
+          params: [revokedAt, accountId, exceptFamilyId],
+        },
+        {
+          sql: `UPDATE grants SET revokedAt = ?
+                 WHERE principalId = ? AND principalKind = 'owner'
+                   AND familyId IS NOT NULL AND familyId != ? AND revokedAt IS NULL`,
+          params: [revokedAt, accountId, exceptFamilyId],
+        },
+      ]);
+      return refreshRes?.rowsWritten ?? 0;
+    },
+
+    async getGrantFamilyId(grantId) {
+      const row = await db.first<{ familyId: string | null }>(
+        `SELECT familyId FROM grants WHERE grantId = ?`,
+        [grantId],
+      );
+      return row?.familyId ?? null;
     },
 
     async getThrottle(bucket) {

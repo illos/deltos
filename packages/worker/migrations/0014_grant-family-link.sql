@@ -1,0 +1,12 @@
+-- Link an owner ACCESS grant to the refresh SESSION family that minted it (Phase 2 — sessions
+-- management / "Active sessions"). NULLABLE + non-authority: familyId carries no `can()` decision; it
+-- exists so that revoking a refresh family (a session) can ALSO revoke that session's outstanding access
+-- grant in the same batch — so signing a device out kills its in-memory access token immediately, not
+-- only after the short access-token TTL elapses.
+--
+-- Population: the password-auth session-mint paths (login / signup / reset / refresh) pass the minting
+-- family into mintGrant. AGENT tokens (insertAgentGrant) do NOT list familyId → it stays NULL, so the
+-- "sign out other sessions" sweep (which targets familyId IS NOT NULL owner grants) can never touch an
+-- agent token. Pre-existing owner grants keep NULL; they are harmless (a NULL-family grant is simply not
+-- linked to any session and is reaped by the existing account-wide revoke-all paths).
+ALTER TABLE grants ADD COLUMN familyId TEXT;

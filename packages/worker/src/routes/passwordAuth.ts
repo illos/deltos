@@ -50,6 +50,7 @@ import { apiError, guard, NON_PROD_ENVIRONMENTS, type AppContext } from '../http
 import type { AppEnv } from '../context.js';
 import { d1Adapter } from '../db/schema.js';
 import { createAuthStore, type AuthStore } from '../db/authStore.js';
+import { deviceLabelFromUA } from '../deviceLabel.js';
 
 /**
  * Password-auth routes — the 2026-06-17 pivot (`docs/specs/auth-pivot-password.md`). Username +
@@ -183,10 +184,15 @@ async function verifyTurnstile(secret: string, token: string | undefined, ip: st
   }
 }
 
-/** Mint a short-TTL in-memory access token (the reused opaque grant; stored HASHED, F6). */
+/**
+ * Mint a short-TTL in-memory access token (the reused opaque grant; stored HASHED, F6). `familyId` links
+ * this access grant to the refresh SESSION family that minted it (Phase 2, migration 0014) so that
+ * revoking that session ALSO kills this access token immediately — not only after the access-token TTL.
+ */
 async function mintAccessToken(
   s: AuthStore,
   accountId: string,
+  familyId: string,
   nowMs: number,
 ): Promise<{ token: string; expiresAt: string }> {
   const token = authCrypto.randomToken(32);
@@ -199,6 +205,7 @@ async function mintAccessToken(
     resource: { kind: 'workspace' },
     scope: [...SCOPES], // v1 account session = full workspace scope (clamped by can() per request)
     expiresAtMs,
+    familyId, // Phase 2: the session this access token belongs to (revoke the session → revoke this grant)
     createdAt: iso(nowMs),
   });
   return { token, expiresAt: iso(expiresAtMs) };
@@ -213,6 +220,7 @@ async function issueRefresh(
   s: AuthStore,
   accountId: string,
   familyId: string,
+  label: string | null,
   nowMs: number,
 ): Promise<void> {
   const refreshToken = authCrypto.randomToken(32);
@@ -222,6 +230,9 @@ async function issueRefresh(
     accountId,
     issuedAtMs: nowMs,
     expiresAtMs: nowMs + REFRESH_TTL_MS,
+    // Phase 2: a fresh-device login passes deviceLabelFromUA(UA); a rotation carries the family's existing
+    // label forward (uniform across a family) so "Active sessions" keeps the original device's name.
+    label,
   });
   setRefreshCookie(c, refreshToken);
 }
@@ -272,9 +283,11 @@ async function reissueActingSession(
   recoveryEstablished: boolean,
   nowMs: number,
 ): Promise<{ token: string; expiresAt: string }> {
-  const access = await mintAccessToken(s, accountId, nowMs);
+  // Fresh family for the acting device (the credential-change revoke-all just killed the prior one).
+  const familyId = authCrypto.randomToken(16);
+  const access = await mintAccessToken(s, accountId, familyId, nowMs);
   if (recoveryEstablished) {
-    await issueRefresh(c, s, accountId, authCrypto.randomToken(16), nowMs);
+    await issueRefresh(c, s, accountId, familyId, deviceLabelFromUA(c.req.header('user-agent')), nowMs);
   } else {
     clearRefreshCookie(c); // defensive: a pre-finalize account has no durable cookie to keep
   }
@@ -341,7 +354,11 @@ passwordAuth.post('/signup', async (c) => {
   // token (carries the in-session register→rotate→show-phrase→ack flow). The cross-boot durable cookie is
   // set at FINALIZE, after the user save-acks the phrase — so a registration abandoned before the ack
   // never silently re-auths on next boot. `recoveryEstablished` stays false until finalize.
-  const access = await mintAccessToken(s, accountId, nowMs);
+  // Phase 2: link the (in-memory, pre-finalize) access grant to a fresh family id. No refresh session
+  // exists yet (the durable family is created at /finalize), so this family is currently session-less —
+  // the access token simply expires on its TTL. It carries a familyId only so the grant is uniformly
+  // shaped; it is never listed as an active session until a refresh session backs a family.
+  const access = await mintAccessToken(s, accountId, authCrypto.randomToken(16), nowMs);
   return c.json(
     {
       accountId,
@@ -425,14 +442,17 @@ passwordAuth.post('/login', async (c) => {
     await s.updatePasswordHash(accountId, hashPassword(parsed.data.password, pepper, ARGON2_PARAMS), iso(nowMs));
   }
   const username = (await s.getUsernameByAccount(accountId))?.usernameDisplay ?? null;
-  const access = await mintAccessToken(s, accountId, nowMs);
+  // Phase 2: ONE fresh family backs both the access grant and (for a recoverable account) the refresh
+  // session, so revoking this session later kills both. The label is captured from this device's UA.
+  const familyId = authCrypto.randomToken(16);
+  const access = await mintAccessToken(s, accountId, familyId, nowMs);
 
   // P0 BELT (spec §P0): a durable refresh cookie + ungated entry are granted ONLY for a fully-recoverable
   // account. If `recoveryEstablished` is false (an abandoned signup — password set, phrase never saved),
   // issue NO durable cookie; the response flag tells the client to FORCE the recovery-phrase screen
   // (/recovery/rotate → save-ack → /finalize) before entry. A normal account gets the durable cookie.
   if (credential.recoveryEstablished) {
-    await issueRefresh(c, s, accountId, authCrypto.randomToken(16), nowMs);
+    await issueRefresh(c, s, accountId, familyId, deviceLabelFromUA(c.req.header('user-agent')), nowMs);
   }
   return c.json({
     token: access.token,
@@ -472,14 +492,16 @@ passwordAuth.post('/refresh', async (c) => {
   }
   if (session.expiresAtMs <= nowMs) return reject();
 
-  // Rotate: spend this token, issue a fresh one in the SAME family, mint a fresh access token.
+  // Rotate: spend this token, issue a fresh one in the SAME family, mint a fresh access token. Phase 2:
+  // carry the family's existing label forward (uniform across the family) so the device name is preserved
+  // across rotations, and link the new access grant to the SAME family so a later session-revoke kills it.
   await s.markRefreshRotated(authCrypto.hashToken(cookie), iso(nowMs));
-  await issueRefresh(c, s, session.accountId, session.familyId, nowMs);
+  await issueRefresh(c, s, session.accountId, session.familyId, session.label, nowMs);
   const username = (await s.getUsernameByAccount(session.accountId))?.usernameDisplay ?? null;
   // Surface server-authoritative 2FA state on the cold-boot refresh so Settings renders correctly without
   // a separate fetch. One extra PK-indexed read on the (boot-only) refresh path — negligible.
   const totpEnabled = (await s.getCredentialByAccount(session.accountId))?.totpEnabled ?? false;
-  const access = await mintAccessToken(s, session.accountId, nowMs);
+  const access = await mintAccessToken(s, session.accountId, session.familyId, nowMs);
   // A durable refresh session only ever exists post-finalize, so recoveryEstablished is necessarily true here.
   return c.json({
     token: access.token,

@@ -48,9 +48,12 @@ function sqliteAdapter(db: Database.Database): DbAdapter {
   };
 }
 
-const migrations = ['0000_baseline.sql', '0001_stream-b-sync.sql', '0002_stream-a-auth.sql'].map((f) =>
-  readFileSync(join(__dirname, '../migrations', f), 'utf8'),
-);
+const migrations = [
+  '0000_baseline.sql',
+  '0001_stream-b-sync.sql',
+  '0002_stream-a-auth.sql',
+  '0014_grant-family-link.sql', // adds grants.familyId (the mintGrant INSERT lists it) — ALTER works on the 0002 table
+].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function freshStore() {
   const raw = new Database(':memory:');

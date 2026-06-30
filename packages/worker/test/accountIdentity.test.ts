@@ -28,6 +28,7 @@ const migrationFiles = [
   '0001_stream-b-sync.sql',
   '0002_stream-a-auth.sql',
   '0003_account-identity.sql',
+  '0014_grant-family-link.sql', // adds grants.familyId (the mintGrant INSERT lists it); appended LAST to keep slice/index below valid
 ];
 const migrations = migrationFiles.map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 const preAccountMigrations = migrations.slice(0, 3); // 0000–0002, before the account dimension
