@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import type { CanCheck, Op, Resource, RequestPrincipal } from '@deltos/shared';
 import { resolvePrincipal, can } from './auth.js';
+import { audit, credentialRefOf } from './audit.js';
 import type { AppContext } from './context.js';
 
 export type { AppContext };
@@ -101,6 +102,18 @@ export function guard<TReq>(cfg: GuardConfig<TReq>, deps: GuardDeps = {}) {
     }
     const resource = cfg.resource(parsed.data);
     const allowed = await check(principal, cfg.op, resource);
+    // P3 audit: record the authorization DECISION (allow + deny) at the chokepoint — the security-truth
+    // event for every authenticated REST/sync access. Fire-and-forget; never affects the response.
+    audit(c, {
+      surface: 'rest',
+      action: cfg.op,
+      result: allowed ? 'allow' : 'deny',
+      principalKind: principal.kind,
+      accountId: principal.id,
+      credentialRef: credentialRefOf(principal),
+      resourceKind: resource.kind,
+      resourceId: 'id' in resource ? resource.id : null,
+    });
     if (!allowed) {
       return apiError(c, 403, 'forbidden', `principal not permitted to ${cfg.op} this resource`);
     }

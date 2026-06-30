@@ -95,4 +95,23 @@ export interface Env {
    * inject it; the presign route fail-closes (503) when unset.
    */
   R2_S3_ENDPOINT?: string;
+  /**
+   * Append-only SECURITY AUDIT log (ROAD-0005 P3 — Workers Analytics Engine dataset). The immutable
+   * who/what/where trail of every authenticated access decision (REST + MCP chokepoints) plus the
+   * credential-lifecycle events (login, token mint/revoke, session revoke). Append-only BY CONSTRUCTION:
+   * `writeDataPoint()` has no update/delete API, so a fully-compromised data path cannot rewrite history.
+   *
+   * SEPARATION OF DUTIES: this binding is read ONLY by `src/audit.ts` (which takes the request context,
+   * never the data layer). The data layer (`db/*`, `mutate.ts`, MCP tool `execute`) takes its `DbAdapter`
+   * by argument and never touches `c.env` — so it has no handle to the audit log and structurally cannot
+   * tamper with it. This invariant is the P5 red-team scoreboard ("attack the audit log with a write
+   * token") and is pinned by audit.separation.test.ts.
+   *
+   * Optional in the type so unit tests inject a capture-stub / omit it; when UNBOUND the audit helper
+   * no-ops (audit is never on the request's critical path — a write failure must never break a request).
+   * Like `AI`/`IMAGES`, Analytics Engine has NO local emulation — exercise it via a deploy + the AE SQL
+   * API, never plain `wrangler dev`. Declared in wrangler.jsonc as `analytics_engine_datasets`; the
+   * dataset is created on first write (no provisioning step).
+   */
+  AUDIT?: AnalyticsEngineDataset;
 }

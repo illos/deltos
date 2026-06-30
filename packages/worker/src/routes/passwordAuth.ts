@@ -51,6 +51,7 @@ import type { AppEnv } from '../context.js';
 import { d1Adapter } from '../db/schema.js';
 import { createAuthStore, type AuthStore } from '../db/authStore.js';
 import { deviceLabelFromUA } from '../deviceLabel.js';
+import { audit } from '../audit.js';
 
 /**
  * Password-auth routes — the 2026-06-17 pivot (`docs/specs/auth-pivot-password.md`). Username +
@@ -394,8 +395,20 @@ passwordAuth.post('/login', async (c) => {
   const gated = await gate(c, s, bucket, parsed.data.turnstileToken, nowMs);
   if (gated) return gated;
 
-  const fail = async (): Promise<Response> => {
+  const fail = async (auditAccountId: string | null): Promise<Response> => {
     await recordFailure(s, bucket, LOGIN_BACKOFF, nowMs);
+    // P3 audit: a failed login (unknown user OR wrong password) — a brute-force / spray signal. accountId
+    // is recorded only when the username resolved (wrong-password); empty for an unknown user. The 401
+    // body stays UNIFORM (no oracle) — the audit log is internal, never an enumeration surface.
+    audit(c, {
+      surface: 'auth',
+      action: 'login',
+      result: 'deny',
+      principalKind: 'anonymous',
+      accountId: auditAccountId ?? '',
+      credentialRef: null,
+      detail: 'invalid-credentials',
+    });
     return apiError(c, 401, 'invalid_credentials', UNIFORM_LOGIN_ERROR);
   };
 
@@ -406,11 +419,11 @@ passwordAuth.post('/login', async (c) => {
   // return — so response timing never leaks account existence.
   if (!accountId || !credential) {
     dummyHash(parsed.data.password, pepper, ARGON2_PARAMS);
-    return fail();
+    return fail(accountId);
   }
 
   const verdict = verifyPassword(parsed.data.password, credential.passwordPhc, pepper, ARGON2_PARAMS);
-  if (!verdict.ok) return fail();
+  if (!verdict.ok) return fail(accountId);
 
   // Second factor (only if enabled). The PASSWORD IS ALREADY VERIFIED at this point, so signalling
   // "2FA required / invalid" leaks nothing about username existence — an unauthenticated attacker still
@@ -431,6 +444,15 @@ passwordAuth.post('/login', async (c) => {
     if (!totp.ok) {
       // Wrong code → a real second-factor failure; record it (brute-force protection on the 6-digit code).
       await recordFailure(s, bucket, LOGIN_BACKOFF, nowMs);
+      audit(c, {
+        surface: 'auth',
+        action: 'login',
+        result: 'deny',
+        principalKind: 'anonymous',
+        accountId,
+        credentialRef: null,
+        detail: 'totp-invalid',
+      });
       return apiError(c, 401, 'totp_invalid', 'that two-factor code is not valid');
     }
     await s.advanceTotpStep(accountId, totp.step, iso(nowMs)); // replay guard moves forward
@@ -454,6 +476,17 @@ passwordAuth.post('/login', async (c) => {
   if (credential.recoveryEstablished) {
     await issueRefresh(c, s, accountId, familyId, deviceLabelFromUA(c.req.header('user-agent')), nowMs);
   }
+  // P3 audit: a successful login. credentialRef = the new session family (so a later session.revoke /
+  // access line ties back here); detail flags whether the second factor was exercised.
+  audit(c, {
+    surface: 'auth',
+    action: 'login',
+    result: 'allow',
+    principalKind: 'owner',
+    accountId,
+    credentialRef: familyId,
+    detail: credential.totpEnabled ? '2fa' : 'password',
+  });
   return c.json({
     token: access.token,
     expiresAt: access.expiresAt,

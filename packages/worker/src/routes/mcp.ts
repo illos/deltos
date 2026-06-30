@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { RequestPrincipal } from '@deltos/shared';
 import type { AppEnv, AppContext } from '../context.js';
 import { resolvePrincipal, can, resolvedGrantFor, grantIsLive } from '../auth.js';
+import { audit, credentialRefOf } from '../audit.js';
 import { callerAccountId } from '../db/accountScope.js';
 import { d1Adapter } from '../db/schema.js';
 import { createAuthStore } from '../db/authStore.js';
@@ -153,7 +154,21 @@ async function handleToolsCall(
   const args = parsed.data;
 
   // SAME chokepoint as the PWA: scope (read/search), resource coverage, expiry, and revocation all here.
-  const allowed = await can(principal, tool.op, tool.resource(args));
+  const toolResource = tool.resource(args);
+  const allowed = await can(principal, tool.op, toolResource);
+  // P3 audit: the MCP/agent path is exactly the "compromised client" case — record every tool-call
+  // decision (allow + deny), tagged surface:'mcp', so the connected-AI access trail is queryable on its own.
+  audit(c, {
+    surface: 'mcp',
+    action: tool.op,
+    result: allowed ? 'allow' : 'deny',
+    principalKind: principal.kind,
+    accountId: callerAccountId(principal),
+    credentialRef: credentialRefOf(principal),
+    resourceKind: toolResource.kind,
+    resourceId: 'id' in toolResource ? toolResource.id : null,
+    detail: String(p.name),
+  });
   if (!allowed) {
     return c.json(
       rpcSuccess(id, toolError('forbidden: this token is not authorized for that operation or resource')),

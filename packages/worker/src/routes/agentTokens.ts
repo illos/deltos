@@ -12,6 +12,7 @@ import { createAuthStore } from '../db/authStore.js';
 import { d1Adapter } from '../db/schema.js';
 import { hashToken, randomToken } from '../authCrypto.js';
 import { stampAccountId } from '../db/accountScope.js';
+import { audit, credentialRefOf } from '../audit.js';
 import { verifyStepUp } from '../stepUp.js';
 import { MINT_BACKOFF, backoffDelayMs } from '../authPolicy.js';
 
@@ -83,6 +84,17 @@ agentTokens.post(
             nowMs + backoffDelayMs(MINT_BACKOFF, failures),
             new Date(nowMs).toISOString(),
           );
+          // P3 lifecycle: a live session that failed the mint step-up — a high-value security signal
+          // (a borrowed session attempting to mint a read-all credential without the password/2FA).
+          audit(c, {
+            surface: 'auth',
+            action: 'token.mint',
+            result: 'deny',
+            principalKind: principal.kind,
+            accountId,
+            credentialRef: credentialRefOf(principal),
+            detail: 'step-up-failed',
+          });
         }
         return stepUp;
       }
@@ -109,6 +121,20 @@ agentTokens.post(
         resource,
         scope,
         createdAt: now,
+      });
+
+      // P3 lifecycle: a new long-lived read-all credential was minted. The new grantId is the
+      // credentialRef so a later revoke / agent-access line ties back to this birth event.
+      audit(c, {
+        surface: 'auth',
+        action: 'token.mint',
+        result: 'allow',
+        principalKind: principal.kind,
+        accountId,
+        credentialRef: grantId,
+        resourceKind: resource.kind,
+        resourceId: req.notebookId ?? null,
+        detail: 'agent-token',
       });
 
       return c.json(
@@ -164,6 +190,17 @@ agentTokens.delete(
         // Not found, not owned by this account, or already revoked — all indistinguishable, all 404.
         return apiError(c, 404, 'not_found', 'agent token not found');
       }
+      // P3 lifecycle: an agent credential was revoked. detail = the revoked grantId (the credential the
+      // act targets); credentialRef = the acting session that performed the revoke.
+      audit(c, {
+        surface: 'auth',
+        action: 'token.revoke',
+        result: 'allow',
+        principalKind: principal.kind,
+        accountId,
+        credentialRef: credentialRefOf(principal),
+        detail: req.grantId,
+      });
       return c.json({ grantId: req.grantId, revoked: true });
     },
   }),

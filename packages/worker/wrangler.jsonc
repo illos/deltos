@@ -22,6 +22,18 @@
   "images": {
     "binding": "IMAGES",
   },
+  // Append-only SECURITY AUDIT log (ROAD-0005 P3). A Workers Analytics Engine dataset — `writeDataPoint()`
+  // is append-only by construction (no update/delete API), so it's the tamper-resistant who/what/where
+  // trail of every access decision + credential-lifecycle event. SEPARATE binding from `DB` on purpose:
+  // the data layer never receives this handle, so a compromised data path cannot wipe the log (separation
+  // of duties; P5 red-team scoreboard). No provisioning step — the dataset is created on first write.
+  // Query via the AE SQL API (`SELECT ... FROM deltos_audit`); no local emulation (deploy to exercise).
+  "analytics_engine_datasets": [
+    {
+      "binding": "AUDIT",
+      "dataset": "deltos_audit",
+    },
+  ],
   "d1_databases": [
     {
       "binding": "DB",
