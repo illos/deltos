@@ -18,6 +18,7 @@ import { PhraseStep } from '../components/PhraseStep.js';
 import { AppearanceSection } from '../components/AppearanceSection.js';
 import { CustomDictSection } from '../components/CustomDictSection.js';
 import { ConnectClaudeSection } from '../components/ConnectClaudeSection.js';
+import { SessionsSection } from '../components/SessionsSection.js';
 import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
 import { useSpellcheck } from '../lib/useSpellcheck.js';
 import { forceUpdate } from '../lib/forceUpdate.js';
@@ -493,6 +494,10 @@ export function SettingsRoute() {
           2FA is required only at new-device sign-in and after a reset — never at regular app launch.
         </p>
       </section>
+
+      {/* Section — Active sessions (Phase-2 credential lifecycle; the per-session kill-switch). Sits with
+          Security as a lazy off-track section riding the lazy SettingsRoute chunk. */}
+      <SessionsSection />
 
       {/* Section — Connect to Claude (llm-mcp-integration.md §5; lazy off-track via the lazy SettingsRoute) */}
       <ConnectClaudeSection />
