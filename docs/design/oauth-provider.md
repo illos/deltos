@@ -50,12 +50,27 @@ Everything downstream of `/token` (resolve, `can()`, scope-clamp, P4 rate-limit,
 | `GET /.well-known/oauth-protected-resource` | 9728 | public | advertises the RS + its AS + `scopes_supported` + the `resource` id `…/api/mcp` |
 | `GET /.well-known/oauth-authorization-server` | 8414 | public | `registration/authorization/token` endpoints; `code_challenge_methods_supported:["S256"]`; `grant_types:["authorization_code"]`; `response_types:["code"]` |
 | `POST /api/oauth/register` | 7591 | public (rate-limited) | DCR. Returns `client_id`. **Public client → no `client_secret`** (PKCE is the proof). Validates `redirect_uris`. |
-| `GET /api/oauth/authorize` | 6749/PKCE | **owner session** | the consent screen. Not logged in → bounce to login then back. Requires `code_challenge` (S256) + exact-registered `redirect_uri`. |
-| `POST /api/oauth/authorize` (approve) | — | owner session + **`verifyStepUp`** | user clicks Approve → mint auth code, 302 to `redirect_uri?code&state`. Deny → 302 `?error=access_denied`. |
+| `GET /oauth/authorize` (PWA route) | 6749/PKCE | **owner session (in-app)** | the `authorization_endpoint`. A LAZY PWA route (not server-rendered HTML) — see §2b. Validates `code_challenge` (S256) + params, ensures the user is logged in (app's normal ungated-reload), renders the consent screen. |
+| `POST /api/oauth/authorize` (mint code) | — | `guard` op:`share` (bearer) + **`verifyStepUp`** | JSON. Approve → mint auth code bound to (clientId, redirectUri, challenge, accountId, scope), return `{ redirect_uri, code, state }`; the PWA then navigates the browser there. Deny → PWA navigates to `redirect_uri?error=access_denied`. |
 | `POST /api/oauth/token` | 6749/PKCE | public + PKCE | exchange code → access token. Verifies `code_verifier` vs stored `code_challenge`, single-use, redirect match, not expired. |
 
 `.well-known` lives at the ROOT (Hono `app.get('/.well-known/...')`), not under `/api`. The `401` change is a
 one-liner in `mcp.ts:83` — add the `resource_metadata` param so a tokenless `/api/mcp` *triggers* discovery.
+
+### 2b. Consent is PWA-mediated, not server-rendered HTML (architecture refinement, 2026-07-01)
+
+The `authorization_endpoint` a browser lands on is a **lazy PWA route** (`/oauth/authorize`), NOT a
+worker-rendered HTML page. Rationale: deltos authenticates with an **in-memory bearer** (+ httpOnly refresh
+cookie for ungated reload), and a top-level server-rendered consent page would need a brand-new
+cookie-authenticated-HTML-page auth path (+ its own CSRF story) that exists nowhere else in the app. Instead:
+the OAuth client opens `…/oauth/authorize?client_id&redirect_uri&code_challenge&…`; the PWA loads, does its
+normal reload-auth (→ bearer), renders a consent screen reusing the existing login + step-up UI, and on
+**Approve** calls the JSON `POST /api/oauth/authorize` (bearer-authed through `guard` op:`share`, so agent
+tokens can't self-consent + step-up applies) which mints the code and returns `{ redirect_uri, code, state }`.
+The PWA then does a top-level `window.location` navigation to `redirect_uri?code&state` — that navigation IS
+the OAuth redirect, invisible to and fully conformant for the OAuth client. CSRF is a non-issue (bearer, not
+an ambient cookie). This keeps auth in one model, puts the consent UI on a lazy off-first-load route
+(CONV-0004), and lands the consent screen in the client lane where it belongs.
 
 ## 3. Storage (migration 0017 — additive, the 0013/0014 pattern)
 

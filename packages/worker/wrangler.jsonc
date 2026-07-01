@@ -70,11 +70,13 @@
   // The token must be Object Read & Write, scoped to the single `deltos-blobs` bucket (least privilege). Also
   // one-time: set the bucket CORS policy (PUT, app origin, x-amz-checksum-sha256 header) — see §5.2.
   // Same-origin PWA hosting: serve the client build as static assets; SPA-fallback unmatched routes
-  // to index.html; run the Worker FIRST only for /api/* so the API is never shadowed by the shell.
+  // to index.html; run the Worker FIRST only for /api/* + the OAuth discovery docs (RFC 8414/9728) so the
+  // API + AS metadata are never shadowed by the shell. Note: /oauth/authorize is deliberately NOT here — it
+  // is a CLIENT route (the PWA consent screen), served by the SPA fallback (oauth-provider.md §2b).
   "assets": {
     "directory": "../client/dist",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"],
+    "run_worker_first": ["/api/*", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource"],
   },
   // Rich-embed unfurl cache (GET /api/unfurl). Not yet wired — add after creating the namespace:
   //   wrangler kv namespace create unfurl-cache   # copy the returned id into the block below

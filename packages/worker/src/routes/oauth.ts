@@ -1,0 +1,369 @@
+import { Hono } from 'hono';
+import { z } from 'zod';
+import {
+  RegisterClientRequestSchema,
+  AuthorizeConsentRequestSchema,
+  TokenRequestSchema,
+  clampToReadOnlyScopes,
+  buildAuthServerMetadata,
+  buildProtectedResourceMetadata,
+  type RegisterClientResponse,
+  type AuthorizeConsentResponse,
+  type TokenResponse,
+  type Resource,
+} from '@deltos/shared';
+import type { AppEnv } from '../context.js';
+import type { Context } from 'hono';
+import { guard, apiError } from '../http.js';
+import { createAuthStore } from '../db/authStore.js';
+import { d1Adapter } from '../db/schema.js';
+import { hashToken, randomToken } from '../authCrypto.js';
+import { stampAccountId } from '../db/accountScope.js';
+import { verifyStepUp } from '../stepUp.js';
+import { audit, credentialRefOf } from '../audit.js';
+import { principalRateAllow } from '../rateLimit.js';
+import { MINT_BACKOFF, backoffDelayMs } from '../authPolicy.js';
+import { isRegisterableRedirectUri, matchRedirectUri, verifyPkceS256 } from '../oauth.js';
+
+/** The concrete deltos resource an OAuth v1 grant authorizes: the whole workspace, read-only. */
+const OAUTH_V1_RESOURCE: Resource = { kind: 'workspace' };
+/** Authorization codes live 60s — long enough for a token exchange, short enough to bound theft/replay. */
+const AUTH_CODE_TTL_MS = 60_000;
+
+/**
+ * OAuth 2.1 provider — deltos as the Authorization Server for its own MCP resource (`/api/mcp`). See
+ * docs/design/oauth-provider.md. This module owns the WORKER endpoints; the consent SCREEN is a lazy PWA
+ * route (§2b) and the token itself is a `grants` row (principalKind='agent' + clientId) issued through the
+ * already-hardened agent path. Nothing here is on the mobile first-load — pure backend plumbing (CONV-0004).
+ *
+ * Split into two mount points (index.ts): `oauthWellKnown` at `/.well-known` (public discovery docs, also
+ * listed in wrangler `run_worker_first` so the SPA shell can't shadow them) and `oauth` at `/api/oauth`.
+ */
+
+/** Derive the public origin from the actual request URL — correct on any deploy (live/dogfood/red-team). */
+function requestOrigin(url: string): string {
+  return new URL(url).origin;
+}
+
+/**
+ * OAuth endpoints return RFC-shaped errors — `{ error, error_description }` (RFC 6749 §5.2 / RFC 7591
+ * §3.2.2) — NOT deltos's `{ code, message }` apiError shape, because OAuth clients parse the `error` field.
+ * `error` is a plain string so both the 6749 token codes and the DCR-specific codes (invalid_redirect_uri,
+ * invalid_client_metadata) can be expressed.
+ */
+function oauthError(c: Context<AppEnv>, status: number, error: string, description?: string): Response {
+  return c.json(description ? { error, error_description: description } : { error }, status as never);
+}
+
+// --- Discovery documents (RFC 8414 + RFC 9728), public, mounted at /.well-known -------------------
+
+export const oauthWellKnown = new Hono<AppEnv>();
+
+/** RFC 8414 Authorization Server Metadata — endpoints + hard constraints (S256-only, code-only, public). */
+oauthWellKnown.get('/oauth-authorization-server', (c) =>
+  c.json(buildAuthServerMetadata(requestOrigin(c.req.url))),
+);
+
+/** RFC 9728 Protected Resource Metadata for /api/mcp — points clients at this AS + names the audience. */
+oauthWellKnown.get('/oauth-protected-resource', (c) =>
+  c.json(buildProtectedResourceMetadata(requestOrigin(c.req.url))),
+);
+
+// --- /api/oauth ----------------------------------------------------------------------------------
+
+export const oauth = new Hono<AppEnv>();
+
+/**
+ * POST /api/oauth/register — Dynamic Client Registration (RFC 7591). PUBLIC, but registering grants ZERO
+ * access on its own: a client can read nothing until the logged-in owner completes the /authorize consent.
+ * So the only abuse is row-spam → rate-limited (native Tier-1 binding, keyed by IP) + cron-pruned. The one
+ * field that confers a control is `redirect_uris` (the exact-match allow-list); every entry must be
+ * registerable (https or http-loopback, {@link isRegisterableRedirectUri}) — a plaintext non-loopback
+ * redirect is refused so a code can never leak over http to an arbitrary host. Public client → no secret
+ * (`token_endpoint_auth_method: 'none'`); PKCE is the proof at /token.
+ */
+oauth.post('/register', async (c) => {
+  const ip = c.req.header('CF-Connecting-IP') ?? 'unknown';
+  const underRate = await principalRateAllow(c.env.API_RATE_LIMITER, `oauth-register:${ip}`);
+  if (!underRate) return oauthError(c, 429, 'temporarily_unavailable', 'too many registration attempts');
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return oauthError(c, 400, 'invalid_request', 'request body must be JSON');
+  }
+  const parsed = RegisterClientRequestSchema.safeParse(body);
+  if (!parsed.success) return oauthError(c, 400, 'invalid_client_metadata', 'invalid client metadata');
+
+  for (const uri of parsed.data.redirect_uris) {
+    if (!isRegisterableRedirectUri(uri)) {
+      // RFC 7591 §3.2.2 error code for a rejected redirect.
+      return oauthError(c, 400, 'invalid_redirect_uri', `redirect_uri not allowed: ${uri}`);
+    }
+  }
+
+  const { redirect_uris, client_name, software_id, ...rest } = parsed.data;
+  const clientId = randomToken(16);
+  const nowMs = Date.now();
+  const store = createAuthStore(d1Adapter(c.env.DB));
+  await store.registerOauthClient({
+    clientId,
+    clientName: client_name ?? 'Unnamed client',
+    redirectUris: redirect_uris,
+    softwareId: software_id ?? null,
+    // Remaining DCR metadata is non-authoritative (authority comes from consent) — stashed, never trusted.
+    metadata: Object.keys(rest).length > 0 ? JSON.stringify(rest) : null,
+    createdAt: new Date(nowMs).toISOString(),
+  });
+
+  const resp: RegisterClientResponse = {
+    client_id: clientId,
+    client_id_issued_at: Math.floor(nowMs / 1000),
+    redirect_uris,
+    ...(client_name !== undefined ? { client_name } : {}),
+    token_endpoint_auth_method: 'none',
+    grant_types: ['authorization_code'],
+    response_types: ['code'],
+  };
+  return c.json(resp, 201);
+});
+
+/**
+ * POST /api/oauth/authorize — the consent-approval mint (§2b). The PWA consent screen POSTs here after the
+ * user approves; it is BEARER-authed through `guard` op:`share` (so an agent token can NEVER self-consent —
+ * it lacks `share`) and re-proves the human with `verifyStepUp` (the H1 consent gate). On success it mints a
+ * single-use authorization code bound to (client, redirect, PKCE challenge, account, scope) and returns
+ * `{ code, redirect_uri, state? }`; the PWA then navigates the browser to `redirect_uri?code&state`. NO
+ * token is issued here — the code is exchanged at /token. Deny is pure client-side navigation (no call).
+ */
+oauth.post(
+  '/authorize',
+  guard({
+    op: 'share',
+    schema: AuthorizeConsentRequestSchema,
+    input: async (c) => {
+      try {
+        return await c.req.json();
+      } catch {
+        return {};
+      }
+    },
+    // v1 OAuth consent grants the whole workspace (read-only); authorize the owner against it.
+    resource: (): Resource => OAUTH_V1_RESOURCE,
+    handle: async (req, c, principal) => {
+      const store = createAuthStore(d1Adapter(c.env.DB));
+      const accountId = stampAccountId(principal); // server-derived owner; never the body
+      const nowMs = Date.now();
+
+      // Rate-limit gate BEFORE the Argon2 step-up (gate-before-hash) — same backoff bucket discipline as
+      // agent-token mint, so a borrowed session can't brute the password / amplify Argon2 CPU at consent.
+      const bucket = `oauth-consent:${accountId}`;
+      const throttle = await store.getThrottle(bucket);
+      if (throttle && nowMs < throttle.nextAllowedMs) {
+        return oauthError(c, 429, 'temporarily_unavailable', 'too many attempts — try again shortly');
+      }
+
+      // H1 STEP-UP — re-prove the human at consent (fail-closed). verifyStepUp returns its own Response on
+      // failure (401 wrong factor / 503 config); a wrong factor counts toward the backoff + is audited.
+      const stepUp = await verifyStepUp(c, store, accountId, { password: req.password, totp: req.totp }, nowMs);
+      if (stepUp) {
+        if (stepUp.status === 401) {
+          const failures = ((await store.getThrottle(bucket))?.failures ?? 0) + 1;
+          await store.recordThrottleFailure(
+            bucket,
+            failures,
+            nowMs + backoffDelayMs(MINT_BACKOFF, failures),
+            new Date(nowMs).toISOString(),
+          );
+          await audit(c, {
+            surface: 'auth',
+            action: 'oauth.consent',
+            result: 'deny',
+            principalKind: principal.kind,
+            accountId,
+            detail: 'step-up-failed',
+          });
+        }
+        return stepUp;
+      }
+      await store.clearThrottle(bucket);
+
+      // Validate the client + redirect BEFORE minting a code (fail-closed). matchRedirectUri is THE
+      // anti-phishing gate: exact-match, loopback port-exception only. code_challenge_method is pinned to
+      // S256 by the schema; scope is clamped to the read-only surface regardless of what was requested.
+      const client = await store.getOauthClient(req.client_id);
+      if (!client) return oauthError(c, 400, 'invalid_request', 'unknown client_id');
+      if (!matchRedirectUri(req.redirect_uri, client.redirectUris)) {
+        return oauthError(c, 400, 'invalid_request', 'redirect_uri is not registered for this client');
+      }
+
+      const scope = clampToReadOnlyScopes(); // v1: ['read','search'], never widened by the request
+      const rawCode = `dltos_code_${randomToken(32)}`;
+      await store.insertOauthCode({
+        codeHash: hashToken(rawCode), // only the hash is stored (F6)
+        clientId: req.client_id,
+        accountId,
+        redirectUri: req.redirect_uri,
+        codeChallenge: req.code_challenge,
+        scope,
+        resource: req.resource ?? null,
+        expiresAtMs: nowMs + AUTH_CODE_TTL_MS,
+        createdAt: new Date(nowMs).toISOString(),
+      });
+
+      await audit(c, {
+        surface: 'auth',
+        action: 'oauth.consent',
+        result: 'allow',
+        principalKind: principal.kind,
+        accountId,
+        detail: `client:${req.client_id}`,
+      });
+
+      const resp: AuthorizeConsentResponse = {
+        code: rawCode,
+        redirect_uri: req.redirect_uri,
+        ...(req.state !== undefined ? { state: req.state } : {}),
+      };
+      return c.json(resp, 200);
+    },
+  }),
+);
+
+/**
+ * POST /api/oauth/token — the authorization-code → access-token exchange (RFC 6749 §4.1.3 + PKCE). PUBLIC
+ * (no bearer): the PKCE `code_verifier` + the single-use code ARE the proof. Accepts form-encoded (the spec
+ * default) or JSON. Security ordering: the code is ATOMICALLY consumed FIRST (burned regardless of what
+ * follows), so a wrong verifier can't be retried against the same code (no PKCE brute-force). Then every
+ * binding is re-checked (client, redirect, PKCE) — any mismatch → invalid_grant on an already-dead code.
+ * The issued token is an `agent` grant carrying the clientId — inheriting the whole hardened agent path.
+ */
+oauth.post('/token', async (c) => {
+  let raw: unknown;
+  const contentType = c.req.header('content-type') ?? '';
+  try {
+    if (contentType.includes('application/json')) {
+      raw = await c.req.json();
+    } else {
+      const body = await c.req.parseBody();
+      raw = Object.fromEntries(
+        Object.entries(body).map(([k, v]) => [k, typeof v === 'string' ? v : String(v)]),
+      );
+    }
+  } catch {
+    return oauthError(c, 400, 'invalid_request', 'unparseable token request');
+  }
+
+  const parsed = TokenRequestSchema.safeParse(raw);
+  if (!parsed.success) return oauthError(c, 400, 'invalid_request', 'invalid token request');
+  const req = parsed.data;
+
+  const store = createAuthStore(d1Adapter(c.env.DB));
+  const nowMs = Date.now();
+
+  const client = await store.getOauthClient(req.client_id);
+  if (!client) return oauthError(c, 401, 'invalid_client', 'unknown client');
+
+  // ATOMIC single-use claim — see consumeOauthCode. Burning first prevents PKCE retry brute-forcing.
+  const claimed = await store.consumeOauthCode(hashToken(req.code), nowMs);
+  if (!claimed) return oauthError(c, 400, 'invalid_grant', 'code is invalid, expired, or already used');
+  if (claimed.clientId !== req.client_id) {
+    return oauthError(c, 400, 'invalid_grant', 'code was not issued to this client');
+  }
+  // Exact equality against the redirect bound at consent (the concrete URI the client used) — RFC 6749 §4.1.3.
+  if (claimed.redirectUri !== req.redirect_uri) {
+    return oauthError(c, 400, 'invalid_grant', 'redirect_uri does not match the authorization request');
+  }
+  if (!verifyPkceS256(req.code_verifier, claimed.codeChallenge)) {
+    return oauthError(c, 400, 'invalid_grant', 'PKCE verification failed');
+  }
+
+  // Issue the access token: an agent grant carrying clientId (v1: non-expiring, read-only workspace).
+  const token = `dltos_oauth_${randomToken(32)}`;
+  const grantId = randomToken(16);
+  const createdAt = new Date(nowMs).toISOString();
+  await store.insertAgentGrant({
+    grantId,
+    tokenHash: hashToken(token),
+    accountId: claimed.accountId,
+    label: client.clientName, // display name for the Connected-apps surface
+    resource: OAUTH_V1_RESOURCE,
+    scope: claimed.scope,
+    createdAt,
+    clientId: claimed.clientId,
+  });
+
+  await audit(c, {
+    surface: 'auth',
+    action: 'oauth.token',
+    result: 'allow',
+    principalKind: 'agent',
+    accountId: claimed.accountId,
+    credentialRef: grantId,
+    resourceKind: OAUTH_V1_RESOURCE.kind,
+    detail: `client:${claimed.clientId}`,
+  });
+
+  const resp: TokenResponse = {
+    access_token: token,
+    token_type: 'Bearer',
+    scope: claimed.scope.join(' '),
+  };
+  // No expires_in, no refresh_token — v1 tokens are non-expiring (revocation is the control).
+  return c.json(resp, 200);
+});
+
+/**
+ * GET /api/oauth/clients — the owner's "Connected apps" list (OAuth-issued grants only; first-party agent
+ * tokens are a separate surface). Owner-authed (`guard` op:`share` → agents 403), BOLA-scoped on principalId,
+ * non-secret metadata only. Server-resident: this and the consent screen are the only OAuth client-facing UI.
+ */
+oauth.get(
+  '/clients',
+  guard({
+    op: 'share',
+    schema: z.object({}).strict(),
+    input: () => ({}),
+    resource: (): Resource => OAUTH_V1_RESOURCE,
+    handle: async (_req, c, principal) => {
+      const store = createAuthStore(d1Adapter(c.env.DB));
+      const apps = await store.listOauthGrantsForAccount(stampAccountId(principal));
+      return c.json({ apps });
+    },
+  }),
+);
+
+/**
+ * DELETE /api/oauth/clients/:clientId — disconnect an app: revoke EVERY live OAuth grant this account holds
+ * for that client (the kill-switch behind the Connected-apps UI). BOLA-checked in the store (account match +
+ * principalKind='agent' + clientId IN the WHERE) — a non-match revokes zero rows → 404 (no cross-account
+ * existence disclosure). Immediate: the next request bearing any of that client's tokens 403s at `can()`.
+ */
+oauth.delete(
+  '/clients/:clientId',
+  guard({
+    op: 'share',
+    schema: z.object({ clientId: z.string().min(1) }),
+    input: (c) => ({ clientId: c.req.param('clientId') }),
+    resource: (): Resource => OAUTH_V1_RESOURCE,
+    handle: async (req, c, principal) => {
+      const store = createAuthStore(d1Adapter(c.env.DB));
+      const accountId = stampAccountId(principal);
+      const revoked = await store.revokeOauthGrantsForClient(req.clientId, accountId);
+      if (revoked === 0) {
+        return apiError(c, 404, 'not_found', 'no connected app for that client');
+      }
+      await audit(c, {
+        surface: 'auth',
+        action: 'oauth.revoke',
+        result: 'allow',
+        principalKind: principal.kind,
+        accountId,
+        credentialRef: credentialRefOf(principal),
+        detail: `client:${req.clientId}`,
+      });
+      return c.json({ clientId: req.clientId, revoked: true });
+    },
+  }),
+);

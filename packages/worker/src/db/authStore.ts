@@ -841,9 +841,11 @@ export function createAuthStore(db: DbAdapter): AuthStore {
         resourceId: string | null;
         createdAt: string;
       }>(
+        // clientId IS NULL keeps this the FIRST-PARTY agent-token list only — OAuth-issued grants (clientId
+        // set) belong to the Connected-apps surface (listOauthGrantsForAccount), never the Settings token list.
         `SELECT grantId, label, scope, resourceKind, resourceId, createdAt
            FROM grants
-          WHERE principalKind = 'agent' AND principalId = ? AND revokedAt IS NULL
+          WHERE principalKind = 'agent' AND principalId = ? AND clientId IS NULL AND revokedAt IS NULL
           ORDER BY createdAt`,
         [accountId],
       );
@@ -866,7 +868,7 @@ export function createAuthStore(db: DbAdapter): AuthStore {
       const [res] = await db.batch([
         {
           sql: `UPDATE grants SET revokedAt = ?
-                 WHERE grantId = ? AND principalKind = 'agent' AND principalId = ? AND revokedAt IS NULL`,
+                 WHERE grantId = ? AND principalKind = 'agent' AND principalId = ? AND clientId IS NULL AND revokedAt IS NULL`,
           params: [now, grantId, accountId],
         },
       ]);

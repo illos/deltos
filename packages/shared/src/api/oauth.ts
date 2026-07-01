@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ScopeSchema } from './grant.js';
+import { TimestampSchema } from '../spine/ids.js';
 
 /**
  * OAuth 2.1 provider surface — deltos as the Authorization Server for its own MCP resource
@@ -74,6 +75,37 @@ export const AuthorizeRequestSchema = z
   .strip();
 export type AuthorizeRequest = z.infer<typeof AuthorizeRequestSchema>;
 
+/**
+ * The consent-approval body the PWA consent screen POSTs to `POST /api/oauth/authorize` (§2b). It carries
+ * the authorize params the browser arrived with PLUS the step-up factors (the consent gate re-proves the
+ * human, like agent-token mint). Bearer-authed through `guard` op:`share`, so an agent token can never
+ * self-consent. `.strict()` rejects any ride-along field. There is NO server GET `/authorize` — the browser
+ * lands on the PWA route, which reads the query params and renders consent client-side.
+ */
+export const AuthorizeConsentRequestSchema = z
+  .object({
+    client_id: z.string().min(1),
+    redirect_uri: z.string().url(),
+    code_challenge: z.string().min(1),
+    code_challenge_method: z.literal(PKCE_METHOD),
+    scope: z.string().optional(),
+    resource: z.string().url().optional(),
+    state: z.string().optional(),
+    // H1 step-up — re-prove the human at consent (password always; totp when 2FA on). Verified + discarded.
+    password: z.string().min(1).optional(),
+    totp: z.string().optional(),
+  })
+  .strict();
+export type AuthorizeConsentRequest = z.infer<typeof AuthorizeConsentRequestSchema>;
+
+/** The consent-mint response the PWA uses to perform the OAuth redirect: `window.location = redirect_uri?code&state`. */
+export const AuthorizeConsentResponseSchema = z.object({
+  code: z.string().min(1),
+  redirect_uri: z.string().url(),
+  state: z.string().optional(),
+});
+export type AuthorizeConsentResponse = z.infer<typeof AuthorizeConsentResponseSchema>;
+
 // --- Token request (RFC 6749 §4.1.3 + PKCE) + response -------------------------------------------
 
 export const TokenRequestSchema = z
@@ -97,6 +129,25 @@ export const TokenResponseSchema = z.object({
   scope: z.string(),
 });
 export type TokenResponse = z.infer<typeof TokenResponseSchema>;
+
+// --- Connected apps (the owner-facing management surface for OAuth-issued grants) ----------------
+
+/**
+ * One OAuth-issued grant in the owner's "Connected apps" list. Non-secret metadata only (never a token or
+ * hash). A single client can hold more than one connection (re-consent) — the UI groups by `clientId`, and
+ * revoke is per-`clientId` (kills every grant for that app at once).
+ */
+export const ConnectedAppSchema = z.object({
+  grantId: z.string().min(1),
+  clientId: z.string().min(1),
+  clientName: z.string().nullable(),
+  scope: z.array(ScopeSchema),
+  createdAt: TimestampSchema,
+});
+export type ConnectedApp = z.infer<typeof ConnectedAppSchema>;
+
+export const ListConnectedAppsResponseSchema = z.object({ apps: z.array(ConnectedAppSchema) });
+export type ListConnectedAppsResponse = z.infer<typeof ListConnectedAppsResponseSchema>;
 
 /** OAuth error response (RFC 6749 §5.2) — returned by /token and echoed to /authorize's redirect. */
 export const OAuthErrorSchema = z.object({

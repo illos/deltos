@@ -80,7 +80,14 @@ mcp.post('/', async (c) => {
     grant !== undefined &&
     grantIsLive(grant, Date.now());
   if (!live) {
-    c.header('WWW-Authenticate', 'Bearer');
+    // Point a tokenless client at the Protected Resource Metadata (RFC 9728) so it can DISCOVER the OAuth
+    // Authorization Server and run the connect flow — this is what turns a bare 401 into a one-click OAuth
+    // handshake (oauth-provider.md §1). Same-origin, derived from the request so it's right on any deploy.
+    const origin = new URL(c.req.url).origin;
+    c.header(
+      'WWW-Authenticate',
+      `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"`,
+    );
     return c.json(rpcError(id, RPC.UNAUTHORIZED, 'missing or invalid bearer token'), 401);
   }
 

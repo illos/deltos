@@ -35,6 +35,7 @@ import { blob } from './routes/blob.js';
 import { agentTokens } from './routes/agentTokens.js';
 import { auditRoutes } from './routes/audit.js';
 import { mcp } from './routes/mcp.js';
+import { oauth, oauthWellKnown } from './routes/oauth.js';
 import { createAuthStore } from './db/authStore.js';
 import {
   AUDIT_LOG_RETENTION_DAYS,
@@ -152,6 +153,16 @@ app.route('/api/agent-tokens', agentTokens);
 // ---------------------------------------------------------------------------
 
 app.route('/api/mcp', mcp);
+
+// ---------------------------------------------------------------------------
+// OAuth 2.1 provider (ROAD-0005 first capability) — deltos as the Authorization Server for its own MCP
+// resource. Discovery docs are ROOT-level (/.well-known/*, also in wrangler run_worker_first so the SPA
+// shell can't shadow them); the register/authorize/token endpoints are under /api/oauth. The consent SCREEN
+// is a lazy PWA route (oauth-provider.md §2b), not served here. Server-resident: zero client-bundle cost.
+// ---------------------------------------------------------------------------
+
+app.route('/.well-known', oauthWellKnown);
+app.route('/api/oauth', oauth);
 
 // ---------------------------------------------------------------------------
 // Helpers
