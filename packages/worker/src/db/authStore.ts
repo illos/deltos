@@ -241,6 +241,10 @@ export interface AuthStore {
     resource: Resource;
     scope: Scope[]; // already CLAMPED read-only at the route
     createdAt: string; // ISO-8601 Z
+    // OAuth-issued tokens set this to the registered oauthClient.clientId (migration 0017); first-party
+    // Settings-minted tokens leave it null. The grant stays principalKind='agent' either way, so revoke-all
+    // covers it; clientId only adds per-client revoke + the Connected-apps listing. Defaults null.
+    clientId?: string | null;
   }): Promise<void>;
 
   /**
@@ -480,6 +484,81 @@ export interface AuthStore {
    * the forensic truth and is NEVER pruned — only this readable D1 copy is bounded (retention sweep).
    */
   pruneAuditLog(beforeIso: string): Promise<void>;
+
+  // --- OAuth provider (migration 0017) ------------------------------------------------------------
+  // deltos as an OAuth 2.1 Authorization Server for its own MCP resource. See docs/design/oauth-provider.md.
+  // The issued access token is inserted via insertAgentGrant({ clientId }) — these methods own only the
+  // client registry + the single-use authorization-code lifecycle + the Connected-apps list/revoke/prune.
+
+  /** DCR (RFC 7591): persist a newly registered public client. `redirectUris` is the exact-match allow-list. */
+  registerOauthClient(row: {
+    clientId: string;
+    clientName: string;
+    redirectUris: string[];
+    softwareId: string | null;
+    metadata: string | null; // JSON blob of remaining (non-authoritative) DCR metadata
+    createdAt: string; // ISO-8601 Z
+  }): Promise<void>;
+
+  /** Resolve a registered client for redirect-uri validation at /authorize + /token. Null if unknown. */
+  getOauthClient(
+    clientId: string,
+  ): Promise<{ clientId: string; clientName: string; redirectUris: string[] } | null>;
+
+  /** Persist a freshly minted authorization code (single-use, short-TTL). Only the hash is stored (F6). */
+  insertOauthCode(row: {
+    codeHash: string;
+    clientId: string;
+    accountId: string;
+    redirectUri: string;
+    codeChallenge: string;
+    scope: Scope[];
+    resource: string | null;
+    expiresAtMs: number;
+    createdAt: string; // ISO-8601 Z
+  }): Promise<void>;
+
+  /**
+   * ATOMIC single-use redemption at /token: claim the code IFF it is unconsumed AND unexpired, latching
+   * `consumedAt` in the same statement (RETURNING the bound fields). A second concurrent/replayed redemption
+   * matches zero rows → null → deny. This is the security-critical latch (mirrors the chargeUsage guard):
+   * the single-use property holds even under a concurrent burst because the claim + latch are one UPDATE.
+   */
+  consumeOauthCode(
+    codeHash: string,
+    nowMs: number,
+  ): Promise<{
+    clientId: string;
+    accountId: string;
+    redirectUri: string;
+    codeChallenge: string;
+    scope: Scope[];
+    resource: string | null;
+  } | null>;
+
+  /**
+   * Connected-apps listing: the account's ACTIVE (revokedAt IS NULL) OAuth-issued grants, joined to their
+   * client for a display name. Account-scoped on principalId (BOLA). Non-secret metadata only.
+   */
+  listOauthGrantsForAccount(accountId: string): Promise<
+    Array<{
+      grantId: string;
+      clientId: string;
+      clientName: string | null;
+      scope: Scope[];
+      createdAt: string;
+    }>
+  >;
+
+  /**
+   * BOLA-CRITICAL per-client revoke: revoke ALL of an account's live OAuth grants for one clientId. The
+   * account match is IN the WHERE, scoped to principalKind='agent' AND clientId — so it can neither touch
+   * another account's tokens nor an owner session grant. Returns rows affected (0 = nothing to revoke).
+   */
+  revokeOauthGrantsForClient(clientId: string, accountId: string): Promise<number>;
+
+  /** Reap authorization codes past their TTL or already consumed (cron retention; the raw code is unrecoverable). */
+  pruneOauthCodes(beforeMs: number): Promise<void>;
 }
 
 /** A password credential record (migration 0004). `totpEnabled` is the 0/1 column surfaced as a boolean. */
@@ -736,8 +815,8 @@ export function createAuthStore(db: DbAdapter): AuthStore {
         {
           sql: `INSERT INTO grants
                   (grantId, tokenHash, principalKind, principalId, mintedByKeyId,
-                   resourceKind, resourceId, scope, expiresAtMs, revokedAt, createdAt, label)
-                VALUES (?, ?, 'agent', ?, NULL, ?, ?, ?, NULL, NULL, ?, ?)`,
+                   resourceKind, resourceId, scope, expiresAtMs, revokedAt, createdAt, label, clientId)
+                VALUES (?, ?, 'agent', ?, NULL, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
           params: [
             row.grantId,
             row.tokenHash,
@@ -747,6 +826,7 @@ export function createAuthStore(db: DbAdapter): AuthStore {
             JSON.stringify(row.scope), // already CLAMPED read-only at the route
             row.createdAt,
             row.label,
+            row.clientId ?? null, // OAuth-issued → registered clientId; first-party → null
           ],
         },
       ]);
@@ -1203,6 +1283,138 @@ export function createAuthStore(db: DbAdapter): AuthStore {
 
     async pruneAuditLog(beforeIso) {
       await db.batch([{ sql: `DELETE FROM auditLog WHERE ts < ?`, params: [beforeIso] }]);
+    },
+
+    // --- OAuth provider (migration 0017) ----------------------------------------------------------
+
+    async registerOauthClient(row) {
+      await db.batch([
+        {
+          sql: `INSERT INTO oauthClient (clientId, clientName, redirectUris, softwareId, metadata, createdAt)
+                VALUES (?, ?, ?, ?, ?, ?)`,
+          params: [
+            row.clientId,
+            row.clientName,
+            JSON.stringify(row.redirectUris),
+            row.softwareId,
+            row.metadata,
+            row.createdAt,
+          ],
+        },
+      ]);
+    },
+
+    async getOauthClient(clientId) {
+      const r = await db.first<{ clientId: string; clientName: string; redirectUris: string }>(
+        `SELECT clientId, clientName, redirectUris FROM oauthClient WHERE clientId = ?`,
+        [clientId],
+      );
+      if (!r) return null;
+      // Parse + re-validate the stored allow-list at this read boundary (fail-closed on a malformed row).
+      const redirectUris = z.array(z.string()).parse(JSON.parse(r.redirectUris));
+      return { clientId: r.clientId, clientName: r.clientName, redirectUris };
+    },
+
+    async insertOauthCode(row) {
+      await db.batch([
+        {
+          sql: `INSERT INTO oauthAuthCode
+                  (codeHash, clientId, accountId, redirectUri, codeChallenge, scope, resource,
+                   expiresAtMs, consumedAt, createdAt)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+          params: [
+            row.codeHash,
+            row.clientId,
+            row.accountId,
+            row.redirectUri,
+            row.codeChallenge,
+            JSON.stringify(row.scope),
+            row.resource,
+            row.expiresAtMs,
+            row.createdAt,
+          ],
+        },
+      ]);
+    },
+
+    async consumeOauthCode(codeHash, nowMs) {
+      // ATOMIC single-use claim: the WHERE selects only an unconsumed, unexpired code and the SET latches
+      // consumedAt in the SAME statement, so a replay/concurrent redemption matches zero rows (no
+      // read-then-write window). RETURNING yields the bound fields exactly once; absence = deny.
+      const consumedAt = new Date(nowMs).toISOString();
+      const r = await db.first<{
+        clientId: string;
+        accountId: string;
+        redirectUri: string;
+        codeChallenge: string;
+        scope: string;
+        resource: string | null;
+      }>(
+        `UPDATE oauthAuthCode SET consumedAt = ?
+          WHERE codeHash = ? AND consumedAt IS NULL AND expiresAtMs > ?
+        RETURNING clientId, accountId, redirectUri, codeChallenge, scope, resource`,
+        [consumedAt, codeHash, nowMs],
+      );
+      if (!r) return null;
+      return {
+        clientId: r.clientId,
+        accountId: r.accountId,
+        redirectUri: r.redirectUri,
+        codeChallenge: r.codeChallenge,
+        scope: ScopeArraySchema.parse(JSON.parse(r.scope)), // fail-closed re-validate at the boundary
+        resource: r.resource,
+      };
+    },
+
+    async listOauthGrantsForAccount(accountId) {
+      const rows = await db.all<{
+        grantId: string;
+        clientId: string;
+        clientName: string | null;
+        scope: string;
+        createdAt: string;
+      }>(
+        `SELECT g.grantId, g.clientId, c.clientName, g.scope, g.createdAt
+           FROM grants g
+           LEFT JOIN oauthClient c ON c.clientId = g.clientId
+          WHERE g.principalKind = 'agent' AND g.principalId = ? AND g.clientId IS NOT NULL
+                AND g.revokedAt IS NULL
+          ORDER BY g.createdAt`,
+        [accountId],
+      );
+      return rows.map((r) => ({
+        grantId: r.grantId,
+        clientId: r.clientId,
+        clientName: r.clientName,
+        scope: ScopeArraySchema.parse(JSON.parse(r.scope)),
+        createdAt: r.createdAt,
+      }));
+    },
+
+    async revokeOauthGrantsForClient(clientId, accountId) {
+      // BOLA + scope belt IN the WHERE: only this account's live agent grants for this clientId. Cannot
+      // reach another account's rows or an owner session grant. Idempotent re-revoke = 0 rows. The route
+      // treats the result as >0 (revoked) vs 0 (nothing/not-yours → 404): real D1 `rowsWritten` counts
+      // INDEX writes (grants_byClientId + others), so it is NOT a reliable grant CARDINALITY — never test ===.
+      const now = new Date().toISOString();
+      const [res] = await db.batch([
+        {
+          sql: `UPDATE grants SET revokedAt = ?
+                 WHERE principalKind = 'agent' AND principalId = ? AND clientId = ? AND revokedAt IS NULL`,
+          params: [now, accountId, clientId],
+        },
+      ]);
+      return res?.rowsWritten ?? 0;
+    },
+
+    async pruneOauthCodes(beforeMs) {
+      // Reap anything past TTL or already consumed; the 60s TTL means this is a trickle regardless.
+      await db.batch([
+        {
+          sql: `DELETE FROM oauthAuthCode WHERE expiresAtMs < ? OR consumedAt IS NOT NULL`,
+          params: [beforeMs],
+        },
+      ]);
     },
   };
 }

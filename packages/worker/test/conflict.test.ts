@@ -68,7 +68,8 @@ const migrations = [
   '0013_agent-token-label.sql',
   '0014_grant-family-link.sql',
   '0015_audit-log.sql',
-  '0016_usage-counter.sql',].map((f) =>
+  '0016_usage-counter.sql',
+  '0017_oauth-provider.sql',].map((f) =>
   readFileSync(join(__dirname, '../migrations', f), 'utf8'),
 );
 

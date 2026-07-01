@@ -397,6 +397,9 @@ async function pruneRetention(env: Env): Promise<void> {
   const dayMs = 24 * 60 * 60 * 1000;
   await store.pruneAuditLog(new Date(nowMs - AUDIT_LOG_RETENTION_DAYS * dayMs).toISOString());
   await store.pruneUsage(dayBucket(nowMs - USAGE_COUNTER_RETENTION_DAYS * dayMs));
+  // OAuth authorization codes (migration 0017): 60s TTL, so reaping everything already-expired-or-consumed
+  // as of `nowMs` leaves only the handful of still-live codes. The raw code is unrecoverable regardless.
+  await store.pruneOauthCodes(nowMs);
 }
 
 // The default export carries BOTH entrypoints. We attach `scheduled` to the Hono `app` itself (rather than
