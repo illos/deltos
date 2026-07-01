@@ -322,6 +322,31 @@ describe('Connected apps — list / disconnect', () => {
   });
 });
 
+describe('client retention prune (pruneOauthClients)', () => {
+  it('drops a stale client with no live grant, keeps a stale client WITH a live grant + any recent client', async () => {
+    const store = createAuthStore(d1Adapter(env.DB));
+    const DAY = 86_400_000;
+    const oldIso = new Date(Date.now() - 60 * DAY).toISOString();
+    const nowIso = new Date().toISOString();
+    const base = { clientName: 'x', redirectUris: ['https://a/cb'], softwareId: null, metadata: null };
+
+    await store.registerOauthClient({ clientId: 'stale-nogrant', ...base, createdAt: oldIso });
+    await store.registerOauthClient({ clientId: 'stale-live', ...base, createdAt: oldIso });
+    await store.registerOauthClient({ clientId: 'recent-nogrant', ...base, createdAt: nowIso });
+    // stale-live holds a live OAuth grant → must be kept regardless of age.
+    await store.insertAgentGrant({
+      grantId: 'g-live', tokenHash: 'h-live', accountId: 'acct-1', label: 'x',
+      resource: { kind: 'workspace' }, scope: ['read', 'search'], createdAt: oldIso, clientId: 'stale-live',
+    });
+
+    await store.pruneOauthClients(new Date(Date.now() - 30 * DAY).toISOString());
+
+    expect(await store.getOauthClient('stale-nogrant')).toBeNull(); // reaped
+    expect(await store.getOauthClient('stale-live')).not.toBeNull(); // kept (live grant)
+    expect(await store.getOauthClient('recent-nogrant')).not.toBeNull(); // kept (recent)
+  });
+});
+
 describe('MCP 401 → discovery pointer', () => {
   it('a tokenless /api/mcp 401 carries the RFC 9728 resource_metadata pointer', async () => {
     const res = await app.request('/api/mcp', {

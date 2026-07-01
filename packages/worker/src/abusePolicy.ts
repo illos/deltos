@@ -50,6 +50,10 @@ export const API_RATE_CEILING = { limit: 200, periodSec: 10 } as const; // 200 /
  */
 export const AUDIT_LOG_RETENTION_DAYS = 90; // user-facing "Account activity" mirror horizon
 export const USAGE_COUNTER_RETENTION_DAYS = 7; // daily counters only need a few days of tail for inspection
+// OAuth clients (DCR): drop a registered client with NO live grant after this many days — bounds DCR-spam
+// row growth (the /register rate-limit fails open, so this is the durable backstop). A client with any live
+// grant is kept regardless of age. Auth codes are pruned separately (60s TTL, every cron pass).
+export const OAUTH_CLIENT_RETENTION_DAYS = 30;
 
 /** The UTC day bucket ('YYYY-MM-DD') a timestamp falls in — the partition key for the daily quota. */
 export function dayBucket(nowMs: number): string {

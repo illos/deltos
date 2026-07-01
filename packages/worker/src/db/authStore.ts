@@ -559,6 +559,13 @@ export interface AuthStore {
 
   /** Reap authorization codes past their TTL or already consumed (cron retention; the raw code is unrecoverable). */
   pruneOauthCodes(beforeMs: number): Promise<void>;
+
+  /**
+   * Reap registered clients older than `beforeIso` that hold NO live grant — the durable backstop against
+   * DCR row-spam (the /register rate-limit fails open). A client with ANY live (revokedAt IS NULL) grant is
+   * kept regardless of age; only genuinely-unused clients are dropped.
+   */
+  pruneOauthClients(beforeIso: string): Promise<void>;
 }
 
 /** A password credential record (migration 0004). `totpEnabled` is the 0/1 column surfaced as a boolean. */
@@ -1415,6 +1422,21 @@ export function createAuthStore(db: DbAdapter): AuthStore {
         {
           sql: `DELETE FROM oauthAuthCode WHERE expiresAtMs < ? OR consumedAt IS NOT NULL`,
           params: [beforeMs],
+        },
+      ]);
+    },
+
+    async pruneOauthClients(beforeIso) {
+      // Drop old clients that hold no LIVE grant. The NOT IN sub-select keeps any client with an active
+      // OAuth grant (so a connected app is never orphaned); only stale/unused registrations are reaped.
+      await db.batch([
+        {
+          sql: `DELETE FROM oauthClient
+                 WHERE createdAt < ?
+                   AND clientId NOT IN (
+                     SELECT clientId FROM grants WHERE clientId IS NOT NULL AND revokedAt IS NULL
+                   )`,
+          params: [beforeIso],
         },
       ]);
     },

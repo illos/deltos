@@ -40,6 +40,7 @@ import { createAuthStore } from './db/authStore.js';
 import {
   AUDIT_LOG_RETENTION_DAYS,
   USAGE_COUNTER_RETENTION_DAYS,
+  OAUTH_CLIENT_RETENTION_DAYS,
   dayBucket,
 } from './abusePolicy.js';
 
@@ -411,6 +412,9 @@ async function pruneRetention(env: Env): Promise<void> {
   // OAuth authorization codes (migration 0017): 60s TTL, so reaping everything already-expired-or-consumed
   // as of `nowMs` leaves only the handful of still-live codes. The raw code is unrecoverable regardless.
   await store.pruneOauthCodes(nowMs);
+  // OAuth clients: drop stale registrations (no live grant, older than the retention window) — the durable
+  // backstop against DCR row-spam (adversarial-review MED-2). A client with a live grant is always kept.
+  await store.pruneOauthClients(new Date(nowMs - OAUTH_CLIENT_RETENTION_DAYS * dayMs).toISOString());
 }
 
 // The default export carries BOTH entrypoints. We attach `scheduled` to the Hono `app` itself (rather than

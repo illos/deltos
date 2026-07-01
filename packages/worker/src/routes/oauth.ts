@@ -164,6 +164,16 @@ oauth.post(
         return oauthError(c, 429, 'temporarily_unavailable', 'too many attempts — try again shortly');
       }
 
+      // Validate the client + redirect FIRST — a cheap D1 read that fails fast BEFORE spending an Argon2
+      // step-up on a request whose redirect we'd never honor (adversarial-review INFO). matchRedirectUri is
+      // THE anti-phishing gate: exact-match, loopback port-exception only. The caller is already an
+      // authenticated owner (guard), so ordering this ahead of step-up discloses nothing to an attacker.
+      const client = await store.getOauthClient(req.client_id);
+      if (!client) return oauthError(c, 400, 'invalid_request', 'unknown client_id');
+      if (!matchRedirectUri(req.redirect_uri, client.redirectUris)) {
+        return oauthError(c, 400, 'invalid_request', 'redirect_uri is not registered for this client');
+      }
+
       // H1 STEP-UP — re-prove the human at consent (fail-closed). verifyStepUp returns its own Response on
       // failure (401 wrong factor / 503 config); a wrong factor counts toward the backoff + is audited.
       const stepUp = await verifyStepUp(c, store, accountId, { password: req.password, totp: req.totp }, nowMs);
@@ -189,15 +199,7 @@ oauth.post(
       }
       await store.clearThrottle(bucket);
 
-      // Validate the client + redirect BEFORE minting a code (fail-closed). matchRedirectUri is THE
-      // anti-phishing gate: exact-match, loopback port-exception only. code_challenge_method is pinned to
-      // S256 by the schema; scope is clamped to the read-only surface regardless of what was requested.
-      const client = await store.getOauthClient(req.client_id);
-      if (!client) return oauthError(c, 400, 'invalid_request', 'unknown client_id');
-      if (!matchRedirectUri(req.redirect_uri, client.redirectUris)) {
-        return oauthError(c, 400, 'invalid_request', 'redirect_uri is not registered for this client');
-      }
-
+      // S256 method is pinned by the schema; scope is clamped to the read-only surface regardless of request.
       const scope = clampToReadOnlyScopes(); // v1: ['read','search'], never widened by the request
       const rawCode = `dltos_code_${randomToken(32)}`;
       await store.insertOauthCode({
@@ -240,6 +242,14 @@ oauth.post(
  * The issued token is an `agent` grant carrying the clientId — inheriting the whole hardened agent path.
  */
 oauth.post('/token', async (c) => {
+  // IP rate-limit (Tier-1 native binding) — /token is UNAUTHENTICATED and does a D1 write per call
+  // (consumeOauthCode's UPDATE runs even on a zero-row miss), so without this an attacker could flood
+  // garbage codes to drive D1 write load / billing (adversarial-review MED-1). Mirrors /register.
+  const ip = c.req.header('CF-Connecting-IP') ?? 'unknown';
+  if (!(await principalRateAllow(c.env.API_RATE_LIMITER, `oauth-token:${ip}`))) {
+    return oauthError(c, 429, 'temporarily_unavailable', 'too many token requests');
+  }
+
   let raw: unknown;
   const contentType = c.req.header('content-type') ?? '';
   try {
