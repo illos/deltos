@@ -18,6 +18,7 @@ import { PhraseStep } from '../components/PhraseStep.js';
 import { AppearanceSection } from '../components/AppearanceSection.js';
 import { CustomDictSection } from '../components/CustomDictSection.js';
 import { ConnectClaudeSection } from '../components/ConnectClaudeSection.js';
+import { ConnectedAppsSection } from '../components/ConnectedAppsSection.js';
 import { SessionsSection } from '../components/SessionsSection.js';
 import { ActivitySection } from '../components/ActivitySection.js';
 import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
@@ -502,6 +503,10 @@ export function SettingsRoute() {
 
       {/* Section — Connect to Claude (llm-mcp-integration.md §5; lazy off-track via the lazy SettingsRoute) */}
       <ConnectClaudeSection />
+
+      {/* Section — Connected apps (oauth-provider.md §4; one-click OAuth grants + per-client kill-switch).
+          Sits under "Connect to Claude" — the OAuth counterpart to the manual paste-token surface. */}
+      <ConnectedAppsSection />
 
       {/* Section — Account activity (ROAD-0005 P3; the user-facing audit view — a live trust surface).
           Sits below the kill-switches it points at (Active sessions / Connect to Claude). */}

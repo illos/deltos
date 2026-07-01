@@ -15,6 +15,7 @@ import { useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../auth/store.js';
 import type { LoginResult } from '../auth/store.js';
+import { consumeOAuthReturn } from '../lib/oauthReturn.js';
 import { Disclosure } from '../components/Disclosure.js';
 import { Turnstile, turnstileEnabled, type TurnstileHandle } from '../components/Turnstile.js';
 
@@ -60,7 +61,9 @@ export function LoginRoute() {
         } else {
           const r = await finalizeAuth();
           if (r.ok) {
-            navigate('/', { replace: true });
+            // OAuth consent bounce (oauth-provider.md §2b): if an OAuth client sent us here via /login,
+            // return to the stashed /oauth/authorize destination; otherwise home. Safe-prefixed helper.
+            navigate(consumeOAuthReturn() ?? '/', { replace: true });
           } else {
             setStep({ tag: 'form', error: 'Connection error — please try again' });
           }
@@ -87,7 +90,7 @@ export function LoginRoute() {
         } else {
           const r = await finalizeAuth();
           if (r.ok) {
-            navigate('/', { replace: true });
+            navigate(consumeOAuthReturn() ?? '/', { replace: true });
           } else {
             setStep({ ...step, submitting: false, error: 'Connection error — please try again' });
           }

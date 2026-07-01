@@ -126,8 +126,13 @@ export function ConnectClaudeSection() {
     <section className="settings__section" aria-label="Connect to Claude">
       <h2 className="settings__section-title">Connect to Claude</h2>
       <p className="settings__row-hint">
-        Generate a token to connect Claude (claude.ai, Claude Desktop, or Claude Code) to your notes.
-        Access is <strong>read-only</strong> and you can revoke it anytime.
+        Claude now connects with <strong>one click</strong> — add deltos&rsquo;s MCP server
+        (<code>https://deltos.blackgate.studio/api/mcp</code>) as a connector in Claude and it discovers the
+        sign-in automatically; approved apps appear under <strong>Connected apps</strong> below.
+      </p>
+      <p className="settings__row-hint">
+        Prefer to paste a token by hand? Generate a manual connection token below. Either way access is{' '}
+        <strong>read-only</strong> and you can revoke it anytime.
       </p>
 
       {/* ── Generate sub-flow ─────────────────────────────────────────────── */}

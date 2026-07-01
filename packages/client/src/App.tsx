@@ -18,6 +18,21 @@ const NoteRoute = lazy(() => import('./routes/NoteRoute.js').then((m) => ({ defa
 const SettingsRoute = lazy(() =>
   import('./routes/SettingsRoute.js').then((m) => ({ default: m.SettingsRoute })),
 );
+// LAZY: the OAuth consent screen (/oauth/authorize) + its network client (oauthClient) are an off-track
+// access-plumbing surface — split out of the entry bundle (CONV-0004 / plugins-lazy-past-first-paint) so an
+// external app landing on the consent route pulls the chunk on demand, never at first paint.
+const OAuthAuthorizeRoute = lazy(() =>
+  import('./routes/OAuthAuthorizeRoute.js').then((m) => ({ default: m.OAuthAuthorizeRoute })),
+);
+
+/** The consent route wrapped in the standard lazy-route Suspense hold — reused in the auth-gate + the shell. */
+function OAuthAuthorizeLazy() {
+  return (
+    <Suspense fallback={<div className="auth"><div className="auth__spinner" aria-label="Loading" /></div>}>
+      <OAuthAuthorizeRoute />
+    </Suspense>
+  );
+}
 import { DrawerNav } from './components/DrawerNav.js';
 import { FullScreenNav } from './components/FullScreenNav.js';
 import { BottomNav } from './components/BottomNav.js';
@@ -121,6 +136,9 @@ function AppRoutes() {
           <Route path="/login" element={<LoginRoute />} />
           <Route path="/reset" element={<ResetRoute />} />
           <Route path="/forced-phrase" element={<ForcedPhraseRoute />} />
+          {/* OAuth consent while signed out: the route stashes the return + bounces to /login, then
+              LoginRoute returns the user here with the params intact (oauth-provider.md §2b). */}
+          <Route path="/oauth/authorize" element={<OAuthAuthorizeLazy />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       );
@@ -475,6 +493,9 @@ function AuthedShell() {
             }
           />
           <Route path="/" element={<CollectionView notebookId={notebookId} />} />
+          {/* OAuth consent (signed in): render the consent screen so a connecting app gets the approve/deny
+              gate (oauth-provider.md §2b). Lazy — never on the first-load bundle. */}
+          <Route path="/oauth/authorize" element={<OAuthAuthorizeLazy />} />
           {/* Auth routes are the gate — redirect home in the shell (session re-established by init on reload). */}
           <Route path="/login" element={<Navigate to="/" replace />} />
           <Route path="/register" element={<Navigate to="/" replace />} />

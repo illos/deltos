@@ -3219,3 +3219,64 @@ body.deck-custom .bottom-nav { display: none; }
    Approximate — tune on-device. */
 body.deck-custom .shell__main { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 
+
+/* ── OAuth consent screen (/oauth/authorize) — the PWA-mediated approve/deny surface (oauth-provider.md
+   §2b). Rides the shared `.auth` full-screen container; these add only the disclosure card + scope list,
+   using existing theme tokens (no new styling system). */
+.oauth-consent__card {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.oauth-consent__lede {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.oauth-consent__sent {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.oauth-consent__host {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--accent);
+  word-break: break-all;
+}
+.oauth-consent__client {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--secondary);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  word-break: break-all;
+}
+.oauth-consent__scopes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.oauth-consent__scopes-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.oauth-consent__scope-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.oauth-consent__scope {
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+.oauth-consent__scopes-note {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--secondary);
+  line-height: 1.5;
+}
