@@ -11,6 +11,7 @@ import { buildKeymapPlugin } from './keymap.js';
 import { buildInputRulesPlugin } from './inputRules.js';
 import { buildAutolinkKeymap } from './autolink.js';
 import { spineToPmDoc, pmDocToSpine, extractTitleFromDoc } from './serializer.js';
+import { buildMarkdownPastePlugin } from './markdownPaste.js';
 import { buildPluginIslandNodeViews } from './nodeviews/PluginIsland.js';
 // A1 (#123): plugins are sourced through the manifest spine. `collectEagerContributions` aggregates the
 // built-in plugins' (formula, link_card, tools) contributions — the formula registry, extra PM plugins
@@ -601,6 +602,10 @@ export function ProseMirrorEditor({
       // A1: plugin-contributed PM plugins (today: the link_card bare-URL paste handler, #69 E2b) — sourced
       // through the manifest spine, kept LAST to preserve the prior plugin order exactly.
       ...contributions.buildEditorPlugins(deltoSchema),
+      // Plain-text markdown paste — MUST be AFTER the contributed file/URL paste handlers (attachment image
+      // paste, embeds bare-URL card) so a file/URL paste still wins; this only sees a plain-text-only paste
+      // the earlier handlers declined, and converts it to native blocks via markdownToBody + spineToPmDoc.
+      buildMarkdownPastePlugin(deltoSchema),
     ];
     basePluginsRef.current = basePlugins; // #69 §5: the spellcheck plugin is added on top via reconfigure
     // Caret placement on open (Jim 2026-06-27): an EMPTY note (the new-note flow) keeps PM's default caret at
