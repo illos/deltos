@@ -1710,7 +1710,7 @@ a.auth__link { display: inline; }
   width: 100%;
   padding: 1rem;
   box-sizing: border-box;
-  background: #1a1d2a;
+  background: var(--list);
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   font-family: 'SF Mono', 'Fira Code', monospace;
@@ -1742,7 +1742,7 @@ a.auth__link { display: inline; }
   align-items: center;
   gap: 0.75rem;
   padding: 1.25rem;
-  background: #1a1d2a;
+  background: var(--list);
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   width: 100%;
@@ -1766,7 +1766,7 @@ a.auth__link { display: inline; }
   letter-spacing: 0.3em;
   font-family: 'SF Mono', 'Fira Code', monospace;
   padding: 1rem 1.5rem;
-  background: #1a1d2a;
+  background: var(--list);
   border: 1px solid var(--border);
   border-radius: 0.5rem;
 }
@@ -1775,7 +1775,7 @@ a.auth__link { display: inline; }
 .auth__input {
   width: 100%;
   box-sizing: border-box;
-  background: #1a1d2a;
+  background: var(--list);
   border: 1px solid var(--border);
   border-radius: 0.5rem;
   color: inherit;

@@ -18,7 +18,7 @@
  * RESIDENCY: `lazy()`-loaded in App.tsx (its own chunk), so neither this screen nor its network client
  * (oauthClient) ever touches the mobile first-load bundle (CONV-0004 / plugins-lazy-past-first-paint).
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import type { AuthorizeConsentRequest } from '@deltos/shared';
 import { useAuthStore } from '../auth/store.js';
@@ -105,10 +105,23 @@ export function OAuthAuthorizeRoute() {
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const isAuthed = useAuthStore((s) => s.isAuthed);
+  const sessionState = useAuthStore((s) => s.sessionState);
   const totpEnabled = useAuthStore((s) => s.totpEnabled);
+  const requireReauth = useAuthStore((s) => s.requireReauth);
 
   const parsed = useMemo(() => parseParams(searchParams), [searchParams]);
   const [phase, setPhase] = useState<Phase>({ tag: 'consent', password: '', totp: '', error: null });
+
+  // 'revoked' = isAuthed is persisted-true (ungated local shell) but the refresh cookie is DEAD in this
+  // browser context, so there is no live bearer and a consent POST would 503. Force a full re-login here
+  // (requireReauth is non-destructive — it keeps local data), stashing the return so login lands back on
+  // consent. This is the common real case: the OAuth client opens consent in a context without a live session.
+  useEffect(() => {
+    if (parsed.ok && isAuthed === true && sessionState === 'revoked') {
+      setOAuthReturn(location.pathname + location.search);
+      requireReauth();
+    }
+  }, [parsed.ok, isAuthed, sessionState, location, requireReauth]);
 
   // ── Invalid request — refuse before any auth / POST (a clear terminal error, no redirect). ──
   if (!parsed.ok) {
@@ -134,6 +147,15 @@ export function OAuthAuthorizeRoute() {
   if (isAuthed === false) {
     setOAuthReturn(location.pathname + location.search);
     return <Navigate to="/login" replace />;
+  }
+  // Revoked session (dead cookie in this context): the effect above is flipping us to the login gate — hold
+  // a spinner rather than flash the consent screen or fire an unauthenticated (503) POST.
+  if (sessionState === 'revoked') {
+    return (
+      <div className="auth">
+        <div className="auth__spinner" aria-label="Signing in again" />
+      </div>
+    );
   }
 
   // Deny → a TERMINAL screen, NOT a navigation. We can't validate the query-string redirect_uri client-side
@@ -168,6 +190,13 @@ export function OAuthAuthorizeRoute() {
       setPhase({ tag: 'redirecting' });
       redirectTo(buildRedirect(res.redirect_uri, { code: res.code, state: res.state }));
     } catch (err) {
+      // Session died between mount and submit (e.g. access TTL lapsed mid-consent + the refresh cookie is
+      // dead in this context) → route into a full re-login (non-destructive), returning here after.
+      if (err instanceof OAuthClientError && err.code === 'session_revoked') {
+        setOAuthReturn(location.pathname + location.search);
+        requireReauth();
+        return;
+      }
       // Step-up failure (401) → stay on the consent screen with an inline error so the entered factors can
       // be corrected and retried; anything else → surface the message on the same screen.
       const message =

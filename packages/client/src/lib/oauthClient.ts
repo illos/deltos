@@ -71,6 +71,8 @@ async function authedFetch(
         ? 'Your session expired — sign in again to continue.'
         : 'Could not reach the server — check your connection.',
       res.status,
+      // The consent screen keys on this code to route into a full re-login (vs a step-up retry).
+      outcome === 'revoked' ? 'session_revoked' : 'network_error',
     );
   }
   try {

@@ -14,7 +14,9 @@
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F2F2F4" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111113" />
     <meta name="description" content="A private, multi-surface notes framework." />
-    <!-- iOS installed-PWA hints -->
+    <!-- iOS installed-PWA hints. The `apple-` name is deprecated in favour of the standard
+         `mobile-web-app-capable`; keep both — older iOS only honours the apple- variant. -->
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <!-- NOT black-translucent: that runs content FULL-SCREEN under the status bar in standalone, and with
          the html,body,#root{height:100%} model iOS sized the layout viewport to (screen − status bar)
