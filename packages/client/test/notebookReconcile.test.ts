@@ -117,7 +117,7 @@ describe('GATE — create → EDIT → sync → note STAYS PUT (does not vanish)
     // The sync round-trip: the server (#58) now re-homes orphaned notes to null (uncategorized / All Notes).
     // The pull returns the note re-stamped to null + the canonical notebook.
     const reStamped: SyncNote = { ...local, notebookId: null, syncStatus: 'synced', deletedAt: null, syncSeq: 2 };
-    await mergePull([reStamped]);
+    await mergePull([reStamped], 'nbr-acct');
     await mergeNotebooks([syncNotebook(CANON, true)]);
 
     // After reconcile: note is null (All Notes) + pointer fell back to null (All Notes).
@@ -154,7 +154,7 @@ describe('GATE — create → EDIT → sync → note STAYS PUT (does not vanish)
 
     // Sync round-trip: the server KEEPS the resolvable custom notebookId (no reassign), pull echoes it.
     const echoed: SyncNote = { ...local, syncStatus: 'synced', deletedAt: null, syncSeq: 2 };
-    await mergePull([echoed]);
+    await mergePull([echoed], 'nbr-acct');
     await mergeNotebooks([syncNotebook(BOOKS, false), syncNotebook(CANON, true)]);
 
     const storedNote = await db.notes.get(noteId);

@@ -121,15 +121,27 @@ export interface LocalStore {
   applyConflict(recordId: NoteId, serverNote: Note | null, accountId: string, baseVersion: number): Promise<void>;
 
   /**
-   * Pull MERGE (PIN-SYNC-2 + pending-edit guard), atomic over BOTH notes AND the sync queue: compute
-   * the pending-edit record ids INSIDE this transaction, then apply `liveNotes` (put) / `tombstones`
-   * (delete), skipping any pending id. Computing pendingIds in-transaction (NOT as a prior separate
-   * read) closes a TOCTOU silent-loss window: a concurrent putNoteAndEnqueue — which also locks
+   * Pull MERGE (PIN-SYNC-2 + pending-edit guard), atomic over notes + the sync queue + noteVersions:
+   * compute the pending-edit record ids INSIDE this transaction, then apply `liveNotes` (put) /
+   * `tombstones` (delete), skipping any pending id. Computing pendingIds in-transaction (NOT as a prior
+   * separate read) closes a TOCTOU silent-loss window: a concurrent putNoteAndEnqueue — which also locks
    * notes+queue — serializes against this, so its edit is either seen as pending (guarded) or applied
    * strictly AFTER the merge (note not stomped). An id with a pending edit is reconciled by the push
    * path, never stomped by pull.
+   *
+   * PRE-OVERWRITE CAPTURE (agent-write safety net): before a live note overwrites an existing local row,
+   * if the change is MATERIAL (total char delta ≥ `capture.materialFloorChars`) the OLD LOCAL content is
+   * retained as a `kind:'sync'` NoteVersion (accountId-scoped, sharing the bounded session+sync pool via
+   * `capture.retentionCap`). A sync-authored change (future agent edit / another device) would otherwise
+   * clobber the local copy with no snapshot. The captured content is ALWAYS the OLD local note, never the
+   * incoming edit. Mutually exclusive with the conflict-capture path (a pending-edit note skips here).
    */
-  mergeServerNotes(liveNotes: Note[], tombstones: NoteId[]): Promise<void>;
+  mergeServerNotes(
+    liveNotes: Note[],
+    tombstones: NoteId[],
+    accountId: string,
+    capture: { materialFloorChars: number; retentionCap: number },
+  ): Promise<void>;
 
   // --- notebooks mirror ---
   getNotebook(id: NotebookId): Promise<NotebookRow | undefined>;

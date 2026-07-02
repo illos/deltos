@@ -15,6 +15,7 @@ import type {
 } from '@deltos/shared';
 import { sanitizeBlockIds } from '../editor/serializer.js';
 import { useNotebookStore } from './notebookStore.js';
+import { DEFAULT_CAPTURE_THRESHOLDS } from './historyCapture.js';
 
 /**
  * The `Authorization: Bearer <grant-token>` header for sync requests. The token is read FRESH from
@@ -436,7 +437,7 @@ async function pullUpdates(notebookId: NotebookId, apiBase: string): Promise<voi
 
     const json: SyncPullResponse = await res.json();
 
-    await mergePull(json.notes);
+    await mergePull(json.notes, accountId);
     await mergeNotebooks(json.notebooks);
     await mergeDictionary(json.dictionaryWords);
 
@@ -454,9 +455,12 @@ async function pullUpdates(notebookId: NotebookId, apiBase: string): Promise<voi
  * syncQueue, skip the incoming server update — the push flush will reconcile. This prevents
  * an in-flight pull from overwriting unsent edits.
  *
+ * `accountId` (the caller's authed principal — non-null in pullUpdates) scopes the pre-overwrite
+ * kind:'sync' capture the store does before a material foreign change clobbers a local note.
+ *
  * Exported for direct testing (syncEngine.test.ts).
  */
-export async function mergePull(notes: SyncNote[]): Promise<void> {
+export async function mergePull(notes: SyncNote[], accountId: string): Promise<void> {
   // The engine splits the wire notes into live puts vs tombstone deletes; the store's
   // mergeServerNotes applies both atomically AND computes the pending-edit guard inside its own
   // notes+queue transaction (closing the TOCTOU window — see dexieLocalStore.mergeServerNotes).
@@ -480,7 +484,10 @@ export async function mergePull(notes: SyncNote[]): Promise<void> {
     }
   }
 
-  await getStore().mergeServerNotes(liveNotes, tombstones);
+  await getStore().mergeServerNotes(liveNotes, tombstones, accountId, {
+    materialFloorChars: DEFAULT_CAPTURE_THRESHOLDS.materialFloorChars,
+    retentionCap: DEFAULT_CAPTURE_THRESHOLDS.retentionCap,
+  });
 }
 
 // ---------------------------------------------------------------------------

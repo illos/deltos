@@ -15,28 +15,33 @@ export type ClientNote = Note & { hasConflict?: boolean; deletedAt?: string };
 
 /**
  * A retained whole-note snapshot keyed to the SAME note id (never a new-id fork). `accountId` is the
- * client-side D6 scope (stamped from the session principal, never the body). Two kinds share this store
+ * client-side D6 scope (stamped from the session principal, never the body). Three kinds share this store
  * and the one chronological timeline (#45):
  *   - `'conflict'` — a CAS-conflict divergence retained by the sync engine (PART 2 conflict-as-version).
  *   - `'session'`  — a coalesced edit-session checkpoint captured by the history layer (idle-settle /
  *     on-leave / big-change). Carries the precomputed split char-delta so the timeline never recomputes.
- * `charsAdded`/`charsRemoved` are precomputed at capture vs the previous snapshot; present on `'session'`
- * rows, absent on `'conflict'` rows (the conflict path predates them). Versions are client-only (unsynced)
- * in v1. Per-block history stays Phase 3 (whole-note grain here, per S2).
+ *   - `'sync'`     — the OLD local content captured by `mergeServerNotes` BEFORE a material FOREIGN
+ *     overwrite clobbers it (a future agent edit / another device). The safety net that lets agent
+ *     write-tools ship: a sync-authored change would otherwise overwrite the local copy with no snapshot.
+ * `charsAdded`/`charsRemoved` are precomputed at capture vs the overwritten/previous snapshot; present on
+ * `'session'` + `'sync'` rows, absent on `'conflict'` rows (the conflict path predates them). `'session'`
+ * and `'sync'` share ONE bounded retention pool per [noteId+accountId] (conflict rows are never pruned).
+ * Versions are client-only (unsynced) in v1. Per-block history stays Phase 3 (whole-note grain here, per S2).
  */
 export interface NoteVersion {
   id: string;            // version-row UUID (PK)
   noteId: NoteId;        // the note this version belongs to — SAME id
   accountId: string;     // client-side D6 scope (session principal)
-  kind: 'conflict' | 'session';
+  kind: 'conflict' | 'session' | 'sync';
   title: string;
   properties: Note['properties'];
   body: Note['body'];
   baseVersion: number;   // conflict: the server version the divergent edit was authored against;
-                         // session: the note's current local version at capture (informational).
+                         // session: the note's current local version at capture (informational);
+                         // sync: the OLD local note's version, before the foreign overwrite.
   createdAt: string;     // ISO-8601 Z (when retained/captured)
-  charsAdded?: number;   // 'session' only — precomputed split delta vs the previous snapshot.
-  charsRemoved?: number; // 'session' only.
+  charsAdded?: number;   // 'session'/'sync' only — precomputed split delta vs the overwritten snapshot.
+  charsRemoved?: number; // 'session'/'sync' only.
 }
 
 /**

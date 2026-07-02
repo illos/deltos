@@ -11,9 +11,8 @@
  * Mock fetch intercepts push/pull requests and returns controlled server responses.
  */
 
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import 'fake-indexeddb/auto';
-import Dexie from 'dexie';
 import type { Note, NotebookId } from '@deltos/shared';
 import type { SyncNote } from '@deltos/shared';
 
@@ -198,13 +197,123 @@ describe('pending-edit pull guard (PIN-SYNC-1 landmine)', () => {
     const serverVersion = makeNote(noteId, 3, 'Server version — must not overwrite local');
     const pullNotes: SyncNote[] = [makeSyncNote(serverVersion)];
 
-    await mergePull(pullNotes, NB);
+    await mergePull(pullNotes, 'pull-guard-acct');
 
     // Local note must NOT be overwritten — still at version 2 with the local title
     const afterMerge = await db.notes.get(noteId as Note['id']);
     expect(afterMerge).not.toBeNull();
     expect(afterMerge!.title).toBe('My local edit');
     expect(afterMerge!.version).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 2b: pre-overwrite sync-capture — a MATERIAL foreign overwrite (a future agent edit / another
+// device) captures the OLD local content as a kind:'sync' version BEFORE clobbering it. This is the
+// safety net that lets agent write-tools ship: version history is otherwise local-editing-only.
+// ---------------------------------------------------------------------------
+
+describe('pre-overwrite sync-capture (agent-write safety net)', () => {
+  const ACCT = 'sync-cap-acct';
+
+  it('captures exactly one kind:sync version holding the OLD content, then adopts server content', async () => {
+    const { db } = await import('../src/db/schema.js');
+    const { mergePull } = await import('../src/lib/syncEngine.js');
+    const { computeCharDelta, noteText } = await import('../src/lib/textDelta.js');
+
+    const noteId = 'f0000000-0000-4000-8000-000000000001';
+    // A synced local note (no pending queue entry) — the state a foreign edit is about to overwrite.
+    const local = makeNote(noteId, 4, 'Original local title before the agent rewrote it');
+    local.syncStatus = 'synced';
+    await db.notes.put(local);
+
+    // The server (agent / another device) sends a materially different version at a higher version.
+    const server = makeNote(noteId, 5, 'Completely rewritten by the AI agent write tool now');
+    const pullNotes: SyncNote[] = [makeSyncNote(server, null, 7)];
+
+    await mergePull(pullNotes, ACCT);
+
+    // Exactly one sync version, holding the OLD local content (NOT the incoming server edit).
+    const versions = await db.noteVersions.where('[noteId+accountId]').equals([noteId, ACCT]).toArray();
+    expect(versions).toHaveLength(1);
+    const v = versions[0]!;
+    expect(v.kind).toBe('sync');
+    expect(v.title).toBe('Original local title before the agent rewrote it'); // OLD content, never the incoming note
+    expect(v.body).toEqual(local.body);
+    expect(v.baseVersion).toBe(4); // the old local version, about to be replaced
+    const expectedDelta = computeCharDelta(noteText(local.title, local.body), noteText(server.title, server.body));
+    expect(v.charsAdded).toBe(expectedDelta.charsAdded);
+    expect(v.charsRemoved).toBe(expectedDelta.charsRemoved);
+
+    // The live note now carries the server content.
+    const after = await db.notes.get(noteId as Note['id']);
+    expect(after!.title).toBe('Completely rewritten by the AI agent write tool now');
+    expect(after!.version).toBe(5);
+  });
+
+  it('captures NOTHING for a no-op merge (identical content) or a sub-floor change (< materialFloorChars)', async () => {
+    const { db } = await import('../src/db/schema.js');
+    const { mergePull } = await import('../src/lib/syncEngine.js');
+
+    // (a) identical content → 0 delta.
+    const idId = 'f1000000-0000-4000-8000-000000000001';
+    const idLocal = makeNote(idId, 2, 'Unchanged title');
+    idLocal.syncStatus = 'synced';
+    await db.notes.put(idLocal);
+
+    // (b) sub-floor change (< 24 chars): a one-char title tweak.
+    const subId = 'f2000000-0000-4000-8000-000000000001';
+    const subLocal = makeNote(subId, 2, 'Hello');
+    subLocal.syncStatus = 'synced';
+    await db.notes.put(subLocal);
+
+    await mergePull(
+      [
+        makeSyncNote(makeNote(idId, 3, 'Unchanged title'), null, 8), // identical → 0 delta
+        makeSyncNote(makeNote(subId, 3, 'Hello!'), null, 9),          // +1 char → below the 24 floor
+      ],
+      ACCT,
+    );
+
+    expect(await db.noteVersions.count()).toBe(0);
+    // Both notes still adopt the server version (the put is unconditional).
+    expect((await db.notes.get(idId as Note['id']))!.version).toBe(3);
+    expect((await db.notes.get(subId as Note['id']))!.version).toBe(3);
+  });
+
+  it('captures NOTHING for a brand-new pulled note (no existing local row) — just puts it', async () => {
+    const { db } = await import('../src/db/schema.js');
+    const { mergePull } = await import('../src/lib/syncEngine.js');
+
+    const newId = 'f3000000-0000-4000-8000-000000000001';
+    // No local row exists — a first pull backfilling this note.
+    await mergePull([makeSyncNote(makeNote(newId, 1, 'A brand new note from the server side'), null, 10)], ACCT);
+
+    expect(await db.noteVersions.count()).toBe(0);
+    const after = await db.notes.get(newId as Note['id']);
+    expect(after).toBeDefined();
+    expect(after!.title).toBe('A brand new note from the server side');
+  });
+
+  it('the pending-edit guard still skips the note AND writes zero sync versions for it', async () => {
+    const { db } = await import('../src/db/schema.js');
+    const { mergePull } = await import('../src/lib/syncEngine.js');
+
+    const noteId = 'f4000000-0000-4000-8000-000000000001';
+    const local = makeNote(noteId, 2, 'My unsent local edit that must survive');
+    local.syncStatus = 'pending';
+    await db.notes.put(local);
+    // A pending queue entry pins the note — pull must not stomp it, and must not sync-capture it.
+    await db.syncQueue.add({ id: crypto.randomUUID(), recordId: noteId, payload: local, baseVersion: 1, createdAt: NOW });
+
+    // A materially different foreign version arrives for the same (pending) note.
+    await mergePull([makeSyncNote(makeNote(noteId, 3, 'Server clobber that should be ignored while pending'), null, 11)], ACCT);
+
+    // Local edit untouched (guard held) AND no kind:'sync' version for the pending note.
+    const after = await db.notes.get(noteId as Note['id']);
+    expect(after!.title).toBe('My unsent local edit that must survive');
+    expect(after!.version).toBe(2);
+    expect(await db.noteVersions.where('[noteId+accountId]').equals([noteId, ACCT]).count()).toBe(0);
   });
 });
 
@@ -328,7 +437,6 @@ describe('queue drain on accept', () => {
     // On accept, the older (superseded) entries must drain too — otherwise they re-push at a stale
     // baseVersion and the server forks them into spurious copies.
     const { db } = await import('../src/db/schema.js');
-    const { mutateNotes } = await import('../src/db/mutate.js');
 
     const noteId = 'e0000000-0000-4000-8000-000000000001';
     // Three edits, distinct createdAt (mutateNotes stamps ISO-now; force ordering explicitly).

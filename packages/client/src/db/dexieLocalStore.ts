@@ -2,6 +2,7 @@ import { liveQuery } from 'dexie';
 import type { Note, NoteId, NotebookId, SyncStatus } from '@deltos/shared';
 import { isTrashed, trashedAt, setTrashedAt } from '@deltos/shared';
 import { noteHasContent } from '../lib/noteContent.js';
+import { computeCharDelta, deltaMagnitude, noteText } from '../lib/textDelta.js';
 import { db } from './schema.js';
 import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry, NotebookQueueEntry, DictionaryWordRow, DictionaryQueueEntry } from './schema.js';
 import type { ConflictResolution, LocalStore, Unsubscribe } from './localStore.js';
@@ -14,6 +15,26 @@ import type { ConflictResolution, LocalStore, Unsubscribe } from './localStore.j
  * VISIBLE in the main list (and out of the trash view, so it shows normally — never lost). secSys (B).
  */
 const isInTrash = (n: ClientNote): boolean => isTrashed(n.properties);
+
+/**
+ * Prune the bounded version pool for a note to `retentionCap`, oldest-first. `'session'` and `'sync'`
+ * rows SHARE this one bounded pool per [noteId+accountId]; `'conflict'` rows are NEVER counted or pruned
+ * (they're cleared only by conflict resolution). MUST be called inside an rw transaction that already
+ * includes db.noteVersions — Dexie propagates the transaction context through the async chain, so the
+ * reads/deletes here join the caller's transaction. Shared by captureSessionVersion + the sync-capture
+ * path (mergeServerNotes) so history stays bounded no matter which mechanism appended (anti-bloat).
+ */
+async function pruneVersionPool(noteId: NoteId, accountId: string, retentionCap: number): Promise<void> {
+  const pool = (
+    await db.noteVersions.where('[noteId+accountId]').equals([noteId, accountId]).toArray()
+  )
+    .filter((v) => v.kind !== 'conflict')
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt)); // oldest first
+  const excess = pool.length - retentionCap;
+  if (excess > 0) {
+    await db.noteVersions.bulkDelete(pool.slice(0, excess).map((v) => v.id));
+  }
+}
 
 /**
  * The Dexie/IndexedDB implementation of {@link LocalStore}. This is the ONE place Dexie types live;
@@ -134,16 +155,9 @@ export const dexieLocalStore: LocalStore = {
     // already decided this checkpoint is material and precomputed the delta — this is the write + prune.
     await db.transaction('rw', db.noteVersions, async () => {
       await db.noteVersions.add(version);
-      // Prune only OUR 'session' rows beyond the cap; conflict rows are untouched (resolution clears them).
-      const sessions = (
-        await db.noteVersions.where('[noteId+accountId]').equals([version.noteId, version.accountId]).toArray()
-      )
-        .filter((v) => v.kind === 'session')
-        .sort((a, b) => a.createdAt.localeCompare(b.createdAt)); // oldest first
-      const excess = sessions.length - retentionCap;
-      if (excess > 0) {
-        await db.noteVersions.bulkDelete(sessions.slice(0, excess).map((v) => v.id));
-      }
+      // Prune the shared 'session'+'sync' pool beyond the cap; conflict rows are untouched (resolution
+      // clears them). Same helper the sync-capture path uses, so the two can't drift.
+      await pruneVersionPool(version.noteId, version.accountId, retentionCap);
     });
   },
 
@@ -281,15 +295,28 @@ export const dexieLocalStore: LocalStore = {
     });
   },
 
-  async mergeServerNotes(liveNotes: Note[], tombstones: NoteId[]): Promise<void> {
-    // Transaction over BOTH notes AND syncQueue, with pendingIds computed INSIDE it. This closes the
-    // TOCTOU silent-loss window (secSys): a concurrent putNoteAndEnqueue also locks notes+queue, so it
-    // serializes against this merge — its edit is either visible in pendingIds here (guarded) or
-    // applied strictly after (note not stomped). Reading pendingIds as a prior separate query (the old
-    // shape) let an edit slip into the gap, get stomped, then be silently dropped if the next push
-    // conflict-forked the stomped state and blanket-drained the edit's queue entry.
-    await db.transaction('rw', db.notes, db.syncQueue, async () => {
+  async mergeServerNotes(
+    liveNotes: Note[],
+    tombstones: NoteId[],
+    accountId: string,
+    capture: { materialFloorChars: number; retentionCap: number },
+  ): Promise<void> {
+    // Transaction over notes + syncQueue + noteVersions (the last so the pre-overwrite capture below is
+    // atomic with the put), with pendingIds computed INSIDE it. This closes the TOCTOU silent-loss
+    // window (secSys): a concurrent putNoteAndEnqueue also locks notes+queue, so it serializes against
+    // this merge — its edit is either visible in pendingIds here (guarded) or applied strictly after
+    // (note not stomped). Reading pendingIds as a prior separate query (the old shape) let an edit slip
+    // into the gap, get stomped, then be silently dropped if the next push conflict-forked the stomped
+    // state and blanket-drained the edit's queue entry.
+    await db.transaction('rw', db.notes, db.syncQueue, db.noteVersions, async () => {
       const pendingIds = new Set((await db.syncQueue.toArray()).map((e) => e.recordId));
+      // ONE bulkGet for the whole batch → existing-local map, keyed by id. NOT a per-note get in the
+      // loop (perf — Jim's load north-star; a full re-pull merges every account note at once).
+      const existingMap = new Map<NoteId, ClientNote>(
+        (await db.notes.bulkGet(liveNotes.map((n) => n.id)))
+          .filter((n): n is ClientNote => n !== undefined)
+          .map((n) => [n.id, n]),
+      );
       for (const id of tombstones) {
         // Pending-edit pull guard: never stomp a note with an unsent local edit (push reconciles it).
         if (pendingIds.has(id)) continue;
@@ -297,6 +324,39 @@ export const dexieLocalStore: LocalStore = {
       }
       for (const note of liveNotes) {
         if (pendingIds.has(note.id)) continue;
+        // Pre-overwrite safety net (the change that lets agent write-tools ship): a note changed by SYNC
+        // (a future agent edit, or another device) is about to clobber the local copy with NO history
+        // snapshot — version capture is otherwise local-editing-only. For a MATERIAL foreign change,
+        // retain the OLD LOCAL content as a kind:'sync' version BEFORE the put, so it's recoverable in the
+        // timeline. CAPTURE THE OLD CONTENT, NEVER the incoming note: capturing the incoming edit would
+        // make "recover" restore the very thing that clobbered you.
+        //
+        // No double-capture with the conflict path: a note with a pending local edit hits the `continue`
+        // above, so applyConflict's kind:'conflict' retention and this kind:'sync' capture are mutually
+        // exclusive — a given overwrite is retained by exactly one of them. A brand-new pulled note has no
+        // existing row → nothing to capture, just the put.
+        const existing = existingMap.get(note.id);
+        if (existing) {
+          const oldText = noteText(existing.title, existing.body);
+          const newText = noteText(note.title, note.body);
+          const delta = computeCharDelta(oldText, newText);
+          if (deltaMagnitude(delta) >= capture.materialFloorChars) {
+            await db.noteVersions.add({
+              id: crypto.randomUUID(),
+              noteId: note.id,
+              accountId,
+              kind: 'sync',
+              title: existing.title,        // OLD local content — the thing being overwritten
+              properties: existing.properties,
+              body: existing.body,
+              baseVersion: existing.version, // the local version that is about to be replaced
+              createdAt: new Date().toISOString(),
+              charsAdded: delta.charsAdded,
+              charsRemoved: delta.charsRemoved,
+            });
+            await pruneVersionPool(note.id, accountId, capture.retentionCap);
+          }
+        }
         await db.notes.put(note);
       }
     });
