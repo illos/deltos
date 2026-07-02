@@ -31,7 +31,7 @@ const migrationFiles = [
   '0014_grant-family-link.sql',
   '0015_audit-log.sql',
   '0016_usage-counter.sql',
-  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', // adds grants.familyId (the mintGrant INSERT lists it); appended LAST to keep slice/index below valid
+  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', // adds grants.familyId (the mintGrant INSERT lists it); appended LAST to keep slice/index below valid
 ];
 const migrations = migrationFiles.map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 const preAccountMigrations = migrations.slice(0, 3); // 0000–0002, before the account dimension

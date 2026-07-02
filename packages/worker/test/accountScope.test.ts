@@ -31,7 +31,7 @@ const migrations = [
   '0001_stream-b-sync.sql',
   '0002_stream-a-auth.sql',
   '0003_account-identity.sql',
-  '0018_fts5-note-search.sql', // FTS table; searchIndex.ts is invoked by the note mutators (0018)
+  '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', // FTS table; searchIndex.ts is invoked by the note mutators (0018)
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function sqliteAdapter(db: Database.Database): DbAdapter {

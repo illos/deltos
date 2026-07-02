@@ -33,6 +33,7 @@ import { transcribe } from './routes/transcribe.js';
 import { unfurl } from './routes/unfurl.js';
 import { blob } from './routes/blob.js';
 import { agentTokens } from './routes/agentTokens.js';
+import { account } from './routes/account.js';
 import { auditRoutes } from './routes/audit.js';
 import { mcp } from './routes/mcp.js';
 import { oauth, oauthWellKnown, oauthConsentSurface } from './routes/oauth.js';
@@ -144,6 +145,7 @@ app.route('/api/plugin/blob', blob);
 // ---------------------------------------------------------------------------
 
 app.route('/api/agent-tokens', agentTokens);
+app.route('/api/account', account);
 
 // ---------------------------------------------------------------------------
 // Remote MCP server (llm-mcp-integration.md §6) — JSON-RPC 2.0 over a stateless Streamable-HTTP POST,
