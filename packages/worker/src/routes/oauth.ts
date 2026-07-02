@@ -60,14 +60,19 @@ function oauthError(c: Context<AppEnv>, status: number, error: string, descripti
 export const oauthWellKnown = new Hono<AppEnv>();
 
 /** RFC 8414 Authorization Server Metadata — endpoints + hard constraints (S256-only, code-only, public). */
-oauthWellKnown.get('/oauth-authorization-server', (c) =>
-  c.json(buildAuthServerMetadata(requestOrigin(c.req.url))),
-);
+oauthWellKnown.get('/oauth-authorization-server', (c) => {
+  // no-store: the doc is derived per-deploy/origin and MUST reflect a redeploy immediately — edge-caching it
+  // once served a stale authorization_endpoint after a fix and 404'd the client's connect. It's tiny and
+  // fetched once per connect, so skipping the cache costs nothing.
+  c.header('Cache-Control', 'no-store');
+  return c.json(buildAuthServerMetadata(requestOrigin(c.req.url)));
+});
 
 /** RFC 9728 Protected Resource Metadata for /api/mcp — points clients at this AS + names the audience. */
-oauthWellKnown.get('/oauth-protected-resource', (c) =>
-  c.json(buildProtectedResourceMetadata(requestOrigin(c.req.url))),
-);
+oauthWellKnown.get('/oauth-protected-resource', (c) => {
+  c.header('Cache-Control', 'no-store');
+  return c.json(buildProtectedResourceMetadata(requestOrigin(c.req.url)));
+});
 
 // --- /api/oauth ----------------------------------------------------------------------------------
 
