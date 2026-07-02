@@ -1,10 +1,16 @@
 import { Hono } from 'hono';
 import { AwsClient } from 'aws4fetch';
 import type { AppEnv, AppContext } from '../context.js';
-import type { Env } from '../env.js';
 import { apiError, NON_PROD_ENVIRONMENTS } from '../http.js';
 import { resolvePrincipal } from '../auth.js';
 import { chargeUsage, quotaExceeded } from '../usage.js';
+import {
+  storeBlob,
+  safeServeType,
+  accountUsage,
+  ACCOUNT_BLOB_QUOTA,
+  MAX_BLOB_SIZE,
+} from '../blobStore.js';
 
 /**
  * BLOB host capability (docs/specs/plugin-support.md §7, A4 #126) — the first SERVER-ENFORCED plugin host
@@ -30,11 +36,6 @@ import { chargeUsage, quotaExceeded } from '../usage.js';
  *      paths (buffered upload + presign) — the deferral the transcribe-throttle ruling flagged is closed.
  */
 
-/** Per-object hard cap. Matches the transcribe final-pass ceiling; raise only with a secSys ruling. */
-const MAX_BLOB_SIZE = 25 * 1024 * 1024;
-/** Per-account total stored bytes. Coarse v1 quota (summed from R2 list); a durable counter is a later add. */
-const ACCOUNT_BLOB_QUOTA = 10 * 1024 * 1024 * 1024;
-
 /**
  * Direct-to-R2 large-file path (direct-r2-upload.md §3, Slice 1). Files > MAX_BLOB_SIZE can't ride the
  * buffered path (the Worker would buffer the whole body against the 128 MB memory / ~100 MB request limits),
@@ -47,76 +48,6 @@ const MAX_DIRECT_BLOB_SIZE = 2 * 1024 * 1024 * 1024;
 const PRESIGN_TTL_SECONDS = 3600;
 /** R2 S3-API bucket name (matches `wrangler.jsonc` r2_buckets bucket_name — the BLOBS binding's target). */
 const BLOB_BUCKET = 'deltos-blobs';
-
-/** Content-types safe to hand back with their real type (images can't execute). Everything else → octet. */
-const SAFE_INLINE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
-
-/**
- * Image inputs we pre-bake WebP derivatives for (file-notes spec §4.2). The SAFE_INLINE image set plus HEIC/HEIF
- * — `env.IMAGES` decodes HEIC on all plans (FN-W4), and the user never sees the raw HEIC bytes inline (browsers
- * can't decode them), only the host-baked WebP. The derivative bake is content-format-agnostic; this set only
- * decides WHICH uploads are worth a bake.
- */
-const BAKEABLE_IMAGE_TYPES = new Set([...SAFE_INLINE_TYPES, 'image/heic', 'image/heif']);
-
-/**
- * The two WebP derivatives pre-baked per image (file-notes spec §4.2, gate FN-W2). Keys live under the SAME
- * server-derived `{accountId}/` prefix as the original blob (HC-A4-1 access boundary), suffixed so a user upload
- * — whose key is `{accountId}/{64-hex-hash}` — can NEVER land bytes at a derivative key. That key-namespace gap is
- * what makes the inline derivative routes safe to serve non-attachment: they only ever return host-generated WebP.
- */
-const DERIVATIVES = [
-  /** Square center-crop tile for the list artifact-pill. */
-  { suffix: 'thumb.webp', transform: { width: 256, height: 256, fit: 'cover' as const } },
-  /** Long-edge ≤2048px contain (never upscales) for the open-view preview. */
-  { suffix: 'view.webp', transform: { width: 2048, height: 2048, fit: 'scale-down' as const } },
-];
-
-/** Never serve active/ambiguous content with its real type on the app origin (nosniff + attachment also apply). */
-function safeServeType(stored: string | undefined): string {
-  return stored && SAFE_INLINE_TYPES.has(stored) ? stored : 'application/octet-stream';
-}
-
-/**
- * Pre-bake the two WebP derivatives for an uploaded image (file-notes spec §4.2; gate FN-W2). The `env.IMAGES`
- * call is the mockable seam — unit tests inject a stub binding (the real binding has NO local impl, only
- * `wrangler dev --remote`). Every derive is:
- *   - IDEMPOTENT: content-addressed key + a head()-precheck → a re-upload of the same hash skips an already-baked
- *     derivative (never double-bakes destructively), and a derive that failed last time is retried.
- *   - NON-FATAL: the original blob is already stored, so a transform/store failure is logged and swallowed — the
- *     upload still succeeds; the list just falls back to the format icon and the open-view to the large icon.
- * Degrades cleanly (no-op) when IMAGES is unbound (gate FN-W1).
- */
-async function bakeImageDerivatives(env: Env, accountId: string, hash: string, buf: ArrayBuffer): Promise<void> {
-  const images = env.IMAGES;
-  const bucket = env.BLOBS;
-  if (!images || !bucket) return;
-  for (const d of DERIVATIVES) {
-    const derivKey = `${accountId}/${hash}.${d.suffix}`;
-    try {
-      if (await bucket.head(derivKey)) continue; // already baked — idempotent skip
-      const result = await images
-        .input(new Response(buf).body as ReadableStream<Uint8Array>)
-        .transform(d.transform)
-        .output({ format: 'image/webp' });
-      // Collect to bytes before storing so the value is an ArrayBuffer (portable across R2 impls).
-      const out = await new Response(result.image()).arrayBuffer();
-      await bucket.put(derivKey, out, {
-        httpMetadata: { contentType: 'image/webp' },
-        customMetadata: { accountId, derived: d.suffix, sourceHash: hash },
-      });
-    } catch (err) {
-      console.error(`blob: WebP derivative bake failed for ${derivKey} (non-fatal)`, err);
-    }
-  }
-}
-
-function toHex(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf);
-  let hex = '';
-  for (const b of bytes) hex += b.toString(16).padStart(2, '0');
-  return hex;
-}
 
 /**
  * Convert a validated 64-char hex SHA-256 into the base64 of the raw 32 hash bytes — the value R2 expects in
@@ -138,17 +69,6 @@ async function resolveAccountId(c: AppContext): Promise<string | null> {
   return principal.id;
 }
 
-async function accountUsage(bucket: R2Bucket, accountId: string): Promise<number> {
-  let total = 0;
-  let cursor: string | undefined;
-  do {
-    const page = await bucket.list({ prefix: `${accountId}/`, ...(cursor ? { cursor } : {}) });
-    for (const obj of page.objects) total += obj.size;
-    cursor = page.truncated ? page.cursor : undefined;
-  } while (cursor);
-  return total;
-}
-
 export const blob = new Hono<AppEnv>();
 
 /** Upload: hash-verify + content-address under the caller's own prefix; dedup; quota + size enforced here. */
@@ -164,50 +84,28 @@ blob.post('/', async (c: AppContext) => {
   }
 
   const buf = await c.req.arrayBuffer();
-  if (buf.byteLength === 0) return apiError(c, 400, 'invalid_request', 'empty file body');
-  if (buf.byteLength > MAX_BLOB_SIZE) return apiError(c, 413, 'payload_too_large', 'file exceeds the maximum size');
-
-  // Server-computed content hash — the host's address, not the client's word for it.
-  const hash = toHex(await crypto.subtle.digest('SHA-256', buf));
-  // If the client sent a hash hint, it MUST equal the server hash (integrity; a mismatch is a client bug
-  // or tamper). The key uses the SERVER hash regardless.
-  const claimed = c.req.header('x-blob-sha256');
-  if (claimed && claimed.toLowerCase() !== hash) {
-    return apiError(c, 400, 'hash_mismatch', 'declared content hash does not match the uploaded bytes');
-  }
-
-  // Tier-2 denial-of-wallet daily quota (ROAD-0005 P4): meter the WRITE operation on the server-derived
-  // account BEFORE touching R2; over-cap → 429 until the UTC day rolls. Fail-CLOSED.
-  const decision = await chargeUsage(c, accountId, 'blobWrite');
-  if (!decision.allowed) return quotaExceeded(c, decision);
-
-  const key = `${accountId}/${hash}`;
   const mime = c.req.header('x-blob-mime') ?? c.req.header('content-type') ?? 'application/octet-stream';
 
-  // Dedup: content-addressed, so an identical upload is a no-op (and must not double-count quota).
-  const existing = await c.env.BLOBS.head(key);
-  if (!existing) {
-    const used = await accountUsage(c.env.BLOBS, accountId);
-    if (used + buf.byteLength > ACCOUNT_BLOB_QUOTA) {
+  // The shared store owns hash + BOLA key + blobWrite quota + dedup + byte-quota + image bake (blobStore.ts);
+  // this route just maps its outcome to the HTTP contract. The client's optional `x-blob-sha256` hint is
+  // integrity-checked (against the SERVER hash) before any quota charge.
+  const claimedHash = c.req.header('x-blob-sha256');
+  const result = await storeBlob(c.env, accountId, buf, mime, claimedHash ? { claimedHash } : {});
+  if (result.ok) return c.json({ hash: result.hash, size: result.size });
+  switch (result.kind) {
+    case 'unconfigured':
+      return apiError(c, 503, 'blob_not_configured', 'blob storage is unavailable (R2 unbound)');
+    case 'empty':
+      return apiError(c, 400, 'invalid_request', 'empty file body');
+    case 'too_large':
+      return apiError(c, 413, 'payload_too_large', 'file exceeds the maximum size');
+    case 'hash_mismatch':
+      return apiError(c, 400, 'hash_mismatch', 'declared content hash does not match the uploaded bytes');
+    case 'quota_write':
+      return quotaExceeded(c, result.decision);
+    case 'account_quota':
       return apiError(c, 413, 'quota_exceeded', 'account storage quota exceeded');
-    }
-    await c.env.BLOBS.put(key, buf, {
-      // Store metadata for serving; the content-type is re-sanitized on the way out regardless.
-      httpMetadata: { contentType: mime },
-      customMetadata: { accountId, mime, size: String(buf.byteLength) },
-    });
   }
-
-  // file-notes spec §4.2 — pre-bake the two WebP derivatives for image uploads (gate FN-W2). Runs on every
-  // upload (even a dedup hit) because the bake is idempotent + non-fatal: it retries a previously-failed derive
-  // and skips an already-baked one, and a failure here NEVER fails the upload (the original blob is stored).
-  // Images > 20 MB exceed the IMAGES input cap (§4.5) → the transform simply fails non-fatally (no thumbnail),
-  // which is the spec's chosen behavior (store original, fall back to icon).
-  if (BAKEABLE_IMAGE_TYPES.has(mime)) {
-    await bakeImageDerivatives(c.env, accountId, hash, buf);
-  }
-
-  return c.json({ hash, size: buf.byteLength });
 });
 
 /**

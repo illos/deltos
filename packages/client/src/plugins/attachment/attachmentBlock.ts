@@ -1,38 +1,16 @@
-import type { Block, BlockId, Note } from '@deltos/shared';
-import { newBlockId } from '../../lib/ids.js';
+import type { Note } from '@deltos/shared';
+import { ATTACHMENT_PLUGIN_TYPE } from '@deltos/shared';
+import type { AttachmentContent } from '@deltos/shared';
 
 /**
- * The single shape of an attachment block's payload — produced by BOTH the in-editor insert path
- * (drop / paste → inline block, attachmentDrop.ts) AND the file-note creation path (list-drop →
- * whole note, db/mutate.ts). Defining it once here keeps the two surfaces from drifting into
- * divergent shapes (file-notes.md §5.1 — "reuse the build helper, don't hand-roll a divergent
- * shape"). It is what the spine stores as a `plugin_block`'s `content` and the PM node's
- * `pluginContent` (the editor serializer maps `plugin_block` ↔ a spine block of `type` = pluginType).
+ * The attachment block builders now live in @deltos/shared (spine/attachmentBlock.ts) so the WORKER's MCP
+ * write-tools can build the identical shape without importing client code. They are re-exported here so the
+ * in-editor insert path (attachmentDrop.ts) and the file-note creation path (db/mutate.ts) keep importing
+ * them from this module UNCHANGED — one shape, one source, no drift (file-notes.md §5.1). The file-note READ
+ * helpers below (`fileNoteAttachment`, `formatFileSize`) are client-render concerns and stay here.
  */
-
-/** The plugin-block discriminator for attachments — the spine block `type` AND the PM node `pluginType`. */
-export const ATTACHMENT_PLUGIN_TYPE = 'attachment' as const;
-
-/** The attachment content payload: a content-addressed R2 blob plus its display metadata. */
-export interface AttachmentContent {
-  hash: string;
-  name: string;
-  mime: string;
-  size: number;
-}
-
-/** Build the attachment content payload from an uploaded file + its stored-blob result (one shape, one place). */
-export function buildAttachmentContent(
-  file: { name: string; type: string },
-  blob: { hash: string; size: number },
-): AttachmentContent {
-  return { hash: blob.hash, name: file.name, mime: file.type, size: blob.size };
-}
-
-/** Build a single spine attachment BLOCK — the whole body of a file note. Mirrors the serializer's plugin_block map. */
-export function buildAttachmentBlock(content: AttachmentContent): Block {
-  return { id: newBlockId() as BlockId, type: ATTACHMENT_PLUGIN_TYPE, content };
-}
+export { ATTACHMENT_PLUGIN_TYPE, buildAttachmentContent, buildAttachmentBlock } from '@deltos/shared';
+export type { AttachmentContent } from '@deltos/shared';
 
 /**
  * Read a file note's attachment payload from its single body block (file-notes.md §2). FAIL-SAFE:
