@@ -15,6 +15,14 @@ export interface RateLimit {
 export interface Env {
   DB: D1Database;
   /**
+   * Static-assets binding (Cloudflare Workers static assets; wrangler.jsonc `assets.binding`). The client
+   * build is served automatically for non-`run_worker_first` paths, but the worker fetches assets THROUGH
+   * this binding for the SEPARATE OAuth authorization surface: `/oauth/*` is `run_worker_first`, so the
+   * worker serves `oauth.html` with `Cache-Control: no-store` (oauth-consent-surface-separation.md) rather
+   * than letting the SPA fallback return the notes index.html. Optional in the type so unit tests omit it.
+   */
+  ASSETS?: Fetcher;
+  /**
    * Coarse per-principal request-RATE ceiling for the authenticated surface (ROAD-0005 P4, Tier 1). The
    * native Workers rate-limit binding — one in-memory edge check per request, NO D1 write, so it sits on
    * the hot REST/sync chokepoint (`guard()`) without regressing load-feel. Bounds a runaway/abusive

@@ -69,14 +69,17 @@
   //   wrangler secret put R2_SECRET_ACCESS_KEY   # the R2 API token's Secret Access Key
   // The token must be Object Read & Write, scoped to the single `deltos-blobs` bucket (least privilege). Also
   // one-time: set the bucket CORS policy (PUT, app origin, x-amz-checksum-sha256 header) — see §5.2.
-  // Same-origin PWA hosting: serve the client build as static assets; SPA-fallback unmatched routes
-  // to index.html; run the Worker FIRST only for /api/* + the OAuth discovery docs (RFC 8414/9728) so the
-  // API + AS metadata are never shadowed by the shell. Note: /oauth/authorize is deliberately NOT here — it
-  // is a CLIENT route (the PWA consent screen), served by the SPA fallback (oauth-provider.md §2b).
+  // Same-origin PWA hosting: serve the client build as static assets; SPA-fallback unmatched routes to
+  // index.html; run the Worker FIRST for /api/* + the OAuth discovery docs (RFC 8414/9728) + the SEPARATE
+  // OAuth authorization surface (/oauth/*) so none of them are shadowed by the notes shell. The `binding`
+  // lets the worker fetch built assets (it serves oauth.html for /oauth/* with no-store — see routes/oauth.ts
+  // oauthConsentSurface / oauth-consent-surface-separation.md). oauth.html's own JS/CSS live under /assets/
+  // (NOT worker-first) so they still serve statically, content-hashed.
   "assets": {
+    "binding": "ASSETS",
     "directory": "../client/dist",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource"],
+    "run_worker_first": ["/api/*", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/oauth/*"],
   },
   // Rich-embed unfurl cache (GET /api/unfurl). Not yet wired — add after creating the namespace:
   //   wrangler kv namespace create unfurl-cache   # copy the returned id into the block below

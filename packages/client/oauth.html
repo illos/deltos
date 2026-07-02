@@ -1,0 +1,59 @@
+<!doctype html>
+<!-- SEPARATE OAuth authorization surface (oauth-consent-surface-separation.md / DEC-0005).
+     This is its OWN Vite entry — a tiny self-contained app that mounts ONLY the OAuth consent flow.
+     It deliberately does NOT load the notes SPA (App/router/boot store) and does NOT register the
+     service worker: the surface is served fresh (no-store) by the worker at /oauth/* and is excluded
+     from the notes SW precache, so it can never be served stale. Theme defaults match index.html so
+     first paint is correct with no flash. -->
+<html lang="en" data-palette="ember" data-voice="sans" data-mode="system">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F2F2F4" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111113" />
+    <meta name="description" content="Authorize an app to access your deltos notes." />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/icons/favicon-64.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="preload" href="/fonts/ibm-plex-sans-400.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/ibm-plex-mono-400.woff2" as="font" type="font/woff2" crossorigin />
+    <title>Authorize · deltos</title>
+    <style>
+      /* Critical-CSS token defaults = the Ember boot palette, mode-aware (mirrors index.html) so a
+         light-mode device never flashes dark before oauth.css loads. */
+      :root {
+        color-scheme: light dark;
+        --paper: #ffffff;
+        --ink: #17171a;
+        --secondary: #6e6e76;
+        --border: #e7e7eb;
+        --nav: #f2f2f4;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --paper: #1a1a1d;
+          --ink: #f0f0f2;
+          --secondary: #9a9aa3;
+          --border: #2a2a2e;
+          --nav: #111113;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body, #oauth-root { height: 100%; }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font: 16px/1.5 system-ui, -apple-system, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        touch-action: manipulation;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="oauth-root">
+      <div class="auth"><div class="auth__spinner" aria-label="Loading"></div></div>
+    </div>
+    <script type="module" src="/src/oauth/main.tsx"></script>
+  </body>
+</html>

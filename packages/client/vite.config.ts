@@ -6,6 +6,10 @@ import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { cpSync, createReadStream, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// Absolute path to this package's root (the config-file dir) — used to name the multi-page HTML entries.
+const packageRoot = dirname(fileURLToPath(import.meta.url));
 
 // pdf.js ships its CMaps + standard-14 font data as loose binary asset dirs. The PDF reader points pdf.js at
 // SAME-ORIGIN copies of them (`/pdfjs/cmaps/`, `/pdfjs/standard_fonts/`) so the engine never reaches a CDN for
@@ -78,6 +82,13 @@ export default defineConfig({
   test: testConfig,
   build: {
     rollupOptions: {
+      // TWO HTML entries: the notes SPA (index.html) and the SEPARATE OAuth authorization surface
+      // (oauth.html → src/oauth/*). oauth.html is a standalone tiny app served fresh at /oauth/* and
+      // EXCLUDED from the notes SW precache (injectManifest.globIgnores below) so it can never go stale.
+      input: {
+        main: resolve(packageRoot, 'index.html'),
+        oauth: resolve(packageRoot, 'oauth.html'),
+      },
       output: {
         // STABLE pdf.js chunk names (pdf-reader.md §6.1) so the SW can match them by glob/predicate. pdf.js is
         // collapsed into one `pdfjs-[hash].js` chunk; everything else keeps Vite's default names.
@@ -117,7 +128,10 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest,woff2}'],
         // pdf.js chunks are LAZY + runtime-cached on first PDF open (sw.ts), NEVER install-precached — so the
         // ~0.5 MB engine never bloats install for users who never open a PDF (pdf-reader.md §6.2 / gate PDF-P).
-        globIgnores: ['**/pdfjs-*.js', '**/pdf.worker*.js'],
+        // The SEPARATE OAuth surface (oauth.html + its own entry chunk/CSS) is likewise excluded from the
+        // notes precache: it is served fresh by the worker (no-store) and its navigation is passed through to
+        // the network by the SW (sw.ts denylist), so it must never live in the shell precache manifest.
+        globIgnores: ['**/pdfjs-*.js', '**/pdf.worker*.js', 'oauth.html', '**/oauth-*.js', '**/oauth-*.css'],
       },
       manifest: {
         name: 'deltos',

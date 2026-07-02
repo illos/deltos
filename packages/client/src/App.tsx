@@ -18,21 +18,9 @@ const NoteRoute = lazy(() => import('./routes/NoteRoute.js').then((m) => ({ defa
 const SettingsRoute = lazy(() =>
   import('./routes/SettingsRoute.js').then((m) => ({ default: m.SettingsRoute })),
 );
-// LAZY: the OAuth consent screen (/oauth/authorize) + its network client (oauthClient) are an off-track
-// access-plumbing surface — split out of the entry bundle (CONV-0004 / plugins-lazy-past-first-paint) so an
-// external app landing on the consent route pulls the chunk on demand, never at first paint.
-const OAuthAuthorizeRoute = lazy(() =>
-  import('./routes/OAuthAuthorizeRoute.js').then((m) => ({ default: m.OAuthAuthorizeRoute })),
-);
-
-/** The consent route wrapped in the standard lazy-route Suspense hold — reused in the auth-gate + the shell. */
-function OAuthAuthorizeLazy() {
-  return (
-    <Suspense fallback={<div className="auth"><div className="auth__spinner" aria-label="Loading" /></div>}>
-      <OAuthAuthorizeRoute />
-    </Suspense>
-  );
-}
+// NOTE: OAuth consent is NO LONGER a route in this app. It is a SEPARATE standalone surface served at
+// /oauth/* (oauth-consent-surface-separation.md / DEC-0005), decoupled from this router / shell / service
+// worker. The notes SW passes /oauth/ navigations through to the network (sw.ts denylist).
 import { DrawerNav } from './components/DrawerNav.js';
 import { FullScreenNav } from './components/FullScreenNav.js';
 import { BottomNav } from './components/BottomNav.js';
@@ -136,9 +124,6 @@ function AppRoutes() {
           <Route path="/login" element={<LoginRoute />} />
           <Route path="/reset" element={<ResetRoute />} />
           <Route path="/forced-phrase" element={<ForcedPhraseRoute />} />
-          {/* OAuth consent while signed out: the route stashes the return + bounces to /login, then
-              LoginRoute returns the user here with the params intact (oauth-provider.md §2b). */}
-          <Route path="/oauth/authorize" element={<OAuthAuthorizeLazy />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       );
@@ -150,21 +135,8 @@ function AppRoutes() {
 
     // Durable session live + recovery established → render notes immediately, ungated.
     case 'shell':
-      return <ShellOrConsent />;
+      return <AuthedShell />;
   }
-}
-
-/**
- * When signed in, `/oauth/authorize` is a FULL-SCREEN OAuth consent ceremony (oauth-provider.md §2b), NOT a
- * note view — so it must render ABOVE the desktop/mobile shell fork. AuthedShell's desktop 3-region shell has
- * its own route set that does NOT include this path, so letting it reach the shell drops it to that shell's
- * catch-all → home (the bug). Intercept it here with a plain pathname check (a nested <Routes> would make
- * AuthedShell's absolute inner routes match relative to a splat parent and break the whole shell).
- */
-function ShellOrConsent() {
-  const { pathname } = useLocation();
-  if (pathname === '/oauth/authorize') return <OAuthAuthorizeLazy />;
-  return <AuthedShell />;
 }
 
 /**
@@ -506,8 +478,6 @@ function AuthedShell() {
             }
           />
           <Route path="/" element={<CollectionView notebookId={notebookId} />} />
-          {/* NOTE: /oauth/authorize is intercepted ABOVE the shell fork (ShellOrConsent) as a full-screen
-              ceremony, so it never reaches this route set — deliberately not registered here. */}
           {/* Auth routes are the gate — redirect home in the shell (session re-established by init on reload). */}
           <Route path="/login" element={<Navigate to="/" replace />} />
           <Route path="/register" element={<Navigate to="/" replace />} />

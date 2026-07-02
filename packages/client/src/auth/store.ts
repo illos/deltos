@@ -127,13 +127,6 @@ export interface AuthActions {
   login(username: string, password: string, totp?: string, turnstileToken?: string): Promise<LoginResult>;
   /** Revoke-all server-side + clear the in-memory session. Gate → closed. */
   logout(): Promise<void>;
-  /**
-   * Non-destructive re-auth: close the gate (isAuthed=false) WITHOUT {@link logout}'s server revoke-all +
-   * local data wipe. For when a LIVE bearer is required but the session is 'revoked'/no-bearer (e.g. OAuth
-   * consent opened in a context whose refresh cookie is dead). Keeps accountId + all local data, so the
-   * next login re-attaches the SAME account and re-pulls — the user just signs in again, loses nothing.
-   */
-  requireReauth(): void;
   /** Username + recovery phrase → set a new password (+ clear/re-enrol 2FA), revoke-all, sign in.
    *  NON-DISCLOSING: a wrong username/phrase returns the same uniform 'invalid'. */
   resetWithPhrase(username: string, phrase: string, newPassword: string, turnstileToken?: string): Promise<ResetResult>;
@@ -371,14 +364,6 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     // 5. Clear the in-memory session + close the gate. Net: no bearer, no refresh cookie, no local data,
     //    no resident-account marker → the next login re-detects from a clean slate and re-pulls from seq 0.
     set({ bearerToken: null, accountId: null, username: null, recoveryEstablished: null, totpEnabled: false, isAuthed: false, isAuthing: false, sessionState: 'unauthed' });
-  },
-
-  requireReauth() {
-    // The session is already dead (revoked cookie / no live bearer), so unlike logout() there is nothing to
-    // revoke server-side and NOTHING to wipe locally — keep accountId + Dexie data so re-login re-attaches
-    // the same account. Just stop sync and close the gate; the auth-gate then renders login.
-    suspendSync();
-    set({ bearerToken: null, isAuthed: false, isAuthing: false, sessionState: 'unauthed' });
   },
 
   async resetWithPhrase(username, phrase, newPassword, turnstileToken) {

@@ -1,0 +1,207 @@
+/**
+ * Styles for the SEPARATE OAuth authorization surface (oauth-consent-surface-separation.md).
+ *
+ * This surface does NOT load the app's monolithic styles.css — it carries only the auth-screen styles it
+ * uses plus the OAuth consent card. The rules are a focused copy of the shared `.auth*` styles (kept in
+ * styles.css for the app's own login/register/reset screens); the two surfaces are deliberately independent,
+ * so a small, well-scoped duplication is the correct separation cost. Theme tokens come from tokens.css
+ * (imported alongside this file in main.tsx), so palette/mode/voice follow the same design system.
+ */
+
+.auth {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100dvh;
+  padding: 3rem 1.5rem 4rem;
+  padding-top: calc(3rem + env(safe-area-inset-top));
+  box-sizing: border-box;
+  max-width: 420px;
+  margin: 0 auto;
+  gap: 1rem;
+}
+
+.auth__logo {
+  font-size: 2.5rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.25rem;
+}
+
+.auth__title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-align: center;
+}
+
+.auth__subtitle {
+  margin: 0;
+  font-size: 0.925rem;
+  color: var(--secondary);
+  text-align: center;
+  line-height: 1.55;
+}
+
+/* Action buttons */
+.auth__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0.75rem 1.25rem;
+  border-radius: 0.5rem;
+  border: none;
+  background: var(--border);
+  color: inherit;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.1s, opacity 0.1s;
+}
+.auth__btn--primary {
+  background: #4e7dff;
+  color: #fff;
+}
+.auth__btn--primary:hover { background: #3b6de8; }
+.auth__btn:not(.auth__btn--primary):hover { background: #2a2d3a; }
+.auth__btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Secondary text links */
+.auth__link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--secondary);
+  font-size: 0.875rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: color 0.1s, text-decoration-color 0.1s;
+}
+.auth__link:hover {
+  color: inherit;
+  text-decoration-color: currentColor;
+}
+
+/* Error message */
+.auth__error {
+  margin: 0;
+  padding: 0.65rem 1rem;
+  border-radius: 0.4rem;
+  background: rgba(200, 60, 60, 0.15);
+  border: 1px solid rgba(200, 60, 60, 0.35);
+  color: #f87a7a;
+  font-size: 0.875rem;
+  width: 100%;
+  box-sizing: border-box;
+  line-height: 1.5;
+}
+
+/* Spinner */
+.auth__spinner {
+  width: 2rem;
+  height: 2rem;
+  border: 2px solid var(--border);
+  border-top-color: #4e7dff;
+  border-radius: 50%;
+  animation: auth-spin 0.75s linear infinite;
+}
+@keyframes auth-spin { to { transform: rotate(360deg); } }
+
+/* Cloudflare Turnstile widget — centered; zero-height when no sitekey is configured. */
+.auth__turnstile {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  min-height: 0;
+}
+.auth__turnstile:empty { display: none; }
+
+/* Text / password inputs */
+.auth__input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--list);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  color: inherit;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 1rem; /* ≥16px: avoids iOS focus-zoom */
+  padding: 0.85rem 1rem;
+  line-height: 1.5;
+  caret-color: var(--accent);
+}
+.auth__input:focus {
+  outline: 2px solid #4e7dff;
+  outline-offset: 1px;
+}
+
+/* 6-digit TOTP code input — large monospace digits, centred */
+.auth__totp-input {
+  font-size: 2rem;
+  letter-spacing: 0.35em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── OAuth consent card + scope list (moved from styles.css; oauth-provider.md §2b) ── */
+.oauth-consent__card {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.oauth-consent__lede {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.oauth-consent__sent {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.oauth-consent__host {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--accent);
+  word-break: break-all;
+}
+.oauth-consent__client {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--secondary);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  word-break: break-all;
+}
+.oauth-consent__scopes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.oauth-consent__scopes-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.oauth-consent__scope-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.oauth-consent__scope {
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+.oauth-consent__scopes-note {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--secondary);
+  line-height: 1.5;
+}

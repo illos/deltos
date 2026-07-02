@@ -1,27 +1,20 @@
 /**
- * OAuth-provider client — the owner-authed calls behind the OAuth consent screen and the "Connected apps"
- * Settings section (docs/design/oauth-provider.md §2b / §4). deltos is its own MCP Authorization Server;
- * these three calls mint an authorization code at consent, list the OAuth-issued grants, and disconnect an
- * app (revoke every grant for a client).
+ * OAuth-provider client — the owner-authed calls behind the "Connected apps" Settings section
+ * (docs/design/oauth-provider.md §4): list the OAuth-issued grants and disconnect an app (revoke every
+ * grant for a client). deltos is its own MCP Authorization Server. NOTE: the consent MINT is NOT here — it
+ * lives on the SEPARATE OAuth authorization surface (src/oauth/surfaceApi.ts), decoupled from this app
+ * (oauth-consent-surface-separation.md / DEC-0005).
  *
- * RESIDENCY (CONV-0004 / plugins-lazy-past-first-paint): this is a LAZY off-track module. It is imported
- * only by `OAuthAuthorizeRoute` (its own lazy route chunk) and `ConnectedAppsSection` (rides the already
- * code-split SettingsRoute chunk), so it never enters the mobile first-load bundle. Shared types come in
- * `import type`-only (erased at build) — no zod tags along; mirrors `agentTokensClient`.
+ * RESIDENCY (CONV-0004 / plugins-lazy-past-first-paint): this is a LAZY off-track module, imported only by
+ * `ConnectedAppsSection` (rides the already code-split SettingsRoute chunk), so it never enters the mobile
+ * first-load bundle. Shared types come in `import type`-only (erased at build) — no zod tags along.
  *
- * AUTH: every call bears the in-memory access token (auth/store) and, on an auth rejection, re-mints the
- * bearer ONCE from the refresh cookie and retries — the SAME contract syncEngine/agentTokensClient use.
- * The consent MINT is the exception: a 401 there is a STEP-UP failure (wrong/missing password or TOTP),
- * NOT an expired bearer, so it must NOT be swallowed by a silent re-mint + retry (a 403 = expired access
- * token is; a 503 = absent-bearer cold-boot is).
+ * AUTH: every call bears the in-memory access token (auth/store) and, on an auth rejection (403 = expired
+ * access token · 401 = defensive · 503 = absent-bearer cold-boot), re-mints the bearer ONCE from the refresh
+ * cookie and retries — the SAME contract syncEngine/agentTokensClient use.
  */
 import { useAuthStore } from '../auth/store.js';
-import type {
-  AuthorizeConsentRequest,
-  AuthorizeConsentResponse,
-  ConnectedApp,
-  ListConnectedAppsResponse,
-} from '@deltos/shared';
+import type { ConnectedApp, ListConnectedAppsResponse } from '@deltos/shared';
 
 const BASE = '/api/oauth';
 
@@ -43,17 +36,11 @@ function authHeader(): Record<string, string> {
 }
 
 /**
- * fetch() for an OAuth call. Mirrors agentTokensClient.authedFetch: on an auth rejection (403 = expired
- * access token · 401 = defensive · 503 = absent-bearer cold-boot) it re-mints the in-memory bearer ONCE and
- * retries. The consent mint passes `remintOn401:false` so a step-up rejection (401) is surfaced, not masked
- * as a session expiry.
+ * fetch() for an OAuth-provider management call. Mirrors agentTokensClient.authedFetch: on an auth rejection
+ * (403 = expired access token · 401 = defensive · 503 = absent-bearer cold-boot) it re-mints the in-memory
+ * bearer ONCE from the refresh cookie and retries.
  */
-async function authedFetch(
-  path: string,
-  init: RequestInit = {},
-  opts: { remintOn401?: boolean } = {},
-): Promise<Response> {
-  const remintOn401 = opts.remintOn401 ?? true;
+async function authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const send = () =>
     fetch(`${BASE}${path}`, { ...init, headers: { ...(init.headers ?? {}), ...authHeader() } });
   let res: Response;
@@ -62,7 +49,7 @@ async function authedFetch(
   } catch {
     throw new OAuthClientError('Could not reach the server — check your connection.');
   }
-  const authReject = (res.status === 401 && remintOn401) || res.status === 403 || res.status === 503;
+  const authReject = res.status === 401 || res.status === 403 || res.status === 503;
   if (!authReject) return res;
   const outcome = await useAuthStore.getState().remintBearer();
   if (outcome !== 'ok') {
@@ -84,65 +71,6 @@ async function authedFetch(
 
 async function readJson<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
-}
-
-/** Turn a step-up error code (or none) into a human message keyed to the field at fault. */
-function stepUpMessage(code?: string): string {
-  switch (code) {
-    case 'password_required':
-      return 'Enter your password to authorize this app.';
-    case 'password_invalid':
-      return 'That password is incorrect.';
-    case 'totp_required':
-      return 'Enter your two-factor code.';
-    case 'totp_invalid':
-      return 'That two-factor code is not valid.';
-    default:
-      return 'Re-authentication failed — check your password and try again.';
-  }
-}
-
-async function readErrorCode(res: Response): Promise<string | undefined> {
-  try {
-    const body = (await res.json()) as { error?: { code?: string } };
-    return body.error?.code;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Mint the OAuth authorization code at consent (POST /api/oauth/authorize). Bearer-authed + STEP-UP
- * (`password` always; `totp` when 2FA is on) — the server re-proves the human, exactly like agent-token
- * mint. On success returns `{ code, redirect_uri, state? }`; the caller then navigates the browser to
- * `redirect_uri?code&state` (that top-level navigation IS the OAuth redirect). A step-up failure surfaces as
- * an OAuthClientError(status 401, code) so the screen can target the right field and let the user retry.
- * A 400 means the app's request is invalid (unknown client / unregistered redirect) — a config error, not a
- * retryable step-up.
- */
-export async function mintConsentCode(
-  params: AuthorizeConsentRequest,
-): Promise<AuthorizeConsentResponse> {
-  const res = await authedFetch(
-    '/authorize',
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params) },
-    { remintOn401: false },
-  );
-  if (res.status === 401) {
-    const code = await readErrorCode(res);
-    throw new OAuthClientError(stepUpMessage(code), 401, code);
-  }
-  if (res.status === 400) {
-    throw new OAuthClientError(
-      'This app’s authorization request is invalid — it may be misconfigured.',
-      400,
-    );
-  }
-  if (res.status === 429) {
-    throw new OAuthClientError('Too many attempts — wait a moment and try again.', 429);
-  }
-  if (!res.ok) throw new OAuthClientError(`Could not authorize the app (${res.status}).`, res.status);
-  return readJson<AuthorizeConsentResponse>(res);
 }
 
 /** List the account's connected OAuth apps (grants). The response never includes a token or hash. */

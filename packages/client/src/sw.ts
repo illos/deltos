@@ -33,8 +33,14 @@ precacheAndRoute(self.__WB_MANIFEST);
 // fetch/XHR calls aren't navigations and were always fine; this only bites direct navigations,
 // which is precisely the case the denylist excludes. Drop this line and API navigations
 // silently return HTML.
+//
+// `/oauth/` is ALSO denylisted (oauth-consent-surface-separation.md / DEC-0005): the OAuth authorization
+// surface is a SEPARATE app served fresh (no-store) by the worker at /oauth/*, deliberately NOT the notes
+// shell. This SW controls scope '/', so without this exclusion it would intercept the /oauth/authorize
+// navigation and serve the cached notes index.html — the exact staleness/wrong-surface bug the separation
+// fixes. Passing it through to the network lets the worker serve the always-fresh consent surface.
 const shellHandler = createHandlerBoundToURL('index.html');
-registerRoute(new NavigationRoute(shellHandler, { denylist: [/^\/api\//] }));
+registerRoute(new NavigationRoute(shellHandler, { denylist: [/^\/api\//, /^\/oauth\//] }));
 
 // FONTS — permanent device cache (UI refresh, Lane 0). The everyday faces (Plex Sans + Plex Mono)
 // are PRECACHED via the manifest (woff2 in the injectManifest glob), so they're install-time and

@@ -74,6 +74,34 @@ oauthWellKnown.get('/oauth-protected-resource', (c) => {
   return c.json(buildProtectedResourceMetadata(requestOrigin(c.req.url)));
 });
 
+// --- Separate OAuth authorization SURFACE (served at /oauth/*) ------------------------------------
+
+/**
+ * The dedicated OAuth authorization surface (oauth-consent-surface-separation.md / DEC-0005). Mounted at
+ * `/oauth` and listed in wrangler `run_worker_first`, so a top-level navigation to /oauth/authorize reaches
+ * the worker instead of the SPA fallback (which would return the notes index.html — the wrong surface). We
+ * serve the standalone `oauth.html` entry with `Cache-Control: no-store`, so a redeploy is reflected
+ * immediately and the surface can never be served stale; it is ALSO excluded from the notes SW precache and
+ * its navigation is passed through to the network by the SW (client sw.ts denylist). oauth.html's own hashed
+ * JS/CSS live under /assets/ and serve statically (not worker-first). The advertised authorization_endpoint
+ * stays /oauth/authorize — the same public URL, now backed by this dedicated surface instead of a route
+ * inside the notes SPA (so no discovery-doc change is needed).
+ */
+export const oauthConsentSurface = new Hono<AppEnv>();
+
+oauthConsentSurface.get('/*', async (c) => {
+  const assets = c.env.ASSETS;
+  // ASSETS is unbound in unit tests (and only there); in every real deploy it resolves to the client build.
+  if (!assets) return apiError(c, 503, 'unavailable', 'oauth surface not available');
+  const res = await assets.fetch(new Request(`${requestOrigin(c.req.url)}/oauth.html`));
+  // Re-wrap so WE own the response headers: force the HTML content-type (the request path is extension-less)
+  // and no-store (freshness is the whole point of the separation). The built oauth.html always exists.
+  return new Response(res.body, {
+    status: res.status,
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+  });
+});
+
 // --- /api/oauth ----------------------------------------------------------------------------------
 
 export const oauth = new Hono<AppEnv>();
