@@ -150,8 +150,21 @@ function AppRoutes() {
 
     // Durable session live + recovery established → render notes immediately, ungated.
     case 'shell':
-      return <AuthedShell />;
+      return <ShellOrConsent />;
   }
+}
+
+/**
+ * When signed in, `/oauth/authorize` is a FULL-SCREEN OAuth consent ceremony (oauth-provider.md §2b), NOT a
+ * note view — so it must render ABOVE the desktop/mobile shell fork. AuthedShell's desktop 3-region shell has
+ * its own route set that does NOT include this path, so letting it reach the shell drops it to that shell's
+ * catch-all → home (the bug). Intercept it here with a plain pathname check (a nested <Routes> would make
+ * AuthedShell's absolute inner routes match relative to a splat parent and break the whole shell).
+ */
+function ShellOrConsent() {
+  const { pathname } = useLocation();
+  if (pathname === '/oauth/authorize') return <OAuthAuthorizeLazy />;
+  return <AuthedShell />;
 }
 
 /**
@@ -493,9 +506,8 @@ function AuthedShell() {
             }
           />
           <Route path="/" element={<CollectionView notebookId={notebookId} />} />
-          {/* OAuth consent (signed in): render the consent screen so a connecting app gets the approve/deny
-              gate (oauth-provider.md §2b). Lazy — never on the first-load bundle. */}
-          <Route path="/oauth/authorize" element={<OAuthAuthorizeLazy />} />
+          {/* NOTE: /oauth/authorize is intercepted ABOVE the shell fork (ShellOrConsent) as a full-screen
+              ceremony, so it never reaches this route set — deliberately not registered here. */}
           {/* Auth routes are the gate — redirect home in the shell (session re-established by init on reload). */}
           <Route path="/login" element={<Navigate to="/" replace />} />
           <Route path="/register" element={<Navigate to="/" replace />} />
