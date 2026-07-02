@@ -199,6 +199,62 @@ describe('authorize (consent) → token (PKCE) — the full flow', () => {
     expect(mcpRes.status).toBe(200);
   });
 
+  it('consent WITH a write opt-in mints a WRITE token — one auth path with the mint route', async () => {
+    const { token } = await signupToken(env, 'oauth-write', OWNER_PW);
+    const { clientId, redirect } = await registerClient();
+
+    // The SAME per-scope opt-in the manual mint route takes, threaded through the consent surface.
+    const cRes = await consent(token, consentBody(clientId, redirect, {
+      write: { create: true, update: true, trash: true },
+    }));
+    expect(cRes.status).toBe(200);
+    const { code } = await cRes.json();
+
+    const tRes = await tokenExchange({
+      grant_type: 'authorization_code', code, redirect_uri: redirect, client_id: clientId, code_verifier: PKCE_VERIFIER,
+    });
+    expect(tRes.status).toBe(200);
+    const tok = await tRes.json();
+    // Scope carried read+search+create+write+delete (never `share`), clamped through clampAgentScopes.
+    expect(tok.scope.split(' ').sort()).toEqual(['create', 'delete', 'read', 'search', 'write']);
+
+    // The OAuth-issued write token can actually WRITE via the MCP surface (inherits the agent write path).
+    const created = await app.request('/api/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${tok.access_token}` },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 9, method: 'tools/call',
+        params: { name: 'create_note', arguments: { title: 'via OAuth write', text: 'hello' } },
+      }),
+    }, env);
+    expect(created.status).toBe(200);
+    const body = await created.json();
+    expect(body.result.structuredContent.status).toBe('applied');
+    expect(body.result.structuredContent.note.title).toBe('via OAuth write');
+  });
+
+  it('consent WITHOUT a write opt-in stays READ-ONLY — a write tool is forbidden', async () => {
+    const { token } = await signupToken(env, 'oauth-ro', OWNER_PW);
+    const { clientId, redirect } = await registerClient();
+    const { code } = await (await consent(token, consentBody(clientId, redirect))).json();
+    const tok = await (await tokenExchange({
+      grant_type: 'authorization_code', code, redirect_uri: redirect, client_id: clientId, code_verifier: PKCE_VERIFIER,
+    })).json();
+    expect(tok.scope).toBe('read search'); // unchanged default
+
+    const attempt = await app.request('/api/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${tok.access_token}` },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 9, method: 'tools/call',
+        params: { name: 'create_note', arguments: { title: 'nope' } },
+      }),
+    }, env);
+    const body = await attempt.json();
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0].text).toMatch(/forbidden/i);
+  });
+
   it('a code is SINGLE-USE — a replay is invalid_grant', async () => {
     const { token } = await signupToken(env, 'replay', OWNER_PW);
     const { clientId, redirect } = await registerClient();

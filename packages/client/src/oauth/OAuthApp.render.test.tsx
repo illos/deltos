@@ -96,6 +96,32 @@ describe('OAuthApp (separate consent surface)', () => {
     );
   });
 
+  it('the write toggle (default OFF) flips the disclosure and threads `write` into the consent POST', async () => {
+    setSearch(VALID);
+    refreshBearer.mockResolvedValue({ bearer: 'b1', totpEnabled: false });
+    mintConsentCode.mockResolvedValue({ code: 'authcode', redirect_uri: 'https://claude.ai/cb', state: 'st1' });
+
+    const { findByText, getByLabelText, container } = render(<OAuthApp />);
+    await findByText('Authorize access to your notes');
+
+    // Default OFF: disclosure says read-only, and the honest note says it can't change anything.
+    expect(container.textContent).toContain('read-only access');
+    expect(container.textContent).toContain('can’t create, edit, or delete');
+
+    // Tick the write toggle → the disclosure switches to read & write, honestly.
+    fireEvent.click(getByLabelText('Allow this app to create, edit and delete notes'));
+    expect(container.textContent).toContain('read & write access');
+    expect(container.textContent).toContain('Deletes go to Trash');
+
+    fireEvent.change(getByLabelText('Your password'), { target: { value: 'pw' } });
+    fireEvent.click(getByLabelText('Authorize'));
+
+    await waitFor(() => expect(mintConsentCode).toHaveBeenCalled());
+    expect(mintConsentCode.mock.calls[0]?.[1]).toMatchObject({
+      write: { create: true, update: true, trash: true },
+    });
+  });
+
   it('falls to inline login when there is no session, then reuses the password at consent', async () => {
     setSearch(VALID);
     refreshBearer.mockResolvedValue(null);

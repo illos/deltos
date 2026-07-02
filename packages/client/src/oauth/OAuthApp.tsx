@@ -10,7 +10,9 @@
  *      deltos session); if none, show an inline login (username + password + Turnstile + TOTP). The common
  *      case here is NO live session — the client opened consent in a fresh browser context.
  *   3. Consent: an HONEST disclosure — names the app by the redirect_uri HOST (anti-phishing) + client_id,
- *      discloses the EXACT read-only scopes. Approve re-proves the human (STEP-UP: password always; a fresh
+ *      discloses the EXACT scopes (read-only by default; an optional WRITE toggle — same mechanism + default
+ *      as the manual mint route — flips the disclosure to name write access). Approve re-proves the human
+ *      (STEP-UP: password always; a fresh
  *      TOTP code when 2FA is on — reusing the login password silently, but never a stale TOTP), POSTs to
  *      /api/oauth/authorize, and top-level-navigates to `redirect_uri?code&state` (that IS the OAuth
  *      redirect). Deny is a TERMINAL screen (never navigate to an unvalidated redirect_uri).
@@ -249,6 +251,9 @@ function ConsentScreen({
 }) {
   const [password, setPassword] = useState(carriedPassword ?? '');
   const [totp, setTotp] = useState('');
+  // WRITE opt-in — default OFF (read-only), the SAME default + mechanism as the manual mint toggle. When on,
+  // the consent POSTs `write` and the disclosure below switches to name the write access honestly.
+  const [allowWrite, setAllowWrite] = useState(false);
   // Reveal the password field when we didn't carry one from a just-completed login (or after an error, so a
   // wrong carried password can be corrected).
   const [revealPassword, setRevealPassword] = useState(!carriedPassword);
@@ -272,6 +277,8 @@ function ConsentScreen({
       ...(params.resource ? { resource: params.resource } : {}),
       ...(params.state !== undefined ? { state: params.state } : {}),
       ...(code ? { totp: code } : {}),
+      // A single toggle grants the full write surface (create + edit + trash) — matches the manual mint UI.
+      ...(allowWrite ? { write: { create: true, update: true, trash: true } } : {}),
     };
     try {
       const res = await mintConsentCode(session.bearer, body);
@@ -321,19 +328,42 @@ function ConsentScreen({
         </p>
         <p className="oauth-consent__client">App ID: {params.clientId}</p>
         <div className="oauth-consent__scopes">
-          <span className="oauth-consent__scopes-title">This app will get read-only access:</span>
+          <span className="oauth-consent__scopes-title">
+            {allowWrite ? 'This app will get read & write access:' : 'This app will get read-only access:'}
+          </span>
           <ul className="oauth-consent__scope-list">
             {DISCLOSED_SCOPES.map((s) => (
               <li key={s} className="oauth-consent__scope">
                 {s === 'read' ? 'Read your notes' : 'Search your notes'} ({s})
               </li>
             ))}
+            {allowWrite && (
+              <li className="oauth-consent__scope">Create, edit &amp; delete notes (create, write, delete)</li>
+            )}
           </ul>
           <p className="oauth-consent__scopes-note">
-            It can’t create, edit, or delete anything. You can disconnect it anytime in Settings.
+            {allowWrite
+              ? 'Deletes go to Trash and are recoverable. You can disconnect it anytime in Settings.'
+              : 'It can’t create, edit, or delete anything. You can disconnect it anytime in Settings.'}
           </p>
         </div>
       </div>
+
+      {/* WRITE opt-in — default OFF; the same choice + copy as the manual mint UI so both surfaces read as
+          one mechanism. Toggling it re-writes the disclosure above so consent stays honest. */}
+      <label className="oauth-consent__write-toggle">
+        <input
+          type="checkbox"
+          checked={allowWrite}
+          onChange={(e) => { setAllowWrite(e.target.checked); setError(null); }}
+          disabled={busy}
+          aria-label="Allow this app to create, edit and delete notes"
+        />
+        <span>
+          Allow this app to <strong>create, edit &amp; delete</strong> notes (deletes go to Trash and are
+          recoverable). Leave off for read-only access.
+        </span>
+      </label>
 
       {/* Step-up: re-prove the human before granting (password always; a fresh TOTP when 2FA is on). */}
       {revealPassword && (

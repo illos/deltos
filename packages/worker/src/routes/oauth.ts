@@ -4,7 +4,7 @@ import {
   RegisterClientRequestSchema,
   AuthorizeConsentRequestSchema,
   TokenRequestSchema,
-  clampToReadOnlyScopes,
+  clampAgentScopes,
   buildAuthServerMetadata,
   buildProtectedResourceMetadata,
   type RegisterClientResponse,
@@ -182,7 +182,8 @@ oauth.post(
         return {};
       }
     },
-    // v1 OAuth consent grants the whole workspace (read-only); authorize the owner against it.
+    // OAuth consent grants the whole workspace (read by default, write per opt-in); authorize the owner
+    // against it. A workspace-scoped grant is what the note-level write tools require (write-tools.md §2).
     resource: (): Resource => OAUTH_V1_RESOURCE,
     handle: async (req, c, principal) => {
       const store = createAuthStore(d1Adapter(c.env.DB));
@@ -232,8 +233,11 @@ oauth.post(
       }
       await store.clearThrottle(bucket);
 
-      // S256 method is pinned by the schema; scope is clamped to the read-only surface regardless of request.
-      const scope = clampToReadOnlyScopes(); // v1: ['read','search'], never widened by the request
+      // Scope is clamped through the SAME path as the manual mint route (ONE auth path for write): READ is
+      // the floor; WRITE verbs are added ONLY for the explicit per-scope opt-in in `req.write` (fail-closed —
+      // no opt-in ⇒ read-only). `share` can never appear. The step-up above already re-proved the human,
+      // doubly-warranted for a write-capable consent.
+      const scope = clampAgentScopes(undefined, req.write ? { allowWrite: req.write } : undefined);
       const rawCode = `dltos_code_${randomToken(32)}`;
       await store.insertOauthCode({
         codeHash: hashToken(rawCode), // only the hash is stored (F6)

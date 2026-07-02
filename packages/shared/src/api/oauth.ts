@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ScopeSchema } from './grant.js';
+import { AgentWriteOptSchema } from './agentToken.js';
 import { TimestampSchema } from '../spine/ids.js';
 
 /**
@@ -10,8 +11,10 @@ import { TimestampSchema } from '../spine/ids.js';
  *
  * Locked shape (authorization-model.md §2a; Jim 2026-06-30/07-01):
  *   * an OAuth access token IS an `agent` grant carrying a `clientId` — NOT a new principalKind.
- *   * v1 is READ-ONLY (`['read','search']`, clamped at issuance) and NON-EXPIRING (no expires_in, no
- *     refresh token — the standing no-TTL stance; revoke is the control).
+ *   * READ is the default; WRITE is a per-scope opt-in at consent ({@link AgentWriteOptSchema} →
+ *     clampAgentScopes) — the SAME mechanism the manual mint route uses, so both are ONE auth path for
+ *     write. Tokens are NON-EXPIRING (no expires_in, no refresh token — the standing no-TTL stance; revoke
+ *     is the control).
  *   * PUBLIC PKCE clients only (no client_secret); PKCE S256 is mandatory; redirect_uri is exact-match
  *     (loopback port-exception per RFC 8252). These are the anti-phishing controls, not niceties.
  */
@@ -91,6 +94,10 @@ export const AuthorizeConsentRequestSchema = z
     scope: z.string().optional(),
     resource: z.string().url().optional(),
     state: z.string().optional(),
+    // Per-scope WRITE opt-in — the SAME mechanism as the manual mint route ({@link AgentWriteOptSchema} →
+    // clampAgentScopes). ABSENT ⇒ read-only (fail-closed default). This is what makes OAuth consent and
+    // manual mint ONE auth path for granting write; a write-capable consent is doubly gated by the step-up.
+    write: AgentWriteOptSchema.optional(),
     // H1 step-up — re-prove the human at consent (password always; totp when 2FA on). Verified + discarded.
     password: z.string().min(1).optional(),
     totp: z.string().optional(),

@@ -3,9 +3,11 @@
 > **Status: BUILT + LIVE (2026-07-02).** Agent writes apply **LIVE, full edit + delete** — NO approval/proposal
 > queue. Safety net = **versioning (edits) + trash (deletes) + audit + low write cap + easy revoke**. Five MCP
 > write tools (create/update/append/set_property/trash) ship behind a per-scope mint opt-in; read-only stays
-> the default. Versioning prerequisite (§3) landed first (`a6291eb`). Deployed to `deltos.blackgate.studio`;
-> shared 81 / worker 468 / client 993 green. **Remaining: P5 red-team** + the §10 OAuth-consent-write
-> fast-follow. Sections below are the as-built record (the earlier proposal-queue phrasing is superseded).
+> the default. Write is granted through ONE mechanism (`clampAgentScopes`) shared by BOTH the manual mint
+> route AND the one-click OAuth consent surface (§10 — single auth path). Versioning prerequisite (§3) landed
+> first (`a6291eb`). Deployed to `deltos.blackgate.studio`; shared 81 / worker 470 / client 994 green.
+> **Remaining: P5 red-team.** Sections below are the as-built record (the earlier proposal-queue phrasing is
+> superseded).
 >
 > **Migration numbers:** FTS5 takes 0018; any new table here uses the next FREE number at build time. Never
 > reuse/rewrite an applied migration ([[migration-never-rewrite-applied]]).
@@ -222,8 +224,17 @@ already respects, so this is a "don't regress it" guardrail:
 - **No new migration** — the write cap rides the existing `usageCounter` (0016); delete is soft-trash via the
   existing `sys:trashedAt` property, so there is no schema change.
 
-### Not in this increment (fast-follows)
-- **OAuth-consent write opt-in.** The one-click OAuth path (`routes/oauth.ts`) still mints read-only
-  (`clampToReadOnlyScopes()`); write is granted only via the manual mint route's `write` opt-in. Adding a
-  write toggle to the dedicated `/oauth/*` consent surface is a separate consent-surface change (DEC-0005).
+### Single auth path for write — BUILT (both surfaces)
+Write is granted through **ONE mechanism** — `clampAgentScopes(requested,{allowWrite})` fed by the shared
+`AgentWriteOptSchema` — used identically by BOTH connection methods, so there is no read-only-vs-write split
+by surface:
+- **Manual mint** (`routes/agentTokens.ts`): `MintAgentTokenRequestSchema.write` → clamp.
+- **One-click OAuth consent** (`routes/oauth.ts` `/authorize`): `AuthorizeConsentRequestSchema.write` → the
+  SAME clamp; scope flows authorize → oauth code → `/token` → `insertAgentGrant` unchanged. The dedicated
+  `/oauth/*` consent surface (`OAuthApp.tsx`) shows the SAME "create, edit & delete" toggle (default OFF) as
+  the manual UI, and flips its HONEST scope disclosure when ticked. Both default read-only, fail-closed;
+  `share` never grantable. Step-up gates both mints. (Discovery `scopes_supported` still lists `read search`
+  — write is granted by the human at consent, not requested via the protocol `scope` param, which is ignored.)
+
+### Remaining fast-follows
 - Agent-provenance "changed by Claude" flag + richer ActivitySection copy (§6).

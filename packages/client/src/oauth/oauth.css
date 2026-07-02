@@ -205,3 +205,20 @@
   color: var(--secondary);
   line-height: 1.5;
 }
+
+/* Write opt-in toggle — default OFF; matches the manual mint toggle's copy + default. */
+.oauth-consent__write-toggle {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  width: 100%;
+  max-width: 22rem;
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.85rem;
+  color: var(--secondary);
+  line-height: 1.4;
+  cursor: pointer;
+  text-align: left;
+}
+.oauth-consent__write-toggle input { margin-top: 0.15rem; flex: none; }
+.oauth-consent__write-toggle strong { color: inherit; }
