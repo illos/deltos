@@ -32,7 +32,7 @@ const ALL_MIGRATIONS = [
   '0014_grant-family-link.sql',
   '0015_audit-log.sql',
   '0016_usage-counter.sql',
-  '0017_oauth-provider.sql',
+  '0017_oauth-provider.sql', '0018_fts5-note-search.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function d1Over(raw: Database.Database): D1Database {
@@ -91,6 +91,19 @@ async function createNote(env: Env, ownerToken: string, title: string): Promise<
     body: JSON.stringify({ id, notebookId: null, title, properties: {}, body: [] }),
   }, env);
   if (res.status !== 201) throw new Error(`createNote failed: ${res.status} ${await res.text()}`);
+  return id;
+}
+
+/** Create a note with BODY paragraph text (to exercise full-text search over the note body). */
+async function createNoteWithBody(env: Env, ownerToken: string, title: string, bodyText: string): Promise<string> {
+  const id = randomUUID();
+  const body = [{ id: randomUUID(), type: 'paragraph', content: { segments: [{ text: bodyText }] } }];
+  const res = await app.request('/api/notes', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', Authorization: `Bearer ${ownerToken}` },
+    body: JSON.stringify({ id, notebookId: null, title, properties: {}, body }),
+  }, env);
+  if (res.status !== 201) throw new Error(`createNoteWithBody failed: ${res.status} ${await res.text()}`);
   return id;
 }
 
@@ -239,6 +252,24 @@ describe('MCP server — protocol / auth / tools (POST /api/mcp)', () => {
     const body = (await res.json()) as JsonRpcResult;
     expect(body.result.isError).toBe(true); // not found — indistinguishable from a missing id
     expect(JSON.stringify(body.result)).not.toContain('A private secret note'); // no content leak
+  });
+
+  // --- FTS: full-text search over BODY (migration 0018) ------------------------------------------
+
+  it('search_notes finds a note by BODY text, not just title', async () => {
+    const noteId = await createNoteWithBody(env, ownerA, 'Meeting', 'discuss the quarterly budget spreadsheet');
+    const s = (await (await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'search_notes', arguments: { query: 'spreadsheet' } } }, agentA)).json()) as JsonRpcResult;
+    expect(s.result.isError).toBeUndefined();
+    expect(s.result.structuredContent.results.map((r: { id: string }) => r.id)).toContain(noteId);
+  });
+
+  it('🚨 BOLA: search_notes never returns another account\'s note by body text', async () => {
+    await createNoteWithBody(env, ownerA, 'A note', 'the codeword is xylophone');
+    const { token: ownerB } = await signupToken(env, 'mcp-search-attacker', 'mcp-search-attacker-pw');
+    const { token: agentB } = await mintAgentToken(env, ownerB, 'mcp-search-attacker-pw');
+    const s = (await (await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'search_notes', arguments: { query: 'xylophone' } } }, agentB)).json()) as JsonRpcResult;
+    expect(s.result.structuredContent.results).toHaveLength(0);
+    expect(JSON.stringify(s.result)).not.toContain('xylophone'); // no leak of A's content
   });
 
   // --- C RATE-LIMIT (ROAD-0005 P0): per-token request ceiling -----------------------------------

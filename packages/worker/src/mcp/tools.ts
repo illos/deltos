@@ -57,16 +57,16 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
   defineTool({
     name: 'search_notes',
     description:
-      'Find the user\'s notes by free text. Searches note titles (full-text search over body + ' +
-      'properties is rolling out). Returns lightweight summaries (id, title, notebookId, updatedAt) ' +
-      'ordered most-recently-edited first — NOT the note bodies. Typical flow: search_notes to locate ' +
-      'the right note(s), then get_note(id) to read the full content. Prefer a few specific keywords ' +
-      'over long phrases. Optionally pass a notebookId (from list_notebooks) to scope the search to one ' +
-      'notebook; omit it to search everything the user owns.',
+      'Find the user\'s notes by free text. Full-text search over both the note TITLE and BODY, ' +
+      'returning the most relevant notes first (relevance-ranked, not date-ordered). Returns lightweight ' +
+      'summaries (id, title, notebookId, updatedAt) — NOT the note bodies. Typical flow: search_notes to ' +
+      'locate the right note(s), then get_note(id) to read the full content. Prefer a few specific ' +
+      'keywords over long phrases; each keyword is prefix-matched. Optionally pass a notebookId (from ' +
+      'list_notebooks) to scope the search to one notebook; omit it to search everything the user owns.',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Search keywords (matched against note titles).' },
+        query: { type: 'string', description: 'Search keywords (full-text matched against note titles and bodies).' },
         notebookId: {
           type: 'string',
           description: 'Optional notebook id (from list_notebooks) to scope the search to one notebook.',

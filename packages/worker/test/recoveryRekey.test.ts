@@ -38,6 +38,7 @@ const B = 'acct-NEW-key-0002'; // the accountId after a (hypothetical) re-key
 const migrations = [
   '0000_baseline.sql', '0001_stream-b-sync.sql', '0002_stream-a-auth.sql', '0003_account-identity.sql',
   '0004_password-auth.sql', '0005_recovery-established.sql',
+  '0018_fts5-note-search.sql', // FTS table; searchIndex.ts is invoked by the note mutators (0018)
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function sqliteAdapter(db: Database.Database): DbAdapter {

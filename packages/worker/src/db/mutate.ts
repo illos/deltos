@@ -1,6 +1,7 @@
 import type { NoteRow, NotebookRow, DictionaryWordRow, DbAdapter } from './schema.js';
 import type { SyncPushEntry } from '@deltos/shared';
 import { FIRST_SERVER_VERSION, UNSYNCED_VERSION, isTrashed } from '@deltos/shared';
+import { upsertNoteFts, deleteNoteFts } from './searchIndex.js';
 
 /**
  * All note mutations go through this module. Every write is a single atomic compare-and-swap
@@ -110,6 +111,10 @@ export async function insertNote(
     `SELECT * FROM notes WHERE id = ?`,
     [entry.id],
   );
+  // FTS index maintenance — only on a successful insert (guarded by the rowsWritten check above). A
+  // separate batch after the note CAS: the index is eventual-consistent and searchNotes re-derives
+  // account/liveness/trash from `notes`, so this can never leak or mis-scope. (migration 0018)
+  await upsertNoteFts(db, row!);
   return { outcome: 'accepted', version: FIRST_SERVER_VERSION, syncSeq: row!.syncSeq, row: row! };
 }
 
@@ -225,6 +230,9 @@ export async function updateNote(
   // (=1), so the test suite masks this — same class as the D1 CREATE-TEMP-TABLE landmine.
   if (updateResult.rowsWritten > 0) {
     const row = await db.first<NoteRow>(`SELECT * FROM notes WHERE id = ?`, [entry.id]);
+    // FTS index maintenance — only on a successful CAS. Re-index title+body from the authoritative
+    // read-back row (correct for a trash toggle too: the row still exists, just re-indexed). (0018)
+    await upsertNoteFts(db, row!);
     return { outcome: 'accepted', version: row!.version, syncSeq: row!.syncSeq, row: row! };
   }
 
@@ -287,6 +295,10 @@ export async function deleteNote(
   // a successful single-row soft-delete UPDATE reports >1 — `=== 1` would mislabel it a conflict.
   if (deleteResult.rowsWritten > 0) {
     const row = await db.first<NoteRow>(`SELECT syncSeq FROM notes WHERE id = ?`, [id]);
+    // FTS index maintenance — only on a successful soft-delete. Drop the note from the text index so a
+    // tombstoned note is unsearchable (the search JOIN also filters deletedAt, so this is belt-and-braces
+    // to keep the index small). (0018)
+    await deleteNoteFts(db, id);
     return { outcome: 'accepted', syncSeq: row!.syncSeq };
   }
 
@@ -352,6 +364,9 @@ export async function patchNote(
   }
 
   const row = await db.first<NoteRow>(`SELECT * FROM notes WHERE id = ?`, [id]);
+  // FTS index maintenance — only reached on a successful patch (rowsWritten>0 above). Re-index from the
+  // authoritative read-back row so partial patches (title-only or body-only) stay correct. (0018)
+  await upsertNoteFts(db, row!);
   return { outcome: 'accepted', row: row! };
 }
 
@@ -476,8 +491,32 @@ export async function getNote(
 }
 
 // ---------------------------------------------------------------------------
-// REST search (FTS stub — full-text search is Phase 3)
+// REST / MCP search — SQLite FTS5 over title + body (migration 0018)
 // ---------------------------------------------------------------------------
+
+// Trash filter: the soft-delete flag is a `sys:trashedAt` date property in the JSON `properties` bag
+// (Fork P). PRESENT ⇔ trashed, so `json_extract(...) IS NULL` ⇔ live. This is the SQL mirror of
+// isTrashed() and is applied on the `notes` join-back (the liveness/trash authority), never on FTS.
+const TRASH_LIVE_CLAUSE = `json_extract(n.properties, '$."sys:trashedAt"') IS NULL`;
+
+/**
+ * Turn a raw user query into a safe FTS5 MATCH expression, or null when there is no usable token.
+ *
+ * Tokenize on Unicode letters/numbers (dropping all punctuation/whitespace), lower-case, then map each
+ * token to a QUOTED prefix term `"token"*` and AND-join them. Quoting is the safety mechanism: inside a
+ * double-quoted FTS5 string every otherwise-special character (`" * : ^ - ( )` and the bareword
+ * operators AND / OR / NOT / NEAR) is treated as a literal, so no user input can produce a MATCH syntax
+ * error or inject an operator. Because we strip punctuation before quoting, the token itself can never
+ * contain a `"` to close the quote early. The trailing `*` (outside the quotes) keeps prefix matching so
+ * "not" still finds "notes" — matching the client engine's word-prefix behavior.
+ *
+ * Returns null for empty / whitespace-only / punctuation-only input → caller treats as "no text query".
+ */
+export function toFtsMatch(raw: string): string | null {
+  const tokens = raw.toLowerCase().match(/[\p{L}\p{N}]+/gu);
+  if (!tokens || tokens.length === 0) return null;
+  return tokens.map((t) => `"${t}"*`).join(' AND ');
+}
 
 export async function searchNotes(
   db: DbAdapter,
@@ -485,29 +524,51 @@ export async function searchNotes(
   accountId: string,
   text: string | undefined,
 ): Promise<NoteRow[]> {
-  // Phase 1: title-only LIKE search as a placeholder. Full FTS (SQLite FTS5) is Phase 3.
-  // EVERY branch is account-scoped — the no-notebookId branch was the original cross-account leak
-  // (a bare `title LIKE` returned all accounts' notes). notebookId is a bare client string, so the
-  // notebookId branches scope too — A's and B's "notebook-X" are distinct invisible rows.
-  if (text && notebookId) {
+  // Isolation/liveness/trash are enforced by the JOIN back to `notes` (the authority), NOT by the FTS
+  // table: accountId is server-derived (never client-asserted), deletedAt IS NULL excludes tombstones,
+  // and the trash clause excludes Fork-P soft-deleted notes. FTS supplies candidate ids by relevance;
+  // `notes` decides what this caller may see. This preserves the account scoping the LIKE placeholder had.
+  const match = text !== undefined ? toFtsMatch(text) : null;
+
+  if (match !== null) {
+    // Full-text path — bm25 relevance ranking (lower = more relevant → ORDER BY ascending). The optional
+    // notebook scope is an extra predicate on `notes`; notebookId is a bare client string so it too is
+    // account-relative (A's and B's "notebook-X" are distinct rows).
+    const nbClause = notebookId ? `AND n.notebookId = ?` : '';
+    const params: unknown[] = [match, accountId];
+    if (notebookId) params.push(notebookId);
     return db.all<NoteRow>(
-      `SELECT * FROM notes WHERE notebookId = ? AND accountId = ? AND title LIKE ? AND deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 50`,
-      [notebookId, accountId, `%${text}%`],
+      `SELECT n.* FROM notesFts
+         JOIN notes n ON n.id = notesFts.noteId
+        WHERE notesFts MATCH ?
+          AND n.accountId = ?
+          AND n.deletedAt IS NULL
+          AND ${TRASH_LIVE_CLAUSE}
+          ${nbClause}
+        ORDER BY bm25(notesFts)
+        LIMIT 50`,
+      params,
     );
   }
-  if (text) {
-    return db.all<NoteRow>(
-      `SELECT * FROM notes WHERE accountId = ? AND title LIKE ? AND deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 50`,
-      [accountId, `%${text}%`],
-    );
-  }
+
+  // No usable text token. If a notebook is scoped, fall back to the notebook listing (most-recent first),
+  // account-scoped and trash/liveness-filtered like the FTS path.
   if (notebookId) {
     return db.all<NoteRow>(
-      `SELECT * FROM notes WHERE notebookId = ? AND accountId = ? AND deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 50`,
+      `SELECT n.* FROM notes n
+        WHERE n.notebookId = ?
+          AND n.accountId = ?
+          AND n.deletedAt IS NULL
+          AND ${TRASH_LIVE_CLAUSE}
+        ORDER BY n.updatedAt DESC
+        LIMIT 50`,
       [notebookId, accountId],
     );
   }
-  // Caller guarantees at least one constraint (SearchQuerySchema refine).
+
+  // Text was present but sanitized to empty (punctuation-only) and no notebook scope → nothing to match.
+  // (Caller guarantees at least one constraint via SearchQuerySchema refine, so a truly empty call can't
+  // reach here — this returns [] for the "typed only punctuation, no notebook" case.)
   return [];
 }
 
