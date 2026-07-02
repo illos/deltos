@@ -1157,6 +1157,25 @@
 }
 .settings__label-input::placeholder { color: var(--secondary); }
 
+/* Note routing guide — a multi-line freeform textarea (matches the label-input frame; monospace + ≥16px). */
+.settings__guide-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 9rem;
+  resize: vertical;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 0.3rem;
+  outline: none;
+  font-size: 1rem; /* ≥16px: avoids iOS focus-zoom */
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.4;
+  color: inherit;
+  caret-color: var(--accent);
+  padding: 0.5rem;
+}
+.settings__guide-textarea::placeholder { color: var(--secondary); }
+
 /* Write opt-in toggle inside the Connect-to-Claude generate form. */
 .settings__checkbox-row {
   display: flex;

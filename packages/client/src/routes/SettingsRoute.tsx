@@ -19,6 +19,7 @@ import { AppearanceSection } from '../components/AppearanceSection.js';
 import { CustomDictSection } from '../components/CustomDictSection.js';
 import { ConnectClaudeSection } from '../components/ConnectClaudeSection.js';
 import { ConnectedAppsSection } from '../components/ConnectedAppsSection.js';
+import { RoutingGuideSection } from '../components/RoutingGuideSection.js';
 import { SessionsSection } from '../components/SessionsSection.js';
 import { ActivitySection } from '../components/ActivitySection.js';
 import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
@@ -507,6 +508,10 @@ export function SettingsRoute() {
       {/* Section — Connected apps (oauth-provider.md §4; one-click OAuth grants + per-client kill-switch).
           Sits under "Connect to Claude" — the OAuth counterpart to the manual paste-token surface. */}
       <ConnectedAppsSection />
+
+      {/* Section — Note routing guide (note-routing-guide spec; freeform rules the MCP agent reads via
+          list_notebooks to decide where to file saved notes). Pairs with the Claude-connection surfaces. */}
+      <RoutingGuideSection />
 
       {/* Section — Account activity (ROAD-0005 P3; the user-facing audit view — a live trust surface).
           Sits below the kill-switches it points at (Active sessions / Connect to Claude). */}
