@@ -188,6 +188,23 @@ a change from Claude").
 - **[Open — later] Notification of agent writes:** the Account-activity view + the history-panel "changed by
   Claude" flag cover it; a push/email nudge is a possible later add, not v1.
 
+## 10. Forward-compatibility — plugin-extensible tool surface (build guardrail, not new v1 scope)
+
+Jim's architectural note (2026-07-02): custom plugins will eventually ship **their own AI-manipulable
+controls**. Nothing to build for that now, but write-tools must be the FIRST TENANT of an extensible
+framework, not a note-only dead-end ([[CONV-0010]]). Four seams to keep open — all of which the design above
+already respects, so this is a "don't regress it" guardrail:
+
+1. **Registry, not a literal.** Keep `MCP_TOOLS` a registration seam (a plugin manifest feeds tools in later);
+   no note assumptions baked into the dispatcher (`handleToolsCall`).
+2. **One shared chokepoint.** Every tool — note or future plugin — routes through `can()` + `audit()` + the
+   usage caps. Never per-tool bespoke auth. A plugin tool inherits enforcement for free (the P1-ACL rule).
+3. **Per-tool safety contract.** Note-versioning + trash is the recoverability net for the NOTE tools; a plugin
+   ships its OWN undo/guard. Do NOT hardcode "all AI writes are note edits guarded by note-versioning" — model
+   recoverability as something a tool declares, so a plugin tool with a different safety story slots in.
+4. **Open scope model.** Coarse write scopes (write/create/delete) map onto the same grant ACL; leave room for
+   capability-scoped plugin grants (the plugin-capability-security-model, server-side enforced).
+
 ### Critical files (build)
 - `packages/worker/src/mcp/tools.ts` — five write tools in `MCP_TOOLS`; rewrite `MCP_INSTRUCTIONS`.
 - `packages/worker/src/routes/agentTokens.ts` — gated write opt-in replacing the unconditional read-only clamp.
