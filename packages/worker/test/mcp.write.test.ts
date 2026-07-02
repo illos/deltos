@@ -122,15 +122,16 @@ describe('MCP write tools (POST /api/mcp tools/call)', () => {
     expect(new Set(scope)).toEqual(new Set(['read', 'search', 'create']));
   });
 
-  it('tools/list is scope-filtered: read-only sees 3 tools, a write token sees all 8', async () => {
+  it('tools/list is scope-filtered: read-only sees 3 tools, a write token sees all 10', async () => {
     const { token: ro } = await mintAgentToken(env, ownerA, passA); // no write opt-in
     const { token: rw } = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
     const roList = await (await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, ro)).json() as JsonRpcResult;
     const rwList = await (await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, rw)).json() as JsonRpcResult;
     expect(roList.result.tools.map((t: any) => t.name).sort())
       .toEqual(['get_note', 'list_notebooks', 'search_notes']);
+    // The two plugin-declared file tools (create_file_note, embed_file) join the write surface via the seam.
     expect(rwList.result.tools.map((t: any) => t.name).sort())
-      .toEqual(['append_block', 'create_note', 'get_note', 'list_notebooks', 'search_notes', 'set_property', 'trash_note', 'update_note']);
+      .toEqual(['append_block', 'create_file_note', 'create_note', 'embed_file', 'get_note', 'list_notebooks', 'search_notes', 'set_property', 'trash_note', 'update_note']);
   });
 
   it('initialize instructions are scope-aware (read-only vs write)', async () => {

@@ -67,6 +67,17 @@ export function Plus(props: IconProps) {
   );
 }
 
+/** Upload — a file/tray with an up arrow (add a foreign file → file note, #69 nav loadout). */
+export function Upload(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.6} {...props}>
+      <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+      <path d="M12 16V4" />
+      <path d="M8 8l4-4 4 4" />
+    </IconBase>
+  );
+}
+
 /** Microphone (voice dictation, #69 §6.1). */
 export function Mic(props: IconProps) {
   return (

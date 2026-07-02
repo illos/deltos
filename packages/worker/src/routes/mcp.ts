@@ -230,6 +230,6 @@ async function handleToolsCall(
   }
 
   const db = d1Adapter(c.env.DB);
-  const result = await tool.execute(args, { db, accountId, now });
+  const result = await tool.execute(args, { db, accountId, now, env: c.env });
   return c.json(rpcSuccess(id, result), 200);
 }
