@@ -15,6 +15,7 @@
 import { useAuthStore } from '../auth/store.js';
 import type {
   AgentToken,
+  AgentWriteOpt,
   ListAgentTokensResponse,
   MintAgentTokenRequest,
   MintAgentTokenResponse,
@@ -119,21 +120,24 @@ async function readErrorCode(res: Response): Promise<string | undefined> {
 }
 
 /**
- * Mint a new read-only agent token. Requires STEP-UP re-auth (H1): `password` always, plus `totp` when
- * the account has 2FA. The raw `token` is returned ONCE — capture it now, it is never re-served. The
- * server clamps scope to read-only regardless, so the UI needs no scope picker. A step-up failure surfaces
- * as an AgentTokenError with status 401 and the server `code` so the caller can target the right field.
+ * Mint a new agent token. Requires STEP-UP re-auth (H1): `password` always, plus `totp` when the account
+ * has 2FA. The raw `token` is returned ONCE — capture it now, it is never re-served. Read is the FLOOR;
+ * pass `write` to opt the token into the write tools (create/edit/trash) — omitted ⇒ a read-only token
+ * (the server clamps fail-closed either way). A step-up failure surfaces as an AgentTokenError with status
+ * 401 and the server `code` so the caller can target the right field.
  */
 export async function mintAgentToken(params: {
   label?: string;
   password: string;
   totp?: string;
+  write?: AgentWriteOpt;
 }): Promise<MintAgentTokenResponse> {
   const trimmed = params.label?.trim();
   const body: MintAgentTokenRequest = {
     password: params.password,
     ...(trimmed ? { label: trimmed } : {}),
     ...(params.totp ? { totp: params.totp } : {}),
+    ...(params.write ? { write: params.write } : {}),
   };
   const res = await authedFetch(
     '',

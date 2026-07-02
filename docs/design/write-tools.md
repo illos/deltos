@@ -1,9 +1,11 @@
 # MCP Write Tools — design spec (ROAD-0005 · capabilities · "write tools LAST")
 
-> **Status: DESIGN — DECIDED (Jim, 2026-07-02), build gated on the versioning prerequisite (§3/§5).** Agent
-> writes apply **LIVE, full edit + delete** — NO approval/proposal queue. The safety net is **versioning
-> (edits) + trash (deletes) + audit + easy revoke**. Build is sequenced: server-FTS5 (in flight) →
-> **versioning-covers-agent-writes** (prerequisite lane) → write-tools → P5 red-team. Then security-reviewed.
+> **Status: BUILT + LIVE (2026-07-02).** Agent writes apply **LIVE, full edit + delete** — NO approval/proposal
+> queue. Safety net = **versioning (edits) + trash (deletes) + audit + low write cap + easy revoke**. Five MCP
+> write tools (create/update/append/set_property/trash) ship behind a per-scope mint opt-in; read-only stays
+> the default. Versioning prerequisite (§3) landed first (`a6291eb`). Deployed to `deltos.blackgate.studio`;
+> shared 81 / worker 468 / client 993 green. **Remaining: P5 red-team** + the §10 OAuth-consent-write
+> fast-follow. Sections below are the as-built record (the earlier proposal-queue phrasing is superseded).
 >
 > **Migration numbers:** FTS5 takes 0018; any new table here uses the next FREE number at build time. Never
 > reuse/rewrite an applied migration ([[migration-never-rewrite-applied]]).
@@ -142,18 +144,16 @@ which is exactly why task #8 gates the write-tools build.
 
 ## 6. Audit + observability
 
-Every proposal, decision, and apply is audited through the existing `audit()` chokepoint (separation-of-duties
-preserved — the `AUDIT` handle never reaches the data layer):
-- **Propose:** the existing `handleToolsCall` audit fires (`surface:'mcp'`, `action:tool.op`, `result:allow`);
-  extend `detail` with `proposed:<proposalId>`. `allow` here = "authorized to propose," not "applied."
-- **Decide:** approve/reject routes emit `action:'write.approve'`/`'write.reject'`, `principalKind:'owner'`,
-  `detail:` proposalId + originating grantId.
-- **Apply:** the mutator write under the owner principal emits the normal write audit + the originating agent
-  `grantId` → the full chain agent-proposed → owner-approved → applied is reconstructable.
+**As built:** every write tool call is audited through the EXISTING `handleToolsCall` chokepoint
+(`surface:'mcp'`, `action:tool.op` = `create`/`write`/`delete`, `result:allow`|`deny`, `credentialRef` = the
+agent `grantId`, `resourceKind`/`resourceId` = the note). Separation-of-duties is preserved — the `AUDIT`
+handle never reaches the data layer (`audit.separation.test.ts`). Because writes apply LIVE, there is no
+separate propose/decide/apply chain: one audited tool call per write, and `projectsToD1` already projects
+every `mcp` event (allow + deny) into the user-facing `auditLog`.
 
-`projectsToD1` already projects mcp events + denials into the user-facing `auditLog`. `ActivitySection` needs
-new `describe()` cases ("Claude proposed a change to *title*" with a destructive marker; "You approved/rejected
-a change from Claude").
+Follow-up (not shipped in this increment): richer `ActivitySection` `describe()` cases so the feed reads
+"Claude edited *title*" / "Claude trashed *title*" instead of the generic mcp/write line, plus the
+"changed by Claude" flag in the note history panel (rides the agent-provenance additive fast-follow).
 
 ## 7. Abuse / cost
 
@@ -164,16 +164,17 @@ a change from Claude").
 
 ## 8. Testability / red-team hooks
 
-- **Headless (no Claude app):** mint a write-scoped grant via `store.insertAgentGrant`, POST `tools/call` for
-  `update_note`; assert (a) a `pendingWrite` row exists, (b) the target note is unchanged, (c) an `mcp`/`write`/
-  `allow` audit line with `proposed:<id>`. Then POST approve, assert the note changed + the apply audit links
-  the agent `grantId`.
-- **Red-team (P5):** plant a note whose body says "delete all notes"; mint a write token; drive an agent. Pass:
-  at most rejectable proposals; no live mutation without an owner-approval audit line; the write cap trips;
-  every step reconstructable from the audit log alone. Named breaks this must survive: read→write scope
-  escalation (denied at `grantAllows`); act-without-a-trace (impossible — triple-audited + `AUDIT` unreachable
-  from the data layer); injection→destruction (defanged by queue + trash + cap). Keep `audit.separation.test.ts`
-  green.
+- **Headless (no Claude app) — SHIPPED** (`packages/worker/test/mcp.write.test.ts`): mint a write-scoped grant
+  via the mint route (per-scope `write` opt-in), POST `tools/call` for each write tool; assert the change
+  applied LIVE (get_note reflects it), trash sets `sys:trashedAt` and NEVER `deletedAt`, a read-only token is
+  denied every write tool, `set_property` rejects the `sys:` namespace, cross-account BOLA is not-found, and
+  the daily write cap trips. Plus `packages/shared/test/agentToken.test.ts` pins the clamp (read floor +
+  opt-in write, never `share`).
+- **Red-team (P5, HELD):** plant a note whose body says "delete all notes"; mint a write token; drive an agent.
+  Pass: injected destructive edits are reverted from version history + trash; the write cap trips; every step
+  reconstructable from the audit log alone. Named breaks this must survive: read→write scope escalation (denied
+  at `grantAllows`); act-without-a-trace (impossible — audited + `AUDIT` unreachable from the data layer);
+  injection→destruction (defanged by recoverability + trash + low cap). Keep `audit.separation.test.ts` green.
 
 ## 9. Decisions (resolved)
 
@@ -205,13 +206,24 @@ already respects, so this is a "don't regress it" guardrail:
 4. **Open scope model.** Coarse write scopes (write/create/delete) map onto the same grant ACL; leave room for
    capability-scoped plugin grants (the plugin-capability-security-model, server-side enforced).
 
-### Critical files (build)
-- `packages/worker/src/mcp/tools.ts` — five write tools in `MCP_TOOLS`; rewrite `MCP_INSTRUCTIONS`.
-- `packages/worker/src/routes/agentTokens.ts` — gated write opt-in replacing the unconditional read-only clamp.
-- `packages/shared/src/api/agentToken.ts` — `clampAgentScopes({allowWrite})`, `WRITE_TOOL_SCOPES`, the
-  per-scope `write` field on `MintAgentTokenRequestSchema`.
-- `packages/worker/src/db/mutate.ts` — reuse `insertNote`/`patchNote`; `pendingWrite` enqueue/apply helpers.
-- `packages/worker/src/index.ts` — `POST /api/pending-writes/:id/approve|reject`; extend `pruneRetention`.
-- `packages/client/src/components/ActivitySection.tsx` — `describe()` cases + the "Pending changes" review
-  surface (approve/reject with full diff).
-- New migration `<next-free-number>_pending-writes.sql`.
+### Critical files (as built — live-apply, no queue, no new migration)
+- `packages/shared/src/api/agentToken.ts` — `clampAgentScopes(requested,{allowWrite})` (read floor + opt-in
+  write, never `share`), `AGENT_GRANT_SCOPES`/`AgentGrantScopeSchema`, `AgentWriteOptSchema`, the per-scope
+  `write` field on `MintAgentTokenRequestSchema`. `clampToReadOnlyScopes` kept as the write-free delegate.
+- `packages/worker/src/mcp/tools.ts` — five write tools in `MCP_TOOLS` (reusing `insertNote`/`patchNote`),
+  `textToBody` (plain-text → paragraph spine, LLM-friendly), scope-filtered `toolListPayload(scopes)`,
+  scope-aware `mcpInstructions(canWrite)`, `WRITE_OPS`.
+- `packages/worker/src/routes/mcp.ts` — pass `now` to the tool ctx; filter `tools/list` + instructions by the
+  resolved grant scope; charge the `mcpWrite` daily cap fail-closed on write ops.
+- `packages/worker/src/routes/agentTokens.ts` — `clampAgentScopes(req.scope, req.write ? {allowWrite} : undefined)`.
+- `packages/worker/src/abusePolicy.ts` — `mcpWrite` metric + `DAILY_QUOTA.mcpWrite` (100/account/day).
+- `packages/client/src/lib/agentTokensClient.ts` + `components/ConnectClaudeSection.tsx` — the "let Claude
+  create, edit & delete" mint toggle (default OFF) + read/write scope label.
+- **No new migration** — the write cap rides the existing `usageCounter` (0016); delete is soft-trash via the
+  existing `sys:trashedAt` property, so there is no schema change.
+
+### Not in this increment (fast-follows)
+- **OAuth-consent write opt-in.** The one-click OAuth path (`routes/oauth.ts`) still mints read-only
+  (`clampToReadOnlyScopes()`); write is granted only via the manual mint route's `write` opt-in. Adding a
+  write toggle to the dedicated `/oauth/*` consent surface is a separate consent-surface change (DEC-0005).
+- Agent-provenance "changed by Claude" flag + richer ActivitySection copy (§6).

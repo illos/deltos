@@ -21,9 +21,11 @@ import {
 import {
   findTool,
   toolListPayload,
+  mcpInstructions,
+  WRITE_OPS,
   MCP_SERVER_INFO,
-  MCP_INSTRUCTIONS,
 } from '../mcp/tools.js';
+import type { Op } from '@deltos/shared';
 
 /**
  * The deltos remote MCP server (llm-mcp-integration.md §6) — JSON-RPC 2.0 over a STATELESS Streamable-HTTP
@@ -130,6 +132,12 @@ mcp.post('/', async (c) => {
     return c.body(null, 202);
   }
 
+  // The token's granted scopes drive the least-privilege surface: a read-only token is told it's
+  // read-only + never SEES the write tools; a write token is taught the live-apply/recoverability model
+  // + sees them. `grant` is guaranteed present by the `live` gate above.
+  const scopes = grant!.scope as Op[];
+  const canWrite = scopes.some((s) => WRITE_OPS.has(s));
+
   // 5. Method dispatch.
   switch (req.method) {
     case 'initialize':
@@ -140,16 +148,16 @@ mcp.post('/', async (c) => {
           ),
           serverInfo: MCP_SERVER_INFO,
           capabilities: { tools: {} },
-          instructions: MCP_INSTRUCTIONS,
+          instructions: mcpInstructions(canWrite),
         }),
         200,
       );
     case 'ping':
       return c.json(rpcSuccess(id, {}), 200);
     case 'tools/list':
-      return c.json(rpcSuccess(id, toolListPayload()), 200);
+      return c.json(rpcSuccess(id, toolListPayload(scopes)), 200);
     case 'tools/call':
-      return handleToolsCall(c, id, req.params, principal);
+      return handleToolsCall(c, id, req.params, principal, store);
     default:
       return c.json(rpcError(id, RPC.METHOD_NOT_FOUND, `unknown method: ${req.method}`), 200);
   }
@@ -161,6 +169,7 @@ async function handleToolsCall(
   id: JsonRpcId,
   params: unknown,
   principal: RequestPrincipal,
+  store: ReturnType<typeof createAuthStore>,
 ): Promise<Response> {
   const p = (typeof params === 'object' && params !== null ? params : {}) as {
     name?: unknown;
@@ -204,7 +213,23 @@ async function handleToolsCall(
   // accountId is the SERVER-derived principal.id; every data read filters WHERE accountId = ? — a note
   // owned by another account is invisible (get_note → "not found"), inheriting account isolation.
   const accountId = callerAccountId(principal);
+  const now = new Date().toISOString();
+
+  // WRITE cap (write-tools.md §7): a LOW, durable, per-account/UTC-day ceiling on WRITE tool calls,
+  // charged fail-CLOSED after authorization but BEFORE the mutation — so an injection-driven write flood
+  // is bounded to a handful of individually-recoverable writes, well under the 50k read ceiling. Reads
+  // don't touch it. Over-cap → a handled tool error (the model sees it), not a protocol error.
+  if (WRITE_OPS.has(tool.op)) {
+    const cap = await store.chargeUsage(accountId, 'mcpWrite', dayBucket(Date.now()), DAILY_QUOTA.mcpWrite, now);
+    if (!cap.allowed) {
+      return c.json(
+        rpcSuccess(id, toolError('daily write limit reached for this account — try again after UTC midnight')),
+        200,
+      );
+    }
+  }
+
   const db = d1Adapter(c.env.DB);
-  const result = await tool.execute(args, { db, accountId });
+  const result = await tool.execute(args, { db, accountId, now });
   return c.json(rpcSuccess(id, result), 200);
 }

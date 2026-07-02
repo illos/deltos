@@ -21,7 +21,7 @@
  */
 
 /** A cost-bearing endpoint metered by the durable Tier-2 daily cap. */
-export type UsageMetric = 'transcribe' | 'unfurl' | 'blobWrite' | 'mcp';
+export type UsageMetric = 'transcribe' | 'unfurl' | 'blobWrite' | 'mcp' | 'mcpWrite';
 
 /**
  * Per-account, per-UTC-day call ceilings for each cost-bearing metric (Tier 2). Reaching the cap →
@@ -34,6 +34,7 @@ export const DAILY_QUOTA: Record<UsageMetric, number> = {
   unfurl: 2000, // server-side link fetches/account/day (paid egress; KV-cached re-fetch of same URL is cheap)
   blobWrite: 2000, // R2 blob put/presign operations/account/day (write churn)
   mcp: 50_000, // MCP tool calls/account/day — a ceiling ABOVE the per-token 600/min window, bounding total daily spend across all of an account's tokens
+  mcpWrite: 100, // MCP WRITE tool calls/account/day (write-tools.md §7) — a LOW blast-radius cap far below the read ceiling, so an injection-driven write flood is bounded to a handful of individually-recoverable writes
 };
 
 /**

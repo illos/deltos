@@ -26,10 +26,16 @@ function formatDate(iso: string): string {
   return new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-/** A one-line "Created · Read-only · scope" description for a list row. */
+/** True iff the token holds any write verb (create/write/delete) — drives the "read & write" label. */
+function canWrite(token: AgentToken): boolean {
+  return token.scope.some((s) => s === 'create' || s === 'write' || s === 'delete');
+}
+
+/** A one-line "Created · access · scope" description for a list row. */
 function tokenMeta(token: AgentToken): string {
   const where = token.resourceKind === 'notebook' ? 'One notebook' : 'All notes';
-  return `${formatDate(token.createdAt)} · Read-only · ${where}`;
+  const access = canWrite(token) ? 'Read & write' : 'Read-only';
+  return `${formatDate(token.createdAt)} · ${access} · ${where}`;
 }
 
 function messageFor(err: unknown): string {
@@ -44,7 +50,7 @@ function messageFor(err: unknown): string {
  */
 type GenState =
   | { tag: 'idle' }
-  | { tag: 'form'; label: string; password: string; totp: string; error: string | null }
+  | { tag: 'form'; label: string; password: string; totp: string; allowWrite: boolean; error: string | null }
   | { tag: 'minting' }
   | { tag: 'minted'; token: string; label: string | null }
   | { tag: 'error'; message: string };
@@ -72,7 +78,7 @@ export function ConnectClaudeSection() {
     void refresh();
   }, [refresh]);
 
-  const submitForm = async (form: { label: string; password: string; totp: string }) => {
+  const submitForm = async (form: { label: string; password: string; totp: string; allowWrite: boolean }) => {
     if (!form.password) {
       setGen({ tag: 'form', ...form, error: 'Enter your password to generate a token.' });
       return;
@@ -85,6 +91,9 @@ export function ConnectClaudeSection() {
         label: form.label,
         password: form.password,
         ...(totp ? { totp } : {}),
+        // A single toggle grants the full write surface (create + edit + trash) — matches "let Claude edit
+        // and delete". Least-privilege per-scope splitting exists at the API for later granularity.
+        ...(form.allowWrite ? { write: { create: true, update: true, trash: true } } : {}),
       });
       setGen({ tag: 'minted', token: res.token, label: res.label });
       void refresh(); // the new token appears in the list immediately (without its secret)
@@ -131,15 +140,16 @@ export function ConnectClaudeSection() {
         sign-in automatically; approved apps appear under <strong>Connected apps</strong> below.
       </p>
       <p className="settings__row-hint">
-        Prefer to paste a token by hand? Generate a manual connection token below. Either way access is{' '}
-        <strong>read-only</strong> and you can revoke it anytime.
+        Prefer to paste a token by hand? Generate a manual connection token below. Tokens are{' '}
+        <strong>read-only by default</strong>; you can opt a token into letting Claude create, edit &amp;
+        delete notes (deletes go to Trash). Revoke any token anytime.
       </p>
 
       {/* ── Generate sub-flow ─────────────────────────────────────────────── */}
       {gen.tag === 'idle' && (
         <button
           className="settings__action settings__action--primary"
-          onClick={() => setGen({ tag: 'form', label: '', password: '', totp: '', error: null })}
+          onClick={() => setGen({ tag: 'form', label: '', password: '', totp: '', allowWrite: false, error: null })}
         >
           Generate token
         </button>
@@ -180,10 +190,24 @@ export function ConnectClaudeSection() {
               maxLength={6}
             />
           )}
+          <label className="settings__checkbox-row">
+            <input
+              type="checkbox"
+              checked={gen.allowWrite}
+              onChange={(e) => setGen({ ...gen, allowWrite: e.target.checked, error: null })}
+              aria-label="Allow Claude to edit and delete notes"
+            />
+            <span>
+              Allow Claude to <strong>create, edit &amp; delete</strong> notes (deletes go to Trash and are
+              recoverable). Leave off for read-only access.
+            </span>
+          </label>
           {gen.error && <p className="settings__error">{gen.error}</p>}
           <button
             className="settings__row-action"
-            onClick={() => void submitForm({ label: gen.label, password: gen.password, totp: gen.totp })}
+            onClick={() =>
+              void submitForm({ label: gen.label, password: gen.password, totp: gen.totp, allowWrite: gen.allowWrite })
+            }
             aria-label="Create token"
           >
             Create
@@ -233,7 +257,7 @@ export function ConnectClaudeSection() {
           <p className="settings__error">{gen.message}</p>
           <button
             className="settings__row-action"
-            onClick={() => setGen({ tag: 'form', label: '', password: '', totp: '', error: null })}
+            onClick={() => setGen({ tag: 'form', label: '', password: '', totp: '', allowWrite: false, error: null })}
           >
             Try again
           </button>

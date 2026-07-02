@@ -1157,6 +1157,19 @@
 }
 .settings__label-input::placeholder { color: var(--secondary); }
 
+/* Write opt-in toggle inside the Connect-to-Claude generate form. */
+.settings__checkbox-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  font-size: 0.85rem;
+  color: var(--secondary);
+  line-height: 1.35;
+  cursor: pointer;
+}
+.settings__checkbox-row input { margin-top: 0.15rem; flex: none; }
+.settings__checkbox-row strong { color: inherit; }
+
 .settings__token-box {
   display: flex;
   flex-direction: column;

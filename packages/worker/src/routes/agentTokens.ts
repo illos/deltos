@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   MintAgentTokenRequestSchema,
   RevokeAgentTokenRequestSchema,
-  clampToReadOnlyScopes,
+  clampAgentScopes,
   type Resource,
 } from '@deltos/shared';
 import type { AppEnv } from '../context.js';
@@ -102,8 +102,10 @@ agentTokens.post(
 
       const now = new Date().toISOString();
 
-      // CLAMP read-only at mint (fail-closed): any write/create/delete/share verb is dropped here.
-      const scope = clampToReadOnlyScopes(req.scope);
+      // CLAMP at mint (fail-closed): READ is the floor; WRITE verbs are added ONLY for the explicit
+      // per-scope opt-in in `req.write` (least-privilege). `share` can never appear. No opt-in → read-only,
+      // exactly as before. The step-up above already re-proved the human — warranted for a write mint.
+      const scope = clampAgentScopes(req.scope, req.write ? { allowWrite: req.write } : undefined);
       const resource: Resource = req.notebookId
         ? { kind: 'notebook', id: req.notebookId }
         : { kind: 'workspace' };

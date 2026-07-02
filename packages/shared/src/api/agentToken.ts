@@ -8,42 +8,103 @@ import { ScopeSchema, type Scope } from './grant.js';
  * null`), scope-CLAMPED at mint, and independently revocable. This module is the schema-first source of
  * truth for the three owner-authed routes (mint / list / revoke); the worker derives its types from here.
  *
- * v1 is READ-ONLY ONLY: an agent token may carry at most `['read', 'search']`. Any write/create/delete/
- * share verb is CLAMPED OUT at mint ({@link clampToReadOnlyScopes}), fail-closed — the request body can
- * never widen an agent token beyond reading. accountId/principalId is ALWAYS the authenticated owner's
- * `principal.id`, derived server-side, NEVER taken from the body.
+ * READ is the FLOOR, WRITE is OPT-IN (ROAD-0005 write-tools §2): every agent token carries at least
+ * `['read', 'search']`, and `share` is NEVER grantable (managing tokens is the owner-only capability the
+ * agent-token routes gate on). The write verbs (`write`/`create`/`delete`) are added ONLY when the owner
+ * explicitly opts in PER-SCOPE at mint ({@link clampAgentScopes} with `allowWrite`); with no opt-in the
+ * grant floors to read-only, fail-closed ({@link clampToReadOnlyScopes}). accountId/principalId is ALWAYS
+ * the authenticated owner's `principal.id`, derived server-side, NEVER taken from the body.
  */
 
-/** The ONLY scopes an agent token may hold in v1. A strict read-only surface. */
+/** The read-only floor every agent token holds. */
 export const AGENT_TOKEN_SCOPES = ['read', 'search'] as const;
 export const AgentTokenScopeSchema = z.enum(AGENT_TOKEN_SCOPES);
 export type AgentTokenScope = z.infer<typeof AgentTokenScopeSchema>;
 
 /**
- * Clamp a requested scope array down to the read-only allow-list — the single security control that
- * keeps an agent token from ever holding a write verb (fail-closed). Order is canonical (read, search),
- * duplicates collapse, and an empty/all-dropped request floors to `['read']` (never an empty,
- * scope-less grant). `undefined` (no scope requested) defaults to the full read-only surface.
+ * The FULL set of scopes an agent grant may hold — the read-only floor PLUS the opt-in write verbs.
+ * `share` is deliberately EXCLUDED: token management is the owner-only capability the agent-token routes
+ * key on, so an agent grant can never widen into it. This is the enum the non-secret token views validate.
  */
-export function clampToReadOnlyScopes(requested?: Scope[]): AgentTokenScope[] {
-  const source: readonly Scope[] = requested ?? AGENT_TOKEN_SCOPES;
-  const clamped = AGENT_TOKEN_SCOPES.filter((s) => source.includes(s));
-  return clamped.length > 0 ? [...clamped] : ['read'];
+export const AGENT_GRANT_SCOPES = ['read', 'search', 'create', 'write', 'delete'] as const;
+export const AgentGrantScopeSchema = z.enum(AGENT_GRANT_SCOPES);
+export type AgentGrantScope = z.infer<typeof AgentGrantScopeSchema>;
+
+/**
+ * Per-scope write opt-in at mint (least-privilege). Each flag maps to exactly one `can()` op the write
+ * tools check, so an owner can mint (say) a create-only token that cannot edit or delete existing notes:
+ *   - `create` → the `create` op (create_note)
+ *   - `update` → the `write` op   (update_note / append_block / set_property)
+ *   - `trash`  → the `delete` op   (trash_note — soft `sys:trashedAt`, never a hard tombstone)
+ * `.strict()` so no unknown key can ride along and widen the grant.
+ */
+export const AgentWriteOptSchema = z
+  .object({
+    create: z.boolean().optional(),
+    update: z.boolean().optional(),
+    trash: z.boolean().optional(),
+  })
+  .strict();
+export type AgentWriteOpt = z.infer<typeof AgentWriteOptSchema>;
+
+/** The op each write opt-in flag unlocks — the single mapping the clamp keys on. */
+const WRITE_OPT_TO_OP = { create: 'create', update: 'write', trash: 'delete' } as const;
+
+/**
+ * Clamp a minted agent grant's scope, fail-closed. READ is the floor (`['read','search']` always kept
+ * when present, defaulting to the full read-only surface when nothing is requested); WRITE verbs are added
+ * ONLY for the flags explicitly set in `allowWrite`. `share` can never appear (it is not in the source
+ * allow-lists). Order is canonical, duplicates collapse, and an all-dropped request floors to `['read']`
+ * so a grant is never scope-less. This is THE security control that keeps write off by default.
+ */
+export function clampAgentScopes(
+  requested?: Scope[],
+  opts?: { allowWrite?: AgentWriteOpt },
+): AgentGrantScope[] {
+  // Read floor: exactly today's read-only clamp behavior.
+  const readSource: readonly Scope[] = requested ?? AGENT_TOKEN_SCOPES;
+  const read = AGENT_TOKEN_SCOPES.filter((s) => readSource.includes(s)) as AgentGrantScope[];
+
+  // Write verbs: added ONLY per explicit opt-in flag (never inferred from `requested`).
+  const write: AgentGrantScope[] = [];
+  const allow = opts?.allowWrite;
+  if (allow) {
+    for (const [flag, op] of Object.entries(WRITE_OPT_TO_OP) as [keyof AgentWriteOpt, AgentGrantScope][]) {
+      if (allow[flag]) write.push(op);
+    }
+  }
+
+  // Canonical order + dedupe; floor to ['read'] so the grant is never empty.
+  const merged = AGENT_GRANT_SCOPES.filter((s) => read.includes(s) || write.includes(s));
+  return merged.length > 0 ? [...merged] : ['read'];
 }
 
 /**
- * Mint request. `scope` accepts any valid {@link ScopeSchema} verb (so a write verb is DROPPED at the
- * clamp rather than rejected at the boundary), but the minted grant is always read-only. `.strict()`
- * rejects unknown keys — no silent ride-along field can influence the mint.
+ * Clamp a requested scope array down to the read-only floor — the write-free path (no opt-in). Kept as a
+ * named helper for the read-only callers (OAuth consent, default mint); delegates to {@link clampAgentScopes}
+ * so there is ONE clamp implementation and the read floor can never drift between the two.
+ */
+export function clampToReadOnlyScopes(requested?: Scope[]): AgentTokenScope[] {
+  return clampAgentScopes(requested) as AgentTokenScope[];
+}
+
+/**
+ * Mint request. `scope` accepts any valid {@link ScopeSchema} verb (a disallowed verb is DROPPED at the
+ * clamp, not rejected at the boundary). `write` is the explicit per-scope opt-in for the write tools —
+ * ABSENT ⇒ a read-only token (every existing caller stays read-only). `.strict()` rejects unknown keys —
+ * no silent ride-along field can influence the mint.
  */
 export const MintAgentTokenRequestSchema = z
   .object({
     label: z.string().max(200).optional(),
     scope: z.array(ScopeSchema).optional(),
     notebookId: NotebookIdSchema.optional(),
-    // H1 STEP-UP (ROAD-0005 P0): minting a long-lived, non-expiring read-all credential requires fresh
-    // re-auth — a live session bearer is not enough. `password` always; `totp` when 2FA is enabled. These
-    // are verified + discarded server-side (never stored). See worker `verifyStepUp`.
+    // Per-scope write opt-in (least-privilege). Omit for a read-only token; set flags to grant write tools.
+    write: AgentWriteOptSchema.optional(),
+    // H1 STEP-UP (ROAD-0005 P0): minting a long-lived, non-expiring credential requires fresh re-auth — a
+    // live session bearer is not enough. `password` always; `totp` when 2FA is enabled. These are verified
+    // + discarded server-side (never stored). See worker `verifyStepUp`. Even more warranted for a
+    // write-capable mint (the human is re-proved at issuance; no human is present at write time).
     password: z.string().min(1).optional(),
     totp: z.string().optional(),
   })
@@ -54,7 +115,7 @@ export type MintAgentTokenRequest = z.infer<typeof MintAgentTokenRequestSchema>;
 export const AgentTokenSchema = z.object({
   grantId: z.string().min(1),
   label: z.string().nullable(),
-  scope: z.array(AgentTokenScopeSchema),
+  scope: z.array(AgentGrantScopeSchema),
   resourceKind: z.enum(['workspace', 'notebook']),
   resourceId: z.string().nullable(),
   createdAt: TimestampSchema,
