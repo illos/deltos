@@ -79,7 +79,10 @@ describe('OAuth discovery documents', () => {
     expect(res.status).toBe(200);
     const md = await res.json();
     expect(md.registration_endpoint).toContain('/api/oauth/register');
-    expect(md.authorization_endpoint).toContain('/api/oauth/authorize');
+    // authorization_endpoint is the BROWSER-facing PWA consent route, NOT the /api JSON mint endpoint —
+    // advertising /api here 404s the client's top-level GET (the bug this asserts against).
+    expect(md.authorization_endpoint).toMatch(/\/oauth\/authorize$/);
+    expect(md.authorization_endpoint).not.toContain('/api/oauth/authorize');
     expect(md.token_endpoint).toContain('/api/oauth/token');
     expect(md.code_challenge_methods_supported).toEqual(['S256']); // no 'plain'
     expect(md.grant_types_supported).toEqual(['authorization_code']);

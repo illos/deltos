@@ -176,7 +176,11 @@ export function buildAuthServerMetadata(origin: string) {
   return {
     issuer: origin,
     registration_endpoint: `${origin}/api/oauth/register`,
-    authorization_endpoint: `${origin}/api/oauth/authorize`,
+    // The authorization_endpoint is the address the CLIENT opens in a BROWSER — so it is the PWA consent
+    // route (`/oauth/authorize`, served by the SPA), NOT the `/api/oauth/authorize` JSON mint endpoint the
+    // consent screen POSTs to internally (oauth-provider.md §2b). Advertising the /api path here 404s the
+    // client's top-level GET.
+    authorization_endpoint: `${origin}/oauth/authorize`,
     token_endpoint: `${origin}/api/oauth/token`,
     scopes_supported: [...OAUTH_V1_SCOPES],
     response_types_supported: ['code'],
