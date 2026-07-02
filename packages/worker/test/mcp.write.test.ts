@@ -143,6 +143,8 @@ describe('MCP write tools (POST /api/mcp tools/call)', () => {
     const rwInstr = await init(rw);
     expect(rwInstr).toMatch(/authorized to change notes/i);
     expect(rwInstr).toMatch(/UNTRUSTED DATA/); // the prompt-injection guardrail is taught to write tokens
+    expect(rwInstr).toMatch(/MARKDOWN/); // bodies accept markdown → native blocks
+    expect(rwInstr).toMatch(/TITLES are PLAIN TEXT/); // titles must not carry markdown
   });
 
   // --- happy path (live-apply) ----------------------------------------------------------------------
@@ -182,6 +184,64 @@ describe('MCP write tools (POST /api/mcp tools/call)', () => {
     await call(env, token, 'append_block', { id, text: 'second' });
     const note = await getNote(env, token, id);
     expect(note.body.map((b: any) => b.content.segments[0]?.text)).toEqual(['first', 'second']);
+  });
+
+  // --- markdown bodies render as native blocks; titles are plain text -------------------------------
+
+  it('create_note parses a markdown body into native blocks (heading + checklist todos)', async () => {
+    const { token } = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
+    const md = '## Phase 1\n- [ ] change oil\n- [x] top up coolant';
+    const r = await call(env, token, 'create_note', { title: 'Jetta service', text: md });
+    const note = await getNote(env, token, r.structuredContent.note.id);
+    expect(note.body[0].type).toBe('heading');
+    expect(note.body[0].content.level).toBe(2);
+    const list = note.body[1];
+    expect(list.type).toBe('list');
+    expect(list.children.map((c: any) => c.type)).toEqual(['todo', 'todo']);
+    expect(list.children.map((c: any) => c.content.checked)).toEqual([false, true]);
+    // Every block id — including nested item ids — is a valid UUID (a non-UUID id 400s the sync push).
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    for (const b of note.body) {
+      expect(b.id).toMatch(uuid);
+      for (const c of b.children ?? []) expect(c.id).toMatch(uuid);
+    }
+  });
+
+  it('create_note parses inline marks (bold) in the body', async () => {
+    const { token } = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
+    const r = await call(env, token, 'create_note', { text: 'this is **important** stuff' });
+    const note = await getNote(env, token, r.structuredContent.note.id);
+    expect(note.body[0].content.segments).toEqual([
+      { text: 'this is ' },
+      { text: 'important', bold: true },
+      { text: ' stuff' },
+    ]);
+  });
+
+  it('create_note strips a leading markdown heading marker from the TITLE (plain text)', async () => {
+    const { token } = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
+    const r = await call(env, token, 'create_note', { title: '# 2005 Jetta maintenance' });
+    const note = await getNote(env, token, r.structuredContent.note.id);
+    expect(note.title).toBe('2005 Jetta maintenance');
+  });
+
+  it('update_note strips a leading heading marker from a new title', async () => {
+    const { token } = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
+    const created = await call(env, token, 'create_note', { title: 'plain', text: 'x' });
+    const id = created.structuredContent.note.id;
+    await call(env, token, 'update_note', { id, title: '### Big Title' });
+    const note = await getNote(env, token, id);
+    expect(note.title).toBe('Big Title');
+  });
+
+  it('append_block appends parsed markdown blocks (a bullet list) to the end', async () => {
+    const { token } = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
+    const created = await call(env, token, 'create_note', { text: 'intro' });
+    const id = created.structuredContent.note.id;
+    await call(env, token, 'append_block', { id, text: '- one\n- two' });
+    const note = await getNote(env, token, id);
+    expect(note.body.map((b: any) => b.type)).toEqual(['paragraph', 'list']);
+    expect(note.body[1].children.map((c: any) => c.content.segments[0].text)).toEqual(['one', 'two']);
   });
 
   it('set_property sets a user metadata key', async () => {
