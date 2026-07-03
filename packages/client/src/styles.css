@@ -1458,6 +1458,26 @@
   padding: 2px;
   touch-action: manipulation;
 }
+/* ROAD-0010 full-window fallback exit — a single unobtrusive top-right control shown ONLY when the
+   desktop meta toolbar is absent (a file note, or a mobile visit to /note/:id/full), so the bare
+   full-window view always has a way back to the 3-region shell. Normal desktop full views put the
+   exit in the meta toolbar instead. */
+.editor__full-exit {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--secondary);
+  background: none;
+  border: none;
+  border-radius: 8px;
+  padding: 4px;
+  text-decoration: none;
+  cursor: pointer;
+}
 /* Back affordance — desktop master-detail keeps the list visible (no back); shown on mobile (§5). */
 .editor__back {
   display: none;

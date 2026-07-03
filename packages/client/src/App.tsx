@@ -332,6 +332,12 @@ export function AuthedShell() {
   // route we surface version-history here (next to ⋯) via a ?history URL param NoteRoute reads. (Desktop uses
   // the 3-region shell — no shell__bar — and keeps its own editor__meta.)
   const onNoteRoute = useMatch('/note/:id') != null;
+  // ROAD-0010: the bare full-window note view (/note/:id/full) takes over the ENTIRE window — no
+  // 3-region shell, no mobile shell chrome. It renders as a route INSIDE AuthedShell (so every sync /
+  // notebook-init / auth effect above still runs — this is the same app context, not a second React
+  // root), just WITHOUT the ThreeRegionShell / mobile-shell wrapper. useMatch('/note/:id') does NOT
+  // match the deeper /note/:id/full pattern, so onNoteRoute stays false here (no shell-bar history seam).
+  const onFullNote = useMatch('/note/:id/full') != null;
   const location = useLocation();
   // The Deck is ALWAYS present on a touch-first device — it IS the mobile bottom control surface (the
   // 'navigation' loadout while browsing, the editor keypad while editing). Presence is gated ONLY by
@@ -392,6 +398,30 @@ export function AuthedShell() {
       <div className="auth">
         <div className="auth__spinner" aria-label="Loading" />
       </div>
+    );
+  }
+
+  // ROAD-0010 full-window note view — bypasses BOTH the desktop 3-region shell and the mobile shell
+  // chrome. It reuses NoteRoute's SAME lazy chunk (variant="full" swaps the entry controls for a single
+  // back-to-regular exit); no forked editor. The route lives here (inside AuthedShell) so the sync /
+  // notebook / auth providers + effects above are all live — a popped-out window is just a second same-
+  // origin app context (like a second tab), and edits reconcile through the existing liveQuery path.
+  if (onFullNote) {
+    return (
+      <>
+        <Routes>
+          <Route
+            path="/note/:id/full"
+            element={
+              <Suspense fallback={<div className="editor__pm" aria-busy="true" />}>
+                <NoteRoute variant="full" />
+              </Suspense>
+            }
+          />
+        </Routes>
+        <ConflictToastHostSlot />
+        <UploadProgressHost />
+      </>
     );
   }
 

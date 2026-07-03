@@ -15,7 +15,7 @@ import { ConflictView } from '../components/ConflictView.js';
 import { HistoryPanel } from '../components/HistoryPanel.js';
 import { useNoteVersions } from '../db/conflict.js';
 import { SyncIndicator } from '../components/SyncIndicator.js';
-import { VersionHistory, Trash } from '../icons/index.js';
+import { VersionHistory, Trash, Expand, Collapse, PopOut } from '../icons/index.js';
 import { useIsDesktop } from '../lib/useIsDesktop.js';
 import { showActionToast } from '../lib/toastEvents.js';
 import type { ClientNote, NoteVersion } from '../db/schema.js';
@@ -31,7 +31,19 @@ import type { ClientNote, NoteVersion } from '../db/schema.js';
  * block editor (NoteEditor / ProseMirror). Phase 2 can register full-view descriptors for
  * notebook-capability-specific rendering without changing this route (see editor/views.ts).
  */
-export function NoteRoute() {
+export interface NoteRouteProps {
+  /**
+   * Chrome variant (ROAD-0010). 'regular' (default) is the note as it lives inside the 3-region /
+   * mobile shell — its desktop meta toolbar carries the Full screen + Pop out ENTRY controls.
+   * 'full' is the bare full-window view served at /note/:id/full: the SAME note composition with the
+   * shell chrome stripped away; the entry controls are REPLACED by a single back-to-regular EXIT
+   * control (no full-screen-inside-full-screen).
+   */
+  variant?: 'regular' | 'full';
+}
+
+export function NoteRoute({ variant = 'regular' }: NoteRouteProps = {}) {
+  const isFull = variant === 'full';
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const { state } = useLocation();
@@ -215,8 +227,47 @@ export function NoteRoute() {
             <button className="editor__meta-btn" onClick={handleDeleteNote} aria-label="Delete note">
               <Trash size={18} />
             </button>
+            {/* ROAD-0010 full-window controls. In the full view the entry controls are REPLACED by a
+                single back-to-regular EXIT control (no full-screen-inside-full-screen). */}
+            {isFull ? (
+              <Link
+                to={`/note/${parsedNoteId}`}
+                className="editor__meta-btn"
+                aria-label="Exit full screen"
+              >
+                <Collapse size={18} />
+              </Link>
+            ) : (
+              <>
+                {/* Full screen — navigate the CURRENT window to the bare full-window view in place. */}
+                <button
+                  className="editor__meta-btn"
+                  onClick={() => navigate(`/note/${parsedNoteId}/full`)}
+                  aria-label="Full screen"
+                >
+                  <Expand size={18} />
+                </button>
+                {/* Pop out — the same full-window view in its own popup window. */}
+                <button
+                  className="editor__meta-btn"
+                  onClick={() =>
+                    window.open(`/note/${parsedNoteId}/full`, '_blank', 'popup,width=900,height=760')
+                  }
+                  aria-label="Pop out"
+                >
+                  <PopOut size={18} />
+                </button>
+              </>
+            )}
           </div>
         </header>
+      )}
+      {/* ROAD-0010 full-window fallback exit — when the desktop meta toolbar is absent (a file note, or a
+          mobile visit to /note/:id/full), still guarantee ONE unobtrusive way back to the 3-region view. */}
+      {isFull && !(isDesktop && !isFileNote(note)) && (
+        <Link to={`/note/${parsedNoteId}`} className="editor__full-exit" aria-label="Exit full screen">
+          <Collapse size={20} />
+        </Link>
       )}
       <ViewComponent note={note} onSave={handleSave} autoFocus={isNew} />
     </>

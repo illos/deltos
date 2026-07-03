@@ -181,6 +181,41 @@ export function VersionHistory(props: IconProps) {
   );
 }
 
+/** Expand to full window — four arrows pushing out to the corners. */
+export function Expand(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.6} {...props}>
+      <path d="M4 9V4h5" />
+      <path d="M20 9V4h-5" />
+      <path d="M4 15v5h5" />
+      <path d="M20 15v5h-5" />
+    </IconBase>
+  );
+}
+
+/** Collapse from full window back to the app — four arrows pulling in to the center. */
+export function Collapse(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.6} {...props}>
+      <path d="M9 4v5H4" />
+      <path d="M15 4v5h5" />
+      <path d="M9 20v-5H4" />
+      <path d="M15 20v-5h5" />
+    </IconBase>
+  );
+}
+
+/** Pop out into a new window — a box with an arrow leaving it. */
+export function PopOut(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.6} {...props}>
+      <path d="M14 4h6v6" />
+      <path d="M20 4l-8 8" />
+      <path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" />
+    </IconBase>
+  );
+}
+
 /** Undo arrow. */
 export function Undo(props: IconProps) {
   return (
