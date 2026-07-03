@@ -140,7 +140,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const openSearch = () => fireEvent.click(screen.getByLabelText('Search'));
+// The Search toggle is disabled until the PDF document has OPENED (PdfReader `disabled={!opened}`) —
+// clicking early is a silent no-op and the search input never renders (the 1-in-N flake this fixes).
+// Wait for it to enable before clicking.
+const openSearch = async () => {
+  const btn = screen.getByLabelText('Search') as HTMLButtonElement;
+  await waitFor(() => expect(btn.disabled).toBe(false));
+  fireEvent.click(btn);
+};
 const searchInput = () => screen.getByLabelText('Search in document') as HTMLInputElement;
 const counter = () => document.querySelector('.pdf-reader__search-count')?.textContent ?? '';
 const pageInput = () => screen.getByLabelText('Page number') as HTMLInputElement;
@@ -150,7 +157,7 @@ describe('PDF reader Slice 3 — in-PDF text search', () => {
     await mountRoute();
     await waitFor(() => expect(document.querySelector('.pdf-reader')).not.toBeNull());
 
-    openSearch();
+    await openSearch();
     fireEvent.change(searchInput(), { target: { value: 'the' } });
 
     // 4 occurrences of "the" across the 3 pages; auto-selects the first → "1 of 4".
@@ -161,7 +168,7 @@ describe('PDF reader Slice 3 — in-PDF text search', () => {
     await mountRoute();
     await waitFor(() => expect(document.querySelector('.pdf-reader')).not.toBeNull());
 
-    openSearch();
+    await openSearch();
     fireEvent.change(searchInput(), { target: { value: 'the' } });
     await waitFor(() => expect(counter()).toBe('1 of 4'));
 
@@ -186,7 +193,7 @@ describe('PDF reader Slice 3 — in-PDF text search', () => {
     await mountRoute();
     await waitFor(() => expect(document.querySelector('.pdf-reader__textlayer')).not.toBeNull());
 
-    openSearch();
+    await openSearch();
     fireEvent.change(searchInput(), { target: { value: 'the' } });
 
     await waitFor(() => expect(document.querySelectorAll('.pdf-reader__hl').length).toBeGreaterThan(0));
@@ -208,7 +215,7 @@ describe('PDF reader Slice 3 — in-PDF text search', () => {
     expect(document.querySelector('img[src="x"]')).toBeNull();
 
     // Now drive a search that matches INSIDE the attacker run ("img") — the highlight path must also stay inert.
-    openSearch();
+    await openSearch();
     fireEvent.change(searchInput(), { target: { value: 'img' } });
     await waitFor(() => expect(document.querySelectorAll('.pdf-reader__hl').length).toBeGreaterThan(0));
     // Still no real <img> element, and the literal payload text is intact in the layer.
