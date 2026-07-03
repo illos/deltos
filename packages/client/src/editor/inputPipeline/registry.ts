@@ -36,6 +36,17 @@ export interface EditTransform {
   cmd: Command;
 }
 
+/**
+ * A BULK transform (design §4, step 4): runs over a whole just-inserted range (a paste), not a
+ * caret-anchored trigger. `from`/`to` bound the inserted content in `state` (the post-insert state);
+ * the handler returns a conversion transaction built on `state`, or null to leave the insertion as-is.
+ * Only paste-shaped transactions that pass the §2.2 gate ever reach these — first-non-null wins.
+ */
+export interface BulkTransform {
+  id: string; // 'md-paste'
+  handler: (state: EditorState, from: number, to: number) => Transaction | null;
+}
+
 export type EditSurface = 'backspace' | 'forwardDelete' | 'enterBoundary';
 
 /**
@@ -48,6 +59,7 @@ export class TransformRegistry {
   readonly backspace: EditTransform[] = [];
   readonly forwardDelete: EditTransform[] = [];
   readonly enterBoundary: EditTransform[] = [];
+  readonly bulk: BulkTransform[] = [];
 
   addInsert(t: InsertTransform): void {
     this.insert.push(t);
@@ -55,5 +67,9 @@ export class TransformRegistry {
 
   addEdit(surface: EditSurface, t: EditTransform): void {
     this[surface].push(t);
+  }
+
+  addBulk(t: BulkTransform): void {
+    this.bulk.push(t);
   }
 }

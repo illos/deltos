@@ -14,6 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
 import type { EditorState as PMState, Transaction } from 'prosemirror-state';
+import { Slice, Fragment } from 'prosemirror-model';
 import type { Node as PmNode } from 'prosemirror-model';
 import { history, undo, redo } from 'prosemirror-history';
 import { deltoSchema } from '../src/editor/schema.js';
@@ -171,5 +172,98 @@ describe('input pipeline — the BELT (even a tagged tr is refused when a hostil
     let state = makeState('[ ]');
     state = state.apply(state.tr.insertText(' ').setMeta(inputPipelineTag, { kind: 'applied' }));
     expect(state.doc.child(1).type.name).toBe('paragraph');
+  });
+});
+
+describe('input pipeline — the step-4 PASTE bulk leg (implicit uiEvent tag; corpus EXTENDS, never shrinks)', () => {
+  /** PM's default plain-text paste, faithfully: one paragraph per line (parseFromClipboard's split),
+   *  replaceSelection, dispatched with the metas doPaste sets — the implicit shape the gate accepts. */
+  function pmDefaultPaste(state: PMState, text: string, extraMeta?: [string, unknown]): PMState {
+    const paras = text
+      .split(/(?:\r\n?|\n)+/)
+      .map((line) => S.node('paragraph', { id: null }, line ? [S.text(line)] : []));
+    let tr = state.tr
+      .replaceSelection(new Slice(Fragment.fromArray(paras), 1, 1))
+      .setMeta('paste', true)
+      .setMeta('uiEvent', 'paste');
+    if (extraMeta) tr = tr.setMeta(extraMeta[0], extraMeta[1]);
+    return state.apply(tr);
+  }
+
+  function shape(state: PMState): { heading: boolean; todo: boolean } {
+    let heading = false;
+    let todo = false;
+    state.doc.descendants((n) => {
+      if (n.type.name === 'heading') heading = true;
+      if (n.type.name === 'todo_item') todo = true;
+    });
+    return { heading, todo };
+  }
+
+  it("POSITIVE CONTROL: a uiEvent:'paste' insertion of literal markdown CONVERTS (the bulk leg is live)", () => {
+    let state = makeState('');
+    state = pmDefaultPaste(state, '## Phase\n- [ ] a');
+    expect(shape(state)).toEqual({ heading: true, todo: true });
+    expect(state.doc.textContent).not.toContain('## Phase');
+  });
+
+  it("a uiEvent:'paste' insertion of RICH (marked) content is NOT re-parsed (rich-slice guard)", () => {
+    let state = makeState('');
+    const bold = S.node('paragraph', { id: null }, [S.text('**x** stays as typed', [S.marks['bold']!.create()])]);
+    state = state.apply(
+      state.tr
+        .replaceSelection(new Slice(Fragment.from(bold), 1, 1))
+        .setMeta('paste', true)
+        .setMeta('uiEvent', 'paste'),
+    );
+    // The literal '**x**' inside already-bold text must survive — a rich paste is never re-parsed.
+    expect(state.doc.textContent).toContain('**x** stays as typed');
+    expect(shape(state)).toEqual({ heading: false, todo: false });
+  });
+
+  it("bulk-shaped insertions under uiEvent 'cut' / 'drop' stay literal", () => {
+    for (const ui of ['cut', 'drop']) {
+      let state = makeState('');
+      const para = S.node('paragraph', { id: null }, [S.text('# not a heading')]);
+      state = state.apply(
+        state.tr.replaceSelection(new Slice(Fragment.from(para), 1, 1)).setMeta('uiEvent', ui),
+      );
+      expect(state.doc.textContent).toContain('# not a heading');
+      expect(shape(state).heading).toBe(false);
+    }
+  });
+
+  it('a paste-shaped tr carrying reconcile is refused (belt over the bulk leg)', () => {
+    let state = makeState('');
+    state = pmDefaultPaste(state, '## Phase\n- [ ] a', ['reconcile', true]);
+    expect(state.doc.textContent).toContain('## Phase');
+    expect(shape(state)).toEqual({ heading: false, todo: false });
+  });
+
+  it('a paste into a CODE BLOCK stays literal (code-zone guard)', () => {
+    const code = S.node('code_block', { id: 'c' }, [S.text('existing')]);
+    const doc = S.node('doc', null, [S.node('title', { id: 't' }, [S.text('T')]), code]);
+    let state = EditorState.create({
+      doc,
+      plugins: [buildInputPipelinePlugin(corpusRegistry()), history(), uniqueBlockIdPlugin],
+    });
+    state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, state.doc.content.size - 1)));
+    // PM's real paste into a code block inserts the RAW text (parseFromClipboard's inCode branch).
+    state = state.apply(
+      state.tr.insertText('# h\n- [ ] a').setMeta('paste', true).setMeta('uiEvent', 'paste'),
+    );
+    expect(shape(state)).toEqual({ heading: false, todo: false });
+    expect(state.doc.child(1).textContent).toContain('# h');
+  });
+
+  it('ONE undo reverts the paste insert + its conversion together (§5.1 same history group)', () => {
+    let state = makeState('');
+    state = pmDefaultPaste(state, '## Phase\n- [ ] a');
+    expect(shape(state)).toEqual({ heading: true, todo: true });
+    undo(state, (tr) => { state = state.apply(tr); });
+    expect(shape(state)).toEqual({ heading: false, todo: false });
+    expect(state.doc.textContent).not.toContain('## Phase');
+    redo(state, (tr) => { state = state.apply(tr); });
+    expect(shape(state)).toEqual({ heading: true, todo: true });
   });
 });

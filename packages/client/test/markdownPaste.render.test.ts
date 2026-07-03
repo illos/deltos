@@ -1,17 +1,22 @@
 /**
- * Mount-level md-paste test (ui-features-need-rendered-ui-gate): a REAL EditorView with the markdown-paste
- * plugin. Proves pasting plain-text markdown renders as real nodes in the editor DOM — even when a
- * `text/html` flavour rides alongside (the real-clipboard case) — and that the guard paths (rich-web HTML
- * paste whose text is bare prose / files / a lone URL / the title node) return false = default paste.
+ * Mount-level md-paste test (ui-features-need-rendered-ui-gate): a REAL EditorView running the REAL paste
+ * path — `view.pasteText` / `view.pasteHTML` are prosemirror-view's own doPaste (the exact code a
+ * ClipboardEvent reaches), so the dispatch carries `uiEvent:'paste'` and the pipeline's bulk leg
+ * ([ROAD-0007] step 4) does the conversion. Proves plain-text markdown renders as real nodes in the editor
+ * DOM, that a rich HTML paste keeps its formatting (never re-parsed), that markdown pasted into a code
+ * block or the title stays literal, and that ONE undo reverts a converted paste.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import { Slice } from 'prosemirror-model';
+import { history, undo } from 'prosemirror-history';
 import type { BlockBody, BlockId } from '@deltos/shared';
 import { deltoSchema } from '../src/editor/schema.js';
 import { spineToPmDoc } from '../src/editor/serializer.js';
-import { buildMarkdownPastePlugin } from '../src/editor/markdownPaste.js';
+import { buildEditorTransformRegistry } from '../src/editor/editorTransforms.js';
+import { createDefaultFormulaRegistry } from '../src/plugins/formula/index.js';
+import { buildInputPipelinePlugin } from '../src/editor/inputPipeline/index.js';
+import { uniqueBlockIdPlugin } from '../src/editor/plugins/blockId.js';
 
 const P0: BlockId = '00000000-1111-4111-8111-111111111111' as BlockId;
 const EMPTY: BlockBody = [{ id: P0, type: 'paragraph', content: { segments: [] } }];
@@ -19,37 +24,29 @@ const EMPTY: BlockBody = [{ id: P0, type: 'paragraph', content: { segments: [] }
 let view: EditorView | null = null;
 afterEach(() => { view?.destroy(); view = null; });
 
-/** Mount a real EditorView with ONLY the md-paste plugin; caret in the body unless `inTitle`. */
+/** Mount a real EditorView with the pipeline (production registry) + history + blockId. */
 function mount(body: BlockBody = EMPTY, inTitle = false): EditorView {
   const doc = spineToPmDoc(deltoSchema, body, 'Title');
   const selection = inTitle ? TextSelection.atStart(doc) : TextSelection.atEnd(doc);
-  const state = EditorState.create({ doc, selection, plugins: [buildMarkdownPastePlugin(deltoSchema)] });
+  const registry = buildEditorTransformRegistry(deltoSchema, createDefaultFormulaRegistry());
+  const state = EditorState.create({
+    doc,
+    selection,
+    plugins: [buildInputPipelinePlugin(registry), history(), uniqueBlockIdPlugin],
+  });
   const mountPoint = document.createElement('div');
   document.body.appendChild(mountPoint);
   view = new EditorView(mountPoint, { state });
   return view;
 }
 
-interface ClipOpts { html?: string; files?: File[] }
-/** Minimal ClipboardEvent stand-in carrying the flavours the handler inspects. */
-function clip(text: string, opts: ClipOpts = {}): ClipboardEvent {
-  return {
-    clipboardData: {
-      files: opts.files ?? [],
-      getData: (t: string) => (t === 'text/html' ? (opts.html ?? '') : t === 'text/plain' ? text : ''),
-    },
-  } as unknown as ClipboardEvent;
-}
+// jsdom may lack the ClipboardEvent constructor pasteText/pasteHTML default to — pass a stand-in event.
+const pasteEvent = () => new Event('paste') as ClipboardEvent;
 
-/** Drive the paste through the real plugin chain (someProp = exactly how EditorView dispatches paste). */
-function paste(v: EditorView, event: ClipboardEvent): boolean {
-  return v.someProp('handlePaste', (f) => f(v, event, Slice.empty)) === true;
-}
-
-describe('md paste — rendered editor DOM', () => {
+describe('md paste — rendered editor DOM (the real doPaste path)', () => {
   it('pastes a checklist as a heading + two todo nodes in the editor DOM', () => {
     const v = mount();
-    expect(paste(v, clip('## Phase\n- [ ] a\n- [x] b'))).toBe(true);
+    v.pasteText('## Phase\n- [ ] a\n- [x] b', pasteEvent());
     expect(v.dom.querySelector('h2')?.textContent).toBe('Phase');
     const todos = v.dom.querySelectorAll('[data-type="todo"]');
     expect(todos.length).toBe(2);
@@ -59,16 +56,18 @@ describe('md paste — rendered editor DOM', () => {
 
   it('pastes a bold inline snippet inline (no new paragraph) with a <strong> mark', () => {
     const v = mount([{ id: P0, type: 'paragraph', content: { segments: [{ text: 'hi ' }] } }]);
-    expect(paste(v, clip('**there**'))).toBe(true);
+    v.pasteText('**there**', pasteEvent());
     expect(v.dom.querySelectorAll('p').length).toBe(1);
     expect(v.dom.querySelector('strong')?.textContent).toBe('there');
     expect(v.dom.querySelector('p')?.textContent).toBe('hi there');
   });
 
-  it('CONVERTS a markdown checklist even when a text/html flavour rides alongside (the bug fix)', () => {
-    // Real clipboards attach a text/html flavour to almost every copy; the converter must still fire.
+  it('CONVERTS literal markdown arriving via the HTML flavour (plain <p> literals — the flavour-independence fix)', () => {
+    // Real clipboards attach a text/html flavour to almost every copy; when it is just literal text in
+    // plain paragraphs (a chat client, a terminal, deltos itself), the parsed insertion is unmarked
+    // paragraphs of markdown — the bulk leg converts it exactly like a plain-text paste.
     const v = mount();
-    expect(paste(v, clip('## Phase\n- [ ] a\n- [x] b', { html: '<p>## Phase</p>' }))).toBe(true);
+    v.pasteHTML('<p>## Phase</p><p>- [ ] a</p><p>- [x] b</p>', pasteEvent());
     expect(v.dom.querySelector('h2')?.textContent).toBe('Phase');
     const todos = v.dom.querySelectorAll('[data-type="todo"]');
     expect(todos.length).toBe(2);
@@ -76,44 +75,52 @@ describe('md paste — rendered editor DOM', () => {
     expect(todos[1]?.getAttribute('data-checked')).toBe('true');
   });
 
-  it('CONVERTS inline-mark-only markdown even with a text/html flavour present', () => {
-    const v = mount([{ id: P0, type: 'paragraph', content: { segments: [{ text: 'x ' }] } }]);
-    expect(paste(v, clip('some **bold** text', { html: '<p>some bold text</p>' }))).toBe(true);
-    expect(v.dom.querySelector('strong')?.textContent).toBe('bold');
+  it('ONE undo reverts a converted paste back to the pre-paste doc (§5.1 history grouping)', () => {
+    const v = mount();
+    v.pasteText('## Phase\n- [ ] a', pasteEvent());
+    expect(v.dom.querySelector('h2')).toBeTruthy();
+    undo(v.state, v.dispatch);
+    expect(v.dom.querySelector('h2')).toBeNull();
+    expect(v.dom.querySelectorAll('[data-type="todo"]').length).toBe(0);
+    expect(v.state.doc.textContent).not.toContain('## Phase');
   });
 });
 
-describe('md paste — guards return false (default paste, no regression)', () => {
-  it('does NOT handle a rich-web paste whose text is bare prose (text/html keeps its formatting)', () => {
-    // A real webpage copy: rich text/html + a plain-prose text/plain with no markdown markers → defer so the
-    // transformPastedHTML + parseDOM path renders the HTML formatting.
+describe('md paste — guards (default paste stands, no re-parse)', () => {
+  it('keeps a rich-web paste as formatting (bold HTML is not re-parsed as markdown)', () => {
     const v = mount();
-    expect(paste(v, clip('just some plain prose', { html: '<b>just some plain prose</b>' }))).toBe(false);
-    // A handled paste would add a BODY heading; the title is itself an <h1 data-type="title">.
-    expect(v.dom.querySelector('h1:not([data-type="title"])')).toBeNull();
-  });
-
-  it('does NOT handle a plain-prose paste with no html and no markdown', () => {
-    const v = mount();
-    expect(paste(v, clip('just some plain prose here'))).toBe(false);
+    v.pasteHTML('<p>looks like <b>**markdown**</b> but is rich</p>', pasteEvent());
+    // The bold mark survives AND the literal '**markdown**' inside it is untouched.
+    expect(v.dom.querySelector('strong')?.textContent).toContain('**markdown**');
     expect(v.dom.querySelector('h1:not([data-type="title"]), h2')).toBeNull();
   });
 
-  it('does NOT handle a file paste (attachment plugin territory)', () => {
+  it('leaves plain prose exactly as the default paste inserted it', () => {
     const v = mount();
-    const file = new File(['x'], 'a.png', { type: 'image/png' });
-    expect(paste(v, clip('', { files: [file] }))).toBe(false);
+    v.pasteText('just some plain prose here', pasteEvent());
+    expect(v.state.doc.textContent).toContain('just some plain prose here');
+    expect(v.dom.querySelector('h1:not([data-type="title"]), h2')).toBeNull();
   });
 
-  it('does NOT handle a lone URL paste (embeds card territory)', () => {
+  it('leaves a lone URL paste literal (embeds card territory; no link mark, no blocks)', () => {
     const v = mount();
-    expect(paste(v, clip('https://example.com'))).toBe(false);
+    v.pasteText('https://example.com', pasteEvent());
+    expect(v.state.doc.textContent).toContain('https://example.com');
+    expect(v.dom.querySelector('a')).toBeNull();
+    expect(v.dom.querySelector('h1:not([data-type="title"]), h2')).toBeNull();
+  });
+
+  it('keeps markdown pasted INTO a code block literal (code-zone guard)', () => {
+    const v = mount([{ id: P0, type: 'code', content: { code: 'existing' } }]);
+    v.pasteText('# not a heading', pasteEvent());
+    expect(v.state.doc.textContent).toContain('# not a heading');
     expect(v.dom.querySelector('h1:not([data-type="title"]), h2')).toBeNull();
   });
 
   it('does NOT inject blocks when the caret is in the title', () => {
     const v = mount(EMPTY, /* inTitle */ true);
-    expect(paste(v, clip('## Phase\n- [ ] a'))).toBe(false);
+    v.pasteText('## Phase\n- [ ] a', pasteEvent());
     expect(v.dom.querySelector('h2')).toBeNull();
+    expect(v.dom.querySelectorAll('[data-type="todo"]').length).toBe(0);
   });
 });

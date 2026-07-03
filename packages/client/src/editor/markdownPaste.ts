@@ -1,31 +1,31 @@
-import { Plugin } from 'prosemirror-state';
+import { Selection } from 'prosemirror-state';
 import { Slice, Fragment } from 'prosemirror-model';
 import type { Node as PmNode, ResolvedPos } from 'prosemirror-model';
 import { markdownToBody } from '@deltos/shared';
 import type { Block } from '@deltos/shared';
 import type { DeltoSchema } from './schema.js';
+import type { BulkTransform } from './inputPipeline/index.js';
 import { spineToPmDoc } from './serializer.js';
 
 /**
- * Plain-text markdown paste (the inverse of the copy serializer, `clipboard.ts` nodeToText). Rich HTML paste
- * already converts to native blocks (schema parseDOM + transformPastedHTML); PLAIN-TEXT paste previously
- * landed as literal characters, so pasting markdown from Claude's chat / a `.md` file / a terminal dropped
- * dead `#`, `- [ ]`, `**bold**` etc. into the note. This handler closes that gap by reusing the SHARED
- * parser (`markdownToBody` → spine `Block[]`) and the EXISTING spine→PM serializer (`spineToPmDoc`) — no
- * second markdown parser and no second spine→PM mapping.
+ * Plain-text markdown paste (the inverse of the copy serializer, `clipboard.ts` nodeToText) — the
+ * pipeline's BULK transform ([ROAD-0007] step 4, design §4). Rich HTML paste already converts to native
+ * blocks (schema parseDOM + transformPastedHTML); PLAIN-TEXT paste previously landed as literal characters,
+ * so pasting markdown from Claude's chat / a `.md` file / a terminal dropped dead `#`, `- [ ]`, `**bold**`
+ * etc. into the note. This transform closes that gap by reusing the SHARED parser (`markdownToBody` → spine
+ * `Block[]`) and the EXISTING spine→PM serializer (`spineToPmDoc`) — no second markdown parser and no
+ * second spine→PM mapping.
  *
- * Hooked as an editor PLUGIN (via the plugin list), NOT a direct EditorView prop, so it can be ordered
- * AFTER the file/URL paste plugins (attachment image paste, embeds bare-URL card). Direct view props run
- * BEFORE plugin props in ProseMirror's `someProp` order, which would let this steal a file/URL paste. As a
- * trailing plugin it only sees a paste the earlier handlers declined — and it additionally guards against
- * files / a lone URL / the title node so those paths are never regressed even if order changes.
+ * Delivery is no longer this module's business: prosemirror-view's default paste (desktop ClipboardEvent)
+ * and the pipeline plugin's Deck `beforeinput` adapter both land the pasted text in the doc as an ordinary
+ * `uiEvent:'paste'` transaction; the pipeline's appendTransaction bulk leg then hands the INSERTED RANGE to
+ * this handler. That kills the old `handlePaste` interception and its someProp-ordering constraint — the
+ * embeds card / attachment handlers fully own their pastes (they return true and dispatch untagged, so the
+ * pipeline never sees them), and this handler cannot steal a file/URL paste by construction.
  *
- * It intercepts ONLY when the plain text actually parses to markdown STRUCTURE (a non-paragraph block or a
- * mark-bearing inline segment). Bare prose — and genuine rich-web HTML paste, whose `text/plain` is unmarked
- * prose — falls through to the default paste, so the `transformPastedHTML` + `parseDOM` path keeps its
- * formatting. This deliberately does NOT gate on a `text/html` flavour being present: almost every real copy
- * (from inside deltos, a chat client, a webpage) carries a `text/html` flavour alongside the text, so the
- * old "html present → defer" rule made the markdown converter almost never fire.
+ * It converts ONLY when the inserted text actually parses to markdown STRUCTURE (a non-paragraph block or a
+ * mark-bearing inline segment). Bare prose — and rich-web HTML paste, which arrives already structured and
+ * trips the rich-slice guard — stays exactly as the default paste left it.
  */
 
 // A lone URL (the whole trimmed clipboard) belongs to the embeds link-card handler, not markdown
@@ -100,40 +100,57 @@ export function markdownTextToSlice(schema: DeltoSchema, text: string): Slice | 
 }
 
 /**
- * Build the plain-text-markdown paste plugin. MUST be ordered AFTER the file/URL paste plugins (it is added
- * as a trailing base plugin in ProseMirrorEditor.tsx). Returns `false` (default paste) for: no clipboard
- * data, pasted files, empty text, a lone URL, a caret inside the title, or plain text that carries no
- * markdown structure (bare prose / rich-web HTML paste). Guard order is preserved as listed.
+ * True iff the inserted range holds anything OTHER than plain unmarked paragraphs — i.e. the paste arrived
+ * already STRUCTURED (a rich HTML paste via parseDOM/transformPastedHTML, or PM inherited context marks at
+ * the insertion point). Structured input must never be re-parsed as markdown (design §4 rich-paste guard).
  */
-export function buildMarkdownPastePlugin(schema: DeltoSchema): Plugin {
-  return new Plugin({
-    props: {
-      handlePaste(view, event) {
-        const cd = event.clipboardData;
-        if (!cd) return false;
-        // File / image paste → the attachment plugin owns it (runs earlier). Defensive so a file paste is
-        // never swallowed as text.
-        if (cd.files && cd.files.length > 0) return false;
-        const text = cd.getData('text/plain');
-        if (!text || text.length === 0) return false;
-        // A lone URL belongs to the embeds card handler, not markdown conversion.
-        if (BARE_URL_RE.test(text.trim())) return false;
-        // Title node: keep title paste plain text — never inject blocks into the title.
-        if (inTitle(view.state.selection.$from)) return false;
-
-        // Structure test (replaces the old "text/html present → defer" rule). Parse the PLAIN TEXT and only
-        // intercept when it actually carries markdown structure — a non-paragraph block or a mark-bearing
-        // segment. Bare prose (and genuine rich-web HTML paste, whose text/plain is unmarked prose) falls
-        // through to ProseMirror's default paste, preserving the transformPastedHTML + parseDOM path. This
-        // fires REGARDLESS of whether a `text/html` flavour is present — almost every real copy carries one,
-        // which is exactly why gating on HTML presence made the converter almost never fire.
-        if (!hasMarkdownStructure(markdownToBody(text))) return false;
-
-        const slice = markdownTextToSlice(schema, text);
-        if (!slice) return false;
-        view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
-        return true;
-      },
-    },
+function rangeIsRich(state: Parameters<BulkTransform['handler']>[0], from: number, to: number): boolean {
+  let rich = false;
+  state.doc.nodesBetween(from, to, (node) => {
+    if (rich) return false;
+    if (node.isText) {
+      if (node.marks.length > 0) rich = true;
+      return false;
+    }
+    if (node.type.name !== 'paragraph') rich = true;
+    return !rich;
   });
+  return rich;
+}
+
+/**
+ * The markdown BULK transform (registered in editorTransforms.ts; invoked by the pipeline's
+ * appendTransaction leg on qualifying paste transactions ONLY — the §2.2 gate has already run).
+ * `from`/`to` bound the freshly inserted content. Skip (null) for: an insertion into the title (title
+ * paste stays plain), into a code block (pasted markdown stays literal there), an already-structured
+ * insertion (rich guard above), a lone bare URL (the embeds card owns it), or text with no markdown
+ * structure. On conversion: replace the inserted range with the parsed blocks (open-depth heuristic in
+ * `markdownTextToSlice` preserved) and put the caret at the end of the replacement.
+ */
+export function markdownPasteBulk(schema: DeltoSchema): BulkTransform {
+  return {
+    id: 'md-paste',
+    handler(state, from, to) {
+      const $from = state.doc.resolve(from);
+      // Title node: keep title paste plain text — never inject blocks into the title.
+      if (inTitle($from)) return null;
+      // Code block: pasting markdown INTO code stays literal (PM already inserted it as raw text).
+      if ($from.parent.type.spec.code) return null;
+      if (rangeIsRich(state, from, to)) return null;
+      // '\n' block separator mirrors the line-per-paragraph shape PM's plain-text paste produced; the
+      // shared parser is line-based (one block per line), so this round-trips the clipboard lines.
+      const text = state.doc.textBetween(from, to, '\n');
+      if (!text || text.length === 0) return null;
+      // A lone URL belongs to the embeds card handler, not markdown conversion.
+      if (BARE_URL_RE.test(text.trim())) return null;
+      // Structure test: only convert when the text actually carries markdown structure — a non-paragraph
+      // block or a mark-bearing segment. Bare prose stays exactly as the default paste left it.
+      if (!hasMarkdownStructure(markdownToBody(text))) return null;
+      const slice = markdownTextToSlice(schema, text);
+      if (!slice) return null;
+      const tr = state.tr.replaceRange(from, to, slice);
+      const end = Math.min(tr.mapping.map(to, -1), tr.doc.content.size);
+      return tr.setSelection(Selection.near(tr.doc.resolve(end), -1)).scrollIntoView();
+    },
+  };
 }

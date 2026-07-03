@@ -25,15 +25,22 @@ export const inputPipelineTag = new PluginKey('inputPipelineTag');
  * `reconcile` (the one remote-content ingress, ProseMirrorEditor #90), `addToHistory:false`,
  * prosemirror-history meta (undo/redo must never re-trigger), `composition` (IME), and prosemirror-view's
  * `uiEvent` for cut/drop (only 'paste' is ever a transform input).
+ *
+ * ONE implicit shape qualifies alongside the explicit tags (step 4, design §2.2): prosemirror-view's own
+ * default paste dispatch carries `uiEvent:'paste'` — set ONLY by its real paste path (doPaste, which also
+ * serves `view.pasteText`). That meta counts as an implicit `{kind:'paste'}` tag, so the desktop
+ * ClipboardEvent path needs no re-dispatch. The belt applies to the implicit shape in full.
  */
 export function isPipelineInput(tr: Transaction): Exclude<PipelineTag, { kind: 'applied' }> | null {
   const tag = tr.getMeta(inputPipelineTag) as PipelineTag | undefined;
-  if (!tag || tag.kind === 'applied') return null;
+  if (tag?.kind === 'applied') return null;
+  const ui = tr.getMeta('uiEvent') as string | undefined;
+  const effective = tag ?? (ui === 'paste' ? ({ kind: 'paste' } as const) : undefined);
+  if (!effective) return null;
   if (tr.getMeta('reconcile') === true) return null;
   if (tr.getMeta('addToHistory') === false) return null;
   if (tr.getMeta('history$')) return null;
   if (tr.getMeta('composition') != null) return null;
-  const ui = tr.getMeta('uiEvent') as string | undefined;
   if (ui && ui !== 'paste') return null;
-  return tag;
+  return effective;
 }

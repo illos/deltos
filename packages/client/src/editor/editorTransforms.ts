@@ -4,6 +4,7 @@ import { registerFormulaTransforms } from '../plugins/formula/index.js';
 import type { FormulaRegistry } from '../plugins/formula/index.js';
 import { registerMarkdownTransforms } from './inputRules.js';
 import { registerAutolinkTransforms } from './autolink.js';
+import { markdownPasteBulk } from './markdownPaste.js';
 import { deleteInlineAtomBackspace, deleteInlineAtomDelete } from './plugins/blockAtomChrome.js';
 
 /**
@@ -16,6 +17,7 @@ import { deleteInlineAtomBackspace, deleteInlineAtomDelete } from './plugins/blo
  *   backspace     : undo-autoformat (D3) → formula-unwrap → link-unwrap → atom-delete
  *   forwardDelete : formula-unwrap-delete → atom-delete
  *   enterBoundary : formula-boundary-wrap → linkify
+ *   bulk          : md-paste (the step-4 paste leg)
  */
 
 /**
@@ -31,6 +33,8 @@ export function buildEditorTransformRegistry(schema: DeltoSchema, formulaRegistr
   registerFormulaTransforms(r, formulaRegistry);
   registerMarkdownTransforms(r, schema);
   registerAutolinkTransforms(r, schema);
+  // The paste bulk leg ([ROAD-0007] step 4): markdown conversion over a pasted range.
+  r.addBulk(markdownPasteBulk(schema));
   // Block-object chrome (Mechanic A): inline-atom single-press delete closes both edit chains.
   r.addEdit('backspace', { id: 'atom-delete', cmd: deleteInlineAtomBackspace });
   r.addEdit('forwardDelete', { id: 'atom-delete', cmd: deleteInlineAtomDelete });

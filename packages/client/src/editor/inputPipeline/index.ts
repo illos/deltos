@@ -4,7 +4,7 @@
  * appendTransaction bulk leg). See docs/design/unified-input-transform-pipeline.md.
  */
 export { TransformRegistry } from './registry.js';
-export type { InsertTransform, InsertHandler, EditTransform, EditSurface } from './registry.js';
+export type { InsertTransform, InsertHandler, EditTransform, EditSurface, BulkTransform } from './registry.js';
 export { inputPipelineTag, isPipelineInput } from './gate.js';
 export type { PipelineTag } from './gate.js';
 export { runPreInsert, runPostInsert, MAX_MATCH } from './runner.js';

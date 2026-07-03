@@ -8,14 +8,17 @@
  */
 import { describe, it, expect } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
-import type { Transaction } from 'prosemirror-state';
 import { Slice, Fragment } from 'prosemirror-model';
 import type { Node as PmNode } from 'prosemirror-model';
 import type { Block, BlockBody, BlockId } from '@deltos/shared';
 import { deltoSchema } from '../src/editor/schema.js';
 import { spineToPmDoc, pmDocToSpine } from '../src/editor/serializer.js';
 import { sliceToPlainText } from '../src/editor/clipboard.js';
-import { markdownTextToSlice, buildMarkdownPastePlugin } from '../src/editor/markdownPaste.js';
+import { markdownTextToSlice } from '../src/editor/markdownPaste.js';
+import { buildEditorTransformRegistry } from '../src/editor/editorTransforms.js';
+import { createDefaultFormulaRegistry } from '../src/plugins/formula/index.js';
+import { buildInputPipelinePlugin } from '../src/editor/inputPipeline/index.js';
+import { uniqueBlockIdPlugin } from '../src/editor/plugins/blockId.js';
 
 const uuid = (n: number): BlockId =>
   `${String(n).padStart(8, '0')}-1111-4111-8111-111111111111` as BlockId;
@@ -134,84 +137,115 @@ describe('markdownTextToSlice — open-depth shape', () => {
   });
 });
 
-// ── plugin structure-gate (the bug fix) ────────────────────────────────────────────────────────
+// ── the bulk-leg structure gate (the bug fix, now pipeline-shaped) ─────────────────────────────
 //
-// The `handlePaste` plugin used to DEFER on ANY non-empty `text/html` flavour — but almost every real copy
-// carries one, so the markdown converter almost never fired. The gate now tests the plain text for markdown
-// STRUCTURE and intercepts regardless of a `text/html` flavour. These run in the node env by driving the
-// plugin's `handlePaste` prop directly with a minimal fake view (no DOM needed) + a fake clipboard event.
-interface ClipOpts { html?: string; files?: File[] }
-function clipEvent(text: string, opts: ClipOpts = {}): { clipboardData: DataTransfer } {
-  return {
-    clipboardData: {
-      files: opts.files ?? [],
-      getData: (t: string) => (t === 'text/html' ? (opts.html ?? '') : t === 'text/plain' ? text : ''),
-    } as unknown as DataTransfer,
-  };
-}
-/** Drive `text` through the real plugin handler; return whether it handled + the resulting spine. */
-function driveGate(
-  text: string,
-  opts: ClipOpts = {},
-  start: BlockBody = [{ id: uuid(99), type: 'paragraph', content: { segments: [] } }],
-  inTitle = false,
-): { handled: boolean; body: BlockBody } {
+// The old `handlePaste` plugin deferred on ANY non-empty `text/html` flavour — but almost every real copy
+// carries one, so the markdown converter almost never fired. Step 4 moves conversion to the pipeline's
+// appendTransaction bulk leg: PM's default paste inserts the content (whichever flavour it picked), and
+// the bulk transform inspects the INSERTED RANGE — plain unmarked paragraphs carrying markdown structure
+// convert; anything already structured/marked (a genuinely rich paste) is skipped. Flavour-independence is
+// now a property of the CONTENT, not of clipboard sniffing. These drive the leg with faithfully-shaped
+// transactions (PM's line-per-paragraph plain-text paste + `uiEvent:'paste'` meta), no DOM needed.
+const pipelineRegistry = () => buildEditorTransformRegistry(deltoSchema, createDefaultFormulaRegistry());
+
+function pasteState(start: BlockBody, inTitle: boolean) {
   const doc = spineToPmDoc(deltoSchema, start, 'Title');
-  let state = EditorState.create({
+  return EditorState.create({
     doc,
     selection: inTitle ? TextSelection.atStart(doc) : TextSelection.atEnd(doc),
+    plugins: [buildInputPipelinePlugin(pipelineRegistry()), uniqueBlockIdPlugin],
   });
-  const view = { get state() { return state; }, dispatch: (tr: Transaction) => { state = state.apply(tr); } };
-  const handlePaste = buildMarkdownPastePlugin(deltoSchema).props.handlePaste!;
-  const handled = handlePaste(
-    view as unknown as Parameters<typeof handlePaste>[0],
-    clipEvent(text, opts) as unknown as ClipboardEvent,
-    Slice.empty,
-  ) === true;
-  return { handled, body: pmDocToSpine(state.doc) };
 }
 
-describe('markdown paste — plugin structure gate', () => {
-  it('CONVERTS a markdown checklist even when a non-empty text/html flavour rides alongside (regression)', () => {
-    // The bug: real clipboards attach text/html to almost every copy, and the old rule deferred on it.
-    const { handled, body } = driveGate('## heading\n- [ ] a\n- [x] b', { html: '<p>## heading</p>' });
-    expect(handled).toBe(true);
+/** PM's default PLAIN-TEXT paste, faithfully: one paragraph per line, replaceSelection, doPaste's metas. */
+function drivePlainPaste(
+  text: string,
+  start: BlockBody = [{ id: uuid(99), type: 'paragraph', content: { segments: [] } }],
+  inTitle = false,
+): BlockBody {
+  let state = pasteState(start, inTitle);
+  const paras = text
+    .split(/(?:\r\n?|\n)+/)
+    .map((line) => deltoSchema.node('paragraph', { id: null }, line ? [deltoSchema.text(line)] : []));
+  state = state.apply(
+    state.tr
+      .replaceSelection(new Slice(Fragment.fromArray(paras), 1, 1))
+      .setMeta('paste', true)
+      .setMeta('uiEvent', 'paste'),
+  );
+  return pmDocToSpine(state.doc);
+}
+
+const collectTodos = (bs: BlockBody): Block[] => {
+  const todos: Block[] = [];
+  const walk = (b: BlockBody) => b.forEach((x) => { if (x.type === 'todo') todos.push(x); if (x.children) walk(x.children); });
+  walk(bs);
+  return todos;
+};
+
+describe('markdown paste — the bulk-leg structure gate', () => {
+  it('CONVERTS a markdown checklist delivered as PM default plain-paragraph insertion (regression: flavour-independent)', () => {
+    const body = drivePlainPaste('## heading\n- [ ] a\n- [x] b');
     const heading = body.find((b) => b.type === 'heading');
     expect((heading?.content as { level: number } | undefined)?.level).toBe(2);
-    const todos: Block[] = [];
-    const walk = (bs: BlockBody) => bs.forEach((b) => { if (b.type === 'todo') todos.push(b); if (b.children) walk(b.children); });
-    walk(body);
-    expect(todos.map((t) => (t.content as { checked: boolean }).checked)).toEqual([false, true]);
+    expect(collectTodos(body).map((t) => (t.content as { checked: boolean }).checked)).toEqual([false, true]);
   });
 
   it('CONVERTS inline-mark-only markdown (a mark-bearing segment counts as structure)', () => {
-    const { handled, body } = driveGate('some **bold** text', { html: '<p>some bold text</p>' });
-    expect(handled).toBe(true);
+    const body = drivePlainPaste('some **bold** text');
     const para = body.find((b) => b.type === 'paragraph');
     const segs = (para?.content as { segments: { text: string; bold?: true }[] } | undefined)?.segments ?? [];
     expect(segs.some((s) => s.bold === true && s.text === 'bold')).toBe(true);
   });
 
-  it('DEFERS a rich-web paste: text/html present + plain-prose text/plain (keeps the parseDOM path)', () => {
-    const { handled } = driveGate('just some plain prose here', { html: '<b>just some plain prose here</b>' });
-    expect(handled).toBe(false);
+  it('SKIPS an already-structured (rich) insertion — a real rich-web paste is never re-parsed', () => {
+    // What a rich `<b>…</b>` HTML paste inserts: text already carrying the bold mark.
+    let state = pasteState([{ id: uuid(99), type: 'paragraph', content: { segments: [] } }], false);
+    const para = deltoSchema.node('paragraph', { id: null }, [
+      deltoSchema.text('looks like **markdown** but is rich', [deltoSchema.marks['bold']!.create()]),
+    ]);
+    state = state.apply(
+      state.tr
+        .replaceSelection(new Slice(Fragment.from(para), 1, 1))
+        .setMeta('paste', true)
+        .setMeta('uiEvent', 'paste'),
+    );
+    // Literal '**markdown**' survives inside the bold run — no re-parse, no double conversion.
+    expect(state.doc.textContent).toContain('**markdown**');
+    expect(pmDocToSpine(state.doc).some((b) => b.type === 'heading' || b.type === 'todo')).toBe(false);
   });
 
-  it('DEFERS plain prose with no html and no markdown (behavior change: was force-split before)', () => {
-    const { handled } = driveGate('just some words and 2 * 3 numbers');
-    expect(handled).toBe(false);
+  it('SKIPS plain prose with no markdown structure (stays exactly as the default paste left it)', () => {
+    const body = drivePlainPaste('just some words and 2 * 3 numbers');
+    expect(body.map((b) => b.type)).toEqual(['paragraph']);
+    const text = (body[0]!.content as { segments: { text: string }[] }).segments.map((s) => s.text).join('');
+    expect(text).toBe('just some words and 2 * 3 numbers');
   });
 
-  it('DEFERS a file paste (attachment plugin territory)', () => {
-    const file = new File(['x'], 'a.png', { type: 'image/png' });
-    expect(driveGate('## heading', { files: [file] }).handled).toBe(false);
+  it('SKIPS a non-text insertion (a pasted atom/divider — the file/attachment class)', () => {
+    let state = pasteState([{ id: uuid(99), type: 'paragraph', content: { segments: [] } }], false);
+    const divider = deltoSchema.node('horizontal_rule', { id: null });
+    state = state.apply(
+      state.tr
+        .replaceSelection(new Slice(Fragment.from(divider), 0, 0))
+        .setMeta('paste', true)
+        .setMeta('uiEvent', 'paste'),
+    );
+    const body = pmDocToSpine(state.doc);
+    expect(body.some((b) => b.type === 'divider')).toBe(true);
+    expect(body.some((b) => b.type === 'heading' || b.type === 'todo')).toBe(false);
   });
 
-  it('DEFERS a lone bare URL (embeds card territory)', () => {
-    expect(driveGate('https://example.com').handled).toBe(false);
+  it('SKIPS a lone bare URL (embeds card territory — stays literal for its handler)', () => {
+    const body = drivePlainPaste('https://example.com');
+    expect(body.map((b) => b.type)).toEqual(['paragraph']);
+    const segs = (body[0]!.content as { segments: { text: string; link?: string }[] }).segments;
+    expect(segs[0]?.text).toBe('https://example.com');
+    expect(segs.some((s) => s.link)).toBe(false);
   });
 
-  it('DEFERS when the caret is in the title node', () => {
-    expect(driveGate('## heading\n- [ ] a', {}, undefined, /* inTitle */ true).handled).toBe(false);
+  it('SKIPS when the insertion lands in the title node (title paste stays plain)', () => {
+    const body = drivePlainPaste('## heading\n- [ ] a', undefined, /* inTitle */ true);
+    expect(body.some((b) => b.type === 'heading' || b.type === 'todo')).toBe(false);
   });
 });
