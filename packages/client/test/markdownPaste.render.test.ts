@@ -1,7 +1,8 @@
 /**
  * Mount-level md-paste test (ui-features-need-rendered-ui-gate): a REAL EditorView with the markdown-paste
- * plugin. Proves pasting plain-text markdown renders as real nodes in the editor DOM, and that the guard
- * paths (files / a rich text/html flavour / a lone URL / the title node) return false = default paste.
+ * plugin. Proves pasting plain-text markdown renders as real nodes in the editor DOM — even when a
+ * `text/html` flavour rides alongside (the real-clipboard case) — and that the guard paths (rich-web HTML
+ * paste whose text is bare prose / files / a lone URL / the title node) return false = default paste.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
@@ -63,14 +64,39 @@ describe('md paste — rendered editor DOM', () => {
     expect(v.dom.querySelector('strong')?.textContent).toBe('there');
     expect(v.dom.querySelector('p')?.textContent).toBe('hi there');
   });
+
+  it('CONVERTS a markdown checklist even when a text/html flavour rides alongside (the bug fix)', () => {
+    // Real clipboards attach a text/html flavour to almost every copy; the converter must still fire.
+    const v = mount();
+    expect(paste(v, clip('## Phase\n- [ ] a\n- [x] b', { html: '<p>## Phase</p>' }))).toBe(true);
+    expect(v.dom.querySelector('h2')?.textContent).toBe('Phase');
+    const todos = v.dom.querySelectorAll('[data-type="todo"]');
+    expect(todos.length).toBe(2);
+    expect(todos[0]?.getAttribute('data-checked')).toBe('false');
+    expect(todos[1]?.getAttribute('data-checked')).toBe('true');
+  });
+
+  it('CONVERTS inline-mark-only markdown even with a text/html flavour present', () => {
+    const v = mount([{ id: P0, type: 'paragraph', content: { segments: [{ text: 'x ' }] } }]);
+    expect(paste(v, clip('some **bold** text', { html: '<p>some bold text</p>' }))).toBe(true);
+    expect(v.dom.querySelector('strong')?.textContent).toBe('bold');
+  });
 });
 
 describe('md paste — guards return false (default paste, no regression)', () => {
-  it('does NOT handle a paste carrying a text/html flavour', () => {
+  it('does NOT handle a rich-web paste whose text is bare prose (text/html keeps its formatting)', () => {
+    // A real webpage copy: rich text/html + a plain-prose text/plain with no markdown markers → defer so the
+    // transformPastedHTML + parseDOM path renders the HTML formatting.
     const v = mount();
-    expect(paste(v, clip('# H', { html: '<h1>H</h1>' }))).toBe(false);
-    // The title node is itself an <h1 data-type="title"> — a BODY heading is what a handled paste would add.
+    expect(paste(v, clip('just some plain prose', { html: '<b>just some plain prose</b>' }))).toBe(false);
+    // A handled paste would add a BODY heading; the title is itself an <h1 data-type="title">.
     expect(v.dom.querySelector('h1:not([data-type="title"])')).toBeNull();
+  });
+
+  it('does NOT handle a plain-prose paste with no html and no markdown', () => {
+    const v = mount();
+    expect(paste(v, clip('just some plain prose here'))).toBe(false);
+    expect(v.dom.querySelector('h1:not([data-type="title"]), h2')).toBeNull();
   });
 
   it('does NOT handle a file paste (attachment plugin territory)', () => {
