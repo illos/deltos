@@ -3105,11 +3105,18 @@ a.auth__link { display: inline; }
 .elt-sub .editor__mtool {
   min-height: 44px; min-width: 44px; padding: 4px 14px;
 }
-/* In custom-keyboard mode (toggle ON, mobile) the standalone universal bottom nav is PERMANENTLY gone —
-   AuthedShell toggles body.deck-custom from the opt-in flag, NOT the Deck's up/down (which flashed the nav
-   back under the user's thumb). The Deck owns the bottom; nav controls return via its 'navigation' loadout
-   next slice. */
+/* body.deck-custom = "the Deck occupies the bottom slot" — AuthedShell sets it on every touch-first device
+   from Deck PRESENCE (NOT the custom-keyboard setting; the setting only picks keypad-vs-native INSIDE the
+   editor). It retires the legacy standalone bottom nav — the Deck's 'navigation' loadout carries New /
+   Search / Upload instead. Toggled by Deck presence, NOT the Deck's up/down (a toggle-driven hide flashed
+   the nav back under Jim's thumb). NOTE: the class NAME predates this and no longer means "custom keyboard
+   opted in"; a rename is out of scope (CSS churn). */
 body.deck-custom .bottom-nav { display: none; }
+
+/* On the note route in NATIVE-keyboard mode (custom-keyboard setting OFF) the editor owns the bottom with
+   its own sticky .editor__mbar + the native keyboard; a viewport-fixed Deck would float over that bar /
+   behind the keyboard. Keep the Deck MOUNTED (host intact) but hide it here. Set by AuthedShell. */
+body.deck-suppressed .deck { display: none; }
 
 /* #69 §5 local spellcheck — misspelled-word squiggle (decoration) + the tap-to-correct popover (host-side;
    the engine is in deck-core). Red wavy underline matches the app's danger red (#e05252). */
@@ -3245,11 +3252,11 @@ body.deck-custom .bottom-nav { display: none; }
 .deck-nav__action:active { background: var(--sel); }
 .deck-nav__label { font-family: var(--mono); font-size: 10px; }
 
-/* Browsing screens clear the Deck nav loadout in custom mode (the standalone bottom nav it replaces is
-   hidden above). The note editor reserves its own taller keypad clearance via .editor__pm--kb, so this
-   only needs to cover the shorter nav row (the nav loadout has NO keypad band — it sits flush, #384).
-   Approximate — tune on-device. */
-body.deck-custom .shell__main { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+/* Browsing screens clear the Deck nav loadout (the standalone bottom nav it replaces is hidden above). The
+   note editor reserves its own taller keypad clearance via .editor__pm--kb, so this only needs to cover the
+   shorter nav row (the nav loadout has NO keypad band — it sits flush, #384). Excluded when the Deck is
+   suppressed (native-mode note route): no Deck there, so no reserved space. Approximate — tune on-device. */
+body.deck-custom:not(.deck-suppressed) .shell__main { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 
 
 /* NOTE: the OAuth consent screen styles (.oauth-consent__*) moved to the SEPARATE authorization surface

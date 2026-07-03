@@ -126,10 +126,14 @@ export function ProseMirrorEditor({
   const recheckSpellRef = useRef<(() => void) | null>(null);
   const dictWordsRef = useRef<string[]>([]);
   const isDesktop = useIsDesktop();
-  // #69: the custom keyboard is opt-in (Settings, default OFF) + touch-first-only. When ON the editor
-  // suppresses the native keyboard (inputmode=none) and shows our context-driven Deck. The gate is
-  // TOUCH-FIRST MODALITY (useTouchPrimary), not window width — a half-width laptop window is still a
-  // hardware-keyboard machine and must NOT summon the Deck. (Layout forks stay width-based on isDesktop.)
+  // #69: the custom keyboard is opt-in (Settings, default OFF) + touch-first-only. This setting gates ONLY
+  // the KEYPAD vs the native keyboard HERE — NOT the Deck's presence (the Deck is always mounted on a
+  // touch-first device; that's the shell's call, App.tsx). When ON the editor suppresses the native
+  // keyboard (inputmode=none) and publishes its keypad loadout to the Deck; when OFF the native keyboard
+  // types, MobileEditorBar shows, and the editor publishes NO loadout (the Deck stays on its nav loadout,
+  // or is suppressed at the shell on the note route). The gate is TOUCH-FIRST MODALITY (useTouchPrimary),
+  // not window width — a half-width laptop window is still a hardware-keyboard machine and must NOT summon
+  // the keypad. (Layout forks stay width-based on isDesktop.)
   const touchPrimary = useTouchPrimary();
   const [customKbEnabled] = useCustomKeyboard();
   const customKb = customKbEnabled && touchPrimary;

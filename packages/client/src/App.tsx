@@ -313,7 +313,7 @@ export function HomeView({ notebookId }: CollectionViewProps) {
 // notebook arrives via the first pull. The actual account scope comes from the bearer token.
 const INITIAL_SYNC_SENTINEL = '00000000-0000-4000-8000-000000000000' as NotebookId;
 
-function AuthedShell() {
+export function AuthedShell() {
   const sessionState = useAuthStore((s) => s.sessionState);
   const _ready = useNotebookStore((s) => s._ready);
   const currentNotebookId = useNotebookStore((s) => s.currentNotebookId);
@@ -333,20 +333,32 @@ function AuthedShell() {
   // the 3-region shell — no shell__bar — and keeps its own editor__meta.)
   const onNoteRoute = useMatch('/note/:id') != null;
   const location = useLocation();
-  // #69: in custom-keyboard mode (toggle ON, mobile) the standalone universal bottom nav is PERMANENTLY
-  // gone — not hidden-while-typing (that flashed it back under Jim's thumb every time the keyboard
-  // dropped). Toggle-driven body class, independent of the keyboard being up/down. Slice B absorbs
-  // search/new-note into the Deck's 'navigation' loadout (DeckHostProvider, below) — shown while
-  // browsing, swapped for the keypad while editing.
-  const [customKbEnabled] = useCustomKeyboard();
-  // Deck gate = touch-first modality (not window width) — mirrors the editor. A narrow laptop window is a
-  // hardware-keyboard machine and must keep the standard nav + native keyboard, never the Deck.
+  // The Deck is ALWAYS present on a touch-first device — it IS the mobile bottom control surface (the
+  // 'navigation' loadout while browsing, the editor keypad while editing). Presence is gated ONLY by
+  // modality (touch-first), NOT by the custom-keyboard setting: that setting picks keypad-vs-native
+  // keyboard INSIDE the editor (ProseMirrorEditor), it changes nothing at the shell. Gate = touch-first
+  // modality (not window width) — a narrow laptop window is a hardware-keyboard machine and keeps the
+  // standard nav + native keyboard, never the Deck.
   const touchPrimary = useTouchPrimary();
-  const customKb = customKbEnabled && touchPrimary;
+  const deckActive = touchPrimary;
+  // body.deck-custom = "the Deck occupies the bottom slot": it retires the legacy standalone BottomNav
+  // (styles.css) and reserves the browsing shell's bottom padding. Driven by Deck PRESENCE, independent
+  // of the keyboard being up/down (a toggle-driven hide flashed the nav back under Jim's thumb). The
+  // 'navigation' loadout (DeckHostProvider, below) carries search/new-note while browsing.
   useEffect(() => {
-    document.body.classList.toggle('deck-custom', customKb);
+    document.body.classList.toggle('deck-custom', deckActive);
     return () => { document.body.classList.remove('deck-custom'); };
-  }, [customKb]);
+  }, [deckActive]);
+  // Custom-keyboard setting (device-local): editor keypad vs native keyboard. At the SHELL it's read for
+  // ONE thing — suppress the Deck on the note route in NATIVE mode. There the editor owns the bottom with
+  // its own sticky MobileEditorBar + summons the native keyboard, and a viewport-fixed Deck would float
+  // over that bar / behind the keyboard. Keep the Deck MOUNTED (host intact) but CSS-hide it there.
+  const [customKbEnabled] = useCustomKeyboard();
+  const suppressDeck = deckActive && onNoteRoute && !customKbEnabled;
+  useEffect(() => {
+    document.body.classList.toggle('deck-suppressed', suppressDeck);
+    return () => { document.body.classList.remove('deck-suppressed'); };
+  }, [suppressDeck]);
 
   // Load the device-local current notebook from IDB on first mount (with localStorage migration).
   useEffect(() => { void initNotebook(); }, [initNotebook]);
@@ -400,10 +412,11 @@ function AuthedShell() {
   }
 
   // MOBILE / tablet-portrait: single-column, route-driven (note pushes over the list) + bottom-sheet nav.
-  // The Deck (custom-keyboard mode) mounts ONCE here via DeckHostProvider — above <Routes> so it persists
-  // across route changes: the navigation loadout while browsing, the editor's keypad while a note is open.
+  // The Deck (touch-first — always present, NOT the custom-keyboard setting) mounts ONCE here via
+  // DeckHostProvider — above <Routes> so it persists across route changes: the navigation loadout while
+  // browsing, the editor's keypad while a note is open (or suppressed on the note route in native mode).
   return (
-    <DeckHostProvider enabled={customKb}>
+    <DeckHostProvider enabled={deckActive}>
     <div className="shell">
       {/* Desktop: left-drawer nav (hidden on mobile via CSS). Mobile: BottomNav below. */}
       <DrawerNav open={navOpen} onClose={() => setNavOpen(false)} />
