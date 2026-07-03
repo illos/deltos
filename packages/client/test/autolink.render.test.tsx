@@ -11,7 +11,7 @@ import { EditorView } from 'prosemirror-view';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap } from 'prosemirror-commands';
 import { deltoSchema } from '../src/editor/schema.js';
-import { buildInputRulesPlugin } from '../src/editor/inputRules.js';
+import { buildAutolinkInputRulesPlugin } from '../src/editor/inputRules.js';
 import { detectTrailingUrl, linkifyTrailingUrl, buildAutolinkKeymap, unwrapLinkBackspace } from '../src/editor/autolink.js';
 import { buildPmKeyActions } from '../src/editor/deckAdapter.js';
 import { createDefaultFormulaRegistry } from '../src/plugins/formula/index.js';
@@ -59,7 +59,7 @@ describe('detectTrailingUrl', () => {
 });
 
 describe('autolink — SPACE boundary (inputRules.ts)', () => {
-  const rules = () => [buildInputRulesPlugin(deltoSchema)];
+  const rules = () => [buildAutolinkInputRulesPlugin(deltoSchema)];
   it('bare google.com + space → link (href https://google.com)', () => {
     const v = mount('google.com', rules());
     type(v, ' ');

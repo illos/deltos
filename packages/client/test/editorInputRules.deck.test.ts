@@ -1,33 +1,50 @@
 /**
- * Markdown-light transforms, NATIVE surface ([ROAD-0007] step 1; originally Deploy 3 slice E). One
- * assertion per trigger, driven through the input-pipeline plugin's handleTextInput with a minimal fake
- * view (no DOM) — the same prop the old prosemirror-inputrules plugin exposed, so the assertions port
- * verbatim. The uniqueBlockIdPlugin is in the state so the blockId-interplay invariants are exercised:
- * new nodes get fresh ids, a type change keeps its id. Transforms share the toolbar commands, so a
- * trigger ≡ the matching button. The Deck mirror of this suite lives in editorInputRules.deck.test.ts.
+ * Markdown-light transforms, DECK surface ([ROAD-0007] step 1) — the mirror of editorInputRules.test.ts,
+ * driven through `deckAdapter.insert` (the keypad path) instead of handleTextInput. THIS is the suite
+ * that pins the origin bug fix: the Deck bypasses ProseMirror's whole input pipeline
+ * ([[deck-keypad-bypasses-inputrules-keymap]]), so markdown silently never converted there until the
+ * unified pipeline gave the adapter one generic runner call. Every trigger asserted natively is asserted
+ * here through the adapter — with the REAL formula registry in front, matching production order
+ * (formula trigger first, then the pipeline runner).
  */
 import { describe, it, expect } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
 import type { EditorState as PMState, Transaction } from 'prosemirror-state';
+import type { EditorView } from 'prosemirror-view';
 import { deltoSchema } from '../src/editor/schema.js';
 import { registerMarkdownTransforms } from '../src/editor/inputRules.js';
 import { TransformRegistry, buildInputPipelinePlugin } from '../src/editor/inputPipeline/index.js';
 import { uniqueBlockIdPlugin } from '../src/editor/plugins/blockId.js';
+import { buildPmKeyActions } from '../src/editor/deckAdapter.js';
+import { createDefaultFormulaRegistry } from '../src/plugins/formula/index.js';
 
 const S = deltoSchema;
-const registry = new TransformRegistry();
-registerMarkdownTransforms(registry, S);
-const inputPlugin = buildInputPipelinePlugin(registry);
+const formulaRegistry = createDefaultFormulaRegistry();
 
-/** Put `before` in a body paragraph, cursor at its end, then "type" lastChar through the input rules. */
+function makeRegistry(): TransformRegistry {
+  const r = new TransformRegistry();
+  registerMarkdownTransforms(r, S);
+  return r;
+}
+
+/** Put `before` in a body paragraph, caret at its end, then press `lastChar` ON THE KEYPAD. */
 function fire(before: string, lastChar: string): PMState {
+  const registry = makeRegistry();
   const para = S.node('paragraph', { id: 'p' }, before ? [S.text(before)] : []);
   const doc = S.node('doc', null, [S.node('title', { id: 't' }, [S.text('T')]), para]);
-  let state = EditorState.create({ doc, schema: S, plugins: [inputPlugin, uniqueBlockIdPlugin] });
+  let state = EditorState.create({
+    doc,
+    schema: S,
+    plugins: [buildInputPipelinePlugin(registry), uniqueBlockIdPlugin],
+  });
   const pos = state.doc.content.size - 1; // end of the paragraph's content
   state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, pos)));
-  const view = { state, composing: false, dispatch: (tr: Transaction) => { state = state.apply(tr); } };
-  inputPlugin.props!.handleTextInput!(view as never, pos, pos, lastChar);
+  const view = {
+    get state() { return state; },
+    dispatch: (tr: Transaction) => { state = state.apply(tr); },
+    focus: () => {},
+  } as unknown as EditorView;
+  buildPmKeyActions(() => view, formulaRegistry, registry).insert(lastChar);
   return state;
 }
 const block = (st: PMState) => st.doc.child(1);
@@ -37,7 +54,7 @@ function bodyHasMark(st: PMState, name: string): boolean {
   return found;
 }
 
-describe('input rules — block triggers', () => {
+describe('Deck markdown — block triggers (via deckAdapter.insert)', () => {
   it('# → h1', () => { const b = block(fire('#', ' ')); expect(b.type.name).toBe('heading'); expect(b.attrs.level).toBe(1); });
   it('## → h2', () => { const b = block(fire('##', ' ')); expect(b.type.name).toBe('heading'); expect(b.attrs.level).toBe(2); });
   it('### → h3', () => { const b = block(fire('###', ' ')); expect(b.type.name).toBe('heading'); expect(b.attrs.level).toBe(3); });
@@ -55,7 +72,7 @@ describe('input rules — block triggers', () => {
   });
 });
 
-describe('input rules — inline marks', () => {
+describe('Deck markdown — inline marks (via deckAdapter.insert)', () => {
   it('**b** → bold', () => { expect(bodyHasMark(fire('**b*', '*'), 'bold')).toBe(true); });
   it('*i* → italic', () => { expect(bodyHasMark(fire('*i', '*'), 'italic')).toBe(true); });
   it('~~s~~ → strikethrough', () => { expect(bodyHasMark(fire('~~s~', '~'), 'strikethrough')).toBe(true); });
@@ -63,7 +80,7 @@ describe('input rules — inline marks', () => {
   it('`c` → code', () => { expect(bodyHasMark(fire('`c', '`'), 'code')).toBe(true); });
 });
 
-describe('input rules — blockId interplay', () => {
+describe('Deck markdown — blockId interplay + guards', () => {
   it('paragraph→heading keeps the existing block id (no spurious re-mint)', () => {
     expect(block(fire('#', ' ')).attrs.id).toBe('p');
   });
@@ -76,13 +93,26 @@ describe('input rules — blockId interplay', () => {
     expect(hrId).not.toBe(pId);
   });
   it('a trigger in the unified title node is inert (title stays title)', () => {
-    // Cursor in the title; typing "# " must NOT convert it.
+    const registry = makeRegistry();
     const doc = S.node('doc', null, [S.node('title', { id: 't' }, [S.text('#')])]);
-    let state = EditorState.create({ doc, schema: S, plugins: [inputPlugin, uniqueBlockIdPlugin] });
-    const pos = 2; // inside the title, after '#'
-    state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, pos)));
-    const view = { state, composing: false, dispatch: (tr: Transaction) => { state = state.apply(tr); } };
-    inputPlugin.props!.handleTextInput!(view as never, pos, pos, ' ');
+    let state = EditorState.create({
+      doc,
+      schema: S,
+      plugins: [buildInputPipelinePlugin(registry), uniqueBlockIdPlugin],
+    });
+    state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 2)));
+    const view = {
+      get state() { return state; },
+      dispatch: (tr: Transaction) => { state = state.apply(tr); },
+      focus: () => {},
+    } as unknown as EditorView;
+    buildPmKeyActions(() => view, formulaRegistry, registry).insert(' ');
     expect(state.doc.child(0).type.name).toBe('title');
+    expect(state.doc.child(0).textContent).toBe('# '); // the space still lands as plain text
+  });
+  it('a non-matching char just inserts (the runner declining falls through to plain insert)', () => {
+    const st = fire('hello', '!');
+    expect(block(st).type.name).toBe('paragraph');
+    expect(block(st).textContent).toBe('hello!');
   });
 });

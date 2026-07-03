@@ -8,7 +8,8 @@ import type { BlockBody } from '@deltos/shared';
 import { deltoSchema } from './schema.js';
 import { uniqueBlockIdPlugin } from './plugins/blockId.js';
 import { buildKeymapPlugin } from './keymap.js';
-import { buildInputRulesPlugin } from './inputRules.js';
+import { registerMarkdownTransforms, buildAutolinkInputRulesPlugin } from './inputRules.js';
+import { TransformRegistry, buildInputPipelinePlugin } from './inputPipeline/index.js';
 import { buildAutolinkKeymap } from './autolink.js';
 import { spineToPmDoc, pmDocToSpine, extractTitleFromDoc } from './serializer.js';
 import { buildMarkdownPastePlugin } from './markdownPaste.js';
@@ -187,9 +188,17 @@ export function ProseMirrorEditor({
   // formula registry it carries is the same MATH+HEXCOLOR set createDefaultFormulaRegistry() produced.
   const contributions = useRef(collectEagerContributions(pluginRegistry)).current;
   const formulaRegistry = contributions.formulaRegistry;
+  // [ROAD-0007] The unified input-transform registry: markdown registers ONCE here and fires on native
+  // typing (pipeline plugin) AND the Deck (deckAdapter's generic runner call) — no per-feature dual-wire.
+  // Formula and autolink migrate here in later steps. Stable per editor instance, like the contributions.
+  const inputTransforms = useRef((() => {
+    const r = new TransformRegistry();
+    registerMarkdownTransforms(r, deltoSchema);
+    return r;
+  })()).current;
   // The keypad's abstract KeyActions, wired to PM via the adapter (closes over viewRef → stable across
   // view re-creation). The Deck loadout registry for this host: the 'text' context → the keypad.
-  const deckActions = useRef(buildPmKeyActions(() => viewRef.current, formulaRegistry)).current;
+  const deckActions = useRef(buildPmKeyActions(() => viewRef.current, formulaRegistry, inputTransforms)).current;
   // #69 Deck link fix: inline URL+TITLE entry typed ON THE KEYPAD (window.prompt is unreliable in an
   // installed PWA / inputmode=none). A clean two-field form (Title = the visible clickable text, URL = the
   // href) — drops the old select-text model. While open, the keypad routes into whichever field is active
@@ -591,9 +600,12 @@ export function ProseMirrorEditor({
       // inputRules.ts rule). Before the base keymap so it intercepts Enter; returns false when no trailing URL.
       buildAutolinkKeymap(),
       buildKeymapPlugin(deltoSchema),
-      // Input rules MUST precede uniqueBlockIdPlugin so its appendTransaction runs AFTER the rule's
-      // transaction and mints ids for any nodes the rule created (divider, list wrappers).
-      buildInputRulesPlugin(deltoSchema),
+      // The input PIPELINE (markdown transforms; [ROAD-0007]) MUST precede uniqueBlockIdPlugin so its
+      // appendTransaction runs AFTER the transform's transaction and mints ids for any nodes the
+      // transform created (divider, list wrappers). The residual autolink space rules keep the same
+      // slot/order they had inside the old single inputRules plugin (they migrate at step 3).
+      buildInputPipelinePlugin(inputTransforms),
+      buildAutolinkInputRulesPlugin(deltoSchema),
       history({ newGroupDelay: HISTORY_GROUP_DELAY_MS }),
       dropCursor(),
       gapCursor(),

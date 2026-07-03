@@ -6,17 +6,17 @@
  * cut/drop — full of literal markdown, and asserts ZERO conversion. A positive control proves the corpus
  * isn't vacuous. THIS FILE MUST NEVER SHRINK: every case pins a silent-corruption vector.
  *
- * The corpus registers REAL markdown-shaped rules in its own registry (todo/h1/bold — the same handler
- * recipes production uses), so "zero output" means the rules were live and the GATE refused, not that
- * nothing was registered.
+ * The corpus registers the REAL production markdown transforms (registerMarkdownTransforms — the exact
+ * set the live editor runs), so "zero output" means the rules were live and the GATE refused, not that
+ * nothing was registered. As later migration steps register formula/autolink, this net covers them too.
  */
 import { describe, it, expect } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
-import type { Command, EditorState as PMState, Transaction } from 'prosemirror-state';
+import type { EditorState as PMState, Transaction } from 'prosemirror-state';
 import type { Node as PmNode } from 'prosemirror-model';
 import { history, undo, redo } from 'prosemirror-history';
 import { deltoSchema } from '../src/editor/schema.js';
-import { setBlock } from '../src/editor/commands.js';
+import { registerMarkdownTransforms } from '../src/editor/inputRules.js';
 import { uniqueBlockIdPlugin } from '../src/editor/plugins/blockId.js';
 import {
   TransformRegistry,
@@ -29,40 +29,9 @@ const S = deltoSchema;
 /** The literals another device could sync in — each is a live trigger for some current/future transform. */
 const HOSTILE_LITERALS = ['[ ] buy milk', '# not a heading', '**x** stays literal', '=1+1=', 'see https://example.com now'];
 
-/** commandRule recipe (inputRules.ts) — run the shared toolbar command, then strip the trigger text. */
-function cmdHandler(command: Command) {
-  return (state: PMState, _m: RegExpExecArray, start: number, end: number): Transaction | null => {
-    if (state.doc.resolve(start).parent.type.name === 'title') return null;
-    let captured: Transaction | null = null;
-    command(state, (t) => { captured = t; });
-    if (captured === null) return null;
-    const tr: Transaction = captured;
-    tr.delete(tr.mapping.map(start), tr.mapping.map(end));
-    return tr;
-  };
-}
-
 function corpusRegistry(): TransformRegistry {
   const r = new TransformRegistry();
-  r.addInsert({ id: 'md-todo', match: /^\[\s?\]\s$/, handler: cmdHandler(setBlock(S, 'todo_item', { checked: false })) });
-  r.addInsert({ id: 'md-h1', match: /^#\s$/, handler: cmdHandler(setBlock(S, 'heading', { level: 1 })) });
-  const bold = S.marks['bold']!;
-  r.addInsert({
-    id: 'md-bold',
-    match: /(?<!\*)\*\*([^*]+)\*\*$/,
-    handler: (state, match, start, end) => {
-      const captured = match[1];
-      if (!captured) return null;
-      const tr = state.tr;
-      const textStart = start + match[0].indexOf(captured);
-      const textEnd = textStart + captured.length;
-      if (textEnd < end) tr.delete(textEnd, end);
-      if (textStart > start) tr.delete(start, textStart);
-      tr.addMark(start, start + captured.length, bold.create());
-      tr.removeStoredMark(bold);
-      return tr;
-    },
-  });
+  registerMarkdownTransforms(r, S);
   return r;
 }
 
