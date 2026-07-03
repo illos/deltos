@@ -149,10 +149,10 @@ describe('ST-R8 — Mobile: /settings list → tap a row → sub-screen → back
       expect(screen.queryByText(label)).not.toBeNull();
     }
 
-    // Tap Appearance → its sub-screen (the Palette group is an Appearance-only marker).
+    // Tap Appearance → its sub-screen (the Palette radiogroup is an Appearance-only marker).
     await user.click(screen.getByText('Appearance'));
     await waitFor(() => {
-      expect(screen.queryByText('Palette')).not.toBeNull();
+      expect(screen.queryByRole('radiogroup', { name: 'Palette' })).not.toBeNull();
     });
     // The list is gone (pushed over).
     expect(document.querySelector('.settings__list-row')).toBeNull();
@@ -188,10 +188,10 @@ describe('ST-R9 — Desktop: /settings → account; rail 6 tabs; click swaps pan
       expect(active?.querySelector('.settings-rail__tab-label')?.textContent).toBe('Account');
     });
 
-    // Click the Appearance rail row → content pane swaps (Palette marker), active class moves.
+    // Click the Appearance rail row → content pane swaps (Palette radiogroup marker), active class moves.
     await user.click(screen.getByText('Appearance'));
     await waitFor(() => {
-      expect(screen.queryByText('Palette')).not.toBeNull();
+      expect(screen.queryByRole('radiogroup', { name: 'Palette' })).not.toBeNull();
     });
     const active = document.querySelector('.settings-rail__tab--active');
     expect(active?.querySelector('.settings-rail__tab-label')?.textContent).toBe('Appearance');

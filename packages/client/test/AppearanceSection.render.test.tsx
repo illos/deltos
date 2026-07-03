@@ -90,7 +90,7 @@ describe('AppearanceSection — active state reflects the store', () => {
     await waitFor(() =>
       expect(screen.getByRole('radio', { name: 'Manila' }).getAttribute('aria-checked')).toBe('true'),
     );
-    expect(container.querySelectorAll('.appearance__chip--swatch.is-active').length).toBe(1);
+    expect(container.querySelectorAll('.appearance__card--palette.is-active').length).toBe(1);
     expect(screen.getByRole('radio', { name: 'Ember' }).getAttribute('aria-checked')).toBe('false');
   });
 });
