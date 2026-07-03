@@ -356,18 +356,22 @@ export function AuthedShell() {
     return () => { document.body.classList.remove('deck-custom'); };
   }, [deckActive]);
   // Keypad mode (setting ON *and* touch-first *and* installed PWA — the ONE shared gate, useKeypadMode):
-  // editor keypad vs native keyboard. At the SHELL it's read for ONE thing — suppress the Deck on the note
-  // route whenever the editor is in NATIVE mode (setting off, OR a plain mobile browser tab, OR a hardware
-  // keyboard). There the editor owns the bottom with its own sticky MobileEditorBar + summons the native
-  // keyboard, and a viewport-fixed Deck would float over that bar / behind the keyboard. Keep the Deck
-  // MOUNTED (host intact) but CSS-hide it there. This is the SAME gate the editor uses, so shell and editor
-  // can't disagree about whether the keypad is up.
+  // editor keypad vs native keyboard. At the SHELL it's read for ONE thing — decide where the Deck rides.
+  //   • KEYPAD mode (installed PWA + setting on): the Deck owns the BOTTOM slot exactly as before (the
+  //     inputmode=none editor summons no native keyboard, so nothing fights it at the bottom).
+  //   • NATIVE mode (setting off, OR a plain mobile browser tab, OR a hardware keyboard): the editor uses
+  //     the OS keyboard + its own sticky .editor__mbar at the bottom, and Safari owns a bottom URL bar — a
+  //     bottom-fixed Deck would fight all three. So in native mode the Deck flips to a compact sticky nav
+  //     bar at the TOP of the screen (body.deck-top → CSS), where it can't collide with the keyboard/URL
+  //     bar. It stays available on EVERY native-mode screen, the note route included — Deck navigation
+  //     while editing is the point. This is the SAME gate the editor reads (useKeypadMode), so the shell
+  //     and the editor never disagree about which keyboard is up. (deck-custom still means "Deck present".)
   const keypadMode = useKeypadMode();
-  const suppressDeck = deckActive && onNoteRoute && !keypadMode;
+  const deckTop = deckActive && !keypadMode;
   useEffect(() => {
-    document.body.classList.toggle('deck-suppressed', suppressDeck);
-    return () => { document.body.classList.remove('deck-suppressed'); };
-  }, [suppressDeck]);
+    document.body.classList.toggle('deck-top', deckTop);
+    return () => { document.body.classList.remove('deck-top'); };
+  }, [deckTop]);
 
   // Load the device-local current notebook from IDB on first mount (with localStorage migration).
   useEffect(() => { void initNotebook(); }, [initNotebook]);
@@ -447,7 +451,8 @@ export function AuthedShell() {
   // MOBILE / tablet-portrait: single-column, route-driven (note pushes over the list) + bottom-sheet nav.
   // The Deck (touch-first — always present, NOT the custom-keyboard setting) mounts ONCE here via
   // DeckHostProvider — above <Routes> so it persists across route changes: the navigation loadout while
-  // browsing, the editor's keypad while a note is open (or suppressed on the note route in native mode).
+  // browsing, the editor's keypad while a note is open in keypad mode (or, in native mode, that same nav
+  // loadout riding the TOP as a sticky bar — body.deck-top — since the editor publishes null there).
   return (
     <DeckHostProvider enabled={deckActive}>
     <div className="shell">

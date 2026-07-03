@@ -3306,10 +3306,38 @@ a.auth__link { display: inline; }
    opted in"; a rename is out of scope (CSS churn). */
 body.deck-custom .bottom-nav { display: none; }
 
-/* On the note route in NATIVE-keyboard mode (custom-keyboard setting OFF) the editor owns the bottom with
-   its own sticky .editor__mbar + the native keyboard; a viewport-fixed Deck would float over that bar /
-   behind the keyboard. Keep the Deck MOUNTED (host intact) but hide it here. Set by AuthedShell. */
-body.deck-suppressed .deck { display: none; }
+/* ── NATIVE-mode Deck (body.deck-top) — the Deck rides the TOP as a compact sticky nav bar ──────────────
+   In native-keyboard mode (Deck present, but the editor uses the OS keyboard — setting off, a plain mobile
+   browser tab, or a hardware keyboard) a bottom-fixed Deck would fight the OS keyboard, the sticky
+   .editor__mbar, and Safari's bottom URL bar. So AuthedShell sets body.deck-top (deckActive && !keypadMode)
+   and the Deck flips to the TOP edge — full-width, one compact row — available on EVERY native-mode screen,
+   the note route included (Deck navigation while editing is the point). Keypad-mode PWA (bottom Deck) and
+   desktop (no Deck) are untouched. --deck-top-h feeds BOTH the bar height and the shell clearance so they
+   can't drift. Approximate — tune on-device. */
+body.deck-top { --deck-top-h: 48px; }
+body.deck-top .deck {
+  top: 0; bottom: auto;
+  /* the top safe-area (notch) is the ONLY vertical padding; the nav row owns its own height below it. */
+  padding: env(safe-area-inset-top) 0 0;
+  /* edge rule flips to the BOTTOM — content now sits below the bar, not above it. */
+  border-bottom: 1px solid var(--border);
+}
+/* The navigation loadout as a horizontal top bar: it's already a centered flex row (New / Search / Upload);
+   just trim the bottom-bar vertical rhythm to a compact single row and center the actions in --deck-top-h.
+   The 10px labels stay. */
+body.deck-top .deck-nav { padding: 0; height: var(--deck-top-h); align-items: center; gap: 32px; }
+body.deck-top .deck-nav__action { padding: 4px 22px; gap: 2px; }
+/* Reserve TOP clearance on the WHOLE shell so both the app bar (.shell__bar) and the scrolling main clear
+   the fixed top Deck. Padding the shell (border-box + min-height:100%) covers browsing AND the note route in
+   one move — the mobile note route shares this .shell__bar / .shell__main chrome (there is no separate
+   mobile note wrapper; #82's global bar IS the mobile note bar). +1px covers the Deck's bottom border. */
+body.deck-top .shell { padding-top: calc(var(--deck-top-h) + 1px + env(safe-area-inset-top)); }
+/* The app bar now sits BELOW the notch (the shell already padded past the safe area) → drop its own
+   safe-area top padding so it doesn't double-count into a gap. */
+body.deck-top .shell__bar { padding-top: 0.9rem; }
+/* No bottom Deck in top mode → no bottom clearance (the deck-custom bottom reserve + the mobile bottom-nav
+   media clearance are both for the bottom slot; neither applies with the Deck up top). */
+body.deck-top .shell__main { padding-bottom: 0; }
 
 /* #69 §5 local spellcheck — misspelled-word squiggle (decoration) + the tap-to-correct popover (host-side;
    the engine is in deck-core). Red wavy underline matches the app's danger red (#e05252). */
@@ -3445,11 +3473,12 @@ body.deck-suppressed .deck { display: none; }
 .deck-nav__action:active { background: var(--sel); }
 .deck-nav__label { font-family: var(--mono); font-size: 10px; }
 
-/* Browsing screens clear the Deck nav loadout (the standalone bottom nav it replaces is hidden above). The
-   note editor reserves its own taller keypad clearance via .editor__pm--kb, so this only needs to cover the
-   shorter nav row (the nav loadout has NO keypad band — it sits flush, #384). Excluded when the Deck is
-   suppressed (native-mode note route): no Deck there, so no reserved space. Approximate — tune on-device. */
-body.deck-custom:not(.deck-suppressed) .shell__main { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
+/* Browsing screens clear the BOTTOM Deck nav loadout (the standalone bottom nav it replaces is hidden
+   above). The note editor reserves its own taller keypad clearance via .editor__pm--kb, so this only needs
+   to cover the shorter nav row (the nav loadout has NO keypad band — it sits flush, #384). Excluded in
+   deck-top (native) mode: the Deck rides the TOP there (top clearance handled above), so no bottom reserve.
+   Approximate — tune on-device. */
+body.deck-custom:not(.deck-top) .shell__main { padding-bottom: calc(84px + env(safe-area-inset-bottom)); }
 
 
 /* NOTE: the OAuth consent screen styles (.oauth-consent__*) moved to the SEPARATE authorization surface

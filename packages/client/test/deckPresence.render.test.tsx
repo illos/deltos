@@ -7,9 +7,10 @@
  *    body.deck-custom is applied (which is what hides the legacy standalone BottomNav) — the setting no
  *    longer makes the Deck vanish / the old BottomNav reappear (the reported regression).
  *  - With the setting ON, shell behavior is unchanged (Deck present + deck-custom).
- *  - WRINKLE: on the note route in NATIVE mode (setting OFF) the Deck is SUPPRESSED (body.deck-suppressed →
- *    CSS-hides .deck) so it can't float over the editor's sticky MobileEditorBar / the native keyboard —
- *    but it stays MOUNTED (the host is intact). With the setting ON (keypad), it is NOT suppressed.
+ *  - NATIVE-MODE TOP BAR: whenever the editor rides the OS keyboard (setting OFF, OR a plain mobile browser
+ *    tab even with the setting ON) the Deck flips to a sticky TOP nav bar — body.deck-top — on EVERY screen
+ *    (browsing AND the note route). It stays MOUNTED and visible (no display:none), showing the nav loadout.
+ *    In keypad mode (installed PWA + setting ON) there is NO deck-top — the Deck keeps the bottom slot.
  *
  * The heavy shell chrome (nav panes, session/sync status, sync engine, the lazy NoteRoute editor) is stubbed
  * at the module seam so the assertions target the Deck wiring under test; the REAL DeckHostProvider / Deck /
@@ -52,10 +53,10 @@ vi.mock('../src/components/BottomNav.js', () => ({
 }));
 // The note editor is a lazy chunk — stub it so the /note route resolves without mounting ProseMirror.
 vi.mock('../src/routes/NoteRoute.js', () => ({ NoteRoute: () => <div data-testid="note-route">note</div> }));
-// The keypad (and thus non-suppression of the Deck on the note route) is installed-PWA-only: App's
-// useKeypadMode composes useInstalledPwa. Mock it with a mutable flag defaulting TRUE (matches jsdom) so the
-// existing "setting ON → NOT suppressed" case holds; the new browser-tab case flips it false to prove the
-// Deck is suppressed there even with the setting ON. (Vitest allows factory refs to `mock`-prefixed vars.)
+// The keypad (and thus the Deck keeping the BOTTOM slot) is installed-PWA-only: App's useKeypadMode composes
+// useInstalledPwa. Mock it with a mutable flag defaulting TRUE (matches jsdom) so the "setting ON → keypad
+// mode → NO deck-top" case holds; the browser-tab case flips it false to prove the Deck rides the TOP
+// (deck-top) there even with the setting ON. (Vitest allows factory refs to `mock`-prefixed vars.)
 let mockInstalledPwa = true;
 vi.mock('../src/lib/useInstalledPwa.js', () => ({ useInstalledPwa: () => mockInstalledPwa }));
 
@@ -88,12 +89,12 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
-  document.body.classList.remove('deck-custom', 'deck-suppressed');
+  document.body.classList.remove('deck-custom', 'deck-top');
   vi.restoreAllMocks();
 });
 
 describe('Deck presence is touch-first, not custom-keyboard-setting driven', () => {
-  it('setting OFF + browsing: the Deck nav loadout renders + body.deck-custom (legacy BottomNav hidden)', async () => {
+  it('setting OFF + browsing (native mode): the Deck nav loadout renders + body.deck-custom + body.deck-top', async () => {
     seed(false);
     mountShell('/');
     await waitFor(() => expect(deck()).not.toBeNull());
@@ -106,47 +107,53 @@ describe('Deck presence is touch-first, not custom-keyboard-setting driven', () 
     // mounted (present) but CSS-suppressed by this class.
     expect(document.body.classList.contains('deck-custom')).toBe(true);
     expect(document.querySelector('[data-testid="bottom-nav"]')).not.toBeNull();
-    // Browsing is not the note route → not suppressed.
-    expect(document.body.classList.contains('deck-suppressed')).toBe(false);
+    // Native mode (setting off) → the Deck rides the TOP as a sticky bar on ALL screens, browsing included.
+    expect(document.body.classList.contains('deck-top')).toBe(true);
   });
 
-  it('setting ON + browsing: unchanged — Deck present + body.deck-custom', async () => {
+  it('setting ON + browsing (keypad mode): Deck present + body.deck-custom, NO deck-top (bottom Deck)', async () => {
     seed(true);
     mountShell('/');
     await waitFor(() => expect(deck()).not.toBeNull());
     expect(navAction('New note')).not.toBeNull();
     expect(document.body.classList.contains('deck-custom')).toBe(true);
-    expect(document.body.classList.contains('deck-suppressed')).toBe(false);
+    // Installed PWA + setting on = keypad mode → the Deck keeps the BOTTOM slot (no top bar).
+    expect(document.body.classList.contains('deck-top')).toBe(false);
   });
 });
 
-describe('Deck suppressed on the native-mode note route (wrinkle)', () => {
-  it('setting OFF + note open: body.deck-suppressed set, but the Deck host stays MOUNTED', async () => {
+describe('Native-mode Deck rides the top on the note route (body.deck-top)', () => {
+  it('setting OFF + note open: body.deck-top set, Deck MOUNTED + visible, nav loadout present', async () => {
     seed(false);
     mountShell('/note/n1');
-    // The suppression class is applied on the note route in native mode…
-    await waitFor(() => expect(document.body.classList.contains('deck-suppressed')).toBe(true));
-    // …while deck-custom stays on (touch-first) and the Deck remains in the tree (hidden by CSS, not unmounted).
+    // Native mode on the note route → the top-bar class is applied…
+    await waitFor(() => expect(document.body.classList.contains('deck-top')).toBe(true));
+    // …deck-custom stays on (touch-first) and the Deck stays in the tree — MOUNTED and visible (deck-top
+    // repositions it to the top; it is NOT display:none'd the way the old deck-suppressed hid it).
     expect(document.body.classList.contains('deck-custom')).toBe(true);
     expect(deck()).not.toBeNull();
+    // The editor stub publishes no editor state (mirrors the real ProseMirrorEditor publishing null in
+    // native mode) → the Deck shows the navigation loadout even on the note route.
+    expect(document.querySelector('[data-deck-context="navigation"]')).not.toBeNull();
+    expect(navAction('New note')).not.toBeNull();
   });
 
-  it('setting ON + note open: NOT suppressed (the keypad owns the bottom)', async () => {
+  it('setting ON + note open (keypad mode): NO deck-top — the keypad owns the bottom', async () => {
     seed(true);
     mountShell('/note/n2');
     await waitFor(() => expect(document.querySelector('[data-testid="note-route"]')).not.toBeNull());
-    expect(document.body.classList.contains('deck-suppressed')).toBe(false);
+    expect(document.body.classList.contains('deck-top')).toBe(false);
     expect(document.body.classList.contains('deck-custom')).toBe(true);
   });
 
-  it('setting ON but NOT an installed PWA (browser tab) + note open: SUPPRESSED (native mode governs)', async () => {
+  it('setting ON but NOT an installed PWA (browser tab) + note open: deck-top set (native mode governs)', async () => {
     // The keypad is installed-PWA-only. In a plain mobile browser tab the setting has no effect — the editor
-    // rides the native keyboard + its sticky MobileEditorBar, so the Deck must be suppressed on the note route
+    // rides the native keyboard + its sticky MobileEditorBar, so the Deck rides the TOP on the note route
     // exactly as in native mode, even though the toggle is ON.
     mockInstalledPwa = false;
     seed(true);
     mountShell('/note/n3');
-    await waitFor(() => expect(document.body.classList.contains('deck-suppressed')).toBe(true));
+    await waitFor(() => expect(document.body.classList.contains('deck-top')).toBe(true));
     expect(document.body.classList.contains('deck-custom')).toBe(true); // still touch-first (Deck mounted)
   });
 });
