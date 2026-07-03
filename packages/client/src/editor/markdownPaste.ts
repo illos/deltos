@@ -24,8 +24,14 @@ import { spineToPmDoc } from './serializer.js';
  * pipeline never sees them), and this handler cannot steal a file/URL paste by construction.
  *
  * It converts ONLY when the inserted text actually parses to markdown STRUCTURE (a non-paragraph block or a
- * mark-bearing inline segment). Bare prose — and rich-web HTML paste, which arrives already structured and
- * trips the rich-slice guard — stays exactly as the default paste left it.
+ * mark-bearing inline segment). Bare prose stays exactly as the default paste left it.
+ *
+ * The rich guard is PER-BLOCK, not per-paste: the inserted range is partitioned into maximal runs of plain
+ * unmarked top-level paragraphs; each run converts (or skips) independently, and every other node — a real
+ * heading, list, image, plugin atom, or mark-carrying paragraph — is left byte-identical. A mixed paste
+ * (one rich block amid raw-markdown text, e.g. copying a whole note back into deltos where deltos' own
+ * clipboard HTML delivers structured blocks) converts the raw runs instead of skipping everything. A
+ * genuinely rich paste (all structured) still yields no qualifying runs and stays untouched.
  */
 
 // A lone URL (the whole trimmed clipboard) belongs to the embeds link-card handler, not markdown
@@ -100,32 +106,58 @@ export function markdownTextToSlice(schema: DeltoSchema, text: string): Slice | 
 }
 
 /**
- * True iff the inserted range holds anything OTHER than plain unmarked paragraphs — i.e. the paste arrived
- * already STRUCTURED (a rich HTML paste via parseDOM/transformPastedHTML, or PM inherited context marks at
- * the insertion point). Structured input must never be re-parsed as markdown (design §4 rich-paste guard).
+ * True iff a top-level node is a plain unmarked paragraph — the only shape the markdown converter may
+ * touch. Any mark-bearing text or non-text inline child (hard_break) means the content arrived already
+ * STRUCTURED (a rich HTML paste via parseDOM/transformPastedHTML, or PM inherited context marks at the
+ * insertion point) and must never be re-parsed as markdown (design §4 rich-paste guard, per-block).
  */
-function rangeIsRich(state: Parameters<BulkTransform['handler']>[0], from: number, to: number): boolean {
-  let rich = false;
-  state.doc.nodesBetween(from, to, (node) => {
-    if (rich) return false;
-    if (node.isText) {
-      if (node.marks.length > 0) rich = true;
-      return false;
-    }
-    if (node.type.name !== 'paragraph') rich = true;
-    return !rich;
+function isPlainParagraph(node: PmNode): boolean {
+  if (node.type.name !== 'paragraph') return false;
+  let plain = true;
+  node.forEach((child) => {
+    if (!child.isText || child.marks.length > 0) plain = false;
   });
-  return rich;
+  return plain;
+}
+
+/**
+ * Partition the inserted range into maximal contiguous runs of plain unmarked TOP-LEVEL paragraphs.
+ * Only doc-level children are considered: a paragraph nested inside a blockquote / list / plugin atom sits
+ * under a rich ancestor and never qualifies (same conservatism as the old whole-range guard for pastes
+ * into or containing nested structures). Run bounds are clamped to the inserted range so a partially
+ * covered first/last paragraph contributes only its inserted text.
+ */
+function plainParagraphRuns(doc: PmNode, from: number, to: number): { from: number; to: number }[] {
+  const runs: { from: number; to: number }[] = [];
+  let current: { from: number; to: number } | null = null;
+  doc.forEach((child, pos) => {
+    const end = pos + child.nodeSize;
+    if (end <= from || pos >= to) return;
+    if (isPlainParagraph(child)) {
+      const segTo = Math.min(to, end - 1);
+      if (current) {
+        current.to = segTo;
+      } else {
+        current = { from: Math.max(from, pos + 1), to: segTo };
+        runs.push(current);
+      }
+    } else {
+      current = null;
+    }
+  });
+  return runs;
 }
 
 /**
  * The markdown BULK transform (registered in editorTransforms.ts; invoked by the pipeline's
  * appendTransaction leg on qualifying paste transactions ONLY — the §2.2 gate has already run).
- * `from`/`to` bound the freshly inserted content. Skip (null) for: an insertion into the title (title
- * paste stays plain), into a code block (pasted markdown stays literal there), an already-structured
- * insertion (rich guard above), a lone bare URL (the embeds card owns it), or text with no markdown
- * structure. On conversion: replace the inserted range with the parsed blocks (open-depth heuristic in
- * `markdownTextToSlice` preserved) and put the caret at the end of the replacement.
+ * `from`/`to` bound the freshly inserted content. Whole-paste skips (null) cover WHERE the paste landed:
+ * an insertion into the title (title paste stays plain) or into a code block (pasted markdown stays
+ * literal there). Everything else is decided PER RUN of plain top-level paragraphs: a run converts only
+ * when it isn't a lone bare URL (the embeds card owns those) and actually carries markdown structure;
+ * rich blocks between runs are never touched. Runs are replaced in reverse document order on one
+ * transaction — later replacements can't shift earlier run positions — and the caret lands at the mapped
+ * end of the inserted range (same UX as the whole-range version).
  */
 export function markdownPasteBulk(schema: DeltoSchema): BulkTransform {
   return {
@@ -136,19 +168,24 @@ export function markdownPasteBulk(schema: DeltoSchema): BulkTransform {
       if (inTitle($from)) return null;
       // Code block: pasting markdown INTO code stays literal (PM already inserted it as raw text).
       if ($from.parent.type.spec.code) return null;
-      if (rangeIsRich(state, from, to)) return null;
-      // '\n' block separator mirrors the line-per-paragraph shape PM's plain-text paste produced; the
-      // shared parser is line-based (one block per line), so this round-trips the clipboard lines.
-      const text = state.doc.textBetween(from, to, '\n');
-      if (!text || text.length === 0) return null;
-      // A lone URL belongs to the embeds card handler, not markdown conversion.
-      if (BARE_URL_RE.test(text.trim())) return null;
-      // Structure test: only convert when the text actually carries markdown structure — a non-paragraph
-      // block or a mark-bearing segment. Bare prose stays exactly as the default paste left it.
-      if (!hasMarkdownStructure(markdownToBody(text))) return null;
-      const slice = markdownTextToSlice(schema, text);
-      if (!slice) return null;
-      const tr = state.tr.replaceRange(from, to, slice);
+      const runs = plainParagraphRuns(state.doc, from, to);
+      let tr: ReturnType<BulkTransform['handler']> = null;
+      for (let i = runs.length - 1; i >= 0; i--) {
+        const run = runs[i]!;
+        // '\n' block separator mirrors the line-per-paragraph shape PM's plain-text paste produced; the
+        // shared parser is line-based (one block per line), so this round-trips the clipboard lines.
+        const text = state.doc.textBetween(run.from, run.to, '\n');
+        if (!text || text.trim().length === 0) continue;
+        // A lone URL belongs to the embeds card handler, not markdown conversion.
+        if (BARE_URL_RE.test(text.trim())) continue;
+        // Structure test: only convert when the run actually carries markdown structure — a non-paragraph
+        // block or a mark-bearing segment. Bare prose stays exactly as the default paste left it.
+        if (!hasMarkdownStructure(markdownToBody(text))) continue;
+        const slice = markdownTextToSlice(schema, text);
+        if (!slice) continue;
+        tr = (tr ?? state.tr).replaceRange(run.from, run.to, slice);
+      }
+      if (!tr) return null;
       const end = Math.min(tr.mapping.map(to, -1), tr.doc.content.size);
       return tr.setSelection(Selection.near(tr.doc.resolve(end), -1)).scrollIntoView();
     },

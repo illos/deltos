@@ -249,3 +249,101 @@ describe('markdown paste — the bulk-leg structure gate', () => {
     expect(body.some((b) => b.type === 'heading' || b.type === 'todo')).toBe(false);
   });
 });
+
+// ── the per-block rich guard ───────────────────────────────────────────────────────────────────
+//
+// The guard used to be all-or-nothing over the whole paste: ONE structured node anywhere (deltos' own
+// clipboard HTML delivers real blocks) skipped conversion for EVERYTHING, so copying a whole note that
+// mixed a real heading with raw-markdown text converted none of it. Now the range is partitioned into
+// runs of plain unmarked top-level paragraphs: each run converts independently, rich blocks in between
+// stay byte-identical. These drive MIXED insertions (plain paragraphs + real nodes) through the pipeline.
+const plainPara = (line: string): PmNode =>
+  deltoSchema.node('paragraph', { id: null }, line ? [deltoSchema.text(line)] : []);
+
+/** Drive a paste whose inserted slice mixes plain paragraphs with already-rich nodes. */
+function driveMixedPaste(
+  nodes: PmNode[],
+  start: BlockBody = [{ id: uuid(99), type: 'paragraph', content: { segments: [] } }],
+): BlockBody {
+  let state = pasteState(start, false);
+  state = state.apply(
+    state.tr
+      .replaceSelection(new Slice(Fragment.fromArray(nodes), 1, 1))
+      .setMeta('paste', true)
+      .setMeta('uiEvent', 'paste'),
+  );
+  return pmDocToSpine(state.doc);
+}
+
+const segText = (b: Block): string =>
+  ((b.content as { segments?: { text: string }[] }).segments ?? []).map((s) => s.text).join('');
+
+describe('markdown paste — per-block rich guard', () => {
+  it('CONVERTS raw-markdown runs on BOTH sides of a real heading node, leaving the heading untouched (the mixed-note case)', () => {
+    const body = driveMixedPaste([
+      plainPara('## Prep'),
+      plainPara('- [ ] check oil'),
+      deltoSchema.node('heading', { id: null, level: 2 }, [deltoSchema.text('PHASE 2 — Cylinder prep')]),
+      plainPara('- [x] pull plugs'),
+      plainPara('some **bold** tail'),
+    ]);
+    const headings = body.filter((b) => b.type === 'heading');
+    expect(headings.map(segText)).toEqual(['Prep', 'PHASE 2 — Cylinder prep']);
+    expect(headings.map((h) => (h.content as { level: number }).level)).toEqual([2, 2]);
+    expect(collectTodos(body).map((t) => (t.content as { checked: boolean }).checked)).toEqual([false, true]);
+    expect(collectTodos(body).map(segText)).toEqual(['check oil', 'pull plugs']);
+    const tail = body.find((b) => b.type === 'paragraph' && segText(b).includes('bold'));
+    const segs = (tail?.content as { segments: { text: string; bold?: true }[] } | undefined)?.segments ?? [];
+    expect(segs.some((s) => s.bold === true && s.text === 'bold')).toBe(true);
+  });
+
+  it('a converted run ENDING in a paragraph does not merge into the rich block that follows it (openEnd boundary)', () => {
+    const body = driveMixedPaste([
+      plainPara('## Prep'),
+      plainPara('tail with **bold**'),
+      deltoSchema.node('heading', { id: null, level: 3 }, [deltoSchema.text('Real heading')]),
+    ]);
+    expect(body.map((b) => b.type)).toEqual(['heading', 'paragraph', 'heading']);
+    expect(segText(body[2]!)).toBe('Real heading');
+    expect((body[2]!.content as { level: number }).level).toBe(3);
+  });
+
+  it('converts a raw run AFTER a leading rich block (first block rich)', () => {
+    const body = driveMixedPaste([
+      deltoSchema.node('heading', { id: null, level: 1 }, [deltoSchema.text('Kept')]),
+      plainPara('- [ ] raw todo'),
+    ]);
+    expect(segText(body.find((b) => b.type === 'heading')!)).toBe('Kept');
+    expect(collectTodos(body).map(segText)).toEqual(['raw todo']);
+  });
+
+  it('a MARK-carrying paragraph is rich — kept literal — while its plain neighbours convert', () => {
+    const marked = deltoSchema.node('paragraph', { id: null }, [
+      deltoSchema.text('literal **stars** stay', [deltoSchema.marks['bold']!.create()]),
+    ]);
+    const body = driveMixedPaste([plainPara('## Before'), marked, plainPara('## After')]);
+    expect(body.filter((b) => b.type === 'heading').map(segText)).toEqual(['Before', 'After']);
+    const kept = body.find((b) => b.type === 'paragraph' && segText(b).includes('**stars**'));
+    expect(kept).toBeTruthy();
+  });
+
+  it('a lone-bare-URL run amid rich blocks stays literal (embeds card territory, per run)', () => {
+    const body = driveMixedPaste([
+      deltoSchema.node('heading', { id: null, level: 2 }, [deltoSchema.text('Kept')]),
+      plainPara('https://example.com'),
+    ]);
+    const para = body.find((b) => b.type === 'paragraph' && segText(b).length > 0);
+    expect(segText(para!)).toBe('https://example.com');
+    const segs = (para!.content as { segments: { link?: string }[] }).segments;
+    expect(segs.some((s) => s.link)).toBe(false);
+  });
+
+  it('is IDEMPOTENT: the bulk handler returns null over an already-converted body', () => {
+    const converted = drivePlainPaste('## heading\n- [ ] a\n- [x] b\nsome **bold** text');
+    const doc = spineToPmDoc(deltoSchema, converted, 'Title');
+    const state = EditorState.create({ doc });
+    const bulk = pipelineRegistry().bulk.find((b) => b.id === 'md-paste')!;
+    const titleEnd = doc.child(0).nodeSize;
+    expect(bulk.handler(state, titleEnd, doc.content.size)).toBeNull();
+  });
+});
