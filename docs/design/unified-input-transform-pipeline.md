@@ -1,6 +1,23 @@
 # Unified input-transform pipeline — design spec
 
-**Status:** DESIGN — awaiting Jim's rulings on the open decisions in §9. No code changed.
+**Status:** ✅ SHIPPED — all migration steps (§7 steps 0–5) landed on `main` and deployed live,
+2026-07-03. Jim's §9 rulings: D1=Hybrid (H), D2=pipeline-bulk, D3=YES (feel-flagged
+`BACKSPACE_REVERTS_AUTOFORMAT`, editorTransforms.ts), D4=NO, D5=YES, D6=YES, D7=out.
+Canonical registration site: `src/editor/editorTransforms.ts` (shared by the live editor, the
+§2.3 invariant corpus, and the order-pinning tests).
+**As-built deviations from the spec body:**
+- §5.3: prosemirror-inputrules' actual default is `inCodeMark: true` (rules DO run in code
+  marks); the runner replicates the library default, not the spec's "don't run unless opted in".
+- D5 resolution (on-device): Deck Enter was LIVE-BROKEN (Enter in a list item did nothing), and
+  native todo-Enter was broken differently (checked carried over; checklist dead-ended) — the
+  shared Enter chain gained `splitTodoItem` and fixed BOTH surfaces.
+- Space-autolink unified as NON-consuming: the old native rule silently swallowed the boundary
+  space; the pipeline rule linkifies AND inserts the space on both surfaces.
+- `insertReplacementText` is NOT intercepted by the Deck paste adapter (autocorrect targets a
+  range, not the selection — hijacking it would misplace genuine replacements).
+- §2.2 as-built: prosemirror-view's `uiEvent:'paste'` qualifies as an implicit `{kind:'paste'}`
+  tag (desktop path); the Deck adapter re-delivers iOS `insertFromPaste` through `view.pasteText`
+  so both paste routes converge on PM's real paste path.
 **Problem:** every input-triggered transform is wired twice (native `inputRules` + a manual
 `deckAdapter` call) with paste as a third path. The dual-wiring already produced two shipped
 gaps found during this investigation (§2.3). Goal: a transform is **defined once** and works

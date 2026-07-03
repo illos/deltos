@@ -14,7 +14,7 @@ import { normalizeLinkInput } from './openLink.js';
  * (no trailing dot). Curated to common generic TLDs (incl. the common-as-generic 2-letter io/co/ai/me) but
  * NOT abbreviation-colliding country codes (us/am). Jim tunes on feel.
  */
-export const URL_TLDS = [
+const URL_TLDS = [
   'com', 'org', 'net', 'io', 'dev', 'co', 'app', 'ai', 'edu', 'gov', 'me', 'info', 'xyz', 'blog', 'tech', 'design',
 ] as const;
 

@@ -19,7 +19,7 @@ export function createDefaultFormulaRegistry(): FormulaRegistry {
   return registry;
 }
 
-export { registerFormulaTransforms, unwrapFormulaBackspace, unwrapFormulaDelete, maybeWrapBoundaryFormula } from './formulaPlugin.js';
+export { registerFormulaTransforms, unwrapFormulaBackspace } from './formulaPlugin.js';
 export { buildFormulaNodeView } from './formulaNodeView.js';
 export { createFormulaRegistry } from './formulaTypes.js';
 export type { FormulaRegistry, FormulaType, FormulaOutput, FormulaRenderContext, FormulaMatch } from './formulaTypes.js';

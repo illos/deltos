@@ -111,9 +111,9 @@ export function registerFormulaTransforms(transforms: TransformRegistry, registr
 /**
  * BOUNDARY-on-ENTER (and reusable for any non-char boundary): wrap a trailing boundary-detected token (e.g.
  * a bare 6-digit hex) into a formula node, NO char inserted — the caller then performs the normal Enter.
- * Returns true if it wrapped. Shared by the keymap Enter (hardware) + deckAdapter.enter (keypad).
+ * Returns true if it wrapped. Registered on the shared enterBoundary chain above (both keyboards).
  */
-export function maybeWrapBoundaryFormula(
+function maybeWrapBoundaryFormula(
   state: EditorState,
   dispatch: ((tr: Transaction) => void) | undefined,
   registry: FormulaRegistry,
