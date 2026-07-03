@@ -59,10 +59,14 @@ describe('kbPointer + useCustomKeyboard — shared, device-local opt-in', () => 
 });
 
 describe('editor integration (mobile)', () => {
-  it('OFF (default): native editor + MobileEditorBar, no inputmode, no custom keyboard', async () => {
-    render(<ProseMirrorEditor noteId="n1" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
+  it('OFF (default): native editor + Deck top-bar toolbar, no inputmode, no custom keyboard', async () => {
+    // Native mode on a touch-first device (jsdom default): the editor rides the native keyboard and publishes
+    // its TOOLBAR to the shell-level Deck (context-aware Deck) — so it's mounted inShell. The toolbar (Undo)
+    // renders in the Deck, NOT as a standalone bottom bar; there's no keypad and inputmode isn't none.
+    inShell(<ProseMirrorEditor noteId="n1" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
     await waitFor(() => expect(pmEl()).not.toBeNull());
-    expect(document.querySelector('button[aria-label="Undo"]')).not.toBeNull(); // MobileEditorBar present
+    await waitFor(() => expect(document.querySelector('.deck .editor__mbar--deck')).not.toBeNull()); // toolbar in the Deck
+    expect(document.querySelector('.deck button[aria-label="Undo"]')).not.toBeNull();
     expect(pmEl()!.getAttribute('inputmode')).not.toBe('none');
     expect(document.querySelector('.keypad')).toBeNull();
   });

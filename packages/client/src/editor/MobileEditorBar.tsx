@@ -9,25 +9,38 @@ interface MobileEditorBarProps {
   run: (tool: ToolDescriptor) => void;
   onUndo: () => void;
   onRedo: () => void;
+  /**
+   * Layout variant. 'bottom' (default) = the sticky bottom sub-screen bar (native-keyboard non-touch case).
+   * 'deck' = the SAME controls laid out as a compact single row for the Deck's native-mode TOP bar (the
+   * bottom bar's content becomes the Deck top-bar toolbar while a note is open — Jim's context-aware Deck
+   * correction). Only a modifier class differs; the two-row registry/active-state/undo-redo wiring is shared.
+   */
+  variant?: 'bottom' | 'deck';
 }
 
 type ActiveGroup = ToolGroup | null;
 
 /**
- * Mobile grouped contextual bar (spec §3). Pinned to the bottom of the note sub-screen. Two rows:
+ * Mobile grouped contextual bar (spec §3). Two rows:
  *  - sub-row (conditional, ABOVE main): the active group's controls, rendered FROM the registry
  *    (toolsFor('mobile', group)) — same commands as desktop, no duplicate logic.
  *  - main row: the 4 group toggles + a divider + persistent Undo/Redo (disabled-reflecting).
  * Tapping a group opens its sub-row; tapping the same group closes it; a different group swaps it.
  * activeGroup is ephemeral component-local state (not persisted, not in a store).
+ *
+ * Two homes for the SAME component (variant prop):
+ *  - 'bottom' — pinned to the bottom of the note sub-screen (native keyboard, no Deck: a hardware-keyboard
+ *    narrow window).
+ *  - 'deck' — the Deck's native-mode TOP bar while a note is open (touch-first, native keyboard). The
+ *    editor publishes this as its Deck loadout instead of the nav loadout (context-aware Deck).
  */
-export function MobileEditorBar({ active, run, onUndo, onRedo }: MobileEditorBarProps) {
+export function MobileEditorBar({ active, run, onUndo, onRedo, variant = 'bottom' }: MobileEditorBarProps) {
   const [activeGroup, setActiveGroup] = useState<ActiveGroup>(null);
   const toggleGroup = (g: ToolGroup) => setActiveGroup((cur) => (cur === g ? null : g));
   const subTools = activeGroup ? toolsFor('mobile', activeGroup) : [];
 
   return (
-    <div className="editor__mbar">
+    <div className={`editor__mbar${variant === 'deck' ? ' editor__mbar--deck' : ''}`}>
       {activeGroup && (
         <div className="editor__mbar-sub" role="toolbar" aria-label={`${activeGroup} tools`}>
           {subTools.map((tool) => {

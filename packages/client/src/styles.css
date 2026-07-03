@@ -3327,6 +3327,20 @@ body.deck-top .deck {
    The 10px labels stay. */
 body.deck-top .deck-nav { padding: 0; height: var(--deck-top-h); align-items: center; gap: 32px; }
 body.deck-top .deck-nav__action { padding: 4px 22px; gap: 2px; }
+/* Context-aware Deck (Jim): while a NOTE is open in native mode the top bar carries the editor TOOLBAR
+   (MobileEditorBar, 'deck' variant) instead of the nav loadout. Strip the bottom-bar chrome (sticky
+   positioning, the .editor padding-countering negative margins, the bottom safe-area, the panel fill) and
+   lay the main toggle row out compact inside --deck-top-h. column-reverse pins the main row to the fixed
+   top edge and hangs the group submenu BELOW it as a dropdown band (over the note, like a menu). */
+.editor__mbar--deck {
+  position: static; margin: 0; padding: 0;
+  flex-direction: column-reverse;
+  background: transparent; border-top: none;
+}
+.editor__mbar--deck .editor__mbar-main { height: var(--deck-top-h); padding: 0 18px; }
+.editor__mbar--deck .editor__mbar-sub {
+  border-top: 1px solid var(--border); border-bottom: none;
+}
 /* Reserve TOP clearance on the WHOLE shell so both the app bar (.shell__bar) and the scrolling main clear
    the fixed top Deck. Padding the shell (border-box + min-height:100%) covers browsing AND the note route in
    one move — the mobile note route shares this .shell__bar / .shell__main chrome (there is no separate

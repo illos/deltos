@@ -74,6 +74,24 @@ describe('MobileEditorBar — sub-row open/close/swap', () => {
   });
 });
 
+describe('MobileEditorBar — deck variant (native-mode top bar)', () => {
+  it('adds the --deck modifier class but keeps the same controls (shared registry, one impl)', () => {
+    const run = vi.fn();
+    render(<MobileEditorBar active={EMPTY_ACTIVE_STATE} run={run} onUndo={() => {}} onRedo={() => {}} variant="deck" />);
+    const bar = document.querySelector('.editor__mbar') as HTMLElement;
+    expect(bar.classList.contains('editor__mbar--deck')).toBe(true);
+    // Same controls as the bottom variant — the group toggles + undo/redo.
+    for (const label of ['Style', 'Format', 'Lists', 'Insert', 'Undo', 'Redo']) {
+      expect(screen.getByLabelText(label), label).toBeTruthy();
+    }
+  });
+
+  it('defaults to the bottom variant (no --deck class) when variant is omitted', () => {
+    render(<MobileEditorBar active={EMPTY_ACTIVE_STATE} run={vi.fn()} onUndo={() => {}} onRedo={() => {}} />);
+    expect((document.querySelector('.editor__mbar') as HTMLElement).classList.contains('editor__mbar--deck')).toBe(false);
+  });
+});
+
 describe('MobileEditorBar — active reflection + dispatch', () => {
   it('a sub-row control reads active from the snapshot (Bold accented when bold is active)', () => {
     mountBar({ ...EMPTY_ACTIVE_STATE, marks: { ...EMPTY_ACTIVE_STATE.marks, bold: true } });

@@ -15,9 +15,14 @@ import { DeckNavLoadout } from './DeckNavLoadout.js';
  *    note/field is focused. This is the 'navigation' context: it enters at the HOST level, not from
  *    deriveDeckContext — a PM EditorState always implies a focused field, so "no editor" has no PM
  *    state to derive from. The provider yields 'navigation' as the editor-absent default.
- *  - the EDITOR loadout (the keypad) — published by the active ProseMirrorEditor via `publishEditor`
- *    while a note is open, withdrawn (null) on unmount. Its live selection-derived context ('text' /
- *    'node:*') becomes the active context while editing.
+ *  - the EDITOR loadout — published by the active ProseMirrorEditor via `publishEditor` while a note is
+ *    open, withdrawn (null) on unmount. TWO shapes by editor mode (context-aware Deck — Jim):
+ *      • KEYPAD mode (custom keyboard on, installed PWA): the keypad, under its live selection-derived
+ *        context ('text' / 'node:*'). Bottom Deck.
+ *      • NATIVE mode (native keyboard, touch-first): the editor TOOLBAR (the MobileEditorBar controls),
+ *        under the fixed 'toolbar' context — so while a note is open the top-bar Deck shows the editor's
+ *        formatting/undo controls, NOT the site-navigation loadout (nav is browsing-only). Top Deck.
+ *    Either way the editor's published context takes precedence over the nav default while it's mounted.
  *
  * Because the Deck lives here (above the route <Routes>), it PERSISTS across route changes: the keypad
  * while editing, the nav loadout while browsing, with no remount/flash as the note pushes over the list.
@@ -25,6 +30,14 @@ import { DeckNavLoadout } from './DeckNavLoadout.js';
 
 /** The editor-absent default context — the browsing situation, no field focused. */
 export const DECK_NAV_CONTEXT: DeckContext = 'navigation';
+
+/**
+ * The context the NATIVE-mode editor publishes for its toolbar loadout. Fixed (not selection-derived):
+ * the MobileEditorBar's group toggles + undo/redo are the same regardless of caret position, so one stable
+ * context keys the whole toolbar — no need to enumerate per-node contexts. Distinct from 'navigation' so
+ * both stay registered and the active context alone selects which renders (the editor's wins while mounted).
+ */
+export const DECK_TOOLBAR_CONTEXT: DeckContext = 'toolbar';
 
 /** What the active editor publishes to the host while mounted. */
 export interface EditorDeckState {

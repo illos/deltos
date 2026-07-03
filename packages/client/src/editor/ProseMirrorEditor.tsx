@@ -27,7 +27,8 @@ import { MobileEditorBar } from './MobileEditorBar.js';
 import { KeypadLoadout } from '../deck/index.js';
 import type { DeckContext, DeckLoadoutRegistry, KeyActions } from '../deck/index.js';
 import { deriveDeckContext, buildPmKeyActions } from './deckAdapter.js';
-import { useDeckHost } from '../components/DeckHost.js';
+import { useDeckHost, DECK_TOOLBAR_CONTEXT } from '../components/DeckHost.js';
+import { useTouchPrimary } from '../lib/useTouchPrimary.js';
 import { useEditorLoadoutTools, EditorGroupSelector, EditorGroupSubmenu } from './editorLoadoutTools.js';
 import { createSpellcheckPlugin, applySpellCorrection } from './spellcheckPlugin.js';
 import type { SpellTap } from './spellcheckPlugin.js';
@@ -135,6 +136,12 @@ export function ProseMirrorEditor({
   // and a plain mobile browser TAB always rides the native keyboard — both must NOT summon the keypad.
   // (Layout forks stay width-based on isDesktop.)
   const customKb = useKeypadMode();
+  // Context-aware Deck (Jim): on a touch-first device the Deck is present, and while the editor rides the
+  // NATIVE keyboard (customKb off) the Deck's TOP bar carries the editor TOOLBAR — NOT the site-nav loadout
+  // (nav is a browsing context, not an editing one). NATIVE mode = touch-first AND not the custom keypad.
+  // (Mutually exclusive with customKb by construction: customKb ⇒ touch-first, so nativeMode ⇒ !customKb.)
+  const touchPrimary = useTouchPrimary();
+  const nativeMode = touchPrimary && !customKb;
   // One selection-driven snapshot drives every toolbar button + undo/redo availability.
   const [active, setActive] = useState<EditorActiveState>(EMPTY_ACTIVE_STATE);
   // #69 §5 spellcheck: on only when the toggle is enabled AND its deviceState read has resolved (so a
@@ -566,14 +573,40 @@ export function ProseMirrorEditor({
     [deckActionsForKeypad, keypadShown, locked, toggleKeypad, toggleLock, activeGroup, toggleGroup, active, handleUndo, handleRedo, runTool, linkOpen, linkTitle, linkUrl, activeLinkField, submitLink, cancelLink, spellSuggest, handleSpellPick, handleAddToDictionary, voiceState, voiceStream, voiceDraft, voiceStart, voiceStop, micSupported],
   );
 
+  // NATIVE-mode Deck loadout (context-aware Deck — Jim): while a note is open on a touch-first device with
+  // the NATIVE keyboard, the Deck's top bar carries the editor TOOLBAR instead of the nav loadout. It's the
+  // SAME MobileEditorBar rendered for the (Deck-less) bottom bar — the tool registry / active-state /
+  // undo-redo wiring is written once — laid out as a compact top-bar row via the 'deck' variant. Published
+  // under the fixed 'toolbar' context (the toggles/undo don't vary with the caret → no per-node contexts).
+  const toolbarLoadouts = useMemo<DeckLoadoutRegistry>(
+    () => ({
+      [DECK_TOOLBAR_CONTEXT]: (
+        <MobileEditorBar variant="deck" active={active} run={runTool} onUndo={handleUndo} onRedo={handleRedo} />
+      ),
+    }),
+    [active, runTool, handleUndo, handleRedo],
+  );
+
   // #69 slice B: the Deck mounts once at the app-shell level (DeckHostProvider) so it persists across
   // routes. The editor PUBLISHES its loadout + live context while a note is open, withdraws (null) on
-  // unmount → the host falls back to the navigation loadout.
+  // unmount → the host falls back to the navigation loadout. Two published shapes by mode (see DeckHost):
+  //  • KEYPAD mode → the keypad loadout under the live selection context.
+  //  • NATIVE mode (touch-first, native keyboard) → the TOOLBAR loadout under the fixed 'toolbar' context.
+  //  • neither (desktop / non-touch narrow window, no Deck) → null (publishing is harmless; no Deck consumes
+  //    it — DeckHostProvider gates only the <Deck> render on `enabled`, and useDeckHost is a NO-OP with no
+  //    provider). The bottom MobileEditorBar covers that Deck-less case (see the render below).
   useEffect(() => {
-    if (!customKb) { publishEditor(null); return; }
-    publishEditor({ context: deckContext, loadouts: deckLoadouts });
-    return () => publishEditor(null);
-  }, [customKb, deckContext, deckLoadouts, publishEditor]);
+    if (customKb) {
+      publishEditor({ context: deckContext, loadouts: deckLoadouts });
+      return () => publishEditor(null);
+    }
+    if (nativeMode) {
+      publishEditor({ context: DECK_TOOLBAR_CONTEXT, loadouts: toolbarLoadouts });
+      return () => publishEditor(null);
+    }
+    publishEditor(null);
+    return undefined;
+  }, [customKb, nativeMode, deckContext, deckLoadouts, toolbarLoadouts, publishEditor]);
 
   // #69 §5: hydrate the spellcheck toggle from deviceState once (sets _loaded → gates engine creation).
   useEffect(() => {
@@ -851,11 +884,13 @@ export function ProseMirrorEditor({
         onClick={focusEndFromEmptyArea}
         className={`editor__pm${customKb ? ' editor__pm--kb' : ''}${customKb && !keypadShown ? ' editor__pm--kb-collapsed' : ''}`}
       />
-      {/* Mobile, custom keyboard ON: the Deck (mounted at the shell via DeckHostProvider) owns the bottom
-          slot; the editor publishes its keypad loadout + live context to it (see the publishEditor effect
-          above), so it persists across routes and isn't torn down by incidental tap-blurs. #69 slice B. */}
-      {/* Mobile, custom keyboard OFF: today's grouped contextual bar + native keyboard (slice D). */}
-      {!isDesktop && !customKb && (
+      {/* The editor toolbar has TWO homes, split by whether a Deck is present (touch-first):
+          • Deck present (touch-first): the Deck owns the toolbar — keypad loadout in custom-keyboard mode,
+            or the native-mode TOP-bar toolbar loadout (published above). NOTHING renders here.
+          • No Deck (a hardware-keyboard NARROW window: not desktop, not touch-first, native keyboard): the
+            grouped contextual bar rides the BOTTOM of the sub-screen (slice D). This is the only case left
+            for the bottom instance — the touch-first native-mode content moved into the Deck top bar. */}
+      {!isDesktop && !customKb && !touchPrimary && (
         <MobileEditorBar active={active} run={runTool} onUndo={handleUndo} onRedo={handleRedo} />
       )}
       {/* Desktop: the optional bottom-mounted context slot — link form (when adding a link) | spell

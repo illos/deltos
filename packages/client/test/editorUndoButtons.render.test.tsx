@@ -11,13 +11,17 @@
 import 'fake-indexeddb/auto';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, cleanup, act, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import type { EditorView } from 'prosemirror-view';
 import { ProseMirrorEditor } from '../src/editor/ProseMirrorEditor.js';
+import { DeckHostProvider } from '../src/components/DeckHost.js';
 
 const emptyBody = [] as const;
 
 // ── Mount helper ──────────────────────────────────────────────────────────────
-
+// Native mode (jsdom touch-first default, custom keyboard off) publishes the editor TOOLBAR to the
+// shell-level Deck — so the undo/redo buttons live in the Deck now, not a standalone bottom bar. Mount the
+// editor inside the real DeckHostProvider so the toolbar (and its depth-driven Undo/Redo) renders.
 function mountEditor(
   noteId: string,
   opts: {
@@ -26,13 +30,17 @@ function mountEditor(
   } = {},
 ) {
   return render(
-    <ProseMirrorEditor
-      noteId={noteId}
-      initialTitle="Test Note"
-      initialBody={emptyBody}
-      onChange={opts.onChange ?? (() => {})}
-      onViewInit={opts.onViewInit}
-    />,
+    <MemoryRouter>
+      <DeckHostProvider enabled>
+        <ProseMirrorEditor
+          noteId={noteId}
+          initialTitle="Test Note"
+          initialBody={emptyBody}
+          onChange={opts.onChange ?? (() => {})}
+          onViewInit={opts.onViewInit}
+        />
+      </DeckHostProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -148,13 +156,17 @@ describe('UB-5 — buttons reset to disabled on noteId change', () => {
     // Switch to a different note.
     await act(async () => {
       rerender(
-        <ProseMirrorEditor
-          noteId="note-b"
-          initialTitle="Other Note"
-          initialBody={emptyBody}
-          onChange={() => {}}
-          onViewInit={(v) => { capturedView = v; }}
-        />,
+        <MemoryRouter>
+          <DeckHostProvider enabled>
+            <ProseMirrorEditor
+              noteId="note-b"
+              initialTitle="Other Note"
+              initialBody={emptyBody}
+              onChange={() => {}}
+              onViewInit={(v) => { capturedView = v; }}
+            />
+          </DeckHostProvider>
+        </MemoryRouter>,
       );
     });
 

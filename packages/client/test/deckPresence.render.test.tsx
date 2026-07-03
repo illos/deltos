@@ -132,8 +132,10 @@ describe('Native-mode Deck rides the top on the note route (body.deck-top)', () 
     // repositions it to the top; it is NOT display:none'd the way the old deck-suppressed hid it).
     expect(document.body.classList.contains('deck-custom')).toBe(true);
     expect(deck()).not.toBeNull();
-    // The editor stub publishes no editor state (mirrors the real ProseMirrorEditor publishing null in
-    // native mode) → the Deck shows the navigation loadout even on the note route.
+    // NoteRoute is STUBBED here (this is the shell-level class-wiring test), so no editor mounts to publish
+    // a loadout → the Deck falls back to the navigation loadout. (With the REAL editor, native mode publishes
+    // the editor TOOLBAR under the 'toolbar' context and the nav loadout is hidden — that context-aware swap
+    // is covered end-to-end in deckToolbar.render.test.tsx; here we only assert the deck-top shell wiring.)
     expect(document.querySelector('[data-deck-context="navigation"]')).not.toBeNull();
     expect(navAction('New note')).not.toBeNull();
   });
