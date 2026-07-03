@@ -7,10 +7,12 @@
  *    body.deck-custom is applied (which is what hides the legacy standalone BottomNav) — the setting no
  *    longer makes the Deck vanish / the old BottomNav reappear (the reported regression).
  *  - With the setting ON, shell behavior is unchanged (Deck present + deck-custom).
- *  - NATIVE-MODE TOP BAR: whenever the editor rides the OS keyboard (setting OFF, OR a plain mobile browser
- *    tab even with the setting ON) the Deck flips to a sticky TOP nav bar — body.deck-top — on EVERY screen
- *    (browsing AND the note route). It stays MOUNTED and visible (no display:none), showing the nav loadout.
- *    In keypad mode (installed PWA + setting ON) there is NO deck-top — the Deck keeps the bottom slot.
+ *  - NATIVE-MODE PLACEMENT is CONTEXT-aware (Jim): whenever the editor rides the OS keyboard (setting OFF,
+ *    OR a plain mobile browser tab even with the setting ON) the Deck flips to a sticky TOP bar —
+ *    body.deck-top — ONLY while a note is open (the note route), where the top escapes the keyboard/URL bar.
+ *    While BROWSING (no note open) there is no keyboard, so deck-top is OFF and the Deck rides its default
+ *    BOTTOM slot showing the nav loadout (restored pre-513026c browsing placement). In keypad mode
+ *    (installed PWA + setting ON) there is NO deck-top on any screen — the Deck keeps the bottom slot.
  *
  * The heavy shell chrome (nav panes, session/sync status, sync engine, the lazy NoteRoute editor) is stubbed
  * at the module seam so the assertions target the Deck wiring under test; the REAL DeckHostProvider / Deck /
@@ -94,7 +96,7 @@ afterEach(() => {
 });
 
 describe('Deck presence is touch-first, not custom-keyboard-setting driven', () => {
-  it('setting OFF + browsing (native mode): the Deck nav loadout renders + body.deck-custom + body.deck-top', async () => {
+  it('setting OFF + browsing (native mode): the Deck nav loadout renders + body.deck-custom, NO deck-top (BOTTOM slot)', async () => {
     seed(false);
     mountShell('/');
     await waitFor(() => expect(deck()).not.toBeNull());
@@ -107,8 +109,9 @@ describe('Deck presence is touch-first, not custom-keyboard-setting driven', () 
     // mounted (present) but CSS-suppressed by this class.
     expect(document.body.classList.contains('deck-custom')).toBe(true);
     expect(document.querySelector('[data-testid="bottom-nav"]')).not.toBeNull();
-    // Native mode (setting off) → the Deck rides the TOP as a sticky bar on ALL screens, browsing included.
-    expect(document.body.classList.contains('deck-top')).toBe(true);
+    // BROWSING (no note open) → no keyboard to escape → the Deck rides its default BOTTOM slot, NOT the top
+    // bar. deck-top is EDITING-only (note route). This is the restored pre-513026c browsing placement (Jim).
+    expect(document.body.classList.contains('deck-top')).toBe(false);
   });
 
   it('setting ON + browsing (keypad mode): Deck present + body.deck-custom, NO deck-top (bottom Deck)', async () => {

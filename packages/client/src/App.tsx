@@ -359,15 +359,20 @@ export function AuthedShell() {
   // editor keypad vs native keyboard. At the SHELL it's read for ONE thing — decide where the Deck rides.
   //   • KEYPAD mode (installed PWA + setting on): the Deck owns the BOTTOM slot exactly as before (the
   //     inputmode=none editor summons no native keyboard, so nothing fights it at the bottom).
-  //   • NATIVE mode (setting off, OR a plain mobile browser tab, OR a hardware keyboard): the editor uses
-  //     the OS keyboard + its own sticky .editor__mbar at the bottom, and Safari owns a bottom URL bar — a
-  //     bottom-fixed Deck would fight all three. So in native mode the Deck flips to a compact sticky nav
-  //     bar at the TOP of the screen (body.deck-top → CSS), where it can't collide with the keyboard/URL
-  //     bar. It stays available on EVERY native-mode screen, the note route included — Deck navigation
-  //     while editing is the point. This is the SAME gate the editor reads (useKeypadMode), so the shell
-  //     and the editor never disagree about which keyboard is up. (deck-custom still means "Deck present".)
+  //   • NATIVE mode (setting off, OR a plain mobile browser tab, OR a hardware keyboard): placement is
+  //     CONTEXT-aware (Jim), because the top-bar was only ever needed to escape the keyboard while EDITING:
+  //       – EDITING (on the note route): the editor rides the OS keyboard + its own toolbar, and Safari owns
+  //         a bottom URL bar — a bottom-fixed Deck would fight all three. So the Deck flips to a compact
+  //         sticky bar at the TOP (body.deck-top → CSS), carrying the editor TOOLBAR (published by
+  //         ProseMirrorEditor). This is the case the old suppress-hide handled; the top bar replaced it.
+  //       – BROWSING (note list / All-Notes / notebooks nav — no note open): NO keyboard is up, so the
+  //         top-escape isn't needed. The Deck rides the BOTTOM (its default slot), exactly as it did
+  //         pre-513026c while browsing — the nav loadout back under the thumb. Restored per Jim's feedback.
+  //     So deck-top is gated on onNoteRoute: top while a note is open, bottom while browsing. This is the
+  //     SAME useKeypadMode gate the editor reads, so the shell and the editor never disagree about which
+  //     keyboard is up. (deck-custom still means "Deck present" and reserves the bottom browsing padding.)
   const keypadMode = useKeypadMode();
-  const deckTop = deckActive && !keypadMode;
+  const deckTop = deckActive && !keypadMode && onNoteRoute;
   useEffect(() => {
     document.body.classList.toggle('deck-top', deckTop);
     return () => { document.body.classList.remove('deck-top'); };
@@ -451,8 +456,8 @@ export function AuthedShell() {
   // MOBILE / tablet-portrait: single-column, route-driven (note pushes over the list) + bottom-sheet nav.
   // The Deck (touch-first — always present, NOT the custom-keyboard setting) mounts ONCE here via
   // DeckHostProvider — above <Routes> so it persists across route changes: the navigation loadout while
-  // browsing, the editor's keypad while a note is open in keypad mode (or, in native mode, that same nav
-  // loadout riding the TOP as a sticky bar — body.deck-top — since the editor publishes null there).
+  // browsing (BOTTOM slot), the editor's keypad while a note is open in keypad mode (BOTTOM), or, in
+  // native mode with a note open, the editor TOOLBAR riding the TOP as a sticky bar — body.deck-top.
   return (
     <DeckHostProvider enabled={deckActive}>
     <div className="shell">

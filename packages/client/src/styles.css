@@ -3343,14 +3343,16 @@ a.auth__link { display: inline; }
    opted in"; a rename is out of scope (CSS churn). */
 body.deck-custom .bottom-nav { display: none; }
 
-/* ── NATIVE-mode Deck (body.deck-top) — the Deck rides the TOP as a compact sticky nav bar ──────────────
+/* ── NATIVE-mode Deck while EDITING (body.deck-top) — the Deck rides the TOP as a compact sticky bar ─────
    In native-keyboard mode (Deck present, but the editor uses the OS keyboard — setting off, a plain mobile
-   browser tab, or a hardware keyboard) a bottom-fixed Deck would fight the OS keyboard, the sticky
-   .editor__mbar, and Safari's bottom URL bar. So AuthedShell sets body.deck-top (deckActive && !keypadMode)
-   and the Deck flips to the TOP edge — full-width, one compact row — available on EVERY native-mode screen,
-   the note route included (Deck navigation while editing is the point). Keypad-mode PWA (bottom Deck) and
-   desktop (no Deck) are untouched. --deck-top-h feeds BOTH the bar height and the shell clearance so they
-   can't drift. Approximate — tune on-device. */
+   browser tab, or a hardware keyboard) while a NOTE is open, a bottom-fixed Deck would fight the OS
+   keyboard, the sticky .editor__mbar, and Safari's bottom URL bar. So AuthedShell sets body.deck-top
+   (deckActive && !keypadMode && onNoteRoute) and the Deck flips to the TOP edge — full-width, one compact
+   row carrying the editor toolbar (context-aware Deck). This is EDITING-ONLY: while BROWSING (no note open)
+   there's no keyboard to escape, so deck-top is off and the Deck rides its default BOTTOM slot (the nav
+   loadout back under the thumb — restored per Jim). Keypad-mode PWA (bottom Deck) and desktop (no Deck) are
+   untouched. --deck-top-h feeds BOTH the bar height and the shell clearance so they can't drift.
+   Approximate — tune on-device. */
 body.deck-top { --deck-top-h: 48px; }
 body.deck-top .deck {
   top: 0; bottom: auto;
