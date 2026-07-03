@@ -1,6 +1,6 @@
 import { Selection } from 'prosemirror-state';
 import { Slice, Fragment } from 'prosemirror-model';
-import type { Node as PmNode, ResolvedPos } from 'prosemirror-model';
+import type { Node as PmNode } from 'prosemirror-model';
 import { markdownToBody } from '@deltos/shared';
 import type { Block } from '@deltos/shared';
 import type { DeltoSchema } from './schema.js';
@@ -65,14 +65,6 @@ function hasMarkdownStructure(blocks: Block[]): boolean {
     if (block.type !== 'paragraph') return true;
     if (hasMarkedSegment(block)) return true;
     if (block.children && block.children.length > 0 && hasMarkdownStructure(block.children)) return true;
-  }
-  return false;
-}
-
-/** True iff any ancestor of `$pos` is the unified title node — paste into the title stays plain text. */
-function inTitle($pos: ResolvedPos): boolean {
-  for (let d = $pos.depth; d >= 0; d--) {
-    if ($pos.node(d).type.name === 'title') return true;
   }
   return false;
 }
@@ -151,11 +143,16 @@ function plainParagraphRuns(doc: PmNode, from: number, to: number): { from: numb
 /**
  * The markdown BULK transform (registered in editorTransforms.ts; invoked by the pipeline's
  * appendTransaction leg on qualifying paste transactions ONLY — the §2.2 gate has already run).
- * `from`/`to` bound the freshly inserted content. Whole-paste skips (null) cover WHERE the paste landed:
- * an insertion into the title (title paste stays plain) or into a code block (pasted markdown stays
- * literal there). Everything else is decided PER RUN of plain top-level paragraphs: a run converts only
- * when it isn't a lone bare URL (the embeds card owns those) and actually carries markdown structure;
- * rich blocks between runs are never touched. Runs are replaced in reverse document order on one
+ * `from`/`to` bound the freshly inserted content. Everything is decided PER RUN of plain top-level
+ * paragraphs: a run converts only when it isn't a lone bare URL (the embeds card owns those) and actually
+ * carries markdown structure; rich blocks between runs are never touched. Title and code-block exclusion
+ * is STRUCTURAL, not positional: `plainParagraphRuns` only selects top-level plain `paragraph` nodes, so
+ * the title node and code blocks can never be a run — a paste landing entirely inside either yields zero
+ * runs and returns null naturally. (The previous start-position guards — `inTitle($from)` / code-block
+ * parent — were all-or-nothing: a whole-note paste into a fresh note lands with the caret in the TITLE,
+ * the copied title merges into the target title with the body blocks placed after, and the title guard
+ * skipped conversion for the ENTIRE paste including the body. Same bug shape as the all-or-nothing
+ * rangeIsRich guard fixed by the per-block partition.) Runs are replaced in reverse document order on one
  * transaction — later replacements can't shift earlier run positions — and the caret lands at the mapped
  * end of the inserted range (same UX as the whole-range version).
  */
@@ -163,11 +160,6 @@ export function markdownPasteBulk(schema: DeltoSchema): BulkTransform {
   return {
     id: 'md-paste',
     handler(state, from, to) {
-      const $from = state.doc.resolve(from);
-      // Title node: keep title paste plain text — never inject blocks into the title.
-      if (inTitle($from)) return null;
-      // Code block: pasting markdown INTO code stays literal (PM already inserted it as raw text).
-      if ($from.parent.type.spec.code) return null;
       const runs = plainParagraphRuns(state.doc, from, to);
       let tr: ReturnType<BulkTransform['handler']> = null;
       for (let i = runs.length - 1; i >= 0; i--) {

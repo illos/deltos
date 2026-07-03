@@ -157,23 +157,31 @@ function pasteState(start: BlockBody, inTitle: boolean) {
   });
 }
 
-/** PM's default PLAIN-TEXT paste, faithfully: one paragraph per line, replaceSelection, doPaste's metas. */
-function drivePlainPaste(
+/** PM's default PLAIN-TEXT paste, faithfully: one paragraph per line, replaceSelection, doPaste's metas.
+ * Returns the resulting STATE so callers can assert on the title node too (the spine drops it). */
+function drivePlainPasteState(
   text: string,
   start: BlockBody = [{ id: uuid(99), type: 'paragraph', content: { segments: [] } }],
   inTitle = false,
-): BlockBody {
-  let state = pasteState(start, inTitle);
+): EditorState {
+  const state = pasteState(start, inTitle);
   const paras = text
     .split(/(?:\r\n?|\n)+/)
     .map((line) => deltoSchema.node('paragraph', { id: null }, line ? [deltoSchema.text(line)] : []));
-  state = state.apply(
+  return state.apply(
     state.tr
       .replaceSelection(new Slice(Fragment.fromArray(paras), 1, 1))
       .setMeta('paste', true)
       .setMeta('uiEvent', 'paste'),
   );
-  return pmDocToSpine(state.doc);
+}
+
+function drivePlainPaste(
+  text: string,
+  start: BlockBody = [{ id: uuid(99), type: 'paragraph', content: { segments: [] } }],
+  inTitle = false,
+): BlockBody {
+  return pmDocToSpine(drivePlainPasteState(text, start, inTitle).doc);
 }
 
 const collectTodos = (bs: BlockBody): Block[] => {
@@ -244,9 +252,32 @@ describe('markdown paste — the bulk-leg structure gate', () => {
     expect(segs.some((s) => s.link)).toBe(false);
   });
 
-  it('SKIPS when the insertion lands in the title node (title paste stays plain)', () => {
-    const body = drivePlainPaste('## heading\n- [ ] a', undefined, /* inTitle */ true);
-    expect(body.some((b) => b.type === 'heading' || b.type === 'todo')).toBe(false);
+  it('a paste STARTING in the title keeps the title part plain but converts the body spill per-run', () => {
+    // Caret in the title: line 1 merges into the title node (never a run — stays literal), line 2 lands
+    // in the body and converts. The old start-position guard skipped the WHOLE paste (the Jim
+    // whole-note-copy bug); exclusion is now structural, so only the title part stays plain.
+    const state = drivePlainPasteState('## heading\n- [ ] a', undefined, /* inTitle */ true);
+    const title = state.doc.child(0);
+    expect(title.type.name).toBe('title');
+    expect(title.textContent).toContain('## heading');
+    const body = pmDocToSpine(state.doc);
+    expect(body.some((b) => b.type === 'heading')).toBe(false);
+    const todos = collectTodos(body);
+    expect(todos).toHaveLength(1);
+    expect((todos[0]!.content as { checked: boolean }).checked).toBe(false);
+    expect((todos[0]!.content as { segments: { text: string }[] }).segments[0]?.text).toMatch(/^a/);
+  });
+
+  it('SKIPS a paste landing entirely INSIDE the title (title text stays literal, no conversion)', () => {
+    // A single open paragraph merges fully into the title textblock — the range never leaves the title,
+    // the title is not a paragraph so it can never be a run, and the handler returns null structurally.
+    const state = drivePlainPasteState('some **bold** md', undefined, /* inTitle */ true);
+    const title = state.doc.child(0);
+    expect(title.type.name).toBe('title');
+    expect(title.textContent).toContain('**bold**');
+    let allPlainText = true;
+    title.forEach((n) => { if (!n.isText || n.marks.length > 0) allPlainText = false; });
+    expect(allPlainText).toBe(true);
   });
 });
 
@@ -336,6 +367,46 @@ describe('markdown paste — per-block rich guard', () => {
     expect(segText(para!)).toBe('https://example.com');
     const segs = (para!.content as { segments: { link?: string }[] }).segments;
     expect(segs.some((s) => s.link)).toBe(false);
+  });
+
+  it('a WHOLE-NOTE copy (title included) pasted into a fresh note converts the body runs (the title-guard regression)', () => {
+    // The Jim case: select-all in deltos copies the TITLE NODE plus the body; pasting into a fresh note
+    // lands with the caret in the (empty) title, PM merges the copied title into the target title and
+    // places the body blocks after it. The old inTitle($from) start-position guard skipped the ENTIRE
+    // paste; per-run conversion must now convert the raw-markdown body while the title stays a title.
+    const startDoc = spineToPmDoc(
+      deltoSchema,
+      [{ id: uuid(99), type: 'paragraph', content: { segments: [] } }],
+      '', // EMPTY title — the fresh-note shape, and keeps the open-end merge out of the assertions
+    );
+    let state = EditorState.create({
+      doc: startDoc,
+      selection: TextSelection.atStart(startDoc), // caret in the title, where a fresh note focuses
+      plugins: [buildInputPipelinePlugin(pipelineRegistry()), uniqueBlockIdPlugin],
+    });
+    const wholeNote = [
+      deltoSchema.node('title', { id: null }, [deltoSchema.text('Jetta Runbook')]),
+      plainPara('## PHASE 1'),
+      plainPara('- [ ] check oil'),
+      deltoSchema.node('heading', { id: null, level: 3 }, [deltoSchema.text('Real heading')]),
+      plainPara('- [x] pull plugs'),
+    ];
+    state = state.apply(
+      state.tr
+        .replaceSelection(new Slice(Fragment.fromArray(wholeNote), 1, 1))
+        .setMeta('paste', true)
+        .setMeta('uiEvent', 'paste'),
+    );
+    const title = state.doc.child(0);
+    expect(title.type.name).toBe('title');
+    expect(title.textContent).toBe('Jetta Runbook');
+    const body = pmDocToSpine(state.doc);
+    const headings = body.filter((b) => b.type === 'heading');
+    expect(headings.map(segText)).toEqual(['PHASE 1', 'Real heading']);
+    expect(headings.map((h) => (h.content as { level: number }).level)).toEqual([2, 3]);
+    expect(collectTodos(body).map((t) => (t.content as { checked: boolean }).checked)).toEqual([false, true]);
+    expect(collectTodos(body).map(segText)).toEqual(['check oil', 'pull plugs']);
+    expect(state.doc.textContent).not.toContain('## PHASE 1');
   });
 
   it('is IDEMPOTENT: the bulk handler returns null over an already-converted body', () => {

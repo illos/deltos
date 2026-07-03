@@ -117,10 +117,13 @@ describe('md paste — guards (default paste stands, no re-parse)', () => {
     expect(v.dom.querySelector('h1:not([data-type="title"]), h2')).toBeNull();
   });
 
-  it('does NOT inject blocks when the caret is in the title', () => {
+  it('a paste starting in the title keeps the title plain but converts the body spill', () => {
+    // Line 1 merges into the title (never converted — the title is not a run); line 2 spills into the
+    // body and converts. The old start-position guard skipped the whole paste (the whole-note-copy bug).
     const v = mount(EMPTY, /* inTitle */ true);
     v.pasteText('## Phase\n- [ ] a', pasteEvent());
+    expect(v.dom.querySelector('h1[data-type="title"]')?.textContent).toContain('## Phase');
     expect(v.dom.querySelector('h2')).toBeNull();
-    expect(v.dom.querySelectorAll('[data-type="todo"]').length).toBe(0);
+    expect(v.dom.querySelectorAll('[data-type="todo"]').length).toBe(1);
   });
 });
