@@ -45,6 +45,7 @@ import { deriveActiveState, EMPTY_ACTIVE_STATE } from './editorState.js';
 import type { EditorActiveState } from './editorState.js';
 import type { ToolDescriptor } from './editorTools.js';
 import { useIsDesktop } from '../lib/useIsDesktop.js';
+import { useTouchPrimary } from '../lib/useTouchPrimary.js';
 import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
 import { useKeypadSwipe, useScrollHideKeypad } from '../lib/useKeypadSwipe.js';
 import { deckClearanceScroll, findScrollParent, DECK_CLEARANCE_MARGIN_PX } from '../lib/deckClearance.js';
@@ -125,10 +126,13 @@ export function ProseMirrorEditor({
   const recheckSpellRef = useRef<(() => void) | null>(null);
   const dictWordsRef = useRef<string[]>([]);
   const isDesktop = useIsDesktop();
-  // #69: the custom keyboard is opt-in (Settings, default OFF) + mobile-only. When ON the editor
-  // suppresses the native keyboard (inputmode=none) and shows our context-driven Deck.
+  // #69: the custom keyboard is opt-in (Settings, default OFF) + touch-first-only. When ON the editor
+  // suppresses the native keyboard (inputmode=none) and shows our context-driven Deck. The gate is
+  // TOUCH-FIRST MODALITY (useTouchPrimary), not window width — a half-width laptop window is still a
+  // hardware-keyboard machine and must NOT summon the Deck. (Layout forks stay width-based on isDesktop.)
+  const touchPrimary = useTouchPrimary();
   const [customKbEnabled] = useCustomKeyboard();
-  const customKb = customKbEnabled && !isDesktop;
+  const customKb = customKbEnabled && touchPrimary;
   // One selection-driven snapshot drives every toolbar button + undo/redo availability.
   const [active, setActive] = useState<EditorActiveState>(EMPTY_ACTIVE_STATE);
   // #69 §5 spellcheck: on only when the toggle is enabled AND its deviceState read has resolved (so a
@@ -290,8 +294,10 @@ export function ProseMirrorEditor({
   })()).current;
   // #69 C-manual: keypad show/hide. The keypad LAYER collapses (the note reclaims its height); a persistent
   // base region keeps the show/hide toggle. State lives HERE (not in the Deck) because auto-show keys off PM
-  // focus and the caret clearance depends on it. Default shown (entering a note shows the keypad, as before).
-  const [keypadShown, setKeypadShown] = useState(true);
+  // focus and the caret clearance depends on it. Initial visibility = autoFocus: a NEW/empty note (the
+  // new-note create flow sets autoFocus) opens with the keypad up ready to type; an EXISTING note opens with
+  // the keypad hidden (the note reclaims full height) until a caret-placing tap / focus re-shows it.
+  const [keypadShown, setKeypadShown] = useState(autoFocus);
   // locked = auto-show/hide suspended (long-press the toggle). "tap drives; long-press decides if the
   // keyboard may drive itself." Read inside the PM focus handler (created once at view-creation) → ref.
   const [locked, setLocked] = useState(false);

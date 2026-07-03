@@ -92,11 +92,11 @@ describe('keypad show/hide — editor integration', () => {
 
   const emptyBody = [] as BlockBody;
   const pmEl = () => document.querySelector('.editor__pm .ProseMirror') as HTMLElement | null;
-  const renderEditor = () =>
+  const renderEditor = (autoFocus = true) =>
     render(
       <MemoryRouter>
         <DeckHostProvider enabled>
-          <ProseMirrorEditor noteId="n1" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />
+          <ProseMirrorEditor noteId="n1" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus={autoFocus} />
         </DeckHostProvider>
       </MemoryRouter>,
     );
@@ -132,5 +132,23 @@ describe('keypad show/hide — editor integration', () => {
     expect(toggle().querySelector('.deck-kbd-toggle__chevron')).toBeNull(); // locked = chevron removed
     act(() => { fireEvent.focus(pmEl()!); }); // auto suspended → must NOT re-show
     expect(document.querySelector('.keypad')).toBeNull();
+  });
+
+  // R2: keypad auto-show is for NEW notes only. autoFocus=false (an EXISTING note) opens with the keypad
+  // layer collapsed; the toggle-carrying base region still persists, and focus/tap re-shows it as before.
+  it('EXISTING note (autoFocus=false): keypad starts HIDDEN, base region + toggle persist', async () => {
+    renderEditor(false);
+    // The Deck loadout still publishes — wait for the persistent base region (toggle) to appear.
+    await waitFor(() => expect(toggle()).not.toBeNull());
+    expect(document.querySelector('.keypad')).toBeNull(); // collapsed on open (no auto-show)
+    expect(document.querySelector('.editor__pm--kb-collapsed')).not.toBeNull();
+  });
+
+  it('EXISTING note (autoFocus=false): focusing the note re-shows the keypad', async () => {
+    renderEditor(false);
+    await waitFor(() => expect(toggle()).not.toBeNull());
+    expect(document.querySelector('.keypad')).toBeNull();
+    act(() => { fireEvent.focus(pmEl()!); }); // caret placed in the note → auto-show
+    expect(document.querySelector('.keypad')).not.toBeNull();
   });
 });

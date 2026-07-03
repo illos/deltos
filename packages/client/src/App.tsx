@@ -27,6 +27,7 @@ import { BottomNav } from './components/BottomNav.js';
 import { ThreeRegionShell } from './components/ThreeRegionShell.js';
 import { DeckHostProvider } from './components/DeckHost.js';
 import { useIsDesktop } from './lib/useIsDesktop.js';
+import { useTouchPrimary } from './lib/useTouchPrimary.js';
 import { useNoteDnd } from './lib/dnd/useNoteDnd.js';
 import { useFileNoteDnd } from './lib/dnd/useFileNoteDnd.js';
 import { useCustomKeyboard } from './lib/useCustomKeyboard.js';
@@ -338,7 +339,10 @@ function AuthedShell() {
   // search/new-note into the Deck's 'navigation' loadout (DeckHostProvider, below) — shown while
   // browsing, swapped for the keypad while editing.
   const [customKbEnabled] = useCustomKeyboard();
-  const customKb = customKbEnabled && !isDesktop;
+  // Deck gate = touch-first modality (not window width) — mirrors the editor. A narrow laptop window is a
+  // hardware-keyboard machine and must keep the standard nav + native keyboard, never the Deck.
+  const touchPrimary = useTouchPrimary();
+  const customKb = customKbEnabled && touchPrimary;
   useEffect(() => {
     document.body.classList.toggle('deck-custom', customKb);
     return () => { document.body.classList.remove('deck-custom'); };
