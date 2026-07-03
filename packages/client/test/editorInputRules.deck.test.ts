@@ -4,8 +4,8 @@
  * that pins the origin bug fix: the Deck bypasses ProseMirror's whole input pipeline
  * ([[deck-keypad-bypasses-inputrules-keymap]]), so markdown silently never converted there until the
  * unified pipeline gave the adapter one generic runner call. Every trigger asserted natively is asserted
- * here through the adapter — with the REAL formula registry in front, matching production order
- * (formula trigger first, then the pipeline runner).
+ * here through the adapter — with the REAL formula transforms registered in front, matching production
+ * registration order (formula first, then markdown — §5.4; since step 2 formula rides the pipeline too).
  */
 import { describe, it, expect } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
@@ -16,13 +16,14 @@ import { registerMarkdownTransforms } from '../src/editor/inputRules.js';
 import { TransformRegistry, buildInputPipelinePlugin } from '../src/editor/inputPipeline/index.js';
 import { uniqueBlockIdPlugin } from '../src/editor/plugins/blockId.js';
 import { buildPmKeyActions } from '../src/editor/deckAdapter.js';
-import { createDefaultFormulaRegistry } from '../src/plugins/formula/index.js';
+import { createDefaultFormulaRegistry, registerFormulaTransforms } from '../src/plugins/formula/index.js';
 
 const S = deltoSchema;
 const formulaRegistry = createDefaultFormulaRegistry();
 
 function makeRegistry(): TransformRegistry {
   const r = new TransformRegistry();
+  registerFormulaTransforms(r, formulaRegistry); // production order (§5.4): formula before markdown
   registerMarkdownTransforms(r, S);
   return r;
 }

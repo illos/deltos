@@ -3,7 +3,7 @@ import { NodeSelection, TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
 import { baseKeymap, deleteSelection, joinBackward } from 'prosemirror-commands';
 import type { DeckContext, KeyActions } from '../deck/index.js';
-import { unwrapFormulaBackspace, formulaTriggerOnInsert, maybeWrapBoundaryFormula } from '../plugins/formula/index.js';
+import { unwrapFormulaBackspace, maybeWrapBoundaryFormula } from '../plugins/formula/index.js';
 import type { FormulaRegistry } from '../plugins/formula/index.js';
 import { runPreInsert } from './inputPipeline/index.js';
 import type { TransformRegistry } from './inputPipeline/index.js';
@@ -44,15 +44,10 @@ export function buildPmKeyActions(
   };
   return {
     insert: (text) => run((v) => {
-      // Inline-formula triggers on the CUSTOM-KEYBOARD path: the keypad bypasses input rules, so the '='
-      // auto-detect AND the '[...]' bracket trigger must run here too ([[deck-keypad-bypasses-inputrules-keymap]]).
-      // formulaTriggerOnInsert fires for a trigger char (e.g. '=') or a closing ']'; if it wraps a formula
-      // it consumes the char (returns true), else we insert normally. (Migrates into the pipeline at step 2;
-      // it stays FIRST here to preserve today's formula-before-markdown order — design §5.4.)
-      if (formulaTriggerOnInsert(v.state, v.dispatch, formulaRegistry, text)) return;
-      // [ROAD-0007] the unified pipeline's pre-insert runner: every registered insert transform (markdown
-      // now; formula/autolink as their steps land) fires on the Deck through this ONE generic call — the
-      // per-feature dual-wire is dead. Fired = the transform consumed the char; else plain insert.
+      // [ROAD-0007] the unified pipeline's pre-insert runner: every registered insert transform (formula
+      // '='-auto/'[...]'-bracket first, then markdown — registration order IS §5.4 order; autolink lands at
+      // step 3) fires on the Deck through this ONE generic call — the per-feature dual-wire is dead.
+      // Fired = the transform consumed the char; else plain insert.
       const sel = v.state.selection;
       if (inputTransforms && runPreInsert(v, sel.from, sel.to, text, inputTransforms.insert)) return;
       v.dispatch(v.state.tr.insertText(text));

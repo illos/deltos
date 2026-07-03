@@ -1,7 +1,7 @@
 /**
  * Inline-formula framework — public API (docs/specs/inline-formulas.md). The editor host imports ONLY from
- * here: the default registry, the plugins, the NodeView factory, and the deckAdapter dual-wire commands.
- * Editor core stays plugin-agnostic; the registry is injected.
+ * here: the default registry, the pipeline registration, the edit-surface plugin/commands, and the NodeView
+ * factory. Editor core stays plugin-agnostic; the registry is injected.
  */
 import { createFormulaRegistry, type FormulaRegistry } from './formulaTypes.js';
 import { mathType } from '../math/mathType.js';
@@ -19,7 +19,7 @@ export function createDefaultFormulaRegistry(): FormulaRegistry {
   return registry;
 }
 
-export { buildFormulaPlugins, formulaTriggerOnInsert, unwrapFormulaBackspace, maybeWrapBoundaryFormula } from './formulaPlugin.js';
+export { buildFormulaPlugins, registerFormulaTransforms, unwrapFormulaBackspace, maybeWrapBoundaryFormula } from './formulaPlugin.js';
 export { buildFormulaNodeView } from './formulaNodeView.js';
 export { createFormulaRegistry } from './formulaTypes.js';
 export type { FormulaRegistry, FormulaType, FormulaOutput, FormulaRenderContext, FormulaMatch } from './formulaTypes.js';

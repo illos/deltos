@@ -6,9 +6,10 @@
  * cut/drop — full of literal markdown, and asserts ZERO conversion. A positive control proves the corpus
  * isn't vacuous. THIS FILE MUST NEVER SHRINK: every case pins a silent-corruption vector.
  *
- * The corpus registers the REAL production markdown transforms (registerMarkdownTransforms — the exact
- * set the live editor runs), so "zero output" means the rules were live and the GATE refused, not that
- * nothing was registered. As later migration steps register formula/autolink, this net covers them too.
+ * The corpus registers the REAL production transforms in production order (registerFormulaTransforms +
+ * registerMarkdownTransforms — the exact set the live editor runs), so "zero output" means the rules were
+ * live and the GATE refused, not that nothing was registered. As later steps register autolink, this net
+ * covers it too.
  */
 import { describe, it, expect } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
@@ -17,6 +18,7 @@ import type { Node as PmNode } from 'prosemirror-model';
 import { history, undo, redo } from 'prosemirror-history';
 import { deltoSchema } from '../src/editor/schema.js';
 import { registerMarkdownTransforms } from '../src/editor/inputRules.js';
+import { createDefaultFormulaRegistry, registerFormulaTransforms } from '../src/plugins/formula/index.js';
 import { uniqueBlockIdPlugin } from '../src/editor/plugins/blockId.js';
 import {
   TransformRegistry,
@@ -29,8 +31,11 @@ const S = deltoSchema;
 /** The literals another device could sync in — each is a live trigger for some current/future transform. */
 const HOSTILE_LITERALS = ['[ ] buy milk', '# not a heading', '**x** stays literal', '=1+1=', 'see https://example.com now'];
 
+const formulaRegistry = createDefaultFormulaRegistry();
+
 function corpusRegistry(): TransformRegistry {
   const r = new TransformRegistry();
+  registerFormulaTransforms(r, formulaRegistry); // production order: formula BEFORE markdown (§5.4)
   registerMarkdownTransforms(r, S);
   return r;
 }
@@ -51,11 +56,12 @@ function hostileParas(): PmNode[] {
   return HOSTILE_LITERALS.map((t, i) => S.node('paragraph', { id: `h${i}` }, [S.text(t)]));
 }
 
-/** No transform output anywhere: no todo/heading blocks, no bold text, every literal intact. */
+/** No transform output anywhere: no todo/heading blocks, no formula chips, no bold text, every literal intact. */
 function assertNoConversion(state: PMState): void {
   state.doc.descendants((node) => {
     expect(node.type.name).not.toBe('todo_item');
     expect(node.type.name).not.toBe('heading');
+    expect(node.type.name).not.toBe('formula');
     expect(node.marks.some((m) => m.type.name === 'bold')).toBe(false);
   });
   for (const literal of HOSTILE_LITERALS) expect(state.doc.textContent).toContain(literal);
@@ -66,6 +72,14 @@ describe('input pipeline — POSITIVE CONTROL (the corpus is not vacuous)', () =
     let state = makeState('[ ]');
     state = state.apply(state.tr.insertText(' ').setMeta(inputPipelineTag, { kind: 'deck', text: ' ' }));
     expect(state.doc.child(1).type.name).toBe('todo_item');
+  });
+
+  it('the formula rules are live too: a tagged "=" after "1 + 1" converts to a formula chip', () => {
+    let state = makeState('1 + 1');
+    state = state.apply(state.tr.insertText('=').setMeta(inputPipelineTag, { kind: 'deck', text: '=' }));
+    let formula = false;
+    state.doc.descendants((n) => { if (n.type.name === 'formula') formula = true; });
+    expect(formula).toBe(true);
   });
 
   it('undo restores the literal in one step and does NOT re-convert; redo re-applies', () => {

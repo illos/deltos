@@ -12,8 +12,9 @@ import { createDefaultFormulaRegistry } from '../src/plugins/formula/index.js';
 import {
   unwrapFormulaBackspace,
   unwrapFormulaDelete,
-  formulaTriggerOnInsert,
+  registerFormulaTransforms,
 } from '../src/plugins/formula/formulaPlugin.js';
+import { TransformRegistry, runPreInsert } from '../src/editor/inputPipeline/index.js';
 
 const registry = createDefaultFormulaRegistry();
 
@@ -70,8 +71,14 @@ describe('Mechanic B — the unwrapped text re-detects/re-renders via the EXISTI
     state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, p + size)));
     unwrapFormulaBackspace(state, (tr) => { state = state.apply(tr); }); // → "2+2" plain text, caret at end
     expect(hasFormula(state)).toBe(false);
-    // re-trigger: the '=' auto path (same detectTrailingExpression the shipped chip uses) re-renders it
-    const reRan = formulaTriggerOnInsert(state, (tr) => { state = state.apply(tr); }, registry, '=');
+    // re-trigger: the '=' auto path (a pipeline insert transform since [ROAD-0007] step 2) re-renders it
+    const transforms = new TransformRegistry();
+    registerFormulaTransforms(transforms, registry);
+    const pos = state.selection.from;
+    const reRan = runPreInsert(
+      { state, dispatch: (tr) => { state = state.apply(tr); } },
+      pos, pos, '=', transforms.insert,
+    );
     expect(reRan).toBe(true);
     expect(hasFormula(state)).toBe(true);
     let spec = ''; state.doc.descendants((n) => { if (n.type.name === 'formula') spec = n.textContent; });

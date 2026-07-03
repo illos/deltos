@@ -20,7 +20,7 @@ import { buildPluginIslandNodeViews } from './nodeviews/PluginIsland.js';
 // the editor assembled inline before. The core formula machinery (plugins + NodeView) is still built here
 // FROM the aggregated registry. Editor core never imports a plugin directly; this is the single seam.
 import { pluginRegistry, collectEagerContributions } from '../plugins/runtime/index.js';
-import { buildFormulaPlugins, buildFormulaNodeView } from '../plugins/formula/index.js';
+import { buildFormulaPlugins, registerFormulaTransforms, buildFormulaNodeView } from '../plugins/formula/index.js';
 import { TodoItemView } from './nodeviews/TodoItem.js';
 import { sliceToPlainText } from './clipboard.js';
 import { EditorControlStrip } from './EditorControlStrip.js';
@@ -188,11 +188,14 @@ export function ProseMirrorEditor({
   // formula registry it carries is the same MATH+HEXCOLOR set createDefaultFormulaRegistry() produced.
   const contributions = useRef(collectEagerContributions(pluginRegistry)).current;
   const formulaRegistry = contributions.formulaRegistry;
-  // [ROAD-0007] The unified input-transform registry: markdown registers ONCE here and fires on native
+  // [ROAD-0007] The unified input-transform registry: each feature registers ONCE here and fires on native
   // typing (pipeline plugin) AND the Deck (deckAdapter's generic runner call) — no per-feature dual-wire.
-  // Formula and autolink migrate here in later steps. Stable per editor instance, like the contributions.
+  // Registration order IS execution order (design §5.4): formula BEFORE markdown, so a trailing run its
+  // registry claims wins over a markdown pattern (the old plugin order, preserved). Autolink migrates at
+  // step 3. Stable per editor instance, like the contributions.
   const inputTransforms = useRef((() => {
     const r = new TransformRegistry();
+    registerFormulaTransforms(r, formulaRegistry);
     registerMarkdownTransforms(r, deltoSchema);
     return r;
   })()).current;
@@ -593,14 +596,14 @@ export function ProseMirrorEditor({
         paletteEnabledRef,
       ),
       // Inline-formula SECOND: its Backspace-unwrap keymap must intercept before the base keymap (a chip-edge
-      // backspace unwraps; everything else falls through). Its '=' auto + '[...]' bracket input rules are
-      // order-independent. Self-contained — does not touch core inputRules.ts.
+      // backspace unwraps; everything else falls through). Its '=' auto + '[...]' bracket INSERT triggers
+      // ride the input pipeline (registered above); this is the edit-surface keymap only (step 3 migrates it).
       ...buildFormulaPlugins(formulaRegistry),
       // Autolink ENTER boundary: linkify a trailing URL/bare-domain on Enter (the space boundary is an
       // inputRules.ts rule). Before the base keymap so it intercepts Enter; returns false when no trailing URL.
       buildAutolinkKeymap(),
       buildKeymapPlugin(deltoSchema),
-      // The input PIPELINE (markdown transforms; [ROAD-0007]) MUST precede uniqueBlockIdPlugin so its
+      // The input PIPELINE (formula + markdown transforms; [ROAD-0007]) MUST precede uniqueBlockIdPlugin so its
       // appendTransaction runs AFTER the transform's transaction and mints ids for any nodes the
       // transform created (divider, list wrappers). The residual autolink space rules keep the same
       // slot/order they had inside the old single inputRules plugin (they migrate at step 3).

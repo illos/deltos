@@ -1,21 +1,21 @@
 import type { Plugin, Command, EditorState, Transaction } from 'prosemirror-state';
 import type { Node as PmNode, Schema } from 'prosemirror-model';
-import { InputRule, inputRules } from 'prosemirror-inputrules';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap } from 'prosemirror-commands';
+import type { TransformRegistry } from '../../editor/inputPipeline/index.js';
 import type { FormulaRegistry } from './formulaTypes.js';
 import './formula.css';
 
 /**
- * Inline-formula EDITOR PLUGINS (docs/specs/inline-formulas.md §1) — the two entry paths + the unwrap, all
- * self-contained (the plugin owns its OWN inputRules plugin; core inputRules.ts is untouched). Wrapping
- * builds a content-bearing `formula` NODE (spec = its text content); the type-dispatched NodeView renders
- * the output. Math is the first type; the logic is type-generic via the injected registry.
+ * Inline-formula EDITOR PLUGINS (docs/specs/inline-formulas.md §1) — the two entry paths + the unwrap.
+ * Wrapping builds a content-bearing `formula` NODE (spec = its text content); the type-dispatched NodeView
+ * renders the output. Math is the first type; the logic is type-generic via the injected registry.
  *
- * ⚠ DUAL-WIRING ([[deck-keypad-bypasses-inputrules-keymap]]): the custom keypad inserts via deckAdapter,
- * bypassing input rules AND the keymap. So BOTH triggers ('=' auto + '[...]' bracket) and the unwrap are
- * ALSO exposed as commands ({@link formulaTriggerOnInsert}, {@link unwrapFormulaBackspace}) the deckAdapter
- * calls — the framework fires on the Deck (Jim's primary path) and on hardware identically.
+ * INSERT triggers ('=' auto + '[...]' bracket) are registered ONCE into the unified input pipeline
+ * ({@link registerFormulaTransforms}, [ROAD-0007] step 2) and fire on native typing AND the Deck through
+ * the pipeline's generic call sites — the old per-feature dual-wire
+ * ([[deck-keypad-bypasses-inputrules-keymap]]) is gone. The EDIT-surface commands (backspace/Delete
+ * unwraps, the Enter boundary-wrap) remain shared keymap+deckAdapter commands until migration step 3.
  */
 
 /** Build a formula node carrying `spec` as its editable text content (empty content is invalid → omitted). */
@@ -68,49 +68,37 @@ function buildAutoFormulaTr(
 }
 
 /**
- * BRACKET path: a closing ']' resolves the preceding '[...' content against the registry. `closeAt` = the
- * position just AFTER the content (the caret on the keypad path, where ']' isn't inserted yet; the input
- * rule passes the analogous range). If a type matches, replace '[content' (+ the consumed ']') with a
- * formula node; if none match, return null → the literal text stays.
+ * Register the formula INSERT transforms into the unified input pipeline ([ROAD-0007] step 2): one auto
+ * rule per registry trigger char ('=' math consuming; ' ' hexcolor non-consuming) + the '[...]' bracket
+ * rule. Handler bodies are the pre-pipeline InputRule bodies, verbatim — `start`/`end` arrive with the
+ * exact prosemirror-inputrules semantics (the trigger char is prospective, so replacing/deleting through
+ * `end` consumes it; buildAutoFormulaTr is parameterized for precisely this shape). MUST be registered
+ * BEFORE the markdown transforms (design §5.4: formula → markdown → marks — a trailing run is a formula
+ * first if its registry claims it, exactly the old plugin order).
  */
-function buildBracketFormulaTr(state: EditorState, registry: FormulaRegistry, closeAt: number): Transaction | null {
-  if (!hasFormulaNode(state.schema)) return null;
-  const $c = state.doc.resolve(closeAt);
-  if ($c.parent.type.name === 'title') return null;
-  const blockStart = $c.start();
-  const textBefore = state.doc.textBetween(blockStart, closeAt);
-  const openIdx = textBefore.lastIndexOf('[');
-  if (openIdx < 0) return null;
-  const content = textBefore.slice(openIdx + 1);
-  if (content.includes('[') || content.includes(']')) return null; // no nesting
-  const match = registry.resolveBracket(content);
-  if (!match) return null; // nothing matches → leave the literal "[...]" as plain text
-  const openPos = blockStart + openIdx;
-  return state.tr.replaceWith(openPos, closeAt, formulaNode(state.schema, match.type.id, match.spec));
-}
-
-/**
- * The trigger for the CUSTOM-KEYBOARD insert path (deckAdapter). Called BEFORE the keypad inserts `char` —
- * the char is not in the doc yet, so boundary/closeAt = the caret. Returns true (+ dispatches the wrap) when
- * a formula fires, so the caller skips inserting the char; false → insert it normally.
- */
-export function formulaTriggerOnInsert(
-  state: EditorState,
-  dispatch: ((tr: Transaction) => void) | undefined,
-  registry: FormulaRegistry,
-  char: string,
-): boolean {
-  if (!state.selection.empty) return false;
-  const pos = state.selection.from;
-  if (registry.triggerChars().includes(char)) {
-    const tr = buildAutoFormulaTr(state, registry, char, pos, pos);
-    if (tr) { if (dispatch) dispatch(tr); return true; }
+export function registerFormulaTransforms(transforms: TransformRegistry, registry: FormulaRegistry): void {
+  for (const char of registry.triggerChars()) {
+    transforms.addInsert({
+      id: `formula-auto-${char === ' ' ? 'space' : char}`,
+      match: new RegExp(`\\${char}$`),
+      handler: (state, _m, start, end) => buildAutoFormulaTr(state, registry, char, start, end),
+    });
   }
-  if (char === ']') {
-    const tr = buildBracketFormulaTr(state, registry, pos);
-    if (tr) { if (dispatch) dispatch(tr); return true; }
-  }
-  return false;
+  // Fires on the closing ']' (prospective): [start, end] spans "[content" in the doc; the capture group
+  // carries the content; replacing [start, end] with the node consumes the ']' (it's never inserted).
+  transforms.addInsert({
+    id: 'formula-bracket',
+    match: /\[([^[\]]*)\]$/,
+    handler: (state, m, start, end) => {
+      if (!hasFormulaNode(state.schema)) return null;
+      const $start = state.doc.resolve(start);
+      if ($start.parent.type.name === 'title') return null;
+      const content = m[1] ?? '';
+      const match = registry.resolveBracket(content);
+      if (!match) return null; // nothing matches → leave the literal "[...]" as plain text
+      return state.tr.replaceWith(start, end, formulaNode(state.schema, match.type.id, match.spec));
+    },
+  });
 }
 
 /**
@@ -177,27 +165,9 @@ export const unwrapFormulaDelete: Command = (state, dispatch): boolean => {
   return true;
 };
 
-/** All inline-formula editor plugins, bound to a registry. The unwrap keymap goes BEFORE the base keymap;
- *  the input rules carry the auto triggers (one per registered trigger char) + the bracket rule. */
+/** The inline-formula EDIT-surface plugin, bound to a registry: the unwrap/boundary keymap, ordered
+ *  BEFORE the base keymap. Insert triggers live in the pipeline ({@link registerFormulaTransforms}). */
 export function buildFormulaPlugins(registry: FormulaRegistry): Plugin[] {
-  const autoRules = registry.triggerChars().map(
-    (char) => new InputRule(new RegExp(`\\${char}$`), (state, _m, start, end) =>
-      buildAutoFormulaTr(state, registry, char, start, end)),
-  );
-  // The input rule fires AFTER ']' is inserted: the regex captures "[content]"; resolve via closeAt = the
-  // ']' position so the same builder handles it (deletes through the caret/']').
-  const bracketRule = new InputRule(/\[([^[\]]*)\]$/, (state, m, start, end) => {
-    // input-rule mechanics: the typed ']' is NOT yet in the doc — the rule matches against the prospective
-    // text, and [start, end] spans "[content" in the doc. So take the content from the CAPTURE GROUP (m[1]),
-    // and replacing [start, end] with the node consumes the ']' (it's never inserted). Same as the keypad path.
-    if (!hasFormulaNode(state.schema)) return null;
-    const $start = state.doc.resolve(start);
-    if ($start.parent.type.name === 'title') return null;
-    const content = m[1] ?? '';
-    const match = registry.resolveBracket(content);
-    if (!match) return null;
-    return state.tr.replaceWith(start, end, formulaNode(state.schema, match.type.id, match.spec));
-  });
   return [
     keymap({
       Backspace: unwrapFormulaBackspace,
@@ -213,6 +183,5 @@ export function buildFormulaPlugins(registry: FormulaRegistry): Plugin[] {
         return true;
       },
     }),
-    inputRules({ rules: [...autoRules, bracketRule] }),
   ];
 }

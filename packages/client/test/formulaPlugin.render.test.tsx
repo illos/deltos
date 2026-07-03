@@ -16,10 +16,11 @@ import { deltoSchema } from '../src/editor/schema.js';
 import {
   createDefaultFormulaRegistry,
   buildFormulaPlugins,
+  registerFormulaTransforms,
   buildFormulaNodeView,
-  formulaTriggerOnInsert,
   unwrapFormulaBackspace,
 } from '../src/plugins/formula/index.js';
+import { TransformRegistry, buildInputPipelinePlugin } from '../src/editor/inputPipeline/index.js';
 import { buildPmKeyActions } from '../src/editor/deckAdapter.js';
 import { spineToPmDoc, pmDocToSpine, type TextSegment } from '../src/editor/serializer.js';
 import type { BlockBody } from '@deltos/shared';
@@ -29,6 +30,19 @@ afterEach(() => { view?.destroy(); view = null; document.body.innerHTML = ''; })
 
 const registry = createDefaultFormulaRegistry();
 
+/** The formula insert triggers ride the unified input pipeline ([ROAD-0007] step 2) — the mounts carry
+ *  the pipeline plugin with the formula transforms registered, exactly as production assembles it. */
+function formulaTransforms(): TransformRegistry {
+  const r = new TransformRegistry();
+  registerFormulaTransforms(r, registry);
+  return r;
+}
+const mountPlugins = () => [
+  ...buildFormulaPlugins(registry),
+  buildInputPipelinePlugin(formulaTransforms()),
+  keymap(baseKeymap),
+];
+
 /** Mount an editor (formula plugins + NodeView) whose body paragraph holds `text`, caret at the end. */
 function mountWithText(text: string): EditorView {
   const container = document.createElement('div');
@@ -36,7 +50,7 @@ function mountWithText(text: string): EditorView {
   const para = deltoSchema.nodes['paragraph']!.create({ id: null }, text ? deltoSchema.text(text) : []);
   const title = deltoSchema.nodes['title']!.create({ id: null });
   const doc = deltoSchema.nodes['doc']!.create(null, [title, para]);
-  let state = EditorState.create({ doc, plugins: [...buildFormulaPlugins(registry), keymap(baseKeymap)] });
+  let state = EditorState.create({ doc, plugins: mountPlugins() });
   state = state.apply(state.tr.setSelection(TextSelection.atEnd(state.doc)));
   view = new EditorView(container, { state, nodeViews: { formula: buildFormulaNodeView(registry) } });
   return view;
@@ -48,10 +62,15 @@ function mountFromBody(body: BlockBody): EditorView {
   document.body.appendChild(container);
   const doc = spineToPmDoc(deltoSchema, body, '');
   view = new EditorView(container, {
-    state: EditorState.create({ doc, plugins: [...buildFormulaPlugins(registry), keymap(baseKeymap)] }),
+    state: EditorState.create({ doc, plugins: mountPlugins() }),
     nodeViews: { formula: buildFormulaNodeView(registry) },
   });
   return view;
+}
+
+/** The Deck path: the SAME generic runner call deckAdapter.insert makes in production. */
+function deckInsert(v: EditorView, ch: string): void {
+  buildPmKeyActions(() => v, registry, formulaTransforms()).insert(ch);
 }
 
 function type(v: EditorView, ch: string): void {
@@ -164,11 +183,12 @@ describe('formula framework — backspace-unwrap', () => {
 });
 
 // REGRESSION ([[deck-keypad-bypasses-inputrules-keymap]]): both triggers must fire on the deckAdapter
-// (custom-keyboard) path, which bypasses input rules. formulaTriggerOnInsert is what deckAdapter calls.
-describe('formula framework — custom-keyboard insert path (deckAdapter dual-wiring)', () => {
+// (custom-keyboard) path, which bypasses input rules — via the unified pipeline's generic runner call
+// ([ROAD-0007] step 2), the SAME registration the native path fires.
+describe('formula framework — custom-keyboard insert path (via the input pipeline)', () => {
   it('"=" fires the math trigger on the keypad path (no input rule); "=" not inserted', () => {
     const v = mountWithText('10 + 5');
-    expect(formulaTriggerOnInsert(v.state, v.dispatch, registry, '=')).toBe(true);
+    deckInsert(v, '=');
     expect(formulaSpec(v)).toBe('10 + 5');
     expect(resultValue(v)).toBe('15');
     expect(v.state.doc.textContent).toBe('10 + 5');
@@ -176,14 +196,16 @@ describe('formula framework — custom-keyboard insert path (deckAdapter dual-wi
 
   it('"]" fires the bracket trigger on the keypad path', () => {
     const v = mountWithText('[2 + 2');
-    expect(formulaTriggerOnInsert(v.state, v.dispatch, registry, ']')).toBe(true);
+    deckInsert(v, ']');
     expect(formulaSpec(v)).toBe('2 + 2');
     expect(resultValue(v)).toBe('4');
   });
 
   it('a plain char does not fire (keypad inserts it normally)', () => {
     const v = mountWithText('10 + 5');
-    expect(formulaTriggerOnInsert(v.state, v.dispatch, registry, 'a')).toBe(false);
+    deckInsert(v, 'a');
+    expect(formulaSpec(v)).toBeNull();
+    expect(v.state.doc.textContent).toBe('10 + 5a'); // the runner declined → plain insert
   });
 });
 
@@ -243,17 +265,19 @@ describe('formula framework — hexcolor BARE auto-detect (non-consuming boundar
     expect(formulaSpec(v)).toBeNull();
   });
 
-  it('fires on the custom-keyboard path too (deckAdapter dual-wire), space preserved', () => {
+  it('fires on the custom-keyboard path too (via the pipeline), space preserved', () => {
     const v = mountWithText('bg #00ff00');
-    expect(formulaTriggerOnInsert(v.state, v.dispatch, registry, ' ')).toBe(true);
+    deckInsert(v, ' ');
     expect(formulaType(v)).toBe('hexcolor');
     expect(swatch(v)!.style.backgroundColor).toBe('rgb(0, 255, 0)');
     expect(v.state.doc.textContent.endsWith(' ')).toBe(true);
   });
 
-  it('a normal space (no trailing hex) does not fire on the keypad path', () => {
+  it('a normal space (no trailing hex) does not fire on the keypad path (plain insert)', () => {
     const v = mountWithText('hello world');
-    expect(formulaTriggerOnInsert(v.state, v.dispatch, registry, ' ')).toBe(false);
+    deckInsert(v, ' ');
+    expect(formulaSpec(v)).toBeNull();
+    expect(v.state.doc.textContent).toBe('hello world ');
   });
 });
 
