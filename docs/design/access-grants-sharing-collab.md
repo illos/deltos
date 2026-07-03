@@ -224,9 +224,10 @@ Jim's sync directive already names RTC the endgame ("eventual = realtime push").
 
 ## 7. Open decisions for Jim (each with a recommendation)
 
-1. **v1 mint-picker granularity:** notebook-level only, or notes too? — *Recommend notebook-level UI in
-   P1 (note-level grants work in the model; the picker UX for individual notes is better designed with
-   the share-sheet in P2/P3).*
+1. **v1 mint-picker granularity:** notebook-level only, or notes too? — **DECIDED (Jim, 2026-07-03):
+   BOTH in v1, with picker shape matched to collection size — notebooks = list select (bounded set),
+   notes = search select (unbounded set, search is the picker).** This shape is the standing pattern
+   for every grant-resource picker (mint UX, OAuth consent, and the later share-sheet).
 2. **Shared-with-me presentation:** foreign notebooks inline among your own vs. a dedicated "Shared"
    nav section — *Recommend the dedicated section with `@username` badges; inline placement can be a
    later per-share pin option.*
