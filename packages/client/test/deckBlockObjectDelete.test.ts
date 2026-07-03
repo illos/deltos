@@ -14,8 +14,9 @@ import type { EditorView } from 'prosemirror-view';
 import { deltoSchema as S } from '../src/editor/schema.js';
 import { buildPmKeyActions } from '../src/editor/deckAdapter.js';
 import { createDefaultFormulaRegistry } from '../src/plugins/formula/index.js';
+import { buildEditorTransformRegistry } from '../src/editor/editorTransforms.js';
 
-const registry = createDefaultFormulaRegistry();
+const transforms = buildEditorTransformRegistry(S, createDefaultFormulaRegistry());
 
 /** A minimal EditorView double: a real EditorState + dispatch(apply); layout coords stubbed (unused here). */
 function makeView(body: ReturnType<typeof S.node>) {
@@ -29,7 +30,7 @@ function makeView(body: ReturnType<typeof S.node>) {
     posAtCoords: () => null,
   } as unknown as EditorView;
   const setCaret = (pos: number) => { state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, pos))); };
-  const backspace = () => buildPmKeyActions(() => view, registry).backspace();
+  const backspace = () => buildPmKeyActions(() => view, transforms).backspace();
   const has = (typeName: string) => { let f = false; view.state.doc.descendants((n) => { if (n.type.name === typeName) f = true; }); return f; };
   const posOf = (typeName: string) => { let p = -1, size = 0; view.state.doc.descendants((n, pos) => { if (n.type.name === typeName) { p = pos; size = n.nodeSize; } }); return { p, size }; };
   return { view, setCaret, backspace, has, posOf, text: () => view.state.doc.child(1).textContent };

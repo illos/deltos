@@ -6,10 +6,10 @@
  * cut/drop — full of literal markdown, and asserts ZERO conversion. A positive control proves the corpus
  * isn't vacuous. THIS FILE MUST NEVER SHRINK: every case pins a silent-corruption vector.
  *
- * The corpus registers the REAL production transforms in production order (registerFormulaTransforms +
- * registerMarkdownTransforms — the exact set the live editor runs), so "zero output" means the rules were
- * live and the GATE refused, not that nothing was registered. As later steps register autolink, this net
- * covers it too.
+ * The corpus registers the REAL production transforms via the canonical assembly
+ * (buildEditorTransformRegistry — the exact set + order the live editor runs, including the autolink
+ * space rules as of step 3), so "zero output" means the rules were live and the GATE refused, not that
+ * nothing was registered.
  */
 import { describe, it, expect } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
@@ -17,11 +17,12 @@ import type { EditorState as PMState, Transaction } from 'prosemirror-state';
 import type { Node as PmNode } from 'prosemirror-model';
 import { history, undo, redo } from 'prosemirror-history';
 import { deltoSchema } from '../src/editor/schema.js';
-import { registerMarkdownTransforms } from '../src/editor/inputRules.js';
-import { createDefaultFormulaRegistry, registerFormulaTransforms } from '../src/plugins/formula/index.js';
+import { buildEditorTransformRegistry } from '../src/editor/editorTransforms.js';
+import { createDefaultFormulaRegistry } from '../src/plugins/formula/index.js';
 import { uniqueBlockIdPlugin } from '../src/editor/plugins/blockId.js';
+import type {
+  TransformRegistry} from '../src/editor/inputPipeline/index.js';
 import {
-  TransformRegistry,
   buildInputPipelinePlugin,
   inputPipelineTag,
 } from '../src/editor/inputPipeline/index.js';
@@ -34,10 +35,7 @@ const HOSTILE_LITERALS = ['[ ] buy milk', '# not a heading', '**x** stays litera
 const formulaRegistry = createDefaultFormulaRegistry();
 
 function corpusRegistry(): TransformRegistry {
-  const r = new TransformRegistry();
-  registerFormulaTransforms(r, formulaRegistry); // production order: formula BEFORE markdown (§5.4)
-  registerMarkdownTransforms(r, S);
-  return r;
+  return buildEditorTransformRegistry(S, formulaRegistry); // THE production set + §5.4 order, verbatim
 }
 
 /** title + one paragraph, caret at the paragraph's end, pipeline + history + blockId live. */
@@ -56,13 +54,15 @@ function hostileParas(): PmNode[] {
   return HOSTILE_LITERALS.map((t, i) => S.node('paragraph', { id: `h${i}` }, [S.text(t)]));
 }
 
-/** No transform output anywhere: no todo/heading blocks, no formula chips, no bold text, every literal intact. */
+/** No transform output anywhere: no todo/heading blocks, no formula chips, no bold text, and — now that
+ *  the autolink rules are live in the registry (step 3) — no LINK mark on the corpus's bare URL either. */
 function assertNoConversion(state: PMState): void {
   state.doc.descendants((node) => {
     expect(node.type.name).not.toBe('todo_item');
     expect(node.type.name).not.toBe('heading');
     expect(node.type.name).not.toBe('formula');
     expect(node.marks.some((m) => m.type.name === 'bold')).toBe(false);
+    expect(node.marks.some((m) => m.type.name === 'link')).toBe(false);
   });
   for (const literal of HOSTILE_LITERALS) expect(state.doc.textContent).toContain(literal);
 }

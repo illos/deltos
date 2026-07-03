@@ -1,12 +1,13 @@
-import type { Command, EditorState, Plugin, Transaction } from 'prosemirror-state';
-import { baseKeymap } from 'prosemirror-commands';
-import { keymap } from 'prosemirror-keymap';
+import type { Command, EditorState, Transaction } from 'prosemirror-state';
+import type { DeltoSchema } from './schema.js';
+import type { InsertHandler, TransformRegistry } from './inputPipeline/index.js';
 import { normalizeLinkInput } from './openLink.js';
 
 /**
  * Typed-URL autolink detection (rung-1, broadened — Jim wants bare 'google.com' to linkify, not just
- * scheme'd URLs). Shared by the SPACE boundary (an inputRules.ts rule) and the ENTER boundary (a keymap +
- * deckAdapter.enter) — consistent with the formula boundary model. Paste→card stays scheme-required (separate).
+ * scheme'd URLs). SPACE + ENTER boundaries and the Backspace unwrap all register into the unified input
+ * pipeline ({@link registerAutolinkTransforms}, [ROAD-0007] step 3) — both keyboards consume them
+ * generically. Paste→card stays scheme-required (separate).
  *
  * 🚨 FALSE-POSITIVE GUARD: a naive domain.tld regex over-fires on 'etc.', 'file.txt', '3.14', 'U.S.', 'a.m.'.
  * So a bare domain only linkifies when its TLD is in this CURATED allowlist AND the token ENDS in .<tld>
@@ -22,9 +23,6 @@ export const URL_TLDS = [
 // mid-token suffix ('oogle.com' inside a word) never linkifies.
 const SCHEME_CORE = `(https?://[^\\s]+)`;
 const BARE_CORE = `(?<![@\\w.-])((?:[a-z0-9-]+\\.)+(?:${URL_TLDS.join('|')})(?:/[^\\s]*)?)`;
-
-/** The bare-domain pattern source — inputRules.ts builds its `\s$`-anchored SPACE rule from this (DRY). */
-export const BARE_DOMAIN_CORE = BARE_CORE;
 
 const SCHEME_AT_END = new RegExp(`${SCHEME_CORE}$`, 'i');
 const BARE_AT_END = new RegExp(`${BARE_CORE}$`, 'i');
@@ -86,14 +84,36 @@ export const unwrapLinkBackspace: Command = (state, dispatch): boolean => {
   return true;
 };
 
-/** Hardware boundary keymap: ENTER linkifies a trailing URL then does the normal Enter; BACKSPACE unwraps a
- *  link at its right edge (#74). Both return false when not applicable, so the normal chains are untouched. */
-export function buildAutolinkKeymap(): Plugin {
-  const enter: Command = (state, dispatch, view) => {
-    if (!dispatch || !view) return false;
-    if (!linkifyTrailingUrl(state, dispatch)) return false;
-    baseKeymap['Enter']!(view.state, view.dispatch, view);
-    return true;
-  };
-  return keymap({ Enter: enter, Backspace: unwrapLinkBackspace });
+/**
+ * Register the autolink transforms into the unified input pipeline ([ROAD-0007] step 3) — the SPACE
+ * boundary as insert rules (fires on native typing AND the Deck's single space, closing the old
+ * Deck-single-space gap), plus the edit surface: link-unwrap on Backspace and linkify on the shared
+ * Enter boundary. Registered AFTER markdown (§5.4 order); enterBoundary lands after formula-boundary-wrap
+ * ("a trailing token is either a formula or a URL, not both").
+ *
+ * SPACE rules are NON-consuming: the handler marks the URL and re-inserts the boundary space itself
+ * (rule-fired = the default insert is suppressed). The pre-pipeline native rule silently SWALLOWED the
+ * space (it never re-inserted it) while the Deck path preserved it — preserve is the correct unified
+ * behavior (hexcolor's boundary space set the precedent).
+ */
+export function registerAutolinkTransforms(transforms: TransformRegistry, schema: DeltoSchema): void {
+  const link = schema.marks['link'];
+  if (link) {
+    const linkifyOnSpace = (normalize: boolean): InsertHandler => (state, match, start) => {
+      const url = match[1];
+      if (!url) return null;
+      const href = normalize ? normalizeLinkInput(url) : url;
+      if (!href) return null;
+      if (state.doc.rangeHasMark(start, start + url.length, link)) return null; // already linked
+      return state.tr
+        .addMark(start, start + url.length, link.create({ href, title: null }))
+        .insertText(' ')
+        .removeStoredMark(link);
+    };
+    // Scheme'd URL keeps its href verbatim; a bare domain goes through normalizeLinkInput (https:// prefix).
+    transforms.addInsert({ id: 'autolink-scheme', match: /(https?:\/\/[^\s]+)\s$/, handler: linkifyOnSpace(false) });
+    transforms.addInsert({ id: 'autolink-bare', match: new RegExp(`${BARE_CORE}\\s$`, 'i'), handler: linkifyOnSpace(true) });
+  }
+  transforms.addEdit('backspace', { id: 'link-unwrap', cmd: unwrapLinkBackspace });
+  transforms.addEdit('enterBoundary', { id: 'linkify', cmd: linkifyTrailingUrl });
 }

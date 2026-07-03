@@ -1,11 +1,7 @@
-import { inputRules, InputRule } from 'prosemirror-inputrules';
 import type { Command, Transaction } from 'prosemirror-state';
-import type { Plugin } from 'prosemirror-state';
 import type { MarkType } from 'prosemirror-model';
 import type { DeltoSchema } from './schema.js';
 import { setBlock, toggleList, toggleWrap } from './commands.js';
-import { BARE_DOMAIN_CORE } from './autolink.js';
-import { normalizeLinkInput } from './openLink.js';
 import type { InsertHandler, TransformRegistry } from './inputPipeline/index.js';
 
 /**
@@ -100,35 +96,3 @@ export function registerMarkdownTransforms(registry: TransformRegistry, schema: 
   if (marks['code'])          registry.addInsert({ id: 'md-code', match: /`([^`]+)`$/, handler: markRuleHandler(marks['code']) });
 }
 
-/**
- * RESIDUAL native-only wiring — the space-boundary autolink rules stay on prosemirror-inputrules until
- * migration step 3 moves them (and the Enter/backspace boundary commands) onto the pipeline's edit
- * surface. Behavior unchanged from the pre-pipeline plugin; DELETE this whole builder at step 3.
- *
- * Autolink (rung-1, #69 E2b): typing a URL then a space links the URL inline (link mark). A bare-URL
- * PASTE alone becomes a rich card instead (embeds plugin); this is the inline/typed path. link is
- * inclusive:false so the mark doesn't extend onto the trailing space or subsequent typing.
- */
-export function buildAutolinkInputRulesPlugin(schema: DeltoSchema): Plugin {
-  const { marks } = schema;
-  const rules: InputRule[] = [];
-  if (marks['link']) {
-    const link = marks['link'];
-    rules.push(new InputRule(/(https?:\/\/[^\s]+)\s$/, (state, match, start) => {
-      const url = match[1];
-      if (!url) return null;
-      return state.tr.addMark(start, start + url.length, link.create({ href: url, title: null }));
-    }));
-    // Bare-domain autolink (Jim): 'google.com' / 'www.google.com' + space → link too. GATED on the curated
-    // TLD allowlist (BARE_DOMAIN_CORE, src/editor/autolink.ts) so 'etc.'/'file.txt'/'3.14'/'U.S.' don't fire.
-    // href via normalizeLinkInput (prepends https://). The ENTER boundary is handled by the autolink keymap.
-    rules.push(new InputRule(new RegExp(`${BARE_DOMAIN_CORE}\\s$`, 'i'), (state, match, start) => {
-      const url = match[1];
-      if (!url) return null;
-      const href = normalizeLinkInput(url);
-      if (!href) return null;
-      return state.tr.addMark(start, start + url.length, link.create({ href, title: null }));
-    }));
-  }
-  return inputRules({ rules });
-}

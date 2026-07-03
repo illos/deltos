@@ -2,8 +2,8 @@
  * Formula unwrap — Mechanic B: formulas "unwrap to plain text" instead of deleting. Backspace at the right
  * edge (already shipped: unwrapFormulaBackspace) AND the symmetric forward-Delete at the left edge replace
  * the rendered formula with its plain-text SOURCE (the spec), caret left in that text. Re-triggering the
- * existing auto-detect re-renders it. Purely additive to buildFormulaPlugins. The Deck-path dual-wiring of
- * the backspace-unwrap (through the keypad adapter, not the keymap) is covered in deckBlockObjectDelete.test.ts.
+ * existing auto-detect re-renders it. Both commands ride the pipeline's shared backspace/forwardDelete
+ * chains ([ROAD-0007] step 3); the Deck-path coverage is in deckBlockObjectDelete.test.ts.
  */
 import { describe, it, expect } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';

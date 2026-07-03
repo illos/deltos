@@ -1,8 +1,9 @@
 /**
  * Typed-URL autolink tests — bare-domain broadening (Jim). detectTrailingUrl (scheme'd + allowlisted bare
- * domains, with the false-positive guard) + the two boundaries: SPACE (the inputRules.ts rule) and ENTER
- * (the autolink keymap + the deckAdapter path's linkifyTrailingUrl). Negatives (etc./file.txt/3.14/U.S./
- * emails) must NOT link.
+ * domains, with the false-positive guard) + the two boundaries, both riding the unified input pipeline
+ * ([ROAD-0007] step 3): SPACE (insert transforms — native handleTextInput AND the Deck's single space) and
+ * ENTER (the shared enter chain both keyboards consume). Negatives (etc./file.txt/3.14/U.S./emails) must
+ * NOT link.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
@@ -11,10 +12,17 @@ import { EditorView } from 'prosemirror-view';
 import { keymap } from 'prosemirror-keymap';
 import { baseKeymap } from 'prosemirror-commands';
 import { deltoSchema } from '../src/editor/schema.js';
-import { buildAutolinkInputRulesPlugin } from '../src/editor/inputRules.js';
-import { detectTrailingUrl, linkifyTrailingUrl, buildAutolinkKeymap, unwrapLinkBackspace } from '../src/editor/autolink.js';
+import { detectTrailingUrl, linkifyTrailingUrl, registerAutolinkTransforms, unwrapLinkBackspace } from '../src/editor/autolink.js';
 import { buildPmKeyActions } from '../src/editor/deckAdapter.js';
-import { createDefaultFormulaRegistry } from '../src/plugins/formula/index.js';
+import { buildKeymapPlugin } from '../src/editor/keymap.js';
+import { TransformRegistry, buildInputPipelinePlugin } from '../src/editor/inputPipeline/index.js';
+
+/** Autolink-only production registrations (space rules + link-unwrap + enter-boundary linkify). */
+function autolinkTransforms(): TransformRegistry {
+  const r = new TransformRegistry();
+  registerAutolinkTransforms(r, deltoSchema);
+  return r;
+}
 
 let view: EditorView | null = null;
 afterEach(() => { view?.destroy(); view = null; document.body.innerHTML = ''; });
@@ -58,12 +66,13 @@ describe('detectTrailingUrl', () => {
   });
 });
 
-describe('autolink — SPACE boundary (inputRules.ts)', () => {
-  const rules = () => [buildAutolinkInputRulesPlugin(deltoSchema)];
-  it('bare google.com + space → link (href https://google.com)', () => {
+describe('autolink — SPACE boundary (pipeline insert rules, native path)', () => {
+  const rules = () => [buildInputPipelinePlugin(autolinkTransforms())];
+  it('bare google.com + space → link (href https://google.com) AND the space is preserved', () => {
     const v = mount('google.com', rules());
     type(v, ' ');
     expect(linkHref(v)).toBe('https://google.com/');
+    expect(v.state.doc.child(1).textContent).toBe('google.com '); // space inserted, not swallowed
   });
   it('www.google.com + space → link', () => {
     const v = mount('www.google.com', rules());
@@ -90,7 +99,7 @@ describe('autolink — SPACE boundary (inputRules.ts)', () => {
 describe('autolink — ENTER boundary (keymap + deckAdapter primitive)', () => {
   const paraCount = (v: EditorView) => { let n = 0; v.state.doc.descendants((nd) => { if (nd.type.name === 'paragraph') n++; }); return n; };
   it('hardware Enter: bare google.com → link AND the newline still happens', () => {
-    const v = mount('google.com', [buildAutolinkKeymap(), keymap(baseKeymap)]);
+    const v = mount('google.com', [buildKeymapPlugin(deltoSchema, autolinkTransforms())]);
     expect(paraCount(v)).toBe(1);
     v.someProp('handleKeyDown', (f) => f(v, new KeyboardEvent('keydown', { key: 'Enter' })));
     expect(linkHref(v)).toBe('https://google.com/');
@@ -102,7 +111,7 @@ describe('autolink — ENTER boundary (keymap + deckAdapter primitive)', () => {
     expect(linkHref(v)).toBe('https://deltos.dev/');
   });
   it('plain Enter with no trailing URL just splits (no link)', () => {
-    const v = mount('hello', [buildAutolinkKeymap(), keymap(baseKeymap)]);
+    const v = mount('hello', [buildKeymapPlugin(deltoSchema, autolinkTransforms())]);
     v.someProp('handleKeyDown', (f) => f(v, new KeyboardEvent('keydown', { key: 'Enter' })));
     expect(linkHref(v)).toBeNull();
     expect(paraCount(v)).toBe(2);
@@ -123,10 +132,9 @@ function mountLinked(text: string, plugins: Plugin[]): EditorView {
 }
 
 describe('autolink — BACKSPACE unwrap + SPACE/ENTER re-link (#74; keymap + Deck)', () => {
-  const registry = createDefaultFormulaRegistry();
 
   it('HARDWARE Backspace at a linked run right edge: strips the mark, keeps text, deletes NO char', () => {
-    const v = mountLinked('google.com', [buildAutolinkKeymap(), keymap(baseKeymap)]);
+    const v = mountLinked('google.com', [buildKeymapPlugin(deltoSchema, autolinkTransforms())]);
     expect(linkHref(v)).toBe('https://google.com/');
     v.someProp('handleKeyDown', (f) => f(v, new KeyboardEvent('keydown', { key: 'Backspace' })));
     expect(linkHref(v)).toBeNull();
@@ -140,7 +148,7 @@ describe('autolink — BACKSPACE unwrap + SPACE/ENTER re-link (#74; keymap + Dec
 
   it('DECK Backspace (keypad path, bypasses the keymap) unwraps the link; a SECOND deletes a char', () => {
     const v = mountLinked('google.com', []);
-    const acts = buildPmKeyActions(() => v, registry);
+    const acts = buildPmKeyActions(() => v, autolinkTransforms());
     acts.backspace();
     expect(linkHref(v)).toBeNull();
     expect(v.state.doc.textContent).toBe('google.com'); // first backspace: unlink only
@@ -148,10 +156,10 @@ describe('autolink — BACKSPACE unwrap + SPACE/ENTER re-link (#74; keymap + Dec
     expect(v.state.doc.textContent).toBe('google.co'); // second: normal char delete
   });
 
-  it('DECK SPACE re-links a trailing URL (the current gap) — links AND inserts the space', () => {
+  it('DECK single SPACE links a trailing URL (the closed Deck gap) — links AND inserts the space', () => {
     const v = mount('google.com', []);
     expect(linkHref(v)).toBeNull();
-    buildPmKeyActions(() => v, registry).sentenceSpace!();
+    buildPmKeyActions(() => v, autolinkTransforms()).insert(' ');
     expect(linkHref(v)).toBe('https://google.com/'); // re-linked on the Deck space path
     expect(v.state.doc.textContent).toBe('google.com '); // space inserted, not consumed
   });

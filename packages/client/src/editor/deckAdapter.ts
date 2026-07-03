@@ -1,16 +1,12 @@
 import type { Command, EditorState } from 'prosemirror-state';
 import { NodeSelection, TextSelection } from 'prosemirror-state';
 import type { EditorView } from 'prosemirror-view';
-import { baseKeymap, deleteSelection, joinBackward } from 'prosemirror-commands';
+import { deleteSelection, joinBackward } from 'prosemirror-commands';
 import type { DeckContext, KeyActions } from '../deck/index.js';
-import { unwrapFormulaBackspace, maybeWrapBoundaryFormula } from '../plugins/formula/index.js';
-import type { FormulaRegistry } from '../plugins/formula/index.js';
-import { runPreInsert } from './inputPipeline/index.js';
+import { runPreInsert, compileEditChain } from './inputPipeline/index.js';
 import type { TransformRegistry } from './inputPipeline/index.js';
-import { linkifyTrailingUrl, unwrapLinkBackspace } from './autolink.js';
-// Block-object chrome (Mechanic A): single-press inline-atom delete. The Deck bypasses the PM keymap, so the
-// SAME command the keymap chains must be invoked here too ([[deck-keypad-bypasses-inputrules-keymap]]).
-import { deleteInlineAtomBackspace } from './plugins/blockAtomChrome.js';
+import { buildEnterChain } from './keymap.js';
+import { deltoSchema } from './schema.js';
 
 /**
  * The deltos↔Deck ADAPTER (#69 §0.5). ALL ProseMirror-specific code lives here, never in Deck core: the
@@ -33,9 +29,14 @@ export function deriveDeckContext(state: EditorState): DeckContext {
  */
 export function buildPmKeyActions(
   getView: () => EditorView | null,
-  formulaRegistry: FormulaRegistry,
   inputTransforms?: TransformRegistry,
 ): KeyActions {
+  // [ROAD-0007] step 3: the Deck consumes the SAME compiled chains the native keymap binds — Enter
+  // (boundary transforms + titleEnter/splitTodoItem/splitListItem/… — the chain the Deck used to MISS,
+  // which is why Enter in a list item did nothing there) and the Backspace edit chain (D3 revert →
+  // formula-unwrap → link-unwrap → atom-delete). No per-feature wiring remains in this adapter.
+  const enterChain: Command = buildEnterChain(deltoSchema, inputTransforms);
+  const backspaceChain: Command = inputTransforms ? compileEditChain(inputTransforms.backspace) : () => false;
   const run = (fn: (v: EditorView) => void) => {
     const v = getView();
     if (!v) return;
@@ -44,35 +45,22 @@ export function buildPmKeyActions(
   };
   return {
     insert: (text) => run((v) => {
-      // [ROAD-0007] the unified pipeline's pre-insert runner: every registered insert transform (formula
-      // '='-auto/'[...]'-bracket first, then markdown — registration order IS §5.4 order; autolink lands at
-      // step 3) fires on the Deck through this ONE generic call — the per-feature dual-wire is dead.
+      // The unified pipeline's pre-insert runner: every registered insert transform (formula → markdown →
+      // autolink, registration order IS §5.4 order) fires on the Deck through this ONE generic call.
       // Fired = the transform consumed the char; else plain insert.
       const sel = v.state.selection;
       if (inputTransforms && runPreInsert(v, sel.from, sel.to, text, inputTransforms.insert)) return;
       v.dispatch(v.state.tr.insertText(text));
     }),
     enter: () => run((v) => {
-      // ENTER boundary on the keypad path (bypasses the keymap): a trailing token is either a FORMULA
-      // (wrap → node) or a URL/bare-domain (linkify → link mark), not both — try formula first, else
-      // autolink — THEN do the normal enter on the updated state.
-      if (!maybeWrapBoundaryFormula(v.state, v.dispatch, formulaRegistry)) linkifyTrailingUrl(v.state, v.dispatch);
-      (baseKeymap['Enter'] as Command)(v.state, v.dispatch, v);
+      enterChain(v.state, v.dispatch, v);
     }),
     // Own the char-delete: baseKeymap.Backspace only joins at block boundaries (the native keyboard did
     // mid-text delete), and inputmode=none suppressed the native keyboard — so the keypad owns it.
     backspace: () => run((v) => {
-      // Inline-formula: a backspace at a formula chip's right edge unwraps it to plain text first (the
-      // custom keyboard bypasses the keymap, so the unwrap command is shared here too).
-      if (unwrapFormulaBackspace(v.state, v.dispatch)) return;
-      // Link (#74): a backspace at a linked run's right edge unwraps it to plain URL text (dual-wired here
-      // for the Deck since it bypasses the keymap). Formula nodes vs link marks don't overlap → order safe.
-      if (unwrapLinkBackspace(v.state, v.dispatch)) return;
-      // Block-object (Mechanic A): a backspace right after a block-object atom (link card / attachment)
-      // deletes it as ONE unit (single press) — the same guarded command the keymap chains, dual-wired here
-      // since the Deck bypasses the keymap. Inert unless the caret flanks an inline atom, so normal char
-      // delete below is untouched. (Formulas are content nodes, not atoms → handled by the unwrap above.)
-      if (deleteInlineAtomBackspace(v.state, v.dispatch)) return;
+      // The shared edit chain first (chip/link unwraps consume the press; atom single-press delete)…
+      if (backspaceChain(v.state, v.dispatch, v)) return;
+      // …then the keypad's own char delete.
       const { selection } = v.state;
       if (!selection.empty) { deleteSelection(v.state, v.dispatch); return; }
       if (selection.$from.parentOffset > 0) { v.dispatch(v.state.tr.delete(selection.from - 1, selection.from)); return; }
@@ -83,11 +71,8 @@ export function buildPmKeyActions(
     // trailing space with a period+space (a new sentence). Anything else (sentence already ends in
     // punctuation, line start, a non-letter before the space) falls back to a plain space (the skip rule).
     sentenceSpace: () => run((v) => {
-      // SPACE boundary on the keypad path (#74): re-link a trailing URL BEFORE the space — the space
-      // autolink is an inputRules.ts rule, so it fires on hardware but NOT the Deck (Jim's primary path).
-      // No char inserted; the already-linked guard prevents double-apply. Then the normal space logic runs
-      // on the updated state.
-      linkifyTrailingUrl(v.state, v.dispatch);
+      // (The old manual linkify call is gone — the FIRST space of a double-space already went through the
+      // insert pipeline, which carries the space-autolink rule; D6 keeps this timing feature Deck-local.)
       const { selection } = v.state;
       if (!selection.empty) { v.dispatch(v.state.tr.insertText(' ')); return; }
       const $from = selection.$from;

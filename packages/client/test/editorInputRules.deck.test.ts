@@ -45,7 +45,7 @@ function fire(before: string, lastChar: string): PMState {
     dispatch: (tr: Transaction) => { state = state.apply(tr); },
     focus: () => {},
   } as unknown as EditorView;
-  buildPmKeyActions(() => view, formulaRegistry, registry).insert(lastChar);
+  buildPmKeyActions(() => view, registry).insert(lastChar);
   return state;
 }
 const block = (st: PMState) => st.doc.child(1);
@@ -107,7 +107,7 @@ describe('Deck markdown — blockId interplay + guards', () => {
       dispatch: (tr: Transaction) => { state = state.apply(tr); },
       focus: () => {},
     } as unknown as EditorView;
-    buildPmKeyActions(() => view, formulaRegistry, registry).insert(' ');
+    buildPmKeyActions(() => view, registry).insert(' ');
     expect(state.doc.child(0).type.name).toBe('title');
     expect(state.doc.child(0).textContent).toBe('# '); // the space still lands as plain text
   });

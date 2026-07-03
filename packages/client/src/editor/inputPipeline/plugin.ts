@@ -21,11 +21,15 @@ export function buildInputPipelinePlugin(registry: TransformRegistry): Plugin {
     key: inputPipelineKey,
     state: {
       init: (): AppliedTransformRecord | null => null,
-      // prosemirror-inputrules' recipe verbatim: hold the record set by the runner's meta; any other
-      // selection/doc change clears it (the revert window is exactly "immediately after the transform").
+      // prosemirror-inputrules' recipe: hold the record set by the runner's meta; any other selection/doc
+      // change clears it (the revert window is exactly "immediately after the transform"). One deltos
+      // addition: an APPENDED transaction (meta 'appendedTransaction' — e.g. uniqueBlockIdPlugin minting
+      // ids for a rule-created list wrapper in the same dispatch cycle) must NOT close the window — its
+      // root either set the record (our conversion) or already cleared it, so `prev` is the right answer.
       apply(tr, prev) {
         const stored = tr.getMeta(inputPipelineKey) as AppliedTransformRecord | undefined;
         if (stored) return stored;
+        if (tr.getMeta('appendedTransaction')) return prev;
         return tr.selectionSet || tr.docChanged ? null : prev;
       },
     },

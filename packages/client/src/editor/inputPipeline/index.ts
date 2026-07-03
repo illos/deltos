@@ -13,3 +13,4 @@ export { buildInputPipelinePlugin } from './plugin.js';
 export { inputPipelineKey } from './key.js';
 export type { AppliedTransformRecord } from './key.js';
 export { compileEditChain } from './editChains.js';
+export { undoLastTransform } from './undoTransform.js';

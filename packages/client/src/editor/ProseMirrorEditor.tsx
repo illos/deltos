@@ -8,9 +8,8 @@ import type { BlockBody } from '@deltos/shared';
 import { deltoSchema } from './schema.js';
 import { uniqueBlockIdPlugin } from './plugins/blockId.js';
 import { buildKeymapPlugin } from './keymap.js';
-import { registerMarkdownTransforms, buildAutolinkInputRulesPlugin } from './inputRules.js';
-import { TransformRegistry, buildInputPipelinePlugin } from './inputPipeline/index.js';
-import { buildAutolinkKeymap } from './autolink.js';
+import { buildInputPipelinePlugin } from './inputPipeline/index.js';
+import { buildEditorTransformRegistry } from './editorTransforms.js';
 import { spineToPmDoc, pmDocToSpine, extractTitleFromDoc } from './serializer.js';
 import { buildMarkdownPastePlugin } from './markdownPaste.js';
 import { buildPluginIslandNodeViews } from './nodeviews/PluginIsland.js';
@@ -20,7 +19,7 @@ import { buildPluginIslandNodeViews } from './nodeviews/PluginIsland.js';
 // the editor assembled inline before. The core formula machinery (plugins + NodeView) is still built here
 // FROM the aggregated registry. Editor core never imports a plugin directly; this is the single seam.
 import { pluginRegistry, collectEagerContributions } from '../plugins/runtime/index.js';
-import { buildFormulaPlugins, registerFormulaTransforms, buildFormulaNodeView } from '../plugins/formula/index.js';
+import { buildFormulaNodeView } from '../plugins/formula/index.js';
 import { TodoItemView } from './nodeviews/TodoItem.js';
 import { sliceToPlainText } from './clipboard.js';
 import { EditorControlStrip } from './EditorControlStrip.js';
@@ -188,20 +187,14 @@ export function ProseMirrorEditor({
   // formula registry it carries is the same MATH+HEXCOLOR set createDefaultFormulaRegistry() produced.
   const contributions = useRef(collectEagerContributions(pluginRegistry)).current;
   const formulaRegistry = contributions.formulaRegistry;
-  // [ROAD-0007] The unified input-transform registry: each feature registers ONCE here and fires on native
-  // typing (pipeline plugin) AND the Deck (deckAdapter's generic runner call) — no per-feature dual-wire.
-  // Registration order IS execution order (design §5.4): formula BEFORE markdown, so a trailing run its
-  // registry claims wins over a markdown pattern (the old plugin order, preserved). Autolink migrates at
-  // step 3. Stable per editor instance, like the contributions.
-  const inputTransforms = useRef((() => {
-    const r = new TransformRegistry();
-    registerFormulaTransforms(r, formulaRegistry);
-    registerMarkdownTransforms(r, deltoSchema);
-    return r;
-  })()).current;
+  // [ROAD-0007] The unified input-transform registry: each feature registers ONCE (the canonical assembly
+  // in editorTransforms.ts owns the set + the §5.4 order) and fires on native typing (pipeline plugin +
+  // keymap chains) AND the Deck (deckAdapter's generic calls) — no per-feature dual-wire anywhere.
+  // Stable per editor instance, like the contributions.
+  const inputTransforms = useRef(buildEditorTransformRegistry(deltoSchema, formulaRegistry)).current;
   // The keypad's abstract KeyActions, wired to PM via the adapter (closes over viewRef → stable across
   // view re-creation). The Deck loadout registry for this host: the 'text' context → the keypad.
-  const deckActions = useRef(buildPmKeyActions(() => viewRef.current, formulaRegistry, inputTransforms)).current;
+  const deckActions = useRef(buildPmKeyActions(() => viewRef.current, inputTransforms)).current;
   // #69 Deck link fix: inline URL+TITLE entry typed ON THE KEYPAD (window.prompt is unreliable in an
   // installed PWA / inputmode=none). A clean two-field form (Title = the visible clickable text, URL = the
   // href) — drops the old select-text model. While open, the keypad routes into whichever field is active
@@ -595,20 +588,14 @@ export function ProseMirrorEditor({
         (event) => paletteDispatchRef.current(event),
         paletteEnabledRef,
       ),
-      // Inline-formula SECOND: its Backspace-unwrap keymap must intercept before the base keymap (a chip-edge
-      // backspace unwraps; everything else falls through). Its '=' auto + '[...]' bracket INSERT triggers
-      // ride the input pipeline (registered above); this is the edit-surface keymap only (step 3 migrates it).
-      ...buildFormulaPlugins(formulaRegistry),
-      // Autolink ENTER boundary: linkify a trailing URL/bare-domain on Enter (the space boundary is an
-      // inputRules.ts rule). Before the base keymap so it intercepts Enter; returns false when no trailing URL.
-      buildAutolinkKeymap(),
-      buildKeymapPlugin(deltoSchema),
-      // The input PIPELINE (formula + markdown transforms; [ROAD-0007]) MUST precede uniqueBlockIdPlugin so its
-      // appendTransaction runs AFTER the transform's transaction and mints ids for any nodes the
-      // transform created (divider, list wrappers). The residual autolink space rules keep the same
-      // slot/order they had inside the old single inputRules plugin (they migrate at step 3).
+      // ONE keymap ([ROAD-0007] step 3): Enter/Backspace/Delete run the pipeline's compiled edit chains
+      // (formula unwrap, link unwrap, atom delete, boundary wraps, D3 revert) ahead of the base handlers —
+      // the separate formula/autolink keymap plugins are gone; the Deck consumes the same chains.
+      buildKeymapPlugin(deltoSchema, inputTransforms),
+      // The input PIPELINE (formula + markdown + autolink inserts; [ROAD-0007]) MUST precede
+      // uniqueBlockIdPlugin so its appendTransaction runs AFTER the transform's transaction and mints ids
+      // for any nodes the transform created (divider, list wrappers).
       buildInputPipelinePlugin(inputTransforms),
-      buildAutolinkInputRulesPlugin(deltoSchema),
       history({ newGroupDelay: HISTORY_GROUP_DELAY_MS }),
       dropCursor(),
       gapCursor(),

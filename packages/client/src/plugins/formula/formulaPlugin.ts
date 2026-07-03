@@ -1,7 +1,5 @@
-import type { Plugin, Command, EditorState, Transaction } from 'prosemirror-state';
+import type { Command, EditorState, Transaction } from 'prosemirror-state';
 import type { Node as PmNode, Schema } from 'prosemirror-model';
-import { keymap } from 'prosemirror-keymap';
-import { baseKeymap } from 'prosemirror-commands';
 import type { TransformRegistry } from '../../editor/inputPipeline/index.js';
 import type { FormulaRegistry } from './formulaTypes.js';
 import './formula.css';
@@ -11,11 +9,11 @@ import './formula.css';
  * Wrapping builds a content-bearing `formula` NODE (spec = its text content); the type-dispatched NodeView
  * renders the output. Math is the first type; the logic is type-generic via the injected registry.
  *
- * INSERT triggers ('=' auto + '[...]' bracket) are registered ONCE into the unified input pipeline
- * ({@link registerFormulaTransforms}, [ROAD-0007] step 2) and fire on native typing AND the Deck through
- * the pipeline's generic call sites — the old per-feature dual-wire
- * ([[deck-keypad-bypasses-inputrules-keymap]]) is gone. The EDIT-surface commands (backspace/Delete
- * unwraps, the Enter boundary-wrap) remain shared keymap+deckAdapter commands until migration step 3.
+ * ALL formula input behavior registers ONCE into the unified input pipeline via
+ * {@link registerFormulaTransforms} ([ROAD-0007] steps 2+3): the INSERT triggers ('=' auto + '[...]'
+ * bracket) AND the EDIT surface (backspace/Delete unwraps, the Enter boundary-wrap). Both keyboards
+ * consume the compiled chains generically — the old per-feature dual-wire
+ * ([[deck-keypad-bypasses-inputrules-keymap]]) is gone; this module owns no keymap plugin anymore.
  */
 
 /** Build a formula node carrying `spec` as its editable text content (empty content is invalid → omitted). */
@@ -99,6 +97,15 @@ export function registerFormulaTransforms(transforms: TransformRegistry, registr
       return state.tr.replaceWith(start, end, formulaNode(state.schema, match.type.id, match.spec));
     },
   });
+  // EDIT surface ([ROAD-0007] step 3) — the unwraps + the Enter boundary-wrap join the shared chains.
+  // Chain positions (design §3.4, load-bearing): backspace/forwardDelete unwraps run before atom-delete;
+  // the boundary-wrap runs BEFORE linkify on Enter ("a trailing token is either a formula or a URL").
+  transforms.addEdit('backspace', { id: 'formula-unwrap', cmd: unwrapFormulaBackspace });
+  transforms.addEdit('forwardDelete', { id: 'formula-unwrap-delete', cmd: unwrapFormulaDelete });
+  transforms.addEdit('enterBoundary', {
+    id: 'formula-boundary-wrap',
+    cmd: (state, dispatch) => maybeWrapBoundaryFormula(state, dispatch, registry),
+  });
 }
 
 /**
@@ -165,23 +172,3 @@ export const unwrapFormulaDelete: Command = (state, dispatch): boolean => {
   return true;
 };
 
-/** The inline-formula EDIT-surface plugin, bound to a registry: the unwrap/boundary keymap, ordered
- *  BEFORE the base keymap. Insert triggers live in the pipeline ({@link registerFormulaTransforms}). */
-export function buildFormulaPlugins(registry: FormulaRegistry): Plugin[] {
-  return [
-    keymap({
-      Backspace: unwrapFormulaBackspace,
-      // SPIKE (Mechanic B): forward-Delete is the symmetric unwrap (caret right BEFORE the chip).
-      Delete: unwrapFormulaDelete,
-      // ENTER is a boundary too (Jim): wrap a trailing boundary token (bare hex), THEN do the normal Enter
-      // on the updated state. Returns false when there's no boundary formula, so the editor's normal Enter
-      // chain (lists/todos) is untouched in the common case.
-      Enter: (state, dispatch, view) => {
-        if (!dispatch || !view) return false;
-        if (!maybeWrapBoundaryFormula(state, dispatch, registry)) return false;
-        baseKeymap['Enter']!(view.state, view.dispatch, view); // normal Enter on the post-wrap state
-        return true;
-      },
-    }),
-  ];
-}

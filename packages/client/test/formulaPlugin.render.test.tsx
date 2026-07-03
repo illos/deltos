@@ -10,16 +10,14 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { EditorState, TextSelection } from 'prosemirror-state';
 import { EditorView } from 'prosemirror-view';
-import { keymap } from 'prosemirror-keymap';
-import { baseKeymap } from 'prosemirror-commands';
 import { deltoSchema } from '../src/editor/schema.js';
 import {
   createDefaultFormulaRegistry,
-  buildFormulaPlugins,
   registerFormulaTransforms,
   buildFormulaNodeView,
   unwrapFormulaBackspace,
 } from '../src/plugins/formula/index.js';
+import { buildKeymapPlugin } from '../src/editor/keymap.js';
 import { TransformRegistry, buildInputPipelinePlugin } from '../src/editor/inputPipeline/index.js';
 import { buildPmKeyActions } from '../src/editor/deckAdapter.js';
 import { spineToPmDoc, pmDocToSpine, type TextSegment } from '../src/editor/serializer.js';
@@ -30,17 +28,17 @@ afterEach(() => { view?.destroy(); view = null; document.body.innerHTML = ''; })
 
 const registry = createDefaultFormulaRegistry();
 
-/** The formula insert triggers ride the unified input pipeline ([ROAD-0007] step 2) — the mounts carry
- *  the pipeline plugin with the formula transforms registered, exactly as production assembles it. */
+/** ALL formula input behavior rides the unified input pipeline ([ROAD-0007] steps 2+3) — insert triggers
+ *  AND the edit surface (unwraps, Enter boundary-wrap). The mounts carry the pipeline plugin + the ONE
+ *  keymap consuming the compiled chains, exactly as production assembles it. */
 function formulaTransforms(): TransformRegistry {
   const r = new TransformRegistry();
   registerFormulaTransforms(r, registry);
   return r;
 }
 const mountPlugins = () => [
-  ...buildFormulaPlugins(registry),
   buildInputPipelinePlugin(formulaTransforms()),
-  keymap(baseKeymap),
+  buildKeymapPlugin(deltoSchema, formulaTransforms()),
 ];
 
 /** Mount an editor (formula plugins + NodeView) whose body paragraph holds `text`, caret at the end. */
@@ -70,7 +68,7 @@ function mountFromBody(body: BlockBody): EditorView {
 
 /** The Deck path: the SAME generic runner call deckAdapter.insert makes in production. */
 function deckInsert(v: EditorView, ch: string): void {
-  buildPmKeyActions(() => v, registry, formulaTransforms()).insert(ch);
+  buildPmKeyActions(() => v, formulaTransforms()).insert(ch);
 }
 
 function type(v: EditorView, ch: string): void {
@@ -301,7 +299,7 @@ describe('formula framework — ENTER as a boundary trigger', () => {
 
   it('keypad Enter (deckAdapter.enter): bare hex wraps to a swatch AND the newline still happens', () => {
     const v = mountWithText('bg #00ff00');
-    const actions = buildPmKeyActions(() => v, registry);
+    const actions = buildPmKeyActions(() => v, formulaTransforms());
     actions.enter();
     expect(formulaType(v)).toBe('hexcolor');
     expect(swatch(v)!.style.backgroundColor).toBe('rgb(0, 255, 0)');
