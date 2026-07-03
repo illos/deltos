@@ -178,7 +178,7 @@ export function SessionsSection() {
           </div>
         ) : (
           <button
-            className="settings__action settings__action--danger"
+            className="settings__action settings__action--everywhere"
             onClick={() => setConfirmOthers(true)}
           >
             Sign out everywhere else

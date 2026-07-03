@@ -39,8 +39,8 @@ export function SettingsPane({ variant, title, onBack, backLabel = 'Settings', c
             ‹ {backLabel}
           </button>
         )}
-        <span className="settings__title">{title}</span>
       </header>
+      <h2 className="settings__title">{title}</h2>
       {children}
     </div>
   );

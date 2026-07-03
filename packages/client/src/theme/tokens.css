@@ -160,7 +160,7 @@
   --note: 17.5px; --line: 1.65;
   --lt: 15px; --ltw: 600;
   --nav-item: 15px; --nav-itemw: 400;
-  --quote: 17.5px;
+  --quote: 19px;
   --list-note: 15px;
 }
 
@@ -171,7 +171,7 @@
   --note: 16.5px; --line: 1.62;
   --lt: 14.5px; --ltw: 600;
   --nav-item: 14.5px; --nav-itemw: 500;
-  --quote: 16.5px;
+  --quote: 18px;
   --list-note: 14.5px;
 }
 
@@ -195,7 +195,7 @@
   --note: 16px; --line: 1.58;
   --lt: 14.5px; --ltw: 500;
   --nav-item: 14.5px; --nav-itemw: 500;
-  --quote: 16px;
+  --quote: 18px;
   --list-note: 14.5px;
 }
 

@@ -952,11 +952,15 @@
   box-sizing: border-box;
 }
 
+/* Mobile nav row: the "‹ back" affordance on its own row with a bottom hairline (iOS pushed-nav look).
+   Shared by the /settings LIST landing (‹ Notes) and every pushed sub-screen (‹ Settings / ‹ Account). */
 .settings__header {
   display: flex;
   align-items: center;
   gap: 1rem;
-  margin-bottom: 1.5rem;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
 }
 
 .settings__back {
@@ -972,12 +976,13 @@
 
 .settings__back:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* Mobile sub-screen section title — the iOS large title under the back row (--ff 22/600 --ink). */
 .settings__title {
+  font-family: var(--ff);
   font-weight: 600;
-  font-size: 0.9rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--secondary);
+  font-size: 1.375rem; /* 22px */
+  color: var(--ink);
+  margin: 0.5rem 0 1rem;
 }
 
 .settings__section {
@@ -987,13 +992,16 @@
   flex-direction: column;
 }
 
+/* Section eyebrow — mono metadata label opening each section (10px, tracked, uppercase, --faint),
+   per the handoff "each section opens with a mono eyebrow label". Mirrors the .dt-label invariant. */
 .settings__section-title {
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
-  color: var(--secondary);
-  padding: 0.85rem 0 0.35rem;
+  color: var(--faint);
+  padding: 0.85rem 0 0.5rem;
   margin: 0;
 }
 
@@ -1041,7 +1049,7 @@
 }
 
 .settings__row-value--mono {
-  font-family: monospace;
+  font-family: var(--mono);
   font-size: 0.8rem;
   max-width: 180px;
   overflow: hidden;
@@ -1109,8 +1117,11 @@
 .settings__action:disabled { opacity: 0.4; cursor: not-allowed; }
 .settings__action:not(:disabled):active { background: rgba(255,255,255,0.08); }
 
-.settings__action--primary { background: #4a6cf7; color: #fff; }
-.settings__action--primary:not(:disabled):active { background: #3b5de0; }
+.settings__action--primary { background: var(--accent); color: var(--on-accent); }
+.settings__action--primary:not(:disabled):active { filter: brightness(0.92); }
+
+/* "Sign out everywhere else" — full-width soft-fill (--sel) with accent text (handoff §Security). */
+.settings__action--everywhere { background: var(--sel); color: var(--accent); }
 
 .settings__action--danger { color: #e05252; }
 
@@ -1229,6 +1240,7 @@
 }
 
 .settings__token-meta {
+  font-family: var(--mono);
   font-size: 0.78rem;
   color: var(--secondary);
 }
@@ -1244,10 +1256,11 @@
 
 /* Mobile grouped LIST (the /settings landing on a phone). Big title + full-width icon/label/chevron rows. */
 .settings__screen-title {
-  font-size: 1.75rem;
-  font-weight: 700;
+  font-family: var(--ff);
+  font-size: 1.6875rem; /* 27px */
+  font-weight: var(--h1w);
   color: var(--ink);
-  margin: 0 0 1rem;
+  margin: 0.25rem 0 1rem;
 }
 
 .settings__list {
@@ -1279,20 +1292,37 @@
   margin: 0;
   padding: 0;
   width: 100%;
+  /* Column with a fixed header + a single scrolling body (the header hairline stays put while the
+     body scrolls). Fills region 3, which is itself a flex column. */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .settings__pane-header {
   padding: 20px 30px 16px;
   border-bottom: 1px solid var(--border);
+  flex: none;
 }
 .settings__pane-title {
   margin: 0;
-  font-size: 1.375rem;
+  font-family: var(--ff);
+  font-size: 1.375rem; /* 22px */
   font-weight: 600;
   color: var(--ink);
 }
 .settings__pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: 22px 30px 44px;
+  /* Custom scrollbar: 9px, --handle thumb (radius 5), transparent track (handoff §Content pane). */
+  scrollbar-width: thin;
+  scrollbar-color: var(--handle) transparent;
 }
+.settings__pane-body::-webkit-scrollbar { width: 9px; }
+.settings__pane-body::-webkit-scrollbar-track { background: transparent; }
+.settings__pane-body::-webkit-scrollbar-thumb { background: var(--handle); border-radius: 5px; }
 .settings__pane-body > * {
   max-width: 560px;
 }
@@ -1323,7 +1353,8 @@
 }
 .settings-rail__title {
   margin: 0;
-  font-size: 1.25rem;
+  font-family: var(--ff);
+  font-size: 1.25rem; /* 20px */
   font-weight: 600;
   color: var(--ink);
 }
@@ -1352,6 +1383,33 @@
   color: var(--ink);
 }
 .settings-rail__tab--active .settings-rail__tab-icon { color: var(--accent); }
+
+/* iOS-style toggle (Editor tab switches). 42×24 track (radius 12), 18×18 white knob (3px inset →
+   left 21px when on), track --handle ↔ --accent, .15s ease. The hosting button keeps role="switch" +
+   aria-checked; this is the aria-hidden visual. Driven by data-on ('true' | 'false'). */
+.settings__toggle {
+  position: relative;
+  flex-shrink: 0;
+  width: 42px;
+  height: 24px;
+  border-radius: 12px;
+  background: var(--handle);
+  transition: background 0.15s ease;
+}
+.settings__toggle::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: left 0.15s ease;
+}
+.settings__toggle[data-on="true"] { background: var(--accent); }
+.settings__toggle[data-on="true"]::after { left: 21px; }
 
 /* ── Note editor ──────────────────────────────────────────────────────────────── */
 
@@ -3155,9 +3213,9 @@ a.auth__link { display: inline; }
 .appearance__chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .appearance__chip {
   display: inline-flex; align-items: center; gap: 8px;
-  padding: 8px 13px; border-radius: 7px;
+  padding: 8px 13px; border-radius: 9px;
   border: 1px solid var(--border); background: var(--paper);
-  color: var(--secondary); font-size: 13px; line-height: 1; letter-spacing: 0.2px;
+  color: var(--body); font-size: 13px; line-height: 1; letter-spacing: 0.2px;
   white-space: nowrap; cursor: pointer; transition: all 0.12s ease;
   min-height: 36px;            /* comfortable tap target */
 }

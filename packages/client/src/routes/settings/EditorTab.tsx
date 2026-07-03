@@ -43,9 +43,7 @@ export function EditorTab({ variant }: { variant: SettingsVariant }) {
             onClick={() => setCustomKeyboard(!customKeyboard)}
           >
             <span className="settings__row-label">Custom keyboard (experimental)</span>
-            <span className={`settings__row-value${customKeyboard ? '' : ' settings__row-value--muted'}`}>
-              {customKeyboard ? 'On' : 'Off'}
-            </span>
+            <span className="settings__toggle" data-on={customKeyboard ? 'true' : 'false'} aria-hidden />
           </button>
         )}
         {/* #69 §5 local spellcheck — default ON, device-local. ON = live squiggles + tap-to-correct (engine
@@ -57,9 +55,7 @@ export function EditorTab({ variant }: { variant: SettingsVariant }) {
           onClick={() => setSpellcheck(!spellcheck)}
         >
           <span className="settings__row-label">Spellcheck</span>
-          <span className={`settings__row-value${spellcheck ? '' : ' settings__row-value--muted'}`}>
-            {spellcheck ? 'On' : 'Off'}
-          </span>
+          <span className="settings__toggle" data-on={spellcheck ? 'true' : 'false'} aria-hidden />
         </button>
       </section>
     </SettingsPane>
