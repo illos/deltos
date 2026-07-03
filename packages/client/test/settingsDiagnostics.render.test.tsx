@@ -23,9 +23,9 @@ vi.mock('../src/lib/diagnosticSnapshot.js', () => ({ exportDiagnosticSnapshot: e
 async function mountSettings() {
   const { SettingsRoute } = await import('../src/routes/SettingsRoute.js');
   return render(
-    <MemoryRouter initialEntries={['/settings']}>
+    <MemoryRouter initialEntries={['/settings/about']}>
       <Routes>
-        <Route path="/settings" element={<SettingsRoute />} />
+        <Route path="/settings/:tab" element={<SettingsRoute />} />
         <Route path="/login" element={<div>Login</div>} />
         <Route path="/" element={<div>Home</div>} />
       </Routes>

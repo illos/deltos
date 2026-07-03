@@ -497,6 +497,14 @@ export function AuthedShell() {
               </Suspense>
             }
           />
+          <Route
+            path="/settings/:tab"
+            element={
+              <Suspense fallback={<div className="auth"><div className="auth__spinner" aria-label="Loading" /></div>}>
+                <SettingsRoute />
+              </Suspense>
+            }
+          />
           <Route path="/" element={<CollectionView notebookId={notebookId} />} />
           {/* Auth routes are the gate — redirect home in the shell (session re-established by init on reload). */}
           <Route path="/login" element={<Navigate to="/" replace />} />

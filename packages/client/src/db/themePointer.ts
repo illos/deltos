@@ -23,8 +23,9 @@ export const PALETTES: readonly Palette[] = ['bone', 'graphite', 'manila', 'embe
 export const VOICES: readonly Voice[] = ['serif', 'sans', 'mono', 'grotesk'];
 export const MODES: readonly Mode[] = ['light', 'dark', 'system'];
 
-/** Decision #5: default = Ember × Sans × system (placeholder until the Appearance picker, Lane 5). */
-export const DEFAULT_THEME: ThemeState = { palette: 'ember', voice: 'sans', mode: 'system' };
+/** Settings-revamp handoff default = Graphite × Sans × light. Fresh devices only (a stored theme row
+ *  overrides this on init); flipping it never migrates an existing device's saved preference. */
+export const DEFAULT_THEME: ThemeState = { palette: 'graphite', voice: 'sans', mode: 'light' };
 
 const THEME_KEY = 'appearance-theme'; // single deviceState row, JSON-encoded ThemeState
 

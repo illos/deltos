@@ -98,6 +98,46 @@ export function Trash(props: IconProps) {
   );
 }
 
+/** User — head + shoulders (Account). */
+export function User(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.6} {...props}>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 20a8 8 0 0 1 16 0" />
+    </IconBase>
+  );
+}
+
+/** Sun — appearance / theme (rays around a disc). */
+export function Sun(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.6} {...props}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" />
+    </IconBase>
+  );
+}
+
+/** Activity — an ECG / pulse line (Account activity feed). */
+export function Activity(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.6} {...props}>
+      <path d="M3 12h4l3 7 4-14 3 7h4" />
+    </IconBase>
+  );
+}
+
+/** Info — circle with an "i" (About). */
+export function Info(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.6} {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <line x1="12" y1="11" x2="12" y2="16" />
+      <circle cx="12" cy="7.75" r="0.9" fill="currentColor" stroke="none" />
+    </IconBase>
+  );
+}
+
 /** Settings — sliders/faders (two rails + knobs). */
 export function SettingsSliders(props: IconProps) {
   return (

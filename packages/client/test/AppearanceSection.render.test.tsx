@@ -74,8 +74,8 @@ describe('AppearanceSection — active state reflects the store', () => {
   it('exactly one chip per group is active (is-active + aria-checked), tracking the value', async () => {
     const { container } = render(<AppearanceSection />);
 
-    // Default boot = Ember / Sans / System → those three chips are the active ones.
-    for (const [group, active] of [['Palette', 'Ember'], ['Type voice', 'Sans'], ['Mode', 'System']] as const) {
+    // Default boot = Graphite / Sans / Light → those three chips are the active ones.
+    for (const [group, active] of [['Palette', 'Graphite'], ['Type voice', 'Sans'], ['Mode', 'Light']] as const) {
       const grp = screen.getByRole('radiogroup', { name: group });
       const checked = within(grp).getAllByRole('radio').filter((b) => b.getAttribute('aria-checked') === 'true');
       expect(checked.length, `${group} active count`).toBe(1);

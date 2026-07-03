@@ -9,7 +9,7 @@ import { useThemeStore, applyToRoot, resolvedMode } from '../src/lib/themeStore.
 
 /**
  * Lane-0 acceptance gate (UI visual refresh). Proves the theme foundation:
- *   - default applies (no IDB row → Ember × Sans × system on <html>)
+ *   - default applies (no IDB row → Graphite × Sans × light on <html>)
  *   - a swap flips the root axes AND persists to device-local IDB
  *   - corrupt/forward-incompatible rows degrade per-field to the default
  *   - mode=system resolves the OS preference (prefers-color-scheme)
@@ -30,11 +30,11 @@ beforeEach(async () => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('themeStore — default + persistence', () => {
-  it('default applies: no IDB row boots Ember × Sans × system on <html>', async () => {
+  it('default applies: no IDB row boots Graphite × Sans × light on <html>', async () => {
     await useThemeStore.getState().init();
-    expect(html().dataset.palette).toBe('ember');
+    expect(html().dataset.palette).toBe('graphite');
     expect(html().dataset.voice).toBe('sans');
-    expect(html().dataset.mode).toBe('system');
+    expect(html().dataset.mode).toBe('light');
     expect(useThemeStore.getState()._ready).toBe(true);
   });
 
@@ -62,7 +62,7 @@ describe('themeStore — default + persistence', () => {
 
   it('a corrupt / forward-incompatible row degrades per-field to the default', async () => {
     await db.deviceState.put({ key: 'appearance-theme', value: JSON.stringify({ palette: 'neon', voice: 'sans', mode: 'dark' }) });
-    expect(await readTheme()).toEqual({ palette: 'ember', voice: 'sans', mode: 'dark' });
+    expect(await readTheme()).toEqual({ palette: 'graphite', voice: 'sans', mode: 'dark' });
 
     await db.deviceState.put({ key: 'appearance-theme', value: 'not json{' });
     expect(await readTheme()).toEqual(DEFAULT_THEME);

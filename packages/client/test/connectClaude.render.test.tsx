@@ -29,9 +29,9 @@ import type { AgentToken } from '@deltos/shared';
 async function mountSettings() {
   const { SettingsRoute } = await import('../src/routes/SettingsRoute.js');
   return render(
-    <MemoryRouter initialEntries={['/settings']}>
+    <MemoryRouter initialEntries={['/settings/connections']}>
       <Routes>
-        <Route path="/settings" element={<SettingsRoute />} />
+        <Route path="/settings/:tab" element={<SettingsRoute />} />
         <Route path="/login" element={<div data-testid="login-page">Login</div>} />
         <Route path="/" element={<div data-testid="home-page">Home</div>} />
       </Routes>

@@ -1238,6 +1238,121 @@
   gap: 0.5rem;
 }
 
+/* ── Settings-revamp: six-tab shell (rail + desktop pane + mobile grouped list) ──────────────────
+   Structure lane — reuses the existing .settings row/section idioms; pixel-fidelity polish follows
+   in a later lane. Theme-token driven (--paper/--list/--sel/--accent/--border/--ink/--body). */
+
+/* Mobile grouped LIST (the /settings landing on a phone). Big title + full-width icon/label/chevron rows. */
+.settings__screen-title {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0 0 1rem;
+}
+
+.settings__list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+}
+
+.settings__list-row {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  padding: 0.95rem 0.25rem;
+  border-bottom: 1px solid var(--border);
+  color: inherit;
+  text-decoration: none;
+  touch-action: manipulation;
+}
+.settings__list-row:active { background: var(--sel); }
+
+.settings__list-icon { color: var(--accent); flex-shrink: 0; }
+.settings__list-label { flex: 1; font-size: 1.03rem; color: var(--ink); }
+.settings__list-chevron { color: var(--faint); flex-shrink: 0; }
+
+/* Desktop content pane — the active tab body in region 3. Header = tab title + hairline; body scrolls,
+   content constrained. (The nav is the rail in the middle pane, so no back button here.) */
+.settings--desktop {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+.settings__pane-header {
+  padding: 20px 30px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.settings__pane-title {
+  margin: 0;
+  font-size: 1.375rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.settings__pane-body {
+  padding: 22px 30px 44px;
+}
+.settings__pane-body > * {
+  max-width: 560px;
+}
+
+/* Desktop settings tab RAIL — rendered in the middle (list) pane on /settings. Header (‹ Notes + title)
+   then the six tab rows; active row = --sel fill + accent left-border + accent icon. */
+.settings-rail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 17px 12px 12px;
+  overflow-y: auto;
+}
+.settings-rail__header { padding: 0 4px 12px; }
+.settings-rail__back {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0 0 10px;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.settings-rail__title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.settings-rail__tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-rail__tab {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px;
+  border-radius: 8px;
+  border-left: 2px solid transparent;
+  color: var(--body);
+  text-decoration: none;
+  cursor: pointer;
+}
+.settings-rail__tab:hover { background: var(--sel); }
+.settings-rail__tab-icon { color: var(--secondary); flex-shrink: 0; }
+.settings-rail__tab-label { flex: 1; font-size: 0.95rem; }
+.settings-rail__tab--active {
+  background: var(--sel);
+  border-left-color: var(--accent);
+  color: var(--ink);
+}
+.settings-rail__tab--active .settings-rail__tab-icon { color: var(--accent); }
+
 /* ── Note editor ──────────────────────────────────────────────────────────────── */
 
 /* §3 note meta toolbar — edited-time (left) · Synced + version-history + ⋯ (right). padding 15px 26px. */

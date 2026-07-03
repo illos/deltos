@@ -1,9 +1,10 @@
 import { lazy, Suspense } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useMatch } from 'react-router-dom';
 import type { ComponentType } from 'react';
 import type { NotebookId } from '@deltos/shared';
 import type { CollectionViewProps } from '../lib/collectionViews.js';
 import { NavContent } from '../views/NavContent.js';
+import { SettingsRail } from '../routes/settings/SettingsRail.js';
 import { NewNote } from '../routes/NewNote.js';
 import { TrashRoute } from '../routes/TrashRoute.js';
 import { SearchRoute } from '../routes/SearchRoute.js';
@@ -42,6 +43,12 @@ interface ThreeRegionShellProps {
  */
 export function ThreeRegionShell({ notebookId, CollectionView }: ThreeRegionShellProps) {
   const { width, handleProps } = useResizableListPane();
+  // On a /settings route the middle (list) pane becomes the settings tab RAIL, replacing the notes
+  // list — the same slot the notes flow fills, so pane widths/borders stay consistent (settings-revamp
+  // desktop 3-column shell: notebooks nav → tab rail → content).
+  const settingsIndexMatch = useMatch('/settings');
+  const settingsTabMatch = useMatch('/settings/:tab');
+  const onSettings = settingsIndexMatch != null || settingsTabMatch != null;
   return (
     <div className="shell-3region">
       <aside className="shell-3region__nav" aria-label="Notebooks">
@@ -49,7 +56,7 @@ export function ThreeRegionShell({ notebookId, CollectionView }: ThreeRegionShel
       </aside>
 
       <section className="shell-3region__list" style={{ width }}>
-        <CollectionView notebookId={notebookId} />
+        {onSettings ? <SettingsRail /> : <CollectionView notebookId={notebookId} />}
       </section>
 
       <ResizeHandle handle={handleProps} />
@@ -70,6 +77,14 @@ export function ThreeRegionShell({ notebookId, CollectionView }: ThreeRegionShel
           <Route path="/search" element={<SearchRoute />} />
           <Route
             path="/settings"
+            element={
+              <Suspense fallback={<div className="empty-note" />}>
+                <SettingsRoute />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/settings/:tab"
             element={
               <Suspense fallback={<div className="empty-note" />}>
                 <SettingsRoute />
