@@ -45,8 +45,7 @@ import { deriveActiveState, EMPTY_ACTIVE_STATE } from './editorState.js';
 import type { EditorActiveState } from './editorState.js';
 import type { ToolDescriptor } from './editorTools.js';
 import { useIsDesktop } from '../lib/useIsDesktop.js';
-import { useTouchPrimary } from '../lib/useTouchPrimary.js';
-import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
+import { useKeypadMode } from '../lib/useKeypadMode.js';
 import { useKeypadSwipe, useScrollHideKeypad } from '../lib/useKeypadSwipe.js';
 import { deckClearanceScroll, findScrollParent, DECK_CLEARANCE_MARGIN_PX } from '../lib/deckClearance.js';
 import { registerPendingEditFlush } from '../lib/pendingEditFlush.js';
@@ -126,17 +125,16 @@ export function ProseMirrorEditor({
   const recheckSpellRef = useRef<(() => void) | null>(null);
   const dictWordsRef = useRef<string[]>([]);
   const isDesktop = useIsDesktop();
-  // #69: the custom keyboard is opt-in (Settings, default OFF) + touch-first-only. This setting gates ONLY
-  // the KEYPAD vs the native keyboard HERE — NOT the Deck's presence (the Deck is always mounted on a
-  // touch-first device; that's the shell's call, App.tsx). When ON the editor suppresses the native
-  // keyboard (inputmode=none) and publishes its keypad loadout to the Deck; when OFF the native keyboard
-  // types, MobileEditorBar shows, and the editor publishes NO loadout (the Deck stays on its nav loadout,
-  // or is suppressed at the shell on the note route). The gate is TOUCH-FIRST MODALITY (useTouchPrimary),
-  // not window width — a half-width laptop window is still a hardware-keyboard machine and must NOT summon
-  // the keypad. (Layout forks stay width-based on isDesktop.)
-  const touchPrimary = useTouchPrimary();
-  const [customKbEnabled] = useCustomKeyboard();
-  const customKb = customKbEnabled && touchPrimary;
+  // #69: the custom keyboard is opt-in (Settings, default OFF) and gated to a touch-first, INSTALLED PWA.
+  // This gate decides ONLY the KEYPAD vs the native keyboard HERE — NOT the Deck's presence (the Deck is
+  // always mounted on a touch-first device; that's the shell's call, App.tsx). When ON the editor suppresses
+  // the native keyboard (inputmode=none) and publishes its keypad loadout to the Deck; when OFF the native
+  // keyboard types, MobileEditorBar shows, and the editor publishes NO loadout (the Deck stays on its nav
+  // loadout, or is suppressed at the shell on the note route). The gate = SETTING ON *and* TOUCH-FIRST
+  // MODALITY *and* INSTALLED PWA (useKeypadMode). A half-width laptop window is a hardware-keyboard machine,
+  // and a plain mobile browser TAB always rides the native keyboard — both must NOT summon the keypad.
+  // (Layout forks stay width-based on isDesktop.)
+  const customKb = useKeypadMode();
   // One selection-driven snapshot drives every toolbar button + undo/redo availability.
   const [active, setActive] = useState<EditorActiveState>(EMPTY_ACTIVE_STATE);
   // #69 §5 spellcheck: on only when the toggle is enabled AND its deviceState read has resolved (so a

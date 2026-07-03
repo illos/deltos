@@ -23,6 +23,8 @@ import { RoutingGuideSection } from '../components/RoutingGuideSection.js';
 import { SessionsSection } from '../components/SessionsSection.js';
 import { ActivitySection } from '../components/ActivitySection.js';
 import { useCustomKeyboard } from '../lib/useCustomKeyboard.js';
+import { useInstalledPwa } from '../lib/useInstalledPwa.js';
+import { useTouchPrimary } from '../lib/useTouchPrimary.js';
 import { useSpellcheck } from '../lib/useSpellcheck.js';
 import { forceUpdate } from '../lib/forceUpdate.js';
 import type { SessionState } from '../auth/store.js';
@@ -71,6 +73,15 @@ export function SettingsRoute() {
 
   const navigate = useNavigate();
   const [customKeyboard, setCustomKeyboard] = useCustomKeyboard();
+  // The custom keyboard is installed-PWA-only AND touch-first-only (it swaps the native keyboard for our
+  // Deck keypad, which only makes sense in the standalone app on a finger-driven device). The toggle row is
+  // shown only where the keypad can actually engage: a plain mobile browser tab lacks the surface, and a
+  // DESKTOP-installed PWA (Chromium app window) is standalone but pointer-fine — neither offers the setting.
+  // (The stored preference is untouched — the useKeypadMode gate handles the "no effect" part; this just
+  // keeps Settings honest.)
+  const installedPwa = useInstalledPwa();
+  const touchPrimary = useTouchPrimary();
+  const keypadCapable = installedPwa && touchPrimary;
   const [spellcheck, setSpellcheck] = useSpellcheck();
   const [view, setView] = useState<View>({ tag: 'list' });
 
@@ -558,18 +569,21 @@ export function SettingsRoute() {
       <section className="settings__section" aria-label="Developer">
         <h2 className="settings__section-title">Developer</h2>
         {/* #69 custom-keyboard opt-in — default OFF, device-local. ON = the real mobile editor uses our
-            keyboard (no native, no numbers yet); OFF = native keyboard as today. Works in the PWA. */}
-        <button
-          className="settings__row settings__row--btn"
-          role="switch"
-          aria-checked={customKeyboard}
-          onClick={() => setCustomKeyboard(!customKeyboard)}
-        >
-          <span className="settings__row-label">Custom keyboard (experimental)</span>
-          <span className={`settings__row-value${customKeyboard ? '' : ' settings__row-value--muted'}`}>
-            {customKeyboard ? 'On' : 'Off'}
-          </span>
-        </button>
+            keyboard (no native, no numbers yet); OFF = native keyboard as today. Shown only where the keypad
+            can engage (installed PWA + touch-first): hidden in a browser tab AND in a desktop-installed PWA. */}
+        {keypadCapable && (
+          <button
+            className="settings__row settings__row--btn"
+            role="switch"
+            aria-checked={customKeyboard}
+            onClick={() => setCustomKeyboard(!customKeyboard)}
+          >
+            <span className="settings__row-label">Custom keyboard (experimental)</span>
+            <span className={`settings__row-value${customKeyboard ? '' : ' settings__row-value--muted'}`}>
+              {customKeyboard ? 'On' : 'Off'}
+            </span>
+          </button>
+        )}
         {/* #69 §5 local spellcheck — default ON, device-local. ON = live squiggles + tap-to-correct (engine
             loads off-thread on demand); OFF = no squiggles, engine never loads. */}
         <button

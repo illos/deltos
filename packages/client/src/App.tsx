@@ -30,7 +30,7 @@ import { useIsDesktop } from './lib/useIsDesktop.js';
 import { useTouchPrimary } from './lib/useTouchPrimary.js';
 import { useNoteDnd } from './lib/dnd/useNoteDnd.js';
 import { useFileNoteDnd } from './lib/dnd/useFileNoteDnd.js';
-import { useCustomKeyboard } from './lib/useCustomKeyboard.js';
+import { useKeypadMode } from './lib/useKeypadMode.js';
 import { startSyncTriggers, syncNow } from './lib/syncEngine.js';
 import { resolveCollectionView } from './lib/collectionViews.js';
 import type { CollectionViewProps } from './lib/collectionViews.js';
@@ -349,12 +349,15 @@ export function AuthedShell() {
     document.body.classList.toggle('deck-custom', deckActive);
     return () => { document.body.classList.remove('deck-custom'); };
   }, [deckActive]);
-  // Custom-keyboard setting (device-local): editor keypad vs native keyboard. At the SHELL it's read for
-  // ONE thing — suppress the Deck on the note route in NATIVE mode. There the editor owns the bottom with
-  // its own sticky MobileEditorBar + summons the native keyboard, and a viewport-fixed Deck would float
-  // over that bar / behind the keyboard. Keep the Deck MOUNTED (host intact) but CSS-hide it there.
-  const [customKbEnabled] = useCustomKeyboard();
-  const suppressDeck = deckActive && onNoteRoute && !customKbEnabled;
+  // Keypad mode (setting ON *and* touch-first *and* installed PWA — the ONE shared gate, useKeypadMode):
+  // editor keypad vs native keyboard. At the SHELL it's read for ONE thing — suppress the Deck on the note
+  // route whenever the editor is in NATIVE mode (setting off, OR a plain mobile browser tab, OR a hardware
+  // keyboard). There the editor owns the bottom with its own sticky MobileEditorBar + summons the native
+  // keyboard, and a viewport-fixed Deck would float over that bar / behind the keyboard. Keep the Deck
+  // MOUNTED (host intact) but CSS-hide it there. This is the SAME gate the editor uses, so shell and editor
+  // can't disagree about whether the keypad is up.
+  const keypadMode = useKeypadMode();
+  const suppressDeck = deckActive && onNoteRoute && !keypadMode;
   useEffect(() => {
     document.body.classList.toggle('deck-suppressed', suppressDeck);
     return () => { document.body.classList.remove('deck-suppressed'); };

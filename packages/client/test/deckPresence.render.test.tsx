@@ -52,6 +52,12 @@ vi.mock('../src/components/BottomNav.js', () => ({
 }));
 // The note editor is a lazy chunk — stub it so the /note route resolves without mounting ProseMirror.
 vi.mock('../src/routes/NoteRoute.js', () => ({ NoteRoute: () => <div data-testid="note-route">note</div> }));
+// The keypad (and thus non-suppression of the Deck on the note route) is installed-PWA-only: App's
+// useKeypadMode composes useInstalledPwa. Mock it with a mutable flag defaulting TRUE (matches jsdom) so the
+// existing "setting ON → NOT suppressed" case holds; the new browser-tab case flips it false to prove the
+// Deck is suppressed there even with the setting ON. (Vitest allows factory refs to `mock`-prefixed vars.)
+let mockInstalledPwa = true;
+vi.mock('../src/lib/useInstalledPwa.js', () => ({ useInstalledPwa: () => mockInstalledPwa }));
 
 import { AuthedShell } from '../src/App.js';
 import { useAuthStore } from '../src/auth/store.js';
@@ -77,6 +83,7 @@ const navAction = (label: string) =>
   document.querySelector(`.deck-nav__action[aria-label="${label}"]`);
 
 beforeEach(() => {
+  mockInstalledPwa = true; // installed-PWA by default (keypad reachable)
   global.fetch = vi.fn(async () => new Response(JSON.stringify({}), { status: 200 })) as typeof fetch;
 });
 afterEach(() => {
@@ -130,5 +137,16 @@ describe('Deck suppressed on the native-mode note route (wrinkle)', () => {
     await waitFor(() => expect(document.querySelector('[data-testid="note-route"]')).not.toBeNull());
     expect(document.body.classList.contains('deck-suppressed')).toBe(false);
     expect(document.body.classList.contains('deck-custom')).toBe(true);
+  });
+
+  it('setting ON but NOT an installed PWA (browser tab) + note open: SUPPRESSED (native mode governs)', async () => {
+    // The keypad is installed-PWA-only. In a plain mobile browser tab the setting has no effect — the editor
+    // rides the native keyboard + its sticky MobileEditorBar, so the Deck must be suppressed on the note route
+    // exactly as in native mode, even though the toggle is ON.
+    mockInstalledPwa = false;
+    seed(true);
+    mountShell('/note/n3');
+    await waitFor(() => expect(document.body.classList.contains('deck-suppressed')).toBe(true));
+    expect(document.body.classList.contains('deck-custom')).toBe(true); // still touch-first (Deck mounted)
   });
 });

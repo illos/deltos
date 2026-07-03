@@ -24,6 +24,15 @@ import { useAuthStore } from '../src/auth/store.js';
 (globalThis as Record<string, unknown>).__APP_VERSION__ = 'test-sha';
 (globalThis as Record<string, unknown>).__BUILD_TIME__ = '2026-06-28T12:00:00.000Z';
 
+// The "Custom keyboard (experimental)" row shows only where the keypad can ENGAGE: installed PWA AND
+// touch-first (a desktop-installed PWA is standalone but pointer-fine — no keypad, no toggle). Mock both
+// hooks with mutable flags defaulting TRUE (matches jsdom's no-matchMedia defaults) so the existing tests
+// still see the toggle; ST-R7 flips them to test the gate. (Vitest allows factory refs to `mock`-prefixed vars.)
+let mockInstalledPwa = true;
+let mockTouchPrimary = true;
+vi.mock('../src/lib/useInstalledPwa.js', () => ({ useInstalledPwa: () => mockInstalledPwa }));
+vi.mock('../src/lib/useTouchPrimary.js', () => ({ useTouchPrimary: () => mockTouchPrimary }));
+
 // ── Mount helper ─────────────────────────────────────────────────────────────
 
 async function mountSettings() {
@@ -80,6 +89,8 @@ function mockAuthStore(overrides: Record<string, unknown> = {}) {
 // ── Setup / teardown ─────────────────────────────────────────────────────────
 
 beforeEach(() => {
+  mockInstalledPwa = true; // installed-PWA + touch-first by default → the custom-keyboard toggle is shown
+  mockTouchPrimary = true;
   mockAuthStore();
   global.fetch = vi.fn(async () => new Response(JSON.stringify({}), { status: 200 })) as typeof fetch;
   localStorage.clear();
@@ -267,5 +278,37 @@ describe('ST-R6 — 2FA on: Disable → code entry → disableTotp(code) → bac
     await waitFor(() => {
       expect(screen.queryByText('Two-factor authentication')).not.toBeNull();
     });
+  });
+});
+
+// ── ST-R7: Custom-keyboard toggle is installed-PWA-only ───────────────────────
+
+describe('ST-R7 — Custom keyboard toggle: shown in installed PWA, hidden in a browser tab', () => {
+  it('installed PWA: the "Custom keyboard (experimental)" row is present', async () => {
+    mockInstalledPwa = true;
+    await mountSettings();
+    await waitFor(() => {
+      expect(screen.queryByText('Custom keyboard (experimental)')).not.toBeNull();
+    });
+  });
+
+  it('plain browser tab (not installed): the toggle row is hidden entirely', async () => {
+    mockInstalledPwa = false;
+    await mountSettings();
+    // The Developer section still renders (Spellcheck lives there), but the custom-keyboard row is gone.
+    await waitFor(() => {
+      expect(screen.queryByText('Spellcheck')).not.toBeNull();
+    });
+    expect(screen.queryByText('Custom keyboard (experimental)')).toBeNull();
+  });
+
+  it('DESKTOP-installed PWA (standalone but pointer-fine): the toggle row is hidden too', async () => {
+    mockInstalledPwa = true;
+    mockTouchPrimary = false;
+    await mountSettings();
+    await waitFor(() => {
+      expect(screen.queryByText('Spellcheck')).not.toBeNull();
+    });
+    expect(screen.queryByText('Custom keyboard (experimental)')).toBeNull();
   });
 });

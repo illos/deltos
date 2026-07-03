@@ -17,6 +17,13 @@ import { useCustomKeyboard, useCustomKeyboardStore } from '../src/lib/useCustomK
 import { ProseMirrorEditor } from '../src/editor/ProseMirrorEditor.js';
 import { DeckHostProvider } from '../src/components/DeckHost.js';
 
+// The custom keyboard is installed-PWA-only (useKeypadMode composes useInstalledPwa). Mock it with a mutable
+// flag defaulting TRUE so every existing keypad test keeps its "keypad reachable" assumption; the new
+// browser-tab case flips it false to prove the keypad is withheld outside the installed PWA. (Vitest allows
+// factory references to variables prefixed `mock`.)
+let mockInstalledPwa = true;
+vi.mock('../src/lib/useInstalledPwa.js', () => ({ useInstalledPwa: () => mockInstalledPwa }));
+
 // Slice B: the Deck mounts at the shell via DeckHostProvider (the editor PUBLISHES its keypad to it,
 // no longer renders it directly). The keypad therefore only appears when the editor is inside the host.
 const inShell = (ui: ReactNode) =>
@@ -24,6 +31,7 @@ const inShell = (ui: ReactNode) =>
 
 beforeEach(async () => {
   await db.deviceState.clear();
+  mockInstalledPwa = true; // installed-PWA by default (matches jsdom; keeps existing keypad tests reachable)
   useCustomKeyboardStore.setState({ enabled: false, _loaded: false }); // module singleton — reset per test
   global.fetch = vi.fn(async () => new Response(JSON.stringify({}), { status: 200 })) as typeof fetch;
 });
@@ -85,5 +93,16 @@ describe('editor integration (mobile)', () => {
     await waitFor(() => expect(document.querySelector('.keypad__key--mode')).not.toBeNull());
     const mode = document.querySelector('.keypad__key--mode') as HTMLButtonElement;
     expect(mode.disabled).toBe(false);                 // NOT disabled (disabled buttons swallow no events → blur the editor)
+  });
+
+  it('setting ON + touch-first but NOT an installed PWA (browser tab): native keyboard, no keypad', async () => {
+    // The keypad is installed-PWA-only. Even with the toggle ON and a touch-first jsdom default, a plain
+    // mobile browser tab (installedPwa=false) must ride the native keyboard — no inputmode=none, no keypad.
+    mockInstalledPwa = false;
+    await writeCustomKeyboard(true);
+    inShell(<ProseMirrorEditor noteId="n5" initialTitle="T" initialBody={emptyBody} onChange={() => {}} autoFocus />);
+    await waitFor(() => expect(pmEl()).not.toBeNull());
+    expect(pmEl()!.getAttribute('inputmode')).not.toBe('none'); // native keyboard governs
+    expect(document.querySelector('.keypad')).toBeNull();        // keypad withheld outside the installed PWA
   });
 });
