@@ -246,9 +246,14 @@ export function NavSheet() {
       className={`nav-sheet${open ? ' nav-sheet--open' : ''}${dragging ? ' nav-sheet--dragging' : ''}`}
       aria-hidden={!open}
     >
-      {/* Scrim — fades in with the reveal; tap to dismiss. pointer-events gated by --open so it never
-          blocks the list while parked. */}
-      <div ref={backdropRef} className="nav-sheet__backdrop" onPointerDown={close} aria-hidden="true" />
+      {/* Interception scrim — a single full-viewport blur+darken layer over ALL content while the sheet is
+          open OR mid-drag (CSS gives it pointer-events + backdrop blur in both states); it's the topmost
+          interactive layer below the panel, so every tap on the content beneath lands HERE, never on a note
+          row. Dismiss fires on CLICK, not pointerdown: closing flips this layer inert, so dismissing on
+          pointerdown would drop it BEFORE the synthesized click hit-tests → that click falls through to the
+          row underneath and navigates (the exact tap-through Jim hit). Closing on click keeps the layer live
+          through the whole down→up→click, so the click always targets the scrim and never reaches content. */}
+      <div ref={backdropRef} className="nav-sheet__backdrop" onClick={close} aria-hidden="true" />
       {/* Panel — parked at translateY(100%) via CSS until the first drag drives it. `inert` when closed
           keeps NavContent's controls out of the tab/AT tree exactly like FullScreenNav. */}
       <div

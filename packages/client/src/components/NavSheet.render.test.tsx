@@ -159,12 +159,35 @@ describe('NavSheet drag-up bottom sheet', () => {
     expect(sheet(c).classList.contains('nav-sheet--open')).toBe(false);
   });
 
-  it('a backdrop tap dismisses the open sheet', () => {
+  it('a backdrop tap dismisses on CLICK (not pointerdown) so the intercept layer stays live through the click, and never navigates', () => {
     const c = mountShell();
     drag(armZone(c), 700, 150);
+    const bd = c.querySelector('.nav-sheet__backdrop') as HTMLElement;
     expect(sheet(c).classList.contains('nav-sheet--open')).toBe(true);
-    fireEvent.pointerDown(c.querySelector('.nav-sheet__backdrop') as HTMLElement);
+    // REGRESSION (Jim's tap-through): dismissing on pointerdown flips the scrim inert BEFORE the click
+    // hit-tests, so the synthesized click falls through to the row below and navigates. The fix dismisses
+    // on CLICK — so a bare pointerdown must NOT close the sheet (the layer stays interactive for the click).
+    fireEvent.pointerDown(bd, { pointerId: 9, clientX: 100, clientY: 300 });
+    expect(sheet(c).classList.contains('nav-sheet--open')).toBe(true);
+    // The click on the scrim dismisses — and dismissing never navigates the content beneath.
+    fireEvent.click(bd);
     expect(sheet(c).classList.contains('nav-sheet--open')).toBe(false);
+    expect(c.querySelector('[data-testid="loc"]')?.textContent).toBe('/');
+  });
+
+  // ── Task 1 (backdrop intercept): a tap over the content while the sheet is DRAGGING (partly revealed) is
+  //    swallowed by the scrim — it must never activate a note row beneath. ──────────────────────────────────
+  it('a tap on the scrim mid-drag is intercepted (content below is never activated / navigated)', () => {
+    const c = mountShell();
+    const az = armZone(c);
+    // Begin an arming drag and HOLD (locks the y-axis → --dragging; the scrim becomes the interactive
+    // full-viewport intercept layer over ALL content, incl. any row the partly-revealed sheet exposes).
+    fireEvent.pointerDown(az, { pointerId: 4, clientX: 100, clientY: 700 });
+    fireEvent.pointerMove(az, { pointerId: 4, clientX: 100, clientY: 400 });
+    expect(sheet(c).classList.contains('nav-sheet--dragging')).toBe(true);
+    // A tap landing on the scrim while dragging does NOT reach / navigate the content below.
+    fireEvent.click(c.querySelector('.nav-sheet__backdrop') as HTMLElement);
+    expect(c.querySelector('[data-testid="loc"]')?.textContent).toBe('/');
   });
 
   it('a TAP on a Deck nav action still fires its navigation (drag never steals the tap)', () => {

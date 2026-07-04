@@ -2212,7 +2212,20 @@ a.auth__link { display: inline; }
   position: absolute; inset: 0; background: rgba(0, 0, 0, 0.42);
   opacity: 0; pointer-events: none;
 }
-.nav-sheet--open .nav-sheet__backdrop { opacity: 1; pointer-events: auto; }
+/* The interception + dimming layer. It is INTERACTIVE (full-viewport, above all list/FAB/Deck chrome at
+   z-380, below the panel) while the sheet is open OR mid-drag, so every tap on the content beneath lands
+   here and dismisses — never on a note row (Jim's tap-through). blur+darken the underlying content: a
+   single fixed layer (never per-row → cheap over long lists), and blur is applied ONLY in these two states
+   so a PARKED sheet computes no blur during normal scrolling (protects the load/scroll perf bar). The
+   layer's own opacity (0→1) rides the reveal, so the blur fades in with it — no per-frame filter sampling,
+   and the page is scroll-frozen meanwhile so the blurred backdrop is static and inexpensive to composite. */
+.nav-sheet--open .nav-sheet__backdrop,
+.nav-sheet--dragging .nav-sheet__backdrop {
+  pointer-events: auto;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+.nav-sheet--open .nav-sheet__backdrop { opacity: 1; }
 .nav-sheet__panel {
   position: absolute; left: 0; right: 0; bottom: 0;
   display: flex; flex-direction: column;
