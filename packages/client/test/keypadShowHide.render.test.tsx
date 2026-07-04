@@ -66,18 +66,22 @@ describe('KeypadLoadout — collapsible keypad + persistent base region', () => 
     expect(onToggleKeypad).not.toHaveBeenCalled();
   });
 
-  it('UNLOCKED: keyboard icon + direction chevron (⌄ shown / ⌃ hidden) — chevron = "auto may move"', () => {
+  it('UNLOCKED: keyboard icon + fixed-geometry direction chevron (down shown / up hidden) — "auto may move"', () => {
+    // Fixed-geometry SVG icons (not glyph text): the indicator is always ONE 16px icon in a fixed slot, so
+    // the button never resizes across states. Direction reads from data-ind, not variable-width glyph text.
     const { rerender } = render(<KeypadLoadout {...props} keypadShown locked={false} />);
     expect(toggle().querySelector('.deck-kbd-toggle__icon')).not.toBeNull();
-    expect(toggle().querySelector('.deck-kbd-toggle__chevron')!.textContent).toBe('⌄');
+    expect(toggle().querySelector('.deck-kbd-toggle__ind [data-ind="down"]')).not.toBeNull();
+    expect(toggle().querySelector('[data-ind="lock"]')).toBeNull();
     rerender(<KeypadLoadout {...props} keypadShown={false} locked={false} />);
-    expect(toggle().querySelector('.deck-kbd-toggle__chevron')!.textContent).toBe('⌃');
+    expect(toggle().querySelector('.deck-kbd-toggle__ind [data-ind="up"]')).not.toBeNull();
   });
 
-  it('LOCKED: keyboard icon only — the REMOVED chevron is the lock indicator (+ "(locked)" label)', () => {
+  it('LOCKED: keyboard icon + Lock icon indicator (chevron swapped out) — pinned, at a glance (+ "(locked)")', () => {
     render(<KeypadLoadout {...props} keypadShown locked />);
-    expect(toggle().querySelector('.deck-kbd-toggle__icon')).not.toBeNull(); // keyboard icon stays
-    expect(toggle().querySelector('.deck-kbd-toggle__chevron')).toBeNull();   // chevron gone = pinned
+    expect(toggle().querySelector('.deck-kbd-toggle__icon')).not.toBeNull();       // keyboard icon stays
+    expect(toggle().querySelector('[data-ind="lock"]')).not.toBeNull();            // lock icon = pinned
+    expect(toggle().querySelector('[data-ind="down"], [data-ind="up"]')).toBeNull(); // no chevron
     expect(toggle().getAttribute('aria-label')).toContain('(locked)');
   });
 });
@@ -129,7 +133,7 @@ describe('keypad show/hide — editor integration', () => {
     act(() => { vi.advanceTimersByTime(460); });
     fireEvent.pointerUp(toggle());
     vi.useRealTimers();
-    expect(toggle().querySelector('.deck-kbd-toggle__chevron')).toBeNull(); // locked = chevron removed
+    expect(toggle().querySelector('[data-ind="lock"]')).not.toBeNull(); // locked = Lock icon shown
     act(() => { fireEvent.focus(pmEl()!); }); // auto suspended → must NOT re-show
     expect(document.querySelector('.keypad')).toBeNull();
   });

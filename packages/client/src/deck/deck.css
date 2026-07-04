@@ -107,20 +107,34 @@
 }
 
 /* Show/hide-keyboard toggle — generic Deck chrome (toggling a layer is Deck-level behavior). Tap = flip
-   the keypad; long-press = LOCK (suspend auto-show/hide). Font pinned to system-ui (Deck invariant). */
+   the keypad; long-press = LOCK (suspend auto-show/hide). Font pinned to system-ui (Deck invariant).
+   FIXED geometry (belt): width + height are LOCKED so the button can never grow/shrink across states — the
+   indicator swaps between three identical-box SVG icons (chevron up/down/lock), never text of varying width. */
 .deck-kbd-toggle {
   appearance: none; -webkit-appearance: none; border: none;
   background: var(--list); color: var(--secondary);
-  height: 32px; min-width: 60px; padding: 0 16px; border-radius: 8px;
+  box-sizing: border-box;
+  width: 64px; height: 32px; padding: 0 12px; border-radius: 8px;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-size: 15px; line-height: 1;
   cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: none;
+  transition: background 120ms ease, transform 120ms ease;
 }
-.deck-kbd-toggle:active { background: var(--sel); }
-/* Keyboard glyph + a direction chevron. The chevron is ALSO the lock indicator: rendered when unlocked
-   (auto may move the keyboard), removed when locked (pinned) — so no separate locked-state rule. */
+.deck-kbd-toggle:active { background: var(--sel); transform: scale(0.96); }
+/* Long-press "arming" cue — the fill/scale charges over the lock threshold then snaps back the instant the
+   lock fires (the JS clears `pressing` at threshold), matching the app's press language (fill + scale). */
+.deck-kbd-toggle--arming {
+  background: var(--sel); transform: scale(0.93);
+  transition: background 300ms ease-out, transform 300ms ease-out;
+}
+/* Keyboard glyph + a fixed-box direction/lock indicator. The indicator is ALWAYS present (one of three
+   identical-geometry icons) — chevron when auto may move the keyboard, lock when pinned. */
 .deck-kbd-toggle__icon { display: block; flex: 0 0 auto; }
-.deck-kbd-toggle__chevron { font-size: 15px; line-height: 1; }
+.deck-kbd-toggle__ind {
+  flex: 0 0 16px; width: 16px; height: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.deck-kbd-toggle__ind-icon { display: block; }
 
 /* ── #69 §7 — key-pop on press (the native magnified balloon above a pressed CHARACTER key) ───────────
    CSS-only via :active (no per-press React re-render): the balloon is a hidden child of each character key

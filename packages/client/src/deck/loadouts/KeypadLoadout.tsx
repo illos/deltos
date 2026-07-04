@@ -1,7 +1,8 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { KeyActions } from '../types.js';
 import { Keypad } from './Keypad.js';
+import { ChevronUp, ChevronDown, Lock } from '../../icons/index.js';
 
 /**
  * KeypadLoadout — a loadout built around the keypad, as a two-layer stack (layer model §0.6):
@@ -21,13 +22,21 @@ import { Keypad } from './Keypad.js';
  * Undo/Redo) alongside the toggle in the base region. Unused for now.
  */
 
-const LONG_PRESS_MS = 450;
+// Long-press → LOCK threshold. Matches the keypad's own hold-to-enter-a-mode convention (SPACE_LONG_PRESS_MS
+// = 300ms, hold spacebar → trackpad mode) so every "hold decides a mode" gesture in the Deck feels the same.
+const LONG_PRESS_MS = 300;
+
+// Rendered px for the direction/lock indicator (~ the old 15px chevron weight). All three indicator icons
+// render at this exact size and share IconBase's 24×24 viewBox → identical box → constant button width.
+const IND_PX = 16;
 
 /**
- * Keyboard glyph for the show/hide toggle — the native iOS dismiss-keyboard affordance. DECK-CORE-LOCAL
- * inline SVG by design: the Deck must not import the host's icon set (extraction boundary). Matches the
- * deltos fine-line look by convention (24×24, currentColor stroke, 1.5 round caps/joins) so it sits with
- * the host's icons, without coupling to them. currentColor → it inherits the button's themed colour.
+ * Keyboard glyph for the show/hide toggle — the native iOS dismiss-keyboard affordance. Kept as a
+ * DECK-CORE-LOCAL inline SVG: there's no Keyboard glyph in the host icon set to reuse. Matches the deltos
+ * fine-line look by convention (24×24, currentColor stroke, 1.5 round caps/joins). currentColor → it inherits
+ * the button's themed colour. (The direction/lock INDICATOR beside it uses the shared icon set — ChevronUp/
+ * ChevronDown/Lock, cut to identical geometry so the button never resizes across states — per Jim's directive;
+ * that is the one place a loadout reaches into ../../icons, a deliberate exception to the extraction boundary.)
  */
 function KeyboardGlyph() {
   return (
@@ -75,20 +84,37 @@ export function KeypadLoadout({
   // Tap vs long-press on one button: a timer started on pointerdown fires the lock; a pointerup before it
   // is a tap (toggle). preventDefault keeps the host editor focused (the Deck also swallows at the
   // container, but the button needs its own handlers for the timer anyway).
+  //
+  // TAP-WHILE-LOCKED semantics: a short tap ALWAYS toggles shown/hidden and LEAVES the lock engaged — it
+  // does NOT unlock. Rationale (least-surprising + matches the host's design comment "tap drives; long-press
+  // decides if the keyboard may drive itself"): the lock governs only the AUTO show/hide; manual taps are
+  // still the user's direct control and shouldn't secretly also flip the mode. Unlock lives on long-press.
+  //
+  // `pressing` drives the CSS "arming" cue (a subtle scale/fill that charges over LONG_PRESS_MS and snaps
+  // back the instant the lock fires — the visual feedback AT threshold). Cleared on release or on fire.
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longFired = useRef(false);
+  const [pressing, setPressing] = useState(false);
   const clear = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
 
   const onDown = (e: React.PointerEvent) => {
     e.preventDefault();
     longFired.current = false;
-    timer.current = setTimeout(() => { longFired.current = true; onToggleLock(); }, LONG_PRESS_MS);
+    setPressing(true);
+    timer.current = setTimeout(() => {
+      longFired.current = true;
+      setPressing(false); // snap back at threshold = the "locked" confirmation pop
+      onToggleLock();
+    }, LONG_PRESS_MS);
   };
   const onUp = (e: React.PointerEvent) => {
     e.preventDefault();
     clear();
+    setPressing(false);
+    // The press that became a long-press already fired the lock; do NOT also toggle on release.
     if (!longFired.current) onToggleKeypad();
   };
+  const onCancel = () => { clear(); setPressing(false); };
 
   return (
     <div className="keypad-loadout">
@@ -105,18 +131,29 @@ export function KeypadLoadout({
         {baseExtra}
         <button
           type="button"
-          className="deck-kbd-toggle"
+          className={`deck-kbd-toggle${pressing ? ' deck-kbd-toggle--arming' : ''}${locked ? ' deck-kbd-toggle--locked' : ''}`}
           aria-label={`${keypadShown ? 'Hide' : 'Show'} keyboard${locked ? ' (locked)' : ''}`}
           aria-pressed={keypadShown}
+          data-locked={locked || undefined}
           onPointerDown={onDown}
           onPointerUp={onUp}
-          onPointerLeave={clear}
-          onPointerCancel={clear}
+          onPointerLeave={onCancel}
+          onPointerCancel={onCancel}
         >
           <KeyboardGlyph />
-          {/* The chevron shows direction (⌄ hide / ⌃ show) AND is the lock indicator: present = auto may
-              move the keyboard; ABSENT (locked) = pinned, won't move on its own. Long-press toggles it. */}
-          {!locked && <span className="deck-kbd-toggle__chevron">{keypadShown ? '⌄' : '⌃'}</span>}
+          {/* Fixed-geometry indicator beside the keyboard glyph — ALWAYS exactly one icon, all three rendered
+              at the SAME size / identical 24-grid box so the button never resizes: Lock when pinned (auto
+              suspended), else a direction chevron (down = tap-to-hide, up = tap-to-show; also signals auto
+              MAY move the keyboard). Each icon carries a data-ind for the render test to assert geometry. */}
+          <span className="deck-kbd-toggle__ind">
+            {locked ? (
+              <Lock size={IND_PX} className="deck-kbd-toggle__ind-icon" data-ind="lock" />
+            ) : keypadShown ? (
+              <ChevronDown size={IND_PX} className="deck-kbd-toggle__ind-icon" data-ind="down" />
+            ) : (
+              <ChevronUp size={IND_PX} className="deck-kbd-toggle__ind-icon" data-ind="up" />
+            )}
+          </span>
         </button>
       </div>
     </div>
