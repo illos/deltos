@@ -2240,6 +2240,10 @@ a.auth__link { display: inline; }
   flex: 1; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
   padding-bottom: max(16px, env(safe-area-inset-bottom));
 }
+/* Tap-gate while the sheet follows the finger (task 2): the content is inert so a release over a row — the
+   sheet slid up under it — never activates it. The grabber (outside this region) stays draggable. Settles
+   open → class drops → taps live again (the JS click-latch eats only the single trailing settle-click). */
+.nav-sheet--dragging .nav-sheet__scroll { pointer-events: none; }
 
 /* Foreground: slides imperatively over the back layer; explicit bg to cover buttons */
 .swipe-row__foreground {

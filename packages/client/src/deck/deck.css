@@ -17,6 +17,25 @@
   touch-action: none;
 }
 
+/* ── "Pull me up" grabber (host-driven gesture affordance) ────────────────────────────────────────────
+   A slim handle bar across the TOP of the Deck surface that reads as "drag up" — deltos wires it to the
+   nav sheet. Sits ABOVE the loadout (flush against .deck's top padding) so it never overlaps a nav action
+   or keypad key: taps on the controls below are untouched, and a vertical drag off THIS bar is the arm.
+   In-flow (its ~14px flows through --deck-h → the editor clears it) but bottom-anchored: because the Deck
+   is fixed to the viewport bottom, adding this at the TOP raises the surface upward — the pixel-matched
+   keypad keys keep their exact on-screen position (measured from the bottom). Hidden in top-bar mode (the
+   host withholds it). Colour = the muted --secondary token (Deck theme contract). */
+.deck__grab {
+  flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  padding: 2px 0 6px;
+  cursor: grab; touch-action: none;
+}
+.deck__grab-bar {
+  display: block; width: 2.25rem; height: 4px; border-radius: 2px;
+  background: var(--secondary); opacity: 0.4;
+}
+
 /* ── Keypad loadout — geometry matched to the iPhone 15 Plus native keyboard (#69 §2.1) ──────────────
    Metrics as vars so an overlay diff tunes them in one place. */
 .keypad {

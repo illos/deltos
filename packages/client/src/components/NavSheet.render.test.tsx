@@ -40,9 +40,13 @@ vi.mock('../lib/useIsDesktop.js', () => ({ useIsDesktop: () => false }));
 vi.mock('../lib/dnd/useNoteDnd.js', () => ({ useNoteDnd: () => null }));
 vi.mock('../lib/upload/useFilePickerUpload.js', () => ({ useFilePickerUpload: () => undefined }));
 
-import { NavSheetProvider, NavSheet } from './NavSheet.js';
+import { NavSheetProvider, NavSheet, useNavSheetArm } from './NavSheet.js';
 import { DeckNavLoadout } from './DeckNavLoadout.js';
+import { DeckHostProvider } from './DeckHost.js';
 import { FullScreenNav } from './FullScreenNav.js';
+import { Deck, Keypad } from '../deck/index.js';
+import type { DeckContext, DeckLoadoutRegistry } from '../deck/index.js';
+import { _resetBodyScrollLockForTest } from '../lib/bodyScrollLock.js';
 
 function LocationProbe() {
   const loc = useLocation();
@@ -64,8 +68,47 @@ function mountShell(enabled = true) {
   return container;
 }
 
+/** Mounts the REAL Deck via DeckHost (as AuthedShell does) so the Deck-core grabber affordance is present —
+ *  the arm point that carries the gesture into the editor/keypad placement (app-wide arming). */
+function mountDeckHost(enabled = true) {
+  const { container } = render(
+    <MemoryRouter initialEntries={['/']}>
+      <LocationProbe />
+      <NavSheetProvider enabled={enabled}>
+        <DeckHostProvider enabled>
+          <NavSheet />
+        </DeckHostProvider>
+      </NavSheetProvider>
+    </MemoryRouter>,
+  );
+  return container;
+}
+
+/** A Deck in the editor 'text' context (keypad loadout) wired to the sheet arm exactly as DeckHost does —
+ *  proves a keypad key tap still fires while the grabber gesture is armed above the keys. */
+function KeypadDeck({ insert }: { insert: (t: string) => void }) {
+  const arm = useNavSheetArm();
+  const loadouts: DeckLoadoutRegistry = {
+    text: <Keypad actions={{ insert, backspace: () => {}, enter: () => {} }} />,
+  };
+  return <Deck context={'text' as DeckContext} loadouts={loadouts} grabHandlers={arm} showGrabber={'onPointerDown' in arm} />;
+}
+function mountKeypad(insert: (t: string) => void) {
+  const { container } = render(
+    <MemoryRouter initialEntries={['/']}>
+      <LocationProbe />
+      <NavSheetProvider enabled>
+        <KeypadDeck insert={insert} />
+        <NavSheet />
+      </NavSheetProvider>
+    </MemoryRouter>,
+  );
+  return container;
+}
+
 const armZone = (c: HTMLElement) => c.querySelector('.deck-nav') as HTMLElement;
 const grabber = (c: HTMLElement) => c.querySelector('.nav-sheet__grabber') as HTMLElement;
+const deckGrab = (c: HTMLElement) => c.querySelector('.deck__grab') as HTMLElement;
 const sheet = (c: HTMLElement) => c.querySelector('.nav-sheet') as HTMLElement;
 
 /** A vertical pointer drag from → to on an element (locks the y-axis in useDragAxis). */
@@ -75,8 +118,8 @@ function drag(el: HTMLElement, from: number, to: number) {
   fireEvent.pointerUp(el, { pointerId: 1, clientX: 100, clientY: to });
 }
 
-beforeEach(() => vi.clearAllMocks());
-afterEach(cleanup);
+beforeEach(() => { vi.clearAllMocks(); _resetBodyScrollLockForTest(); });
+afterEach(() => { cleanup(); _resetBodyScrollLockForTest(); });
 
 describe('NavSheet drag-up bottom sheet', () => {
   it('a drag UP past threshold off the Deck nav bar opens the sheet', () => {
@@ -136,12 +179,80 @@ describe('NavSheet drag-up bottom sheet', () => {
     expect(sheet(c).classList.contains('nav-sheet--open')).toBe(false);
   });
 
-  it('is inert when the provider is disabled (note route / desktop): no sheet, no arming', () => {
+  it('is inert when the provider is disabled (native-keyboard deck-top / desktop): no sheet, no arming, no grabber', () => {
     const c = mountShell(false);
     // NavSheet renders nothing when the provider is disabled.
     expect(sheet(c)).toBeNull();
     // And an up-drag off the (unchanged) Deck nav bar does nothing — no sheet appears.
     drag(armZone(c), 700, 150);
     expect(sheet(c)).toBeNull();
+    // The Deck core grabber is also withheld while disabled (a drag-UP off a TOP bar is nonsense).
+    const dh = mountDeckHost(false);
+    expect(deckGrab(dh)).toBeNull();
+    expect(sheet(dh)).toBeNull();
+  });
+
+  // ── Task 3: app-wide arming — the Deck-core grabber (present in BOTH bottom placements, incl. the editor
+  //    keypad) carries the gesture, so the sheet arms beyond the browsing nav bar. ─────────────────────────
+  it('app-wide arming: a drag UP off the Deck core grabber opens the sheet', () => {
+    const c = mountDeckHost();
+    const grab = deckGrab(c);
+    expect(grab).not.toBeNull(); // the "pull me up" affordance is present whenever the Deck rides the bottom
+    expect(sheet(c).classList.contains('nav-sheet--open')).toBe(false);
+    drag(grab, 700, 150);
+    expect(sheet(c).classList.contains('nav-sheet--open')).toBe(true);
+  });
+
+  it('a keypad key tap still fires (and does NOT arm the sheet) while the grabber gesture is live', () => {
+    const insert = vi.fn();
+    const c = mountKeypad(insert);
+    // Tapping a letter key inserts (keypad key handler fires on pointerdown) and does NOT arm the sheet —
+    // the keys are never an arm point (only the dedicated grabber above them is), so key taps are untouched.
+    const q = c.querySelector('[aria-label="Q"]') as HTMLElement;
+    expect(q).not.toBeNull();
+    fireEvent.pointerDown(q, { pointerId: 5, clientX: 50, clientY: 500 });
+    fireEvent.pointerUp(q, { pointerId: 5, clientX: 50, clientY: 500 });
+    expect(insert).toHaveBeenCalledWith('q');
+    expect(sheet(c).classList.contains('nav-sheet--open')).toBe(false);
+    // ...and the grabber ABOVE the keys still arms the sheet in this keypad placement.
+    drag(deckGrab(c), 700, 150);
+    expect(sheet(c).classList.contains('nav-sheet--open')).toBe(true);
+  });
+
+  // ── Task 1: the page is frozen (iOS-safe body scroll lock) while the sheet is up, restored on dismiss. ──
+  it('freezes the page (body scroll lock) while the sheet is open and restores it on dismiss', () => {
+    const c = mountShell();
+    expect(document.body.style.position).toBe(''); // not locked at rest
+    drag(armZone(c), 700, 150); // open
+    expect(sheet(c).classList.contains('nav-sheet--open')).toBe(true);
+    expect(document.body.style.position).toBe('fixed'); // page frozen while open
+    drag(grabber(c), 100, 650); // dismiss
+    expect(sheet(c).classList.contains('nav-sheet--open')).toBe(false);
+    expect(document.body.style.position).toBe(''); // scroll restored on dismiss
+  });
+
+  // ── Task 2: content taps are gated while the sheet moves — a release over a row (the sheet just slid up
+  //    under the finger) must NOT activate it; the one trailing settle-click is eaten too, then taps live. ──
+  it('a release over a nav row mid-open does NOT activate it (content tap-gate + settle latch)', () => {
+    const c = mountShell();
+    const az = armZone(c);
+    // Begin an arming drag (locks the y-axis → dragging state, content inert) but hold — do not release.
+    fireEvent.pointerDown(az, { pointerId: 3, clientX: 100, clientY: 700 });
+    fireEvent.pointerMove(az, { pointerId: 3, clientX: 100, clientY: 300 });
+    expect(sheet(c).classList.contains('nav-sheet--dragging')).toBe(true);
+    const trash = sheet(c).querySelector('a[href="/trash"]') as HTMLElement;
+    expect(trash).not.toBeNull();
+    // A click on a row WHILE dragging is swallowed — no navigation.
+    fireEvent.click(trash);
+    expect(c.querySelector('[data-testid="loc"]')?.textContent).toBe('/');
+    // Release → settles open; the ONE trailing click (the release synthesizes it on the row) is eaten too.
+    fireEvent.pointerUp(az, { pointerId: 3, clientX: 100, clientY: 300 });
+    expect(sheet(c).classList.contains('nav-sheet--open')).toBe(true);
+    expect(sheet(c).classList.contains('nav-sheet--dragging')).toBe(false);
+    fireEvent.click(trash);
+    expect(c.querySelector('[data-testid="loc"]')?.textContent).toBe('/');
+    // ...then a real, deliberate tap navigates normally.
+    fireEvent.click(trash);
+    expect(c.querySelector('[data-testid="loc"]')?.textContent).toBe('/trash');
   });
 });

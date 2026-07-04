@@ -489,11 +489,17 @@ export function AuthedShell() {
   // DeckHostProvider — above <Routes> so it persists across route changes: the navigation loadout while
   // browsing (BOTTOM slot), the editor's keypad while a note is open in keypad mode (BOTTOM), or, in
   // native mode with a note open, the editor TOOLBAR riding the TOP as a sticky bar — body.deck-top.
-  // Drag-up nav sheet (ROAD-0011 handoff): armed only while BROWSING on the touch shell — off on the note
-  // route (the Deck shows the editor loadout there, not the nav zone) and off on desktop (no Deck at all).
-  // The provider wraps DeckHostProvider so the single sheet controller reaches BOTH the arm zone (the Deck's
-  // nav loadout, inside DeckHostProvider) and the <NavSheet/> surface in the shell chrome below.
-  const navSheetEnabled = deckActive && !onNoteRoute;
+  // Drag-up nav sheet (ROAD-0011, Jim feel-pass): armed wherever the Deck rides the BOTTOM on the touch
+  // shell — BOTH while browsing (nav loadout) AND in the editor (keypad mode; the Deck keypad is Jim's
+  // daily driver). It arms from the Deck's grabber affordance (DeckHost injects the handlers into the Deck
+  // core, so the keypad placement gets it too) and, while browsing, also from the whole nav bar.
+  //   EXCEPTION — native-keyboard editing (body.deck-top): there the Deck is a compact bar at the TOP, so a
+  //   drag-UP off a top bar is nonsense → the gesture stays disabled in that one state (native mode is
+  //   fallback-only per standing direction, so it stays cheap/conservative there). Desktop has no Deck at
+  //   all → also off. Gate = Deck present AND not top-mode.
+  // The provider wraps DeckHostProvider so the single sheet controller reaches BOTH the Deck (arm zone +
+  // grabber, inside DeckHostProvider) and the <NavSheet/> surface in the shell chrome below.
+  const navSheetEnabled = deckActive && !deckTop;
   return (
     <NavSheetProvider enabled={navSheetEnabled}>
     <DeckHostProvider enabled={deckActive}>

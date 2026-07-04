@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Deck } from '../deck/index.js';
 import type { DeckContext, DeckLoadoutRegistry } from '../deck/index.js';
 import { DeckNavLoadout } from './DeckNavLoadout.js';
+import { useNavSheetArm } from './NavSheet.js';
 
 /**
  * DeckHost — the deltos-side glue that mounts the (app-agnostic) Deck at the app-shell level and feeds
@@ -85,10 +86,21 @@ export function DeckHostProvider({ enabled, children }: DeckHostProviderProps) {
     [editor],
   );
 
+  // Drag-up nav-sheet arm handlers, injected into the Deck's core grabber affordance so it arms in BOTH
+  // bottom placements — the nav loadout AND the editor keypad (Jim's daily driver). Empty when the
+  // NavSheetProvider is disabled (desktop / native-keyboard deck-top); that emptiness also gates the grabber
+  // off, so it never shows in the top-bar placement where a drag-UP is nonsense. Deliberately NOT armed on
+  // the keypad surface itself: the keys carry their own vertical gestures (backspace-repeat, long-press-space
+  // caret trackpad), so a dedicated grabber ABOVE the keys is the only arm point there — no key interference.
+  const armHandlers = useNavSheetArm();
+  const showGrabber = 'onPointerDown' in armHandlers;
+
   return (
     <DeckHostCtx.Provider value={handle}>
       {children}
-      {enabled && <Deck context={context} loadouts={loadouts} />}
+      {enabled && (
+        <Deck context={context} loadouts={loadouts} grabHandlers={armHandlers} showGrabber={showGrabber} />
+      )}
     </DeckHostCtx.Provider>
   );
 }
