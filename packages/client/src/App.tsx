@@ -28,7 +28,7 @@ const ProbeNavRoute = lazy(() =>
 // /oauth/* (oauth-consent-surface-separation.md / DEC-0005), decoupled from this router / shell / service
 // worker. The notes SW passes /oauth/ navigations through to the network (sw.ts denylist).
 import { DrawerNav } from './components/DrawerNav.js';
-import { FullScreenNav } from './components/FullScreenNav.js';
+import { ContextMenuSheet } from './components/ContextMenuSheet.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ThreeRegionShell } from './components/ThreeRegionShell.js';
 import { DeckHostProvider } from './components/DeckHost.js';
@@ -341,8 +341,10 @@ export function AuthedShell() {
   const notebookName = currentNotebookId === null ? 'All Notes' : (notebook?.name ?? '…');
   // navOpen / DrawerNav is desktop-only (mobile uses BottomNav via CSS)
   const [navOpen, setNavOpen] = useState(false);
-  // overlayOpen / FullScreenNav is mobile-only — the global 3-dot menu (#69 nav gap-fill)
-  const [overlayOpen, setOverlayOpen] = useState(false);
+  // optionsOpen / ContextMenuSheet is mobile-only — the top-bar "…" now opens the CONTEXTUAL options
+  // surface (ROAD-0011: the drag-up NavSheet is THE navigation; "…" is repurposed for notebook/note
+  // options — rename / organize / display / sharing land there later; v1 is the empty shell + close).
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const navigate = useNavigate();
   // Device class drives the structural fork: desktop = persistent 3-region master-detail; mobile =
   // single-column push + bottom-sheet nav. Called before the early returns (rules-of-hooks).
@@ -506,8 +508,8 @@ export function AuthedShell() {
     <div className="shell">
       {/* Desktop: left-drawer nav (hidden on mobile via CSS). Mobile: BottomNav below. */}
       <DrawerNav open={navOpen} onClose={() => setNavOpen(false)} />
-      {/* Mobile-only full-screen nav overlay (#69 global nav — visible even in deck-custom mode). */}
-      <FullScreenNav open={overlayOpen} onClose={() => setOverlayOpen(false)} />
+      {/* Mobile-only contextual options surface — opened by the top-bar "…" (ROAD-0011). */}
+      <ContextMenuSheet open={optionsOpen} onClose={() => setOptionsOpen(false)} />
 
       <header className="shell__bar">
         {/*
@@ -545,12 +547,13 @@ export function AuthedShell() {
               <VersionHistory size={20} />
             </button>
           )}
-          {/* Global 3-dot nav button — mobile-only (#69 gap-fill: stays visible in body.deck-custom). */}
+          {/* "…" contextual-options button — mobile-only (stays visible in body.deck-custom). Opens the
+              notebook/note options surface (ROAD-0011); navigation itself is the drag-up NavSheet now. */}
           <button
             className="shell__nav-btn shell__nav-btn--mobile-only"
-            onClick={() => setOverlayOpen(true)}
-            aria-label="Open navigation"
-            aria-expanded={overlayOpen}
+            onClick={() => setOptionsOpen(true)}
+            aria-label="Options"
+            aria-expanded={optionsOpen}
           >
             <Ellipsis size={24} />
           </button>

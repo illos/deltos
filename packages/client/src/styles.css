@@ -2206,7 +2206,7 @@ a.auth__link { display: inline; }
    scrim to dismiss. Content = NavContent (one source of truth, shared with the drawer / "…" overlay). The
    panel + scrim are always mounted so the finger-follow drag has something to move from pixel one; parked
    at translateY(100%) (scrim opacity 0, pointer-events off) until armed. z-index sits above the Deck (50),
-   BottomNav (300) and the "…" full-screen overlay (350) but below the move-picker (nb-sheet, 400). */
+   BottomNav (300) and the "…" context-menu overlay (350) but below the move-picker (nb-sheet, 400). */
 .nav-sheet { position: fixed; inset: 0; z-index: 380; pointer-events: none; }
 .nav-sheet__backdrop {
   position: absolute; inset: 0; background: rgba(0, 0, 0, 0.42);
@@ -2248,15 +2248,31 @@ a.auth__link { display: inline; }
 .nav-sheet__grabber-bar {
   display: block; width: 2.25rem; height: 4px; border-radius: 2px; background: var(--handle);
 }
-/* Scroll region — the pane content; safe-area padding clears the home indicator. */
+/* Scroll region — the pane content; extra breathing room at all four edges (ROAD-0011 polish) with
+   safe-area insets so the block clears the home indicator + notch-side gutters and never hugs the edge. */
 .nav-sheet__scroll {
   flex: 1; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
-  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  padding-top: 6px;
+  padding-left: max(14px, env(safe-area-inset-left));
+  padding-right: max(14px, env(safe-area-inset-right));
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
 }
 /* Tap-gate while the sheet follows the finger (task 2): the content is inert so a release over a row — the
    sheet slid up under it — never activates it. The grabber (outside this region) stays draggable. Settles
    open → class drops → taps live again (the JS click-latch eats only the single trailing settle-click). */
 .nav-sheet--dragging .nav-sheet__scroll { pointer-events: none; }
+
+/* Comfortable touch targets INSIDE the sheet (ROAD-0011 polish) — bump the shared NavContent rows to the
+   44px iOS minimum here WITHOUT touching the desktop drawer's denser geometry (scoped to .nav-sheet). Rows
+   also get a touch more vertical padding + gap for thumb comfort in the sheet placement. */
+.nav-sheet .nav-content__nb-btn,
+.nav-sheet .nav-content__new-btn,
+.nav-sheet .nav-content__footer-link {
+  min-height: 44px;
+  padding-top: 11px; padding-bottom: 11px;
+}
+.nav-sheet .nav-content__list { display: flex; flex-direction: column; gap: 2px; }
+.nav-sheet .nav-content__footer { padding-top: 10px; }
 
 /* Foreground: slides imperatively over the back layer; explicit bg to cover buttons */
 .swipe-row__foreground {
@@ -2999,22 +3015,56 @@ a.auth__link { display: inline; }
 /* hidden on desktop (persistent left pane handles nav); shown on mobile via @media block below */
 .shell__nav-btn--mobile-only { display: none; }
 
-/* ── Full-screen nav overlay (#69 global nav) ─────────────────────────────── */
-.full-screen-nav {
-  position: fixed;
-  inset: 0;
-  background: var(--paper);
-  z-index: 350; /* above DrawerNav (200) and BottomNav (300) */
-  padding-top: env(safe-area-inset-top);
-  overflow-y: auto;
-  box-sizing: border-box;
+/* ── Contextual options menu (ROAD-0011: the "…" surface) ───────────────────
+   The drag-up NavSheet is THE navigation now; the top-bar "…" opens this contextual notebook/note
+   options sheet instead. v1 = an empty-state hint + a bottom close button (thumb zone). Presentation
+   matches the NavSheet panel geometry (rounded top, slides up over a dimmed+blurred scrim). z-350 sits
+   above DrawerNav (200) / BottomNav (300), below the move-picker (nb-sheet, 400). */
+.context-menu { position: fixed; inset: 0; z-index: 350; pointer-events: none; }
+.context-menu__backdrop {
+  position: absolute; inset: 0; background: rgba(0, 0, 0, 0.42);
+  opacity: 0; transition: opacity 0.22s ease; pointer-events: none;
+}
+.context-menu--open .context-menu__backdrop {
+  opacity: 1; pointer-events: auto;
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.context-menu__panel {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; flex-direction: column;
+  max-height: 82vh;
+  background: var(--nav);
+  border-top-left-radius: 22px; border-top-right-radius: 22px;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.22);
+  /* Breathing room at the edges; clears the home indicator + notch-side insets. */
+  padding: 0 max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom))
+             max(20px, env(safe-area-inset-left));
   transform: translateY(100%);
-  transition: transform 0.22s ease;
+  transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.25, 1);
   pointer-events: none;
 }
-.full-screen-nav--open {
-  transform: translateY(0);
-  pointer-events: auto;
+.context-menu--open .context-menu__panel { transform: translateY(0); pointer-events: auto; }
+.context-menu__grabber {
+  flex-shrink: 0; display: flex; justify-content: center; align-items: center;
+  padding: 0.6rem 0 0.35rem;
+}
+.context-menu__grabber-bar {
+  display: block; width: 2.25rem; height: 4px; border-radius: 2px; background: var(--handle);
+}
+.context-menu__body {
+  flex: 1; overflow-y: auto;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 120px; padding: 28px 4px 24px;
+}
+.context-menu__hint { margin: 0; color: var(--faint); font-size: 0.95rem; text-align: center; }
+.context-menu__close {
+  flex-shrink: 0;
+  width: 100%; min-height: 52px;
+  margin-top: 8px;
+  border: none; border-radius: 14px;
+  background: var(--sel); color: var(--ink);
+  font-family: var(--ff); font-size: 1.05rem; font-weight: 600;
+  cursor: pointer; touch-action: manipulation;
 }
 
 /* Mobile / tablet-portrait: activate bottom nav, deactivate desktop nav controls. */
@@ -3501,7 +3551,7 @@ body.deck-top .shell__main { padding-bottom: 0; }
   text-decoration-skip-ink: none;
 }
 .spell-popover {
-  position: fixed; z-index: 400; /* above the Deck (50), bottom-nav (300), full-screen-nav (350) */
+  position: fixed; z-index: 400; /* above the Deck (50), bottom-nav (300), context-menu (350) */
   background: var(--list); color: var(--ink);
   border: 1px solid var(--border); border-radius: 10px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);

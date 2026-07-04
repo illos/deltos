@@ -43,7 +43,7 @@ vi.mock('../lib/upload/useFilePickerUpload.js', () => ({ useFilePickerUpload: ()
 import { NavSheetProvider, NavSheet, useNavSheetArm } from './NavSheet.js';
 import { DeckNavLoadout } from './DeckNavLoadout.js';
 import { DeckHostProvider } from './DeckHost.js';
-import { FullScreenNav } from './FullScreenNav.js';
+import { NavContent } from '../views/NavContent.js';
 import { Deck, Keypad } from '../deck/index.js';
 import type { DeckContext, DeckLoadoutRegistry } from '../deck/index.js';
 import { _resetBodyScrollLockForTest } from '../lib/bodyScrollLock.js';
@@ -129,22 +129,24 @@ describe('NavSheet drag-up bottom sheet', () => {
     expect(sheet(c).classList.contains('nav-sheet--open')).toBe(true);
   });
 
-  it('the opened sheet reveals the SAME pane as the top-bar "…" menu (identical NavContent)', () => {
+  it('the opened sheet reveals the shared NavContent pane (one source of truth)', () => {
     const c = mountShell();
     drag(armZone(c), 700, 150);
     const sheetNav = sheet(c).querySelector('.nav-content') as HTMLElement;
     expect(sheetNav).not.toBeNull();
 
-    // The "…" overflow menu renders the same NavContent inside FullScreenNav.
-    const { container: fsc } = render(
+    // The sheet is just a CONTAINER around NavContent — pin its content against NavContent rendered
+    // directly (the single source of truth the desktop drawer also renders). No FullScreenNav anymore:
+    // the "…" button is repurposed to the ContextMenuSheet, so NavContent is asserted head-on here.
+    const { container: direct } = render(
       <MemoryRouter>
-        <FullScreenNav open onClose={() => {}} />
+        <NavContent />
       </MemoryRouter>,
     );
-    const menuNav = fsc.querySelector('.nav-content') as HTMLElement;
+    const directNav = direct.querySelector('.nav-content') as HTMLElement;
 
     const norm = (el: HTMLElement) => el.textContent?.replace(/\s+/g, ' ').trim();
-    expect(norm(sheetNav)).toBe(norm(menuNav));
+    expect(norm(sheetNav)).toBe(norm(directNav));
     // Sanity: the shared items are actually present in the sheet.
     for (const label of ['All Notes', 'Work', 'Ideas', 'Trash', 'Settings']) {
       expect(sheetNav.textContent).toContain(label);

@@ -12,13 +12,13 @@ import { useDragAxis } from '../lib/useDragAxis.js';
 import { lockBodyScroll, unlockBodyScroll } from '../lib/bodyScrollLock.js';
 
 /**
- * NavSheet — a drag-up bottom sheet that reveals the SAME nav pane the top-bar "…" overflow opens
- * (its content is {@link NavContent}, the single composable nav component the DrawerNav / FullScreenNav
- * also render — one source of truth; this is just a fourth CONTAINER, not a forked copy).
+ * NavSheet — the drag-up bottom sheet that IS the app's mobile navigation (ROAD-0011, Jim's ruling).
+ * Its content is {@link NavContent}, the single composable nav component the desktop DrawerNav also
+ * renders — one source of truth; this is just another CONTAINER, not a forked copy.
  *
- * TWO entrances to the same pane:
- *   - the "…" button in the shell top bar (unchanged — opens FullScreenNav), and
- *   - a drag UP starting on the Deck's bottom nav zone while browsing on mobile (this file).
+ * Entrance: a drag UP starting on the Deck's bottom nav zone (or the Deck-core grabber) while the Deck
+ * rides the bottom on mobile. (The top-bar "…" button no longer opens nav — it's been repurposed as the
+ * contextual notebook/note options surface, {@link ContextMenuSheet}.)
  *
  * Mechanics (product-grade port of the /probe/nav Model-B feel-test Jim picked): a real finger-follow
  * translate3d drag off the bottom bar, velocity/threshold release → spring open or dismiss, drag-down on
@@ -230,7 +230,7 @@ export function NavSheetProvider({ enabled, children }: NavSheetProviderProps) {
 export function NavSheet() {
   const ctx = useContext(NavSheetCtx);
 
-  // Escape closes (mirrors the "…" FullScreenNav overlay). Hook is unconditional; guarded on open/ctx.
+  // Escape closes (consistent with the app's other overlays). Hook is unconditional; guarded on open/ctx.
   useEffect(() => {
     if (!ctx || !ctx.open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') ctx.close(); };
@@ -255,7 +255,7 @@ export function NavSheet() {
           through the whole down→up→click, so the click always targets the scrim and never reaches content. */}
       <div ref={backdropRef} className="nav-sheet__backdrop" onClick={close} aria-hidden="true" />
       {/* Panel — parked at translateY(100%) via CSS until the first drag drives it. `inert` when closed
-          keeps NavContent's controls out of the tab/AT tree exactly like FullScreenNav. */}
+          keeps NavContent's controls out of the tab/AT tree. */}
       <div
         ref={panelRef}
         className="nav-sheet__panel"
