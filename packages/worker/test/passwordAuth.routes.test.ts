@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
@@ -942,6 +942,133 @@ describe('P0 belt — recoveryEstablished', () => {
       expect(
         (await post(env, '/api/auth/reset', { username: 'rotator', recoveryPhrase: freshPhrase, newPassword: 'np-fresh-1' })).status,
       ).toBe(200);
+    },
+    T,
+  );
+});
+
+// ===========================================================================
+// Turnstile — FAILURE-TRIGGERED escalation on the auth gate (Jim's directive: no challenge on a clean
+// first attempt; demand it only after a recorded failure, keyed off the existing per-key throttle bucket).
+// ===========================================================================
+describe('Turnstile — failure-triggered challenge', () => {
+  const SECRET: Partial<Env> = { TURNSTILE_SECRET: 'ts-secret' };
+  afterEach(() => vi.unstubAllGlobals());
+
+  const errCode = async (res: Response) => ((await res.json()) as { error: { code: string } }).error.code;
+
+  /** Stub the siteverify round-trip only (app.request never touches global fetch, so this is surgical). */
+  function mockSiteverify(success: boolean) {
+    const orig = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown, init?: unknown) => {
+        const url = typeof input === 'string' ? input : (input as Request).url;
+        if (url.includes('/turnstile/v0/siteverify')) {
+          return { json: async () => ({ success }) } as unknown as Response;
+        }
+        return (orig as typeof fetch)(input as never, init as never);
+      }),
+    );
+  }
+
+  it(
+    'a CLEAN first attempt is NOT challenged even with the secret set — a no-token login reaches the credential check (401, not 403)',
+    async () => {
+      const env = makeEnv(freshDb(), SECRET);
+      await signup(env, 'clean', 'clean-pass-1');
+      // Fresh bucket (0 failures) → challenge NOT required. Wrong password, NO token → the hash runs →
+      // uniform 401 invalid_credentials, NOT a 403 challenge_required.
+      const res = await post(env, '/api/auth/login', { username: 'clean', password: 'wrong-pass-1' });
+      expect(res.status).toBe(401);
+      expect(await errCode(res)).toBe('invalid_credentials');
+    },
+    T,
+  );
+
+  it(
+    'after ONE recorded failure, a no-token attempt is 403 challenge_required',
+    async () => {
+      const env = makeEnv(freshDb(), SECRET);
+      await signup(env, 'esc', 'esc-pass-1');
+      // First failure (clean bucket → unchallenged) records failures=1 on the login:esc bucket.
+      expect((await post(env, '/api/auth/login', { username: 'esc', password: 'wrong-pass-1' })).status).toBe(401);
+      // Second attempt, still no token → the bucket now has a failure → the challenge is demanded (distinct code).
+      const res = await post(env, '/api/auth/login', { username: 'esc', password: 'wrong-pass-2' });
+      expect(res.status).toBe(403);
+      expect(await errCode(res)).toBe('challenge_required');
+    },
+    T,
+  );
+
+  it(
+    'after a failure, a VALID token passes the gate (reaches + verifies the credential → 200)',
+    async () => {
+      const env = makeEnv(freshDb(), SECRET);
+      await signup(env, 'valid', 'valid-pass-1');
+      expect((await post(env, '/api/auth/login', { username: 'valid', password: 'wrong-pass-1' })).status).toBe(401);
+      mockSiteverify(true);
+      const res = await post(env, '/api/auth/login', { username: 'valid', password: 'valid-pass-1', turnstileToken: 'solved' });
+      expect(res.status, await bodyText(res)).toBe(200);
+    },
+    T,
+  );
+
+  it(
+    'a present-but-INVALID token after a failure is 403 challenge_failed (distinct from challenge_required)',
+    async () => {
+      const env = makeEnv(freshDb(), SECRET);
+      await signup(env, 'badtok', 'badtok-pass-1');
+      expect((await post(env, '/api/auth/login', { username: 'badtok', password: 'wrong-pass-1' })).status).toBe(401);
+      mockSiteverify(false);
+      const res = await post(env, '/api/auth/login', { username: 'badtok', password: 'badtok-pass-1', turnstileToken: 'bad' });
+      expect(res.status).toBe(403);
+      expect(await errCode(res)).toBe('challenge_failed');
+    },
+    T,
+  );
+
+  it(
+    'a successful login CLEARS the bucket → the next attempt needs no token again',
+    async () => {
+      const env = makeEnv(freshDb(), SECRET);
+      await signup(env, 'clearer', 'clearer-pass-1');
+      expect((await post(env, '/api/auth/login', { username: 'clearer', password: 'wrong-pass-1' })).status).toBe(401);
+      // Solve + succeed → clearThrottle empties the login:clearer bucket.
+      mockSiteverify(true);
+      expect(
+        (await post(env, '/api/auth/login', { username: 'clearer', password: 'clearer-pass-1', turnstileToken: 'solved' })).status,
+      ).toBe(200);
+      vi.unstubAllGlobals();
+      // Next attempt, NO token → unchallenged again (0 failures). Wrong password → 401, not 403.
+      const res = await post(env, '/api/auth/login', { username: 'clearer', password: 'wrong-pass-2' });
+      expect(res.status).toBe(401);
+      expect(await errCode(res)).toBe('invalid_credentials');
+    },
+    T,
+  );
+
+  it(
+    'totp_required does NOT trip the challenge (first factor passed records no failure)',
+    async () => {
+      const env = makeEnv(freshDb(), SECRET);
+      const acct = await signup(env, 'tfa-chal', 'tfa-chal-pass-1');
+      const { secret } = (await (
+        await post(env, '/api/auth/totp/setup', {}, { Authorization: `Bearer ${acct.token}` })
+      ).json()) as { secret: string };
+      // Enable on step-1 so the replay guard leaves later steps free (no code is needed by the assertions below).
+      expect(
+        (await post(env, '/api/auth/totp/verify', { code: codeAtStep(base32ToBytes(secret), stepAt(Date.now()) - 1) }, { Authorization: `Bearer ${acct.token}` })).status,
+      ).toBe(200);
+      // Correct password, NO code, NO token, fresh bucket → totp_required (401) — and records NO failure.
+      const first = await post(env, '/api/auth/login', { username: 'tfa-chal', password: 'tfa-chal-pass-1' });
+      expect(first.status).toBe(401);
+      expect(await errCode(first)).toBe('totp_required');
+      // A SECOND no-code, no-token attempt is STILL totp_required — NOT 403 challenge_required. Since
+      // totp_required never recorded a failure, the bucket stays at 0 and the challenge never flips on.
+      const second = await post(env, '/api/auth/login', { username: 'tfa-chal', password: 'tfa-chal-pass-1' });
+      expect(second.status).toBe(401);
+      expect(await errCode(second)).toBe('totp_required');
     },
     T,
   );

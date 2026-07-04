@@ -69,8 +69,11 @@ import { audit } from '../audit.js';
  *    a short-TTL in-memory access token. Refresh is STATEFUL + server-HASHED (not a JWT): rotation-on-
  *    use, reuse-detection (revoke the family), revoke-all on the four credential-change events.
  *  - GATE-BEFORE-HASH on the unauthenticated login/reset endpoints: the cheap per-account exponential
- *    backoff (+ optional Turnstile) runs BEFORE Argon2id, and the hash is UNIFORM real-or-dummy so there
- *    is no CPU-amplification DoS and no account-existence timing oracle.
+ *    backoff runs BEFORE Argon2id, and the hash is UNIFORM real-or-dummy so there is no CPU-amplification
+ *    DoS and no account-existence timing oracle. Turnstile is a FAILURE-TRIGGERED escalation layered on
+ *    that same per-key bucket: a clean FIRST attempt is never challenged; the widget is demanded only once
+ *    the bucket has recorded a failure (and only when TURNSTILE_SECRET is configured). A success clears the
+ *    bucket, so the next attempt is unchallenged again.
  *  - Anti-enumeration: signup DISCLOSES "taken" (usability); login is UNIFORM; reset is NON-DISCLOSING.
  */
 
@@ -132,9 +135,16 @@ function originAllowed(c: AppContext): boolean {
 }
 
 /**
- * The cheap GATE — runs BEFORE any Argon2id (AP-4). Optional Turnstile (skipped when unconfigured) then
- * the per-key exponential backoff. Returns null when allowed, or the rejection Response. Recording the
- * bucket for ANY attempt (existing account or not) keeps it from being an existence oracle.
+ * The cheap GATE — runs BEFORE any Argon2id (AP-4). FAILURE-TRIGGERED Turnstile, then the per-key
+ * exponential backoff, off a SINGLE throttle fetch. Returns null when allowed, or the rejection Response.
+ *
+ * Turnstile is a per-bucket escalation, NOT an always-on tax: it is required only when TURNSTILE_SECRET is
+ * configured AND this bucket has already recorded a failure (`failures > 0`). So a clean FIRST attempt is
+ * never challenged; a missing token when one IS required is a distinct 403 `challenge_required` (tells the
+ * client to render the widget and retry); a present-but-bad token is 403 `challenge_failed`. When NOT
+ * required the supplied token is ignored entirely (no siteverify round-trip). login/reset clear the bucket
+ * on success, so a solved-then-succeeded attempt is unchallenged next time. Recording the bucket for ANY
+ * attempt (existing account or not) keeps it from being an existence oracle.
  */
 async function gate(
   c: AppContext,
@@ -143,11 +153,12 @@ async function gate(
   turnstileToken: string | undefined,
   nowMs: number,
 ): Promise<Response | null> {
-  if (c.env.TURNSTILE_SECRET) {
+  const throttle = await s.getThrottle(bucket);
+  if (c.env.TURNSTILE_SECRET && (throttle?.failures ?? 0) > 0) {
+    if (!turnstileToken) return apiError(c, 403, 'challenge_required', 'anti-abuse challenge required');
     const ok = await verifyTurnstile(c.env.TURNSTILE_SECRET, turnstileToken, clientIp(c));
     if (!ok) return apiError(c, 403, 'challenge_failed', 'anti-abuse challenge failed');
   }
-  const throttle = await s.getThrottle(bucket);
   if (throttle && nowMs < throttle.nextAllowedMs) {
     return apiError(c, 429, 'too_many_attempts', 'too many attempts — try again shortly');
   }

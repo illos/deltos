@@ -117,12 +117,13 @@ function Spinner({ label }: { label: string }) {
 
 // ── Inline login ────────────────────────────────────────────────────────────────────────────────────────
 
-function loginErrorMsg(code: 'invalid' | 'totp_invalid' | 'rate_limited' | 'network'): string {
+function loginErrorMsg(code: 'invalid' | 'totp_invalid' | 'rate_limited' | 'network' | 'challenge'): string {
   switch (code) {
     case 'invalid': return 'Incorrect username or password';
     case 'totp_invalid': return 'Incorrect authentication code';
     case 'rate_limited': return 'Too many attempts — please wait a moment';
     case 'network': return 'Connection error — please try again';
+    case 'challenge': return 'Please complete the challenge below and try again';
   }
 }
 
@@ -141,6 +142,11 @@ function LoginScreen({ onSuccess }: { onSuccess: (session: SurfaceSession, passw
   const [password, setPassword] = useState('');
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const turnstileRef = useRef<TurnstileHandle | null>(null);
+  // Failure-triggered challenge: hidden + ungated on a clean first attempt; flips true (and stays) once the
+  // server demands it or an attempt records a throttle failure (invalid / totp_invalid). totp_required (first
+  // factor passed, no failure recorded) must NOT flip it. Then submit gates on turnstileEnabled && !token.
+  const [challengeNeeded, setChallengeNeeded] = useState(false);
+  const gateOnChallenge = challengeNeeded && turnstileEnabled && !turnstileToken;
   const [step, setStep] = useState<LoginStep>({ tag: 'form' });
 
   const submit = (totpCode?: string) => {
@@ -149,6 +155,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (session: SurfaceSession, passw
       .then((r) => {
         // A spent Turnstile token is single-use — re-challenge on any non-success so a retry carries a fresh one.
         if (!r.ok) turnstileRef.current?.reset();
+        if (!r.ok && (r.code === 'challenge' || r.code === 'invalid' || r.code === 'totp_invalid')) setChallengeNeeded(true);
         if (r.ok) { onSuccess(r.session, password); return; }
         if (r.code === 'totp_required') { setStep({ tag: 'totp', code: '', submitting: false }); return; }
         const msg = loginErrorMsg(r.code);
@@ -182,11 +189,12 @@ function LoginScreen({ onSuccess }: { onSuccess: (session: SurfaceSession, passw
           autoFocus
         />
         {step.error && <p className="auth__error">{step.error}</p>}
-        <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />
+        {/* Re-render the widget for the code-carrying re-call ONLY when the challenge is already on. */}
+        {challengeNeeded && <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />}
         <button
           className="auth__btn auth__btn--primary"
           onClick={() => submit(step.code)}
-          disabled={step.code.length < 6 || step.submitting || (turnstileEnabled && !turnstileToken)}
+          disabled={step.code.length < 6 || step.submitting || gateOnChallenge}
         >
           {step.submitting ? 'Verifying…' : 'Verify'}
         </button>
@@ -195,7 +203,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (session: SurfaceSession, passw
     );
   }
 
-  const canSubmit = username.trim() && password && !(turnstileEnabled && !turnstileToken);
+  const canSubmit = username.trim() && password && !gateOnChallenge;
   return (
     <div className="auth">
       <div className="auth__logo">δ</div>
@@ -223,7 +231,7 @@ function LoginScreen({ onSuccess }: { onSuccess: (session: SurfaceSession, passw
         onKeyDown={(e) => { if (e.key === 'Enter' && canSubmit) submit(); }}
       />
       {step.error && <p className="auth__error">{step.error}</p>}
-      <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />
+      {challengeNeeded && <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />}
       <button className="auth__btn auth__btn--primary" onClick={() => submit()} disabled={!canSubmit}>
         Sign in
       </button>

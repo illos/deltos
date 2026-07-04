@@ -70,16 +70,18 @@ export interface AuthState {
   error: string | null;
 }
 
+// `challenge` = the server's failure-triggered Turnstile fired (challenge_required / challenge_failed):
+// the surface must render the widget and the user re-submits with a token. Distinct from a credential error.
 export type RegisterResult =
   // Option-B single-hash signup: signup mints the session only; the recovery phrase comes from
   // establishRecovery (/recovery/rotate) on the happy path — so no phrase rides this result.
   | { ok: true }
-  | { ok: false; code: 'username_taken' | 'weak_password' | 'invalid' | 'rate_limited' | 'network' };
+  | { ok: false; code: 'username_taken' | 'weak_password' | 'invalid' | 'rate_limited' | 'network' | 'challenge' };
 export type LoginResult =
   /** recoveryRequired = the account has no finalized recovery phrase → route to the forced-phrase
    *  screen and DO NOT finalizeAuth until it is established+acked (the P0-belt). */
   | { ok: true; recoveryRequired: boolean }
-  | { ok: false; code: 'invalid' | 'totp_required' | 'totp_invalid' | 'rate_limited' | 'network' };
+  | { ok: false; code: 'invalid' | 'totp_required' | 'totp_invalid' | 'rate_limited' | 'network' | 'challenge' };
 export type EstablishRecoveryResult =
   | { ok: true; recoveryPhrase: string }
   | { ok: false; code: 'invalid' | 'network' };
@@ -90,7 +92,7 @@ export type FinalizeResult =
   | { ok: false; code: 'invalid' | 'network' | 'recovery_not_established' };
 export type ResetResult =
   | { ok: true }
-  | { ok: false; code: 'invalid' | 'rate_limited' | 'network' };
+  | { ok: false; code: 'invalid' | 'rate_limited' | 'network' | 'challenge' };
 export type TotpSetupResult =
   | { ok: true; secret: string; uri: string }
   | { ok: false; code: 'invalid' | 'network' };
@@ -206,6 +208,12 @@ function readTotpFlag(s: { totpEnabled?: boolean }): boolean {
   return s.totpEnabled === true;
 }
 
+/** True when a server error code is the failure-triggered Turnstile signal (missing OR bad token). Both
+ *  mean the same thing to the surface: render the widget, collect a token, retry. */
+function isChallengeCode(code: string | undefined): boolean {
+  return code === 'challenge_required' || code === 'challenge_failed';
+}
+
 export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   isAuthed: null,
   isAuthing: false,
@@ -302,6 +310,10 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     try { res = await authFetch('/signup', { username, password, ...(turnstileToken ? { turnstileToken } : {}) }); }
     catch { return { ok: false, code: 'network' }; }
     if (!res.ok) {
+      // The failure-triggered Turnstile fires as a 403 (challenge_required/challenge_failed) — read the
+      // body code to distinguish it from the status-mapped credential errors so the route can render the widget.
+      const raw = await res.json().catch(() => ({})) as { error?: { code?: string } };
+      if (isChallengeCode(raw.error?.code)) return { ok: false, code: 'challenge' };
       const code = res.status === 409 ? 'username_taken'
         : res.status === 429 ? 'rate_limited'
         : res.status === 400 ? 'weak_password'
@@ -330,6 +342,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       if (res.status === 429) return { ok: false, code: 'rate_limited' };
       const raw = await res.json().catch(() => ({})) as { error?: { code?: string } };
       const c = raw.error?.code;
+      if (isChallengeCode(c)) return { ok: false, code: 'challenge' };
       if (c === 'totp_required') return { ok: false, code: 'totp_required' };
       if (c === 'totp_invalid') return { ok: false, code: 'totp_invalid' };
       return { ok: false, code: 'invalid' }; // uniform — no username enumeration
@@ -373,6 +386,9 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
     catch { return { ok: false, code: 'network' }; }
     if (!res.ok) {
       if (res.status === 429) return { ok: false, code: 'rate_limited' };
+      // The failure-triggered Turnstile (403 challenge_*) is distinct from the uniform 401 reset failure.
+      const raw = await res.json().catch(() => ({})) as { error?: { code?: string } };
+      if (isChallengeCode(raw.error?.code)) return { ok: false, code: 'challenge' };
       return { ok: false, code: 'invalid' }; // non-disclosing — never confirms the username exists
     }
     const s = (await res.json()) as AccessTokenResponse;

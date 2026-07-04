@@ -29,8 +29,19 @@ function loginErrorMsg(code: Extract<LoginResult, { ok: false }>['code']): strin
     case 'totp_invalid': return 'Incorrect authentication code';
     case 'rate_limited': return 'Too many attempts — please wait a moment';
     case 'network': return 'Connection error — please try again';
+    case 'challenge': return 'Please complete the challenge below and try again';
     default: return 'Something went wrong — please try again';
   }
+}
+
+/**
+ * Should this outcome turn the anti-abuse challenge on for the rest of the flow? Failure-triggered
+ * Turnstile: flip on the server's explicit challenge signal, OR on an outcome that records a throttle
+ * failure server-side (`invalid` / `totp_invalid`) — so the NEXT submit already carries a token instead of
+ * burning a round-trip to learn one is now required. `totp_required` records NO failure → must NOT flip.
+ */
+function loginFlipsChallenge(code: Extract<LoginResult, { ok: false }>['code']): boolean {
+  return code === 'challenge' || code === 'invalid' || code === 'totp_invalid';
 }
 
 export function LoginRoute() {
@@ -44,6 +55,11 @@ export function LoginRoute() {
   // never gates submit — the server gate is inert too, so the pair degrades cleanly.
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const turnstileRef = useRef<TurnstileHandle | null>(null);
+  // Failure-triggered challenge: the widget is hidden and submit ungated on a clean first attempt; this
+  // flips true (and stays true for the rest of the flow) once the server demands the challenge or an
+  // attempt records a throttle failure. Once true, submit gates on turnstileEnabled && !token (old behavior).
+  const [challengeNeeded, setChallengeNeeded] = useState(false);
+  const gateOnChallenge = challengeNeeded && turnstileEnabled && !turnstileToken;
 
   const handleLogin = () => {
     beginAuth();
@@ -52,6 +68,7 @@ export function LoginRoute() {
       // A spent Turnstile token is single-use — re-challenge on any non-entry outcome so a retry
       // (wrong password, totp prompt) carries a fresh token rather than replaying the consumed one.
       if (!(result.ok && !result.recoveryRequired)) turnstileRef.current?.reset();
+      if (!result.ok && loginFlipsChallenge(result.code)) setChallengeNeeded(true);
       if (result.ok) {
         if (result.recoveryRequired) {
           // Forced-phrase belt: account has no finalized phrase — route there before entry.
@@ -80,6 +97,7 @@ export function LoginRoute() {
     // needs its own fresh Turnstile token — the totp screen re-renders the widget for that.
     login(step.username, step.password, step.code, turnstileToken ?? undefined).then(async (result) => {
       if (!result.ok) turnstileRef.current?.reset();
+      if (!result.ok && loginFlipsChallenge(result.code)) setChallengeNeeded(true);
       if (!step || step.tag !== 'totp') return;
       if (result.ok) {
         if (result.recoveryRequired) {
@@ -130,11 +148,13 @@ export function LoginRoute() {
           autoFocus
         />
         {step.error && <p className="auth__error">{step.error}</p>}
-        <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />
+        {/* Re-render the widget for the code-carrying re-call ONLY when the challenge is already on (a
+            totp_required-only first factor never trips it). */}
+        {challengeNeeded && <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />}
         <button
           className="auth__btn auth__btn--primary"
           onClick={handleTotpSubmit}
-          disabled={step.code.length < 6 || step.submitting || (turnstileEnabled && !turnstileToken)}
+          disabled={step.code.length < 6 || step.submitting || gateOnChallenge}
         >
           {step.submitting ? 'Verifying…' : 'Verify'}
         </button>
@@ -170,17 +190,17 @@ export function LoginRoute() {
         placeholder="Password"
         autoComplete="current-password"
         aria-label="Password"
-        onKeyDown={(e) => { if (e.key === 'Enter' && username.trim() && password && !(turnstileEnabled && !turnstileToken)) handleLogin(); }}
+        onKeyDown={(e) => { if (e.key === 'Enter' && username.trim() && password && !gateOnChallenge) handleLogin(); }}
       />
 
       {formError && <p className="auth__error">{formError}</p>}
 
-      <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />
+      {challengeNeeded && <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />}
 
       <button
         className="auth__btn auth__btn--primary"
         onClick={handleLogin}
-        disabled={!username.trim() || !password || (turnstileEnabled && !turnstileToken)}
+        disabled={!username.trim() || !password || gateOnChallenge}
       >
         Sign in
       </button>

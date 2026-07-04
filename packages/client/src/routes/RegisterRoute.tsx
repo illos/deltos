@@ -33,8 +33,18 @@ function registerErrorMsg(code: Extract<RegisterResult, { ok: false }>['code']):
     case 'weak_password': return 'Password must be at least 8 characters';
     case 'rate_limited': return 'Too many attempts — please wait a moment';
     case 'network': return 'Connection error — please try again';
+    case 'challenge': return 'Please complete the challenge below and try again';
     default: return 'Something went wrong — please try again';
   }
+}
+
+/**
+ * Failure-triggered challenge flip: on the server's explicit challenge signal, OR on `username_taken`
+ * (the one signup outcome that records a throttle failure server-side) so the next attempt already carries
+ * a token. Client-side validation errors (weak/mismatch) never hit the server → never flip.
+ */
+function registerFlipsChallenge(code: Extract<RegisterResult, { ok: false }>['code']): boolean {
+  return code === 'challenge' || code === 'username_taken';
 }
 
 export function RegisterRoute() {
@@ -48,6 +58,10 @@ export function RegisterRoute() {
   // Turnstile token for the gated /signup call (null until solved; inert when no sitekey is configured).
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const turnstileRef = useRef<TurnstileHandle | null>(null);
+  // Failure-triggered challenge: hidden + ungated on a clean first attempt; flips true (and stays) once the
+  // server demands it or a signup records a throttle failure. Then submit gates on turnstileEnabled && !token.
+  const [challengeNeeded, setChallengeNeeded] = useState(false);
+  const gateOnChallenge = challengeNeeded && turnstileEnabled && !turnstileToken;
 
   const handleRegister = () => {
     if (password !== confirm) { setStep({ tag: 'form', error: "Passwords don't match" }); return; }
@@ -57,6 +71,7 @@ export function RegisterRoute() {
     register(username.trim(), password, turnstileToken ?? undefined).then((result) => {
       if (!result.ok) {
         turnstileRef.current?.reset(); // spent token — re-challenge for the retry
+        if (registerFlipsChallenge(result.code)) setChallengeNeeded(true);
         setStep({ tag: 'form', error: registerErrorMsg(result.code) }); return;
       }
       // Option-B single-hash signup: signup no longer returns a phrase (it doesn't hash a verifier —
@@ -240,12 +255,12 @@ export function RegisterRoute() {
 
       {formError && <p className="auth__error">{formError}</p>}
 
-      <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />
+      {challengeNeeded && <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />}
 
       <button
         className="auth__btn auth__btn--primary"
         onClick={handleRegister}
-        disabled={!username.trim() || !password || !confirm || (turnstileEnabled && !turnstileToken)}
+        disabled={!username.trim() || !password || !confirm || gateOnChallenge}
       >
         Create account
       </button>

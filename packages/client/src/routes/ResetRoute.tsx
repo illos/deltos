@@ -20,8 +20,17 @@ function resetErrorMsg(code: Extract<ResetResult, { ok: false }>['code']): strin
   switch (code) {
     case 'rate_limited': return 'Too many attempts — please wait a moment';
     case 'network': return 'Connection error — please try again';
+    case 'challenge': return 'Please complete the challenge below and try again';
     default: return 'Incorrect details — please check your recovery phrase';
   }
+}
+
+/**
+ * Failure-triggered challenge flip: on the server's explicit challenge signal, OR on the uniform reset
+ * failure (`invalid`) — which records a throttle failure server-side — so the next attempt carries a token.
+ */
+function resetFlipsChallenge(code: Extract<ResetResult, { ok: false }>['code']): boolean {
+  return code === 'challenge' || code === 'invalid';
 }
 
 export function ResetRoute() {
@@ -36,6 +45,10 @@ export function ResetRoute() {
   // Turnstile token for the gated /reset call (null until solved; inert when no sitekey is configured).
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const turnstileRef = useRef<TurnstileHandle | null>(null);
+  // Failure-triggered challenge: hidden + ungated on a clean first attempt; flips true (and stays) once the
+  // server demands it or a reset attempt records a throttle failure. Then submit gates on turnstileEnabled && !token.
+  const [challengeNeeded, setChallengeNeeded] = useState(false);
+  const gateOnChallenge = challengeNeeded && turnstileEnabled && !turnstileToken;
 
   const handleReset = () => {
     if (newPassword !== confirm) { setStep({ tag: 'form', error: "Passwords don't match" }); return; }
@@ -44,6 +57,7 @@ export function ResetRoute() {
     setStep({ tag: 'busy' });
     resetWithPhrase(username.trim(), phrase.trim(), newPassword, turnstileToken ?? undefined).then(async (result) => {
       if (!result.ok) turnstileRef.current?.reset(); // spent token — re-challenge for the retry
+      if (!result.ok && resetFlipsChallenge(result.code)) setChallengeNeeded(true);
       if (result.ok) {
         // Password is changed. Try to finalize a session — but /reset mints no session cookie
         // by design, so /finalize may 503. Treat any finalize failure as graceful degradation:
@@ -147,12 +161,12 @@ export function ResetRoute() {
         back on in Settings afterward. This will also sign you out on every device.
       </p>
 
-      <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />
+      {challengeNeeded && <Turnstile ref={turnstileRef} onToken={setTurnstileToken} />}
 
       <button
         className="auth__btn auth__btn--primary"
         onClick={handleReset}
-        disabled={!username.trim() || !phrase.trim() || !newPassword || !confirm || (turnstileEnabled && !turnstileToken)}
+        disabled={!username.trim() || !phrase.trim() || !newPassword || !confirm || gateOnChallenge}
       >
         Reset password
       </button>

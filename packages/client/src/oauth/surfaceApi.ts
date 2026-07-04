@@ -27,7 +27,9 @@ export interface SurfaceSession {
 
 export type LoginOutcome =
   | { ok: true; session: SurfaceSession }
-  | { ok: false; code: 'invalid' | 'totp_required' | 'totp_invalid' | 'rate_limited' | 'network' };
+  // `challenge` = the server's failure-triggered Turnstile fired (challenge_required / challenge_failed):
+  // render the widget and retry with a token. Distinct from a credential error.
+  | { ok: false; code: 'invalid' | 'totp_required' | 'totp_invalid' | 'rate_limited' | 'network' | 'challenge' };
 
 function sessionFrom(s: AccessTokenResponse): SurfaceSession {
   return { bearer: s.token, totpEnabled: s.totpEnabled === true };
@@ -79,6 +81,7 @@ export async function login(
     if (res.status === 429) return { ok: false, code: 'rate_limited' };
     const raw = (await res.json().catch(() => ({}))) as { error?: { code?: string } };
     const c = raw.error?.code;
+    if (c === 'challenge_required' || c === 'challenge_failed') return { ok: false, code: 'challenge' };
     if (c === 'totp_required') return { ok: false, code: 'totp_required' };
     if (c === 'totp_invalid') return { ok: false, code: 'totp_invalid' };
     return { ok: false, code: 'invalid' }; // uniform — no username enumeration
