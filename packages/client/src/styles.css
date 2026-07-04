@@ -138,6 +138,52 @@
 .home__search-icon { flex-shrink: 0; color: var(--faint); }
 .home__search-placeholder { font-family: var(--ff); font-size: 13px; color: var(--faint); }
 
+/* In-place search (mobile): the pill morphs into a live field in place — same rounded --paper look, now
+   holding a live input + a close affordance. The note list below stays put until the first character. */
+.home__search-field--active {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 7px 11px;
+  box-sizing: border-box;
+}
+.home__search-input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  font-family: var(--ff);
+  /* 16px min — a real input must render ≥16px or iOS Safari auto-zooms on focus (ios-input-16px-no-zoom). */
+  font-size: 16px;
+  color: var(--ink);
+  caret-color: var(--accent);
+  -webkit-appearance: none;
+  appearance: none;
+}
+.home__search-input::-webkit-search-cancel-button { display: none; }
+.home__search-input::placeholder { color: var(--faint); }
+.home__search-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 2px 6px;
+  touch-action: manipulation;
+}
+
+/* Search mode: the Deck grows tall (keys-only keypad). Pad the scrolling region's tail so its last row
+   clears the fixed Deck. --deck-h is the live Deck height — small in native mode, keypad-tall in keypad
+   mode — published by the Deck itself; falls back to 0 when no Deck is up. */
+.home--searching .home__notes,
+.home--searching .search__body { padding-bottom: calc(var(--deck-h, 0px) + 0.5rem); }
+
 .home__lede {
   margin: 2rem 1rem;
   font-family: var(--ff);
@@ -3178,6 +3224,8 @@ a.auth__link { display: inline; }
      already hidden via --desktop-only classes. New + Search remain BottomNav slots. */
   .home__compose { display: none; }
   .home__search { display: none; }
+  /* …but reveal it while in-place search is open (the live field lives here; entry is the Deck Search slot). */
+  .home--searching .home__search { display: block; }
   /* Show 3-dot global nav button (hidden on desktop). */
   .shell__nav-btn--mobile-only { display: flex; }
 }

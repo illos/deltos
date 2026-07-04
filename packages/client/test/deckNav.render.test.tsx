@@ -14,6 +14,7 @@ import { useEffect } from 'react';
 import { DeckHostProvider, useDeckHost } from '../src/components/DeckHost.js';
 import { Keypad } from '../src/deck/index.js';
 import type { KeyActions } from '../src/deck/index.js';
+import { useSearchModeStore } from '../src/lib/searchModeStore.js';
 
 afterEach(() => { cleanup(); });
 
@@ -84,15 +85,20 @@ describe('DeckHostProvider — shell-level Deck + navigation loadout', () => {
     expect(document.querySelector('.deck-nav')).not.toBeNull();
   });
 
-  it('navigation loadout: New → /new, Search → /search', () => {
+  it('navigation loadout: New → /new; Search → the list + in-place search mode (NOT the /search route)', () => {
+    useSearchModeStore.setState({ open: false });
     render(
-      <MemoryRouter initialEntries={['/']}>
+      <MemoryRouter initialEntries={['/trash']}>
         <DeckHostProvider enabled><LocationProbe /></DeckHostProvider>
       </MemoryRouter>,
     );
     fireEvent.click(navAction('New note')!);
     expect(document.querySelector('[data-testid="path"]')!.textContent).toBe('/new');
+    // Mobile Search no longer routes to /search — it returns to the list and flips the shared flag
+    // HomeView reads to open the in-place field + keys-only keypad.
     fireEvent.click(navAction('Search')!);
-    expect(document.querySelector('[data-testid="path"]')!.textContent).toBe('/search');
+    expect(document.querySelector('[data-testid="path"]')!.textContent).toBe('/');
+    expect(useSearchModeStore.getState().open).toBe(true);
+    useSearchModeStore.setState({ open: false });
   });
 });
