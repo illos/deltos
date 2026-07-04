@@ -37,7 +37,7 @@ const ALL_MIGRATIONS = [
   '0007_reconcile-account-sync-seq.sql', '0008_notebooks.sql', '0009_backfill-default-notebooks.sql',
   '0010_nullable-notebookid-all-notes.sql', '0011_drop-isdefault-notebooksyncseg-notes_pull.sql',
   '0012_custom-dictionary.sql', '0013_agent-token-label.sql', '0014_grant-family-link.sql',
-  '0015_audit-log.sql', '0016_usage-counter.sql', '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql',
+  '0015_audit-log.sql', '0016_usage-counter.sql', '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', '0020_grant-sets.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function d1Over(raw: Database.Database): D1Database {
@@ -91,10 +91,10 @@ async function getNote(env: Env, token: string, id: string): Promise<any> {
   return r?.structuredContent ?? r;
 }
 
-/** Mint an agent token via the manual route, with an optional per-scope write opt-in + notebook scope. */
+/** Mint an agent token via the manual route, with an optional per-scope write opt-in + resource set. */
 async function mintAgentToken(
   env: Env, ownerToken: string, ownerPassword: string,
-  opts: { write?: AgentWriteOpt; notebookId?: string } = {},
+  opts: { write?: AgentWriteOpt; resources?: unknown[] } = {},
 ): Promise<{ token: string; grantId: string; scope: string[] }> {
   const res = await app.request('/api/agent-tokens', {
     method: 'POST',
@@ -102,11 +102,14 @@ async function mintAgentToken(
     body: JSON.stringify({
       label: 'redteam', password: ownerPassword,
       ...(opts.write ? { write: opts.write } : {}),
-      ...(opts.notebookId ? { notebookId: opts.notebookId } : {}),
+      ...(opts.resources ? { resources: opts.resources } : {}),
     }),
   }, env);
   if (res.status !== 201) throw new Error(`mint failed: ${res.status} ${await res.text()}`);
-  return (await res.json()) as { token: string; grantId: string; scope: string[] };
+  // Grant sets: the credentialRef audited on MCP access is the resolved principal's grantId — for a single-
+  // resource token that is resources[0].grantId. Return it as `grantId` so V2/V6 audit checks still bind.
+  const body = (await res.json()) as { token: string; scope: string[]; resources: Array<{ grantId: string }> };
+  return { token: body.token, grantId: body.resources[0].grantId, scope: body.scope };
 }
 
 // --- OAuth full-flow helper (register → consent → token) — to red-team OAuth-minted tokens too ------------
@@ -255,20 +258,60 @@ describe('P5 red-team — MCP write tools threat model', () => {
     expect(note.properties['sys:trashedAt']).toBeUndefined();
   });
 
-  it('V3: a notebook-scoped write token cannot reach note-level ops (no note→notebook resolver)', async () => {
+  it('V3: a notebook-scoped write token reaches notes IN its notebook, but NOT notes outside it (hierarchy coverage)', async () => {
     const notebookId = '00000000-0000-4000-9000-0000000000a1';
-    const { token } = await mintAgentToken(env, ownerA, passA, { write: WRITE_ALL, notebookId });
-    // create INTO the scoped notebook is allowed (exact resource match)…
+    // The notebook must be OWNED by the minter (mint-time ownership validation) — seed it for account A.
+    const iso = new Date().toISOString();
+    raw.prepare(
+      `INSERT INTO notebooks (id, accountId, name, defaultCollectionView, version, createdAt, updatedAt, deletedAt, syncSeq)
+       VALUES (?, ?, 'scoped', 'list', 1, ?, ?, NULL, 0)`,
+    ).run(notebookId, accountA, iso, iso);
+    const { token } = await mintAgentToken(env, ownerA, passA, {
+      write: WRITE_ALL,
+      resources: [{ kind: 'notebook', id: notebookId }],
+    });
+    // create INTO the scoped notebook is allowed (exact notebook coverage)…
     const ok = await call(env, token, 'create_note', { title: 'in scope', notebookId });
     expect(ok.structuredContent.status).toBe('applied');
     const id = ok.structuredContent.note.id;
-    // …but a note(id)-addressed op is DENIED — the grant covers notebook(N), not note(id) under it.
-    const denied = await call(env, token, 'update_note', { id, title: 'x' });
+    // …and a note(id)-addressed op on a note that LIVES in the granted notebook is now ALLOWED (ROAD-0011
+    // P1 §1: a notebook grant covers its current notes via the injected owner-resolver).
+    const inScope = await call(env, token, 'update_note', { id, title: 'edited in scope' });
+    expect(inScope.structuredContent.status).toBe('applied');
+    // …but a note OUTSIDE the granted notebook (here uncategorized, notebookId = null) is DENIED — the note's
+    // current notebook is not the granted one, so the belt/coverage rejects it (forbidden, no oracle).
+    const outsideId = '00000000-0000-4000-9000-0000000000c3';
+    raw.prepare(
+      `INSERT INTO notes (id, notebookId, title, properties, body, version, createdAt, updatedAt, deletedAt, syncSeq, forkedFromId, accountId)
+       VALUES (?, NULL, 'outside', '{}', '[]', 0, ?, ?, NULL, 0, NULL, ?)`,
+    ).run(outsideId, iso, iso, accountA);
+    const denied = await call(env, token, 'update_note', { id: outsideId, title: 'x' });
     expect(denied.isError).toBe(true);
     expect(denied.content[0].text).toMatch(/forbidden/i);
     // …and creating into a DIFFERENT notebook is denied (no coverage).
     const other = await call(env, token, 'create_note', { title: 'y', notebookId: '00000000-0000-4000-9000-0000000000b2' });
     expect(other.isError).toBe(true);
+  });
+
+  it('V3: moving a note OUT of a granted notebook loses coverage (live semantics)', async () => {
+    const notebookId = '00000000-0000-4000-9000-0000000000d4';
+    const iso = new Date().toISOString();
+    raw.prepare(
+      `INSERT INTO notebooks (id, accountId, name, defaultCollectionView, version, createdAt, updatedAt, deletedAt, syncSeq)
+       VALUES (?, ?, 'live', 'list', 1, ?, ?, NULL, 0)`,
+    ).run(notebookId, accountA, iso, iso);
+    const { token } = await mintAgentToken(env, ownerA, passA, {
+      write: WRITE_ALL,
+      resources: [{ kind: 'notebook', id: notebookId }],
+    });
+    const id = (await call(env, token, 'create_note', { title: 'movable', notebookId })).structuredContent.note.id;
+    // In-notebook edit works…
+    expect((await call(env, token, 'update_note', { id, title: 'still in' })).structuredContent.status).toBe('applied');
+    // …now MOVE the note out of the granted notebook (owner-side), and coverage is lost immediately.
+    raw.prepare('UPDATE notes SET notebookId = NULL WHERE id = ?').run(id);
+    const afterMove = await call(env, token, 'update_note', { id, title: 'nope' });
+    expect(afterMove.isError).toBe(true);
+    expect(afterMove.content[0].text).toMatch(/forbidden/i);
   });
 
   // ── Vector 4 — out-of-band sys:-key smuggling BLOCKED ─────────────────────────────────────────────

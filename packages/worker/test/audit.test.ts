@@ -32,7 +32,7 @@ const ALL_MIGRATIONS = [
   '0012_custom-dictionary.sql', '0013_agent-token-label.sql', '0014_grant-family-link.sql',
   '0015_audit-log.sql',
   '0016_usage-counter.sql',
-  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql',
+  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', '0020_grant-sets.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function d1Over(raw: Database.Database): D1Database {
@@ -154,19 +154,20 @@ describe('P3 audit — lifecycle + chokepoint events', () => {
     expect(ev!.detail).toBe('invalid-credentials');
   });
 
-  it('records an agent-token MINT as auth/token.mint/allow with the NEW grantId as the credentialRef', async () => {
+  it('records an agent-token MINT as auth/token.mint/allow with the tokenId as the credentialRef', async () => {
     const seedEnv = makeEnv(raw);
     const { token } = await signupToken(seedEnv, 'mint-owner', OWNER_PW);
     const { dataset, points } = captureAudit();
     const env = makeEnv(raw, dataset);
     const res = await post(env, '/api/agent-tokens', { password: OWNER_PW, label: 'x' }, token);
     expect(res.status).toBe(201);
-    const grantId = ((await res.json()) as { grantId: string }).grantId;
+    // Grant sets (ROAD-0011 P1): credentialRef is the whole-token id; detail carries the resource set.
+    const tokenId = ((await res.json()) as { tokenId: string }).tokenId;
     const ev = points.map(decode).find((e) => e.action === 'token.mint' && e.result === 'allow');
     expect(ev).toBeDefined();
     expect(ev!.surface).toBe('auth');
-    expect(ev!.credentialRef).toBe(grantId);
-    expect(ev!.detail).toBe('agent-token');
+    expect(ev!.credentialRef).toBe(tokenId);
+    expect(ev!.detail).toBe('agent-token workspace');
   });
 
   it('records a mint STEP-UP failure (wrong password) as auth/token.mint/deny', async () => {
@@ -184,14 +185,15 @@ describe('P3 audit — lifecycle + chokepoint events', () => {
   it('records an agent-token REVOKE as auth/token.revoke with the target grantId in detail', async () => {
     const seedEnv = makeEnv(raw);
     const { token } = await signupToken(seedEnv, 'revoke-owner', OWNER_PW);
-    const minted = (await (await post(seedEnv, '/api/agent-tokens', { password: OWNER_PW }, token)).json()) as { grantId: string };
+    const minted = (await (await post(seedEnv, '/api/agent-tokens', { password: OWNER_PW }, token)).json()) as { resources: Array<{ grantId: string }> };
+    const grantId = minted.resources[0].grantId;
     const { dataset, points } = captureAudit();
     const env = makeEnv(raw, dataset);
-    const res = await del(env, `/api/agent-tokens/${minted.grantId}`, token);
+    const res = await del(env, `/api/agent-tokens/${grantId}`, token);
     expect(res.status).toBe(200);
     const ev = points.map(decode).find((e) => e.action === 'token.revoke');
     expect(ev).toBeDefined();
-    expect(ev!.detail).toBe(minted.grantId);
+    expect(ev!.detail).toBe(grantId);
   });
 
   it('records a SESSION revoke as auth/session.revoke', async () => {

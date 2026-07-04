@@ -32,7 +32,7 @@ const ALL_MIGRATIONS = [
   '0014_grant-family-link.sql',
   '0015_audit-log.sql',
   '0016_usage-counter.sql',
-  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql',
+  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', '0020_grant-sets.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function d1Over(raw: Database.Database): D1Database {
@@ -73,13 +73,16 @@ const rpc = (env: Env, payload: unknown, token?: string) =>
   }, env);
 
 /** Mint a read-only agent token for the owner holding `ownerToken`. */
-async function mintAgentToken(env: Env, ownerToken: string, ownerPassword: string): Promise<{ token: string; grantId: string }> {
+async function mintAgentToken(env: Env, ownerToken: string, ownerPassword: string): Promise<{ token: string; grantId: string; tokenId: string }> {
   const res = await app.request('/api/agent-tokens', {
     method: 'POST',
     headers: { 'content-type': 'application/json', Authorization: `Bearer ${ownerToken}` },
     body: JSON.stringify({ label: 'test-mcp', password: ownerPassword }), // H1 step-up: mint requires re-auth
   }, env);
-  return (await res.json()) as { token: string; grantId: string };
+  // Grant sets (ROAD-0011 P1): mint returns tokenId + a per-resource set. A default (workspace) token is one
+  // row, so its sole resources[0].grantId is the per-resource revoke target and revoking it kills the token.
+  const body = (await res.json()) as { token: string; tokenId: string; resources: Array<{ grantId: string }> };
+  return { token: body.token, grantId: body.resources[0].grantId, tokenId: body.tokenId };
 }
 
 /** Create a note via the real REST route (owner-authed) and return its id. */
@@ -275,10 +278,10 @@ describe('MCP server — protocol / auth / tools (POST /api/mcp)', () => {
   // --- C RATE-LIMIT (ROAD-0005 P0): per-token request ceiling -----------------------------------
 
   it('RATE-LIMIT: a token over its per-token request ceiling is 429 (JSON-RPC rate_limited)', async () => {
-    const { token: agentTok, grantId } = await mintAgentToken(env, ownerA, 'mcp-owner-password');
+    const { token: agentTok, tokenId } = await mintAgentToken(env, ownerA, 'mcp-owner-password');
     // Seed the per-token fixed window AT the limit (window-end in the future) so the next request trips it.
     const store = createAuthStore(d1Adapter(env.DB));
-    await store.recordThrottleFailure(`mcp:${grantId}`, 600, Date.now() + 60_000, new Date().toISOString());
+    await store.recordThrottleFailure(`mcp:${tokenId}`, 600, Date.now() + 60_000, new Date().toISOString());
 
     const res = await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, agentTok);
     expect(res.status).toBe(429);
@@ -287,9 +290,9 @@ describe('MCP server — protocol / auth / tools (POST /api/mcp)', () => {
   });
 
   it('RATE-LIMIT also meters NOTIFICATIONS — no unmetered 202 work path', async () => {
-    const { token: agentTok, grantId } = await mintAgentToken(env, ownerA, 'mcp-owner-password');
+    const { token: agentTok, tokenId } = await mintAgentToken(env, ownerA, 'mcp-owner-password');
     const store = createAuthStore(d1Adapter(env.DB));
-    await store.recordThrottleFailure(`mcp:${grantId}`, 600, Date.now() + 60_000, new Date().toISOString());
+    await store.recordThrottleFailure(`mcp:${tokenId}`, 600, Date.now() + 60_000, new Date().toISOString());
     // A notification (no id) is now gated by the window too — it must NOT slip through as a 202.
     const res = await rpc(env, { jsonrpc: '2.0', method: 'notifications/initialized' }, agentTok);
     expect(res.status).toBe(429);

@@ -36,9 +36,13 @@ const grant = (over: Partial<Grant> = {}): Grant => ({
 const ctxWith = (authHeader?: string): AppContext =>
   ({ req: { header: (n: string) => (n === 'Authorization' ? authHeader : undefined) }, env: {} }) as unknown as AppContext;
 
-/** A fake store whose grant lookup returns `g` (or null) regardless of the hash. */
+/** A fake store whose grant lookup returns `g` (or null) regardless of the hash. resolvePrincipal now uses
+ *  the resolve-ALL form (grant sets, ROAD-0011 P1) — a single grant is a one-element set. */
 const storeReturning = (g: Grant | null): AuthStore =>
-  ({ resolveGrantByTokenHash: async () => g }) as unknown as AuthStore;
+  ({
+    resolveGrantByTokenHash: async () => g,
+    resolveGrantsByTokenHash: async () => (g ? [g] : []),
+  }) as unknown as AuthStore;
 
 describe('parseBearerToken', () => {
   it.each([

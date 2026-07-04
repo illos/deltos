@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { ScopeSchema } from './grant.js';
-import { AgentWriteOptSchema } from './agentToken.js';
+import { ScopeSchema, ResourceSchema } from './grant.js';
+import { AgentWriteOptSchema, AgentGrantResourceSchema } from './agentToken.js';
 import { TimestampSchema } from '../spine/ids.js';
 
 /**
@@ -98,6 +98,12 @@ export const AuthorizeConsentRequestSchema = z
     // clampAgentScopes). ABSENT ⇒ read-only (fail-closed default). This is what makes OAuth consent and
     // manual mint ONE auth path for granting write; a write-capable consent is doubly gated by the step-up.
     write: AgentWriteOptSchema.optional(),
+    // The RESOURCE SET the user approved in the consent picker (ROAD-0011 P1 §1.3) — notebooks and/or notes,
+    // or omitted for the whole workspace. Clamped + ownership-validated through the SAME path as manual mint
+    // ({@link clampAgentResources}); only what survives is bound to the auth code and later minted. This is
+    // the picker SELECTION, distinct from the RFC-8707 `resource` audience url below (which binds the token's
+    // audience, not its per-notebook scope).
+    resources: z.array(ResourceSchema).optional(),
     // H1 step-up — re-prove the human at consent (password always; totp when 2FA on). Verified + discarded.
     password: z.string().min(1).optional(),
     totp: z.string().optional(),
@@ -145,10 +151,14 @@ export type TokenResponse = z.infer<typeof TokenResponseSchema>;
  * revoke is per-`clientId` (kills every grant for that app at once).
  */
 export const ConnectedAppSchema = z.object({
-  grantId: z.string().min(1),
+  // The whole-token id (tokenGroupId) — a re-consent mints a fresh token, so a client may hold several.
+  tokenId: z.string().min(1),
   clientId: z.string().min(1),
   clientName: z.string().nullable(),
   scope: z.array(ScopeSchema),
+  // The per-resource set this connection authorizes (ROAD-0011 P1 §1.4). v1 OAuth consent defaults to the
+  // whole workspace; the resource-picker (a later lane) narrows it. Each carries its per-resource grantId.
+  resources: z.array(AgentGrantResourceSchema).min(1),
   createdAt: TimestampSchema,
 });
 export type ConnectedApp = z.infer<typeof ConnectedAppSchema>;

@@ -35,7 +35,7 @@ const ALL_MIGRATIONS = [
   '0014_grant-family-link.sql',
   '0015_audit-log.sql',
   '0016_usage-counter.sql',
-  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql',
+  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', '0020_grant-sets.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function d1Over(raw: Database.Database): D1Database {
@@ -227,7 +227,7 @@ describe('active sessions — list / revoke-one / signout-others (route + chokep
     expect(await listSessions(env, a.token)).toHaveLength(3);
 
     // Mint an agent token (NULL familyId) — it MUST survive signout-others.
-    const minted = (await (await post(env, '/api/agent-tokens', { label: 'Claude', password: a.password }, authed(a.token))).json()) as { grantId: string }; // H1: mint needs step-up password
+    const minted = (await (await post(env, '/api/agent-tokens', { label: 'Claude', password: a.password }, authed(a.token))).json()) as { resources: Array<{ grantId: string }> }; // H1: mint needs step-up password
     const currentFamily = (await listSessions(env, a.token)).find((s) => s.current)!.familyId;
 
     const res = await post(env, '/api/auth/sessions/signout-others', {}, authed(a.token));
@@ -246,7 +246,7 @@ describe('active sessions — list / revoke-one / signout-others (route + chokep
     expect(currentGrant.n).toBeGreaterThan(0);
 
     // The AGENT token (NULL familyId) is STILL live — signout-others never reaches it.
-    const agentRow = raw.prepare('SELECT revokedAt, familyId FROM grants WHERE grantId = ?').get(minted.grantId) as { revokedAt: string | null; familyId: string | null };
+    const agentRow = raw.prepare('SELECT revokedAt, familyId FROM grants WHERE grantId = ?').get(minted.resources[0].grantId) as { revokedAt: string | null; familyId: string | null };
     expect(agentRow.revokedAt).toBeNull();
     expect(agentRow.familyId).toBeNull();
   });

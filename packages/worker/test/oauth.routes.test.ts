@@ -29,7 +29,7 @@ const ALL_MIGRATIONS = [
   '0007_reconcile-account-sync-seq.sql', '0008_notebooks.sql', '0009_backfill-default-notebooks.sql',
   '0010_nullable-notebookid-all-notes.sql', '0011_drop-isdefault-notebooksyncseg-notes_pull.sql',
   '0012_custom-dictionary.sql', '0013_agent-token-label.sql', '0014_grant-family-link.sql',
-  '0015_audit-log.sql', '0016_usage-counter.sql', '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql',
+  '0015_audit-log.sql', '0016_usage-counter.sql', '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', '0020_grant-sets.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function d1Over(raw: Database.Database): D1Database {
@@ -197,6 +197,54 @@ describe('authorize (consent) → token (PKCE) — the full flow', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     }, env);
     expect(mcpRes.status).toBe(200);
+  });
+
+  it('consent WITH a resource set mints a notebook-scoped grant set (the second mint path, clamped)', async () => {
+    const { token, accountId } = await signupToken(env, 'oauth-resources', OWNER_PW);
+    const { clientId, redirect } = await registerClient();
+    // The picker-approved notebook must be OWNED by the account (ownership-validated at consent) — seed it.
+    const notebookId = '33333333-3333-4333-8333-333333333333';
+    const iso = new Date().toISOString();
+    raw.prepare(
+      `INSERT INTO notebooks (id, accountId, name, defaultCollectionView, version, createdAt, updatedAt, deletedAt, syncSeq)
+       VALUES (?, ?, 'picked', 'list', 1, ?, ?, NULL, 0)`,
+    ).run(notebookId, accountId, iso, iso);
+
+    // A workspace in the set alongside a notebook COLLAPSES to workspace at the clamp — prove the notebook-only
+    // selection survives instead (a resource the user did not keep never becomes a grant row).
+    const cRes = await consent(token, consentBody(clientId, redirect, {
+      resources: [{ kind: 'notebook', id: notebookId }],
+    }));
+    expect(cRes.status).toBe(200);
+    const { code } = await cRes.json();
+    const tRes = await tokenExchange({
+      grant_type: 'authorization_code', code, redirect_uri: redirect, client_id: clientId, code_verifier: PKCE_VERIFIER,
+    });
+    expect(tRes.status).toBe(200);
+
+    // The issued token is a grant SET scoped to exactly the notebook (not the whole workspace).
+    const rows = raw.prepare(
+      "SELECT resourceKind, resourceId FROM grants WHERE clientId = ? AND principalKind = 'agent' AND revokedAt IS NULL",
+    ).all(clientId) as Array<{ resourceKind: string; resourceId: string | null }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].resourceKind).toBe('notebook');
+    expect(rows[0].resourceId).toBe(notebookId);
+
+    // Connected-apps listing surfaces the resource set for the UI lane.
+    const apps = (await (await app.request('/api/oauth/clients', { headers: { Authorization: `Bearer ${token}` } }, env)).json()) as {
+      apps: Array<{ tokenId: string; resources: Array<{ kind: string; id: string | null }> }>;
+    };
+    expect(apps.apps).toHaveLength(1);
+    expect(apps.apps[0].resources).toEqual([{ grantId: expect.any(String), kind: 'notebook', id: notebookId }]);
+  });
+
+  it('consent REJECTS a resource the account does not own (fail-closed 400)', async () => {
+    const { token } = await signupToken(env, 'oauth-foreign', OWNER_PW);
+    const { clientId, redirect } = await registerClient();
+    const cRes = await consent(token, consentBody(clientId, redirect, {
+      resources: [{ kind: 'notebook', id: '44444444-4444-4444-8444-444444444444' }],
+    }));
+    expect(cRes.status).toBe(400);
   });
 
   it('consent WITH a write opt-in mints a WRITE token — one auth path with the mint route', async () => {

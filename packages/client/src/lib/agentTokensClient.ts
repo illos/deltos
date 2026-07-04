@@ -153,11 +153,22 @@ export async function mintAgentToken(params: {
 }
 
 /**
- * Revoke an agent token by grantId. The server returns 404 for not-found / already-revoked / not-owned
- * (no cross-account disclosure) — all benign for a revoke, so we treat 404 as success and simply drop the
- * row. Any other non-OK is a real failure.
+ * Revoke a WHOLE token (all its resources) by tokenId — the "revoke connection" button (grant sets, ROAD-0011
+ * P1). The server returns 404 for not-found / already-revoked / not-owned (no cross-account disclosure) — all
+ * benign for a revoke, so we treat 404 as success. Any other non-OK is a real failure.
  */
-export async function revokeAgentToken(grantId: string): Promise<void> {
+export async function revokeAgentToken(tokenId: string): Promise<void> {
+  const res = await authedFetch(`/token/${encodeURIComponent(tokenId)}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 404) {
+    throw new AgentTokenError(`Could not revoke the connection (${res.status}).`, res.status);
+  }
+}
+
+/**
+ * Revoke ONE resource of a token by its per-resource grantId (per-resource revocation) — drops a single
+ * notebook/note from a token without re-minting. Same benign-404 handling as {@link revokeAgentToken}.
+ */
+export async function revokeAgentTokenResource(grantId: string): Promise<void> {
   const res = await authedFetch(`/${encodeURIComponent(grantId)}`, { method: 'DELETE' });
   if (!res.ok && res.status !== 404) {
     throw new AgentTokenError(`Could not revoke the connection (${res.status}).`, res.status);

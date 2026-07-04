@@ -43,7 +43,7 @@ const migrations = [
   '0014_grant-family-link.sql',
   '0015_audit-log.sql',
   '0016_usage-counter.sql',
-  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', // adds grants.familyId (the mintGrant INSERT lists it) — ALTER works on the 0002 table
+  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0020_grant-sets.sql', // adds grants.familyId (the mintGrant INSERT lists it) — ALTER works on the 0002 table
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function sqliteAdapter(db: Database.Database): DbAdapter {
@@ -221,21 +221,25 @@ describe('registerDevice / getDevice — adversarial (secSys)', () => {
 // ---------------------------------------------------------------------------
 
 describe('mintGrant / resolveGrantByTokenHash — adversarial (secSys)', () => {
-  it('duplicate tokenHash → throws UNIQUE constraint (F6 uniqueness)', async () => {
+  it('rows MAY share a tokenHash (grant sets, ROAD-0011 P1) — the 0002 UNIQUE(tokenHash) was dropped in 0020', async () => {
+    // A grant SET is N rows sharing one tokenHash; resolveGrantsByTokenHash returns all of them (any-of eval).
     await store.mintGrant({
-      grantId: 'g1', tokenHash: 'h-clash',
+      grantId: 'g1', tokenHash: 'h-shared',
       principal: owner(FP_A), mintedByKeyId: 'k1',
       resource: workspaceResource(), scope: scopes('read'),
       expiresAtMs: null, createdAt: '2025-01-01T00:00:00Z',
     });
-    await expect(
-      store.mintGrant({
-        grantId: 'g2', tokenHash: 'h-clash',
-        principal: owner(FP_A), mintedByKeyId: 'k2',
-        resource: workspaceResource(), scope: scopes('read'),
-        expiresAtMs: null, createdAt: '2025-01-01T00:00:01Z',
-      }),
-    ).rejects.toThrow();
+    // A second row with the SAME hash no longer throws — this is the grant-set primitive.
+    await store.mintGrant({
+      grantId: 'g2', tokenHash: 'h-shared',
+      principal: owner(FP_A), mintedByKeyId: 'k2',
+      resource: workspaceResource(), scope: scopes('read'),
+      expiresAtMs: null, createdAt: '2025-01-01T00:00:01Z',
+    });
+    const all = await store.resolveGrantsByTokenHash('h-shared');
+    expect(all.map((g) => g.grantId).sort()).toEqual(['g1', 'g2']);
+    // The singular resolver still returns a single representative (unique-hash callers rely on it).
+    expect(await store.resolveGrantByTokenHash('h-shared')).not.toBeNull();
   });
 
   it('revoked grant is still returned by resolveGrantByTokenHash — the layer never hides; chokepoint decides', async () => {

@@ -31,11 +31,25 @@ function canWrite(token: AgentToken): boolean {
   return token.scope.some((s) => s === 'create' || s === 'write' || s === 'delete');
 }
 
+/**
+ * A short human summary of a token's resource SET (grant sets, ROAD-0011 P1) — "All notes" for a workspace
+ * grant, else a count like "2 notebooks · 1 note". The rich picker UI is a later lane; this keeps the list
+ * row honest about scope.
+ */
+function resourceSummary(token: AgentToken): string {
+  if (token.resources.some((r) => r.kind === 'workspace')) return 'All notes';
+  const notebooks = token.resources.filter((r) => r.kind === 'notebook').length;
+  const notes = token.resources.filter((r) => r.kind === 'note').length;
+  const parts: string[] = [];
+  if (notebooks) parts.push(`${notebooks} notebook${notebooks === 1 ? '' : 's'}`);
+  if (notes) parts.push(`${notes} note${notes === 1 ? '' : 's'}`);
+  return parts.length ? parts.join(' · ') : 'All notes';
+}
+
 /** A one-line "Created · access · scope" description for a list row. */
 function tokenMeta(token: AgentToken): string {
-  const where = token.resourceKind === 'notebook' ? 'One notebook' : 'All notes';
   const access = canWrite(token) ? 'Read & write' : 'Read-only';
-  return `${formatDate(token.createdAt)} · ${access} · ${where}`;
+  return `${formatDate(token.createdAt)} · ${access} · ${resourceSummary(token)}`;
 }
 
 function messageFor(err: unknown): string {
@@ -277,10 +291,10 @@ export function ConnectClaudeSection() {
         </div>
       ) : (
         tokens.map((token) => {
-          const isConfirming = confirmRevoke === token.grantId;
-          const isRevoking = revoking === token.grantId;
+          const isConfirming = confirmRevoke === token.tokenId;
+          const isRevoking = revoking === token.tokenId;
           return (
-            <div key={token.grantId} className="settings__row">
+            <div key={token.tokenId} className="settings__row">
               <span className="settings__token-row-main">
                 <span className="settings__row-label">{token.label || 'Untitled token'}</span>
                 <span className="settings__token-meta">{tokenMeta(token)}</span>
@@ -289,7 +303,7 @@ export function ConnectClaudeSection() {
                 <>
                   <button
                     className="settings__row-action"
-                    onClick={() => void handleRevoke(token.grantId)}
+                    onClick={() => void handleRevoke(token.tokenId)}
                     disabled={isRevoking}
                     aria-label={`Confirm revoke ${token.label || 'token'}`}
                   >
@@ -306,7 +320,7 @@ export function ConnectClaudeSection() {
               ) : (
                 <button
                   className="settings__row-action"
-                  onClick={() => setConfirmRevoke(token.grantId)}
+                  onClick={() => setConfirmRevoke(token.tokenId)}
                   aria-label={`Revoke ${token.label || 'token'}`}
                 >
                   Revoke

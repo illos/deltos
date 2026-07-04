@@ -38,7 +38,7 @@ const ALL_MIGRATIONS = [
   '0014_grant-family-link.sql',
   '0015_audit-log.sql',
   '0016_usage-counter.sql',
-  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql',
+  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', '0020_grant-sets.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function d1Over(raw: Database.Database): D1Database {
@@ -88,11 +88,10 @@ const agentGrantCount = (raw: Database.Database) =>
 
 interface MintResponse {
   token: string;
-  grantId: string;
+  tokenId: string;
   label: string | null;
   scope: string[];
-  resourceKind: string;
-  resourceId: string | null;
+  resources: Array<{ grantId: string; kind: string; id: string | null }>;
   createdAt: string;
 }
 
@@ -125,14 +124,18 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
 
     expect(body.token).toMatch(/^dltos_agent_/);
     expect(body.label).toBe('Claude Desktop');
-    expect(body.resourceKind).toBe('workspace');
-    expect(body.resourceId).toBeNull();
+    // Grant sets (ROAD-0011 P1): a default mint is a one-resource set — the whole workspace.
+    expect(body.resources).toHaveLength(1);
+    expect(body.resources[0].kind).toBe('workspace');
+    expect(body.resources[0].id).toBeNull();
+    expect(body.tokenId).toBeTruthy();
     expect(body.scope.sort()).toEqual(['read', 'search']); // default read-only surface
 
     // The persisted grant: principalKind='agent', principalId = OWNER accountId, non-expiring, hash-only.
     const grow = raw
-      .prepare('SELECT principalKind, principalId, expiresAtMs, revokedAt, tokenHash, scope FROM grants WHERE grantId = ?')
-      .get(body.grantId) as { principalKind: string; principalId: string; expiresAtMs: number | null; revokedAt: string | null; tokenHash: string; scope: string };
+      .prepare('SELECT principalKind, principalId, expiresAtMs, revokedAt, tokenHash, scope, tokenGroupId FROM grants WHERE grantId = ?')
+      .get(body.resources[0].grantId) as { principalKind: string; principalId: string; expiresAtMs: number | null; revokedAt: string | null; tokenHash: string; scope: string; tokenGroupId: string };
+    expect(grow.tokenGroupId).toBe(body.tokenId); // every row of the set shares the token id
     expect(grow.principalKind).toBe('agent');
     expect(grow.principalId).toBe(accountId); // scopes to the OWNER's account — NOT a body field
     expect(grow.expiresAtMs).toBeNull(); // non-expiring
@@ -153,12 +156,49 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
     expect(body.scope).toEqual(['read']); // only the read-only verb survived
   });
 
-  it('mint with notebookId scopes the grant to that notebook', async () => {
-    const res = await mint(env, { notebookId: NOTEBOOK, scope: ['read'] }, token);
+  it('mint with a notebook resource scopes the grant to that notebook (ownership-validated)', async () => {
+    // The notebook must belong to the minter (mint-time ownership validation). Seed one for account A.
+    const iso = new Date().toISOString();
+    raw.prepare(
+      `INSERT INTO notebooks (id, accountId, name, defaultCollectionView, version, createdAt, updatedAt, deletedAt, syncSeq)
+       VALUES (?, ?, 'NB', 'list', 1, ?, ?, NULL, 0)`,
+    ).run(NOTEBOOK, accountId, iso, iso);
+
+    const res = await mint(env, { resources: [{ kind: 'notebook', id: NOTEBOOK }], scope: ['read'] }, token);
     expect(res.status).toBe(201);
     const body = (await res.json()) as MintResponse;
-    expect(body.resourceKind).toBe('notebook');
-    expect(body.resourceId).toBe(NOTEBOOK);
+    expect(body.resources).toHaveLength(1);
+    expect(body.resources[0].kind).toBe('notebook');
+    expect(body.resources[0].id).toBe(NOTEBOOK);
+  });
+
+  it('mint REJECTS a resource the account does not own (fail-closed 400, nothing minted)', async () => {
+    const res = await mint(env, { resources: [{ kind: 'notebook', id: NOTEBOOK }], scope: ['read'] }, token);
+    expect(res.status).toBe(400); // NOTEBOOK is not owned by (does not exist for) this account
+    expect(agentGrantCount(raw)).toBe(0);
+  });
+
+  it('mint with MULTIPLE resources persists a grant SET sharing one tokenId (grant sets)', async () => {
+    const iso = new Date().toISOString();
+    const nb2 = '22222222-2222-4222-8222-222222222222';
+    for (const id of [NOTEBOOK, nb2]) {
+      raw.prepare(
+        `INSERT INTO notebooks (id, accountId, name, defaultCollectionView, version, createdAt, updatedAt, deletedAt, syncSeq)
+         VALUES (?, ?, 'NB', 'list', 1, ?, ?, NULL, 0)`,
+      ).run(id, accountId, iso, iso);
+    }
+    const res = await mint(
+      env,
+      { resources: [{ kind: 'notebook', id: NOTEBOOK }, { kind: 'notebook', id: nb2 }], scope: ['read'] },
+      token,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as MintResponse;
+    expect(body.resources).toHaveLength(2);
+    // Two rows, one tokenGroupId, distinct grantIds.
+    const rows = raw.prepare('SELECT tokenGroupId, grantId FROM grants WHERE tokenGroupId = ?').all(body.tokenId) as Array<{ tokenGroupId: string; grantId: string }>;
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((r) => r.grantId)).size).toBe(2);
   });
 
   it('list returns active tokens WITHOUT the token/hash, and is account-scoped', async () => {
@@ -172,7 +212,8 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
     for (const t of body.tokens) {
       expect(t).not.toHaveProperty('token');
       expect(t).not.toHaveProperty('tokenHash');
-      expect(t).toHaveProperty('grantId');
+      expect(t).toHaveProperty('tokenId');
+      expect(t).toHaveProperty('resources');
       expect(t).toHaveProperty('label');
       expect(t).toHaveProperty('scope');
     }
@@ -186,10 +227,10 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
   it('revoke sets revokedAt and drops the token from the active list', async () => {
     const minted = (await (await mint(env, { label: 'doomed' }, token)).json()) as MintResponse;
 
-    const res = await del(env, `/api/agent-tokens/${minted.grantId}`, token);
+    const res = await del(env, `/api/agent-tokens/${minted.resources[0].grantId}`, token);
     expect(res.status).toBe(200);
 
-    const row = raw.prepare('SELECT revokedAt FROM grants WHERE grantId = ?').get(minted.grantId) as { revokedAt: string | null };
+    const row = raw.prepare('SELECT revokedAt FROM grants WHERE grantId = ?').get(minted.resources[0].grantId) as { revokedAt: string | null };
     expect(row.revokedAt).not.toBeNull();
 
     const list = (await (await get(env, '/api/agent-tokens', token)).json()) as { tokens: unknown[] };
@@ -201,11 +242,11 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
     const { token: tokenB } = await signupToken(env, 'agent-attacker', 'agent-tokens-password-B');
 
     // B cannot revoke A's grant — 404 (not 403: no existence disclosure).
-    const res = await del(env, `/api/agent-tokens/${minted.grantId}`, tokenB);
+    const res = await del(env, `/api/agent-tokens/${minted.resources[0].grantId}`, tokenB);
     expect(res.status).toBe(404);
 
     // A's token is UNTOUCHED — still active.
-    const row = raw.prepare('SELECT revokedAt FROM grants WHERE grantId = ?').get(minted.grantId) as { revokedAt: string | null };
+    const row = raw.prepare('SELECT revokedAt FROM grants WHERE grantId = ?').get(minted.resources[0].grantId) as { revokedAt: string | null };
     expect(row.revokedAt).toBeNull();
     const list = (await (await get(env, '/api/agent-tokens', token)).json()) as { tokens: unknown[] };
     expect(list.tokens).toHaveLength(1);
@@ -242,11 +283,11 @@ describe('agent tokens — mint / list / revoke (route + chokepoint)', () => {
     expect(mintRes.status).toBe(403);
     const listRes = await get(env, '/api/agent-tokens', agentBearer);
     expect(listRes.status).toBe(403);
-    const revokeRes = await del(env, `/api/agent-tokens/${minted.grantId}`, agentBearer);
+    const revokeRes = await del(env, `/api/agent-tokens/${minted.resources[0].grantId}`, agentBearer);
     expect(revokeRes.status).toBe(403);
 
     // And the owner's token is untouched by the failed agent revoke attempt.
-    const row = raw.prepare('SELECT revokedAt FROM grants WHERE grantId = ?').get(minted.grantId) as { revokedAt: string | null };
+    const row = raw.prepare('SELECT revokedAt FROM grants WHERE grantId = ?').get(minted.resources[0].grantId) as { revokedAt: string | null };
     expect(row.revokedAt).toBeNull();
   });
 

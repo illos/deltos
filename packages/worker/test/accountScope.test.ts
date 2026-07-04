@@ -31,7 +31,8 @@ const migrations = [
   '0001_stream-b-sync.sql',
   '0002_stream-a-auth.sql',
   '0003_account-identity.sql',
-  '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', // FTS table; searchIndex.ts is invoked by the note mutators (0018)
+  '0013_agent-token-label.sql', '0014_grant-family-link.sql', '0015_audit-log.sql', '0016_usage-counter.sql', '0017_oauth-provider.sql',
+  '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', '0020_grant-sets.sql', // FTS table; searchIndex.ts is invoked by the note mutators (0018)
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function sqliteAdapter(db: Database.Database): DbAdapter {

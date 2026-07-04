@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { NotebookIdSchema, TimestampSchema } from '../spine/ids.js';
-import { ScopeSchema, type Scope } from './grant.js';
+import { TimestampSchema } from '../spine/ids.js';
+import { ScopeSchema, ResourceSchema, type Scope, type Resource } from './grant.js';
 
 /**
  * The agent-token surface (llm-mcp-integration.md §5). An agent token is NOT a new credential kind — it
@@ -89,16 +89,52 @@ export function clampToReadOnlyScopes(requested?: Scope[]): AgentTokenScope[] {
 }
 
 /**
+ * The upper bound on how many resources one token may be scoped to (grant sets, ROAD-0011 P1). A generous
+ * ceiling — it bounds a runaway/abusive mint (N grant rows in one event) without limiting real use; the
+ * picker never approaches it. Enforced by {@link clampAgentResources}, not rejected at the boundary.
+ */
+export const MAX_GRANT_RESOURCES = 100;
+
+/**
+ * Clamp a requested RESOURCE SET to the canonical, minimal set a token is minted against (ROAD-0011 P1 §1.2
+ * — the second half of the ONE mint clamp path). Fail-closed + normalizing:
+ *   - absent / empty        ⇒ `[{workspace}]` — the whole account, backward-compatible with today's mint.
+ *   - workspace anywhere    ⇒ collapses to `[{workspace}]` — a workspace grant already covers every notebook
+ *     and note, so any finer selection alongside it is redundant (and confusing to display/revoke).
+ *   - otherwise             ⇒ the de-duplicated notebook/note selection, capped at {@link MAX_GRANT_RESOURCES}.
+ * This is the CLAMP the security model leans on: only what survives this call is persisted, so a
+ * client-requested (e.g. RFC-8707-seeded) resource the user did not keep never becomes a grant row.
+ * Ownership of each selection is validated separately at the route (against the minter's account).
+ */
+export function clampAgentResources(requested?: Resource[]): Resource[] {
+  if (!requested || requested.length === 0) return [{ kind: 'workspace' }];
+  if (requested.some((r) => r.kind === 'workspace')) return [{ kind: 'workspace' }];
+  const seen = new Set<string>();
+  const out: Resource[] = [];
+  for (const r of requested) {
+    const key = `${r.kind}:${'id' in r ? r.id : ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+    if (out.length >= MAX_GRANT_RESOURCES) break;
+  }
+  return out;
+}
+
+/**
  * Mint request. `scope` accepts any valid {@link ScopeSchema} verb (a disallowed verb is DROPPED at the
- * clamp, not rejected at the boundary). `write` is the explicit per-scope opt-in for the write tools —
- * ABSENT ⇒ a read-only token (every existing caller stays read-only). `.strict()` rejects unknown keys —
- * no silent ride-along field can influence the mint.
+ * clamp, not rejected at the boundary). `resources` is the RESOURCE SET (ROAD-0011 P1 §1) — pick notebooks
+ * and/or notes, or omit for the whole workspace; it is clamped ({@link clampAgentResources}) and each
+ * selection's ownership is validated against the minter before N grant rows (one per resource, sharing one
+ * tokenGroupId) are persisted. `write` is the explicit per-scope opt-in for the write tools — ABSENT ⇒ a
+ * read-only token. `.strict()` rejects unknown keys — no silent ride-along field can influence the mint.
  */
 export const MintAgentTokenRequestSchema = z
   .object({
     label: z.string().max(200).optional(),
     scope: z.array(ScopeSchema).optional(),
-    notebookId: NotebookIdSchema.optional(),
+    // The resource SET (grant sets). Each entry is a {@link ResourceSchema} (workspace | notebook | note).
+    resources: z.array(ResourceSchema).optional(),
     // Per-scope write opt-in (least-privilege). Omit for a read-only token; set flags to grant write tools.
     write: AgentWriteOptSchema.optional(),
     // H1 STEP-UP (ROAD-0005 P0): minting a long-lived, non-expiring credential requires fresh re-auth — a
@@ -111,13 +147,32 @@ export const MintAgentTokenRequestSchema = z
   .strict();
 export type MintAgentTokenRequest = z.infer<typeof MintAgentTokenRequestSchema>;
 
-/** The non-secret view of an agent token (list rows + the metadata half of the mint response). */
-export const AgentTokenSchema = z.object({
+/** The allowed resource kinds a grant row can name (agent tokens can now scope to notes, not just notebooks). */
+export const AGENT_RESOURCE_KINDS = ['workspace', 'notebook', 'note'] as const;
+
+/**
+ * One resource a token is scoped to, in the non-secret token view (ROAD-0011 P1 §1.4). Each carries its own
+ * `grantId` — the per-resource grant row — so the UI can revoke ONE resource from a token without re-minting
+ * (per-row revocation), while `id` is null for a workspace grant.
+ */
+export const AgentGrantResourceSchema = z.object({
   grantId: z.string().min(1),
+  kind: z.enum(AGENT_RESOURCE_KINDS),
+  id: z.string().nullable(),
+});
+export type AgentGrantResource = z.infer<typeof AgentGrantResourceSchema>;
+
+/**
+ * The non-secret view of an agent token (list rows + the metadata half of the mint response). A token is a
+ * GRANT SET: `tokenId` (the shared tokenGroupId) is the whole-token identity — the target of whole-token
+ * revoke — and `resources` is the per-resource set it authorizes ("2 notebooks · 1 note"). `scope` is uniform
+ * across the set (one mint event, one scope).
+ */
+export const AgentTokenSchema = z.object({
+  tokenId: z.string().min(1),
   label: z.string().nullable(),
   scope: z.array(AgentGrantScopeSchema),
-  resourceKind: z.enum(['workspace', 'notebook']),
-  resourceId: z.string().nullable(),
+  resources: z.array(AgentGrantResourceSchema).min(1),
   createdAt: TimestampSchema,
 });
 export type AgentToken = z.infer<typeof AgentTokenSchema>;

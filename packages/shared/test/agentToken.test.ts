@@ -2,7 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   clampAgentScopes,
   clampToReadOnlyScopes,
+  clampAgentResources,
+  MAX_GRANT_RESOURCES,
   MintAgentTokenRequestSchema,
+  ResourceSchema,
+  type Resource,
   type Scope,
 } from '../src/api/index.js';
 
@@ -42,6 +46,31 @@ describe('clampAgentScopes — read floor + opt-in write, fail-closed', () => {
   it('clampToReadOnlyScopes is the write-free delegate (identical read floor)', () => {
     expect(clampToReadOnlyScopes(['read', 'write'] as Scope[])).toEqual(['read']);
     expect(clampToReadOnlyScopes()).toEqual(['read', 'search']);
+  });
+});
+
+describe('clampAgentResources — the resource-set half of the ONE mint clamp (ROAD-0011 P1 §1.3)', () => {
+  const nb = (n: number): Resource => ResourceSchema.parse({ kind: 'notebook', id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}` });
+  const note = (n: number): Resource => ResourceSchema.parse({ kind: 'note', id: `00000000-0000-4000-9000-${String(n).padStart(12, '0')}` });
+
+  it('absent / empty ⇒ [{workspace}] (back-compat default = the whole account)', () => {
+    expect(clampAgentResources()).toEqual([{ kind: 'workspace' }]);
+    expect(clampAgentResources([])).toEqual([{ kind: 'workspace' }]);
+  });
+
+  it('workspace anywhere COLLAPSES to [{workspace}] (it subsumes any finer selection)', () => {
+    expect(clampAgentResources([nb(1), { kind: 'workspace' }, note(2)])).toEqual([{ kind: 'workspace' }]);
+  });
+
+  it('keeps a de-duplicated notebook/note selection (a resource unchecked never survives)', () => {
+    const out = clampAgentResources([nb(1), nb(1), note(2)]);
+    expect(out).toHaveLength(2); // the duplicate notebook collapsed
+    expect(out).toEqual([nb(1), note(2)]);
+  });
+
+  it('caps the set at MAX_GRANT_RESOURCES (bounds a runaway mint)', () => {
+    const many = Array.from({ length: MAX_GRANT_RESOURCES + 25 }, (_, i) => nb(i + 1));
+    expect(clampAgentResources(many)).toHaveLength(MAX_GRANT_RESOURCES);
   });
 });
 

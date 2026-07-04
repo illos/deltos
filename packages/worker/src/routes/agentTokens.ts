@@ -4,12 +4,14 @@ import {
   MintAgentTokenRequestSchema,
   RevokeAgentTokenRequestSchema,
   clampAgentScopes,
+  clampAgentResources,
   type Resource,
 } from '@deltos/shared';
 import type { AppEnv } from '../context.js';
 import { guard, apiError } from '../http.js';
 import { createAuthStore } from '../db/authStore.js';
 import { d1Adapter } from '../db/schema.js';
+import { createResourceOwnerResolver } from '../db/resourceOwner.js';
 import { hashToken, randomToken } from '../authCrypto.js';
 import { stampAccountId } from '../db/accountScope.js';
 import { audit, credentialRefOf } from '../audit.js';
@@ -52,9 +54,10 @@ agentTokens.post(
         return {}; // empty body = all-defaults mint (full read-only surface, workspace scope)
       }
     },
-    // Authorize the owner against the resource being scoped (a notebook, else the whole workspace).
-    resource: (req): Resource =>
-      req.notebookId ? { kind: 'notebook', id: req.notebookId } : { kind: 'workspace' },
+    // Authorize the owner at WORKSPACE level — the human owner holds `share` over their whole workspace, so
+    // they may mint a token for any of their OWN resources. Which specific notebooks/notes are in the set is
+    // clamped + ownership-validated in the handler (a foreign/absent selection is rejected there).
+    resource: (): Resource => ({ kind: 'workspace' }),
     handle: async (req, c, principal) => {
       const store = createAuthStore(d1Adapter(c.env.DB));
       // The owning account is the AUTHENTICATED owner's principal.id — server-derived, never the body.
@@ -106,47 +109,67 @@ agentTokens.post(
       // per-scope opt-in in `req.write` (least-privilege). `share` can never appear. No opt-in → read-only,
       // exactly as before. The step-up above already re-proved the human — warranted for a write mint.
       const scope = clampAgentScopes(req.scope, req.write ? { allowWrite: req.write } : undefined);
-      const resource: Resource = req.notebookId
-        ? { kind: 'notebook', id: req.notebookId }
-        : { kind: 'workspace' };
+      // CLAMP the RESOURCE SET (the second half of the ONE mint clamp): normalize/dedupe/collapse-to-
+      // workspace; absent ⇒ the whole workspace. Only what survives is persisted (grant sets, ROAD-0011 P1).
+      const resources = clampAgentResources(req.resources);
+      // OWNERSHIP VALIDATION (fail-closed): every non-workspace selection MUST belong to the minter's account.
+      // A foreign/absent resource is rejected — otherwise it would mint an INERT grant (the canWith belt would
+      // never let it cover anything anyway; this makes the footgun a clear 400 instead of a silent dud).
+      const resolveOwner = createResourceOwnerResolver(d1Adapter(c.env.DB));
+      for (const r of resources) {
+        if (r.kind === 'workspace') continue;
+        const owner = await resolveOwner(r);
+        if (!owner || owner.accountId !== accountId) {
+          return apiError(c, 400, 'invalid_resource', `resource not found in your account: ${r.kind} ${r.id}`);
+        }
+      }
       const label = req.label ?? null;
 
       // Recognizable prefix + 32 bytes CSPRNG. Only SHA-256(token) is stored; the raw token is returned once.
       const token = `dltos_agent_${randomToken(32)}`;
-      const grantId = randomToken(16);
+      // The whole-token id shared by every row of the set (the revoke-whole-token + listing grouping key);
+      // each resource additionally gets its own row grantId (the per-resource revoke target).
+      const tokenGroupId = randomToken(16);
+      const rows = resources.map((resource) => ({ grantId: randomToken(16), resource }));
 
-      await store.insertAgentGrant({
-        grantId,
+      await store.insertAgentGrantSet({
+        tokenGroupId,
         tokenHash: hashToken(token),
         accountId,
         label,
-        resource,
         scope,
         createdAt: now,
+        rows,
       });
 
-      // P3 lifecycle: a new long-lived read-all credential was minted. The new grantId is the
-      // credentialRef so a later revoke / agent-access line ties back to this birth event.
+      const resourceView = rows.map((r) => ({
+        grantId: r.grantId,
+        kind: r.resource.kind,
+        id: r.resource.kind === 'workspace' ? null : r.resource.id,
+      }));
+
+      // P3 lifecycle: a new long-lived read-all credential was minted. tokenGroupId is the credentialRef so a
+      // later revoke / agent-access line ties back to this birth event; detail carries the resource SET.
+      const primaryResource = resources[0] ?? { kind: 'workspace' as const };
       await audit(c, {
         surface: 'auth',
         action: 'token.mint',
         result: 'allow',
         principalKind: principal.kind,
         accountId,
-        credentialRef: grantId,
-        resourceKind: resource.kind,
-        resourceId: req.notebookId ?? null,
-        detail: 'agent-token',
+        credentialRef: tokenGroupId,
+        resourceKind: primaryResource.kind,
+        resourceId: primaryResource.kind === 'workspace' ? null : primaryResource.id,
+        detail: `agent-token ${resourceView.map((r) => r.kind + (r.id ? `:${r.id}` : '')).join(',')}`,
       });
 
       return c.json(
         {
           token, // returned EXACTLY once — never persisted, never re-served
-          grantId,
+          tokenId: tokenGroupId,
           label,
           scope,
-          resourceKind: resource.kind,
-          resourceId: req.notebookId ?? null,
+          resources: resourceView,
           createdAt: now,
         },
         201,
@@ -173,9 +196,11 @@ agentTokens.get(
 );
 
 /**
- * DELETE /api/agent-tokens/:grantId — revoke an agent token. BOLA-checked: the store revokes ONLY when
- * the grant is owned by the caller's account; a non-match (other account, or no such grant) revokes zero
- * rows → 404 (not 403 — no cross-account existence disclosure).
+ * DELETE /api/agent-tokens/:grantId — revoke ONE resource of a token (per-resource revocation, ROAD-0011 P1
+ * §1.2): with grant sets a token is N rows, so revoking a single grantId drops just that notebook/note from
+ * the token while its siblings stay live (revoke one notebook without re-minting). BOLA-checked: the store
+ * revokes ONLY when the row is owned by the caller's account; a non-match revokes zero rows → 404 (not 403 —
+ * no cross-account existence disclosure). To revoke the WHOLE token, use DELETE /token/:tokenId.
  */
 agentTokens.delete(
   '/:grantId',
@@ -204,6 +229,41 @@ agentTokens.delete(
         detail: req.grantId,
       });
       return c.json({ grantId: req.grantId, revoked: true });
+    },
+  }),
+);
+
+/**
+ * DELETE /api/agent-tokens/token/:tokenId — revoke a WHOLE token (all resources of a grant set at once — the
+ * "revoke this connection" button). BOLA-checked in the store (account match + first-party IN the WHERE); a
+ * non-match revokes zero rows → 404 (no cross-account existence disclosure). Immediate: the next request
+ * bearing the token 401s at the transport (no live row) / 403s at can().
+ */
+agentTokens.delete(
+  '/token/:tokenId',
+  guard({
+    op: 'share',
+    schema: z.object({ tokenId: z.string().min(1) }).strict(),
+    input: (c) => ({ tokenId: c.req.param('tokenId') }),
+    resource: (): Resource => ({ kind: 'workspace' }),
+    handle: async (req, c, principal) => {
+      const store = createAuthStore(d1Adapter(c.env.DB));
+      const accountId = stampAccountId(principal);
+      const revoked = await store.revokeAgentTokenGroupForAccount(req.tokenId, accountId);
+      if (revoked === 0) {
+        // Not found, not owned by this account, or already revoked — all indistinguishable, all 404.
+        return apiError(c, 404, 'not_found', 'agent token not found');
+      }
+      await audit(c, {
+        surface: 'auth',
+        action: 'token.revoke',
+        result: 'allow',
+        principalKind: principal.kind,
+        accountId,
+        credentialRef: credentialRefOf(principal),
+        detail: `token:${req.tokenId}`,
+      });
+      return c.json({ tokenId: req.tokenId, revoked: true });
     },
   }),
 );

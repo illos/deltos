@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import type { RequestPrincipal } from '@deltos/shared';
 import type { AppEnv, AppContext } from '../context.js';
-import { resolvePrincipal, can, resolvedGrantFor, grantIsLive } from '../auth.js';
+import { resolvePrincipal, canWith, resolvedGrantFor, grantIsLive } from '../auth.js';
+import { createResourceOwnerResolver } from '../db/resourceOwner.js';
 import { audit, credentialRefOf } from '../audit.js';
 import { callerAccountId } from '../db/accountScope.js';
 import { d1Adapter } from '../db/schema.js';
@@ -25,7 +26,7 @@ import {
   WRITE_OPS,
   MCP_SERVER_INFO,
 } from '../mcp/tools.js';
-import type { Op } from '@deltos/shared';
+import type { Op, Resource } from '@deltos/shared';
 
 /**
  * The deltos remote MCP server (llm-mcp-integration.md §6) — JSON-RPC 2.0 over a STATELESS Streamable-HTTP
@@ -76,12 +77,13 @@ mcp.post('/', async (c) => {
   //    revoked / expired tokens here at 401, BEFORE any method or tool runs. `grantIsLive` is the same
   //    revoked+expired check the per-op `can()` chokepoint applies, so liveness is decided one way.
   const principal = await resolvePrincipal(c);
-  const grant = resolvedGrantFor(principal);
-  const live =
-    principal.verification.method !== 'unverified' &&
-    grant !== undefined &&
-    grantIsLive(grant, Date.now());
-  if (!live) {
+  // Grant SETS (ROAD-0011 P1): a token may resolve to many rows. The bearer is usable iff AT LEAST ONE row
+  // is live (any-of). The rate-limit key + scope surface read from a live representative (scope is uniform).
+  const nowMs = Date.now();
+  const liveGrants = (resolvedGrantFor(principal) ?? []).filter((g) => grantIsLive(g, nowMs));
+  const primaryGrant = liveGrants[0];
+  const live = principal.verification.method !== 'unverified' && primaryGrant !== undefined;
+  if (!live || !primaryGrant) {
     // Point a tokenless client at the Protected Resource Metadata (RFC 9728) so it can DISCOVER the OAuth
     // Authorization Server and run the connect flow — this is what turns a bare 401 into a one-click OAuth
     // handshake (oauth-provider.md §1). Same-origin, derived from the request so it's right on any deploy.
@@ -100,9 +102,12 @@ mcp.post('/', async (c) => {
   //    notification flood can't pound the auth/D1 read path uncapped (it sits ABOVE the notification ack).
   //    After the auth gate (only authenticated callers consume budget); over-limit → JSON-RPC error + 429.
   const store = createAuthStore(d1Adapter(c.env.DB));
+  // Per-TOKEN key: the shared tokenGroupId is stable across per-resource revocation (revoking one notebook
+  // from a set doesn't reset the token's window); legacy single-row grants fall back to the row grantId.
+  const rateKey = primaryGrant.tokenGroupId ?? primaryGrant.grantId;
   const allowed = await fixedWindowAllow(
     store,
-    `mcp:${grant!.grantId}`,
+    `mcp:${rateKey}`,
     MCP_RATE_LIMIT.limit,
     MCP_RATE_LIMIT.windowMs,
     Date.now(),
@@ -134,8 +139,8 @@ mcp.post('/', async (c) => {
 
   // The token's granted scopes drive the least-privilege surface: a read-only token is told it's
   // read-only + never SEES the write tools; a write token is taught the live-apply/recoverability model
-  // + sees them. `grant` is guaranteed present by the `live` gate above.
-  const scopes = grant!.scope as Op[];
+  // + sees them. Scope is uniform across a grant set, so a live representative row speaks for the token.
+  const scopes = primaryGrant.scope as Op[];
   const canWrite = scopes.some((s) => WRITE_OPS.has(s));
 
   // 5. Method dispatch.
@@ -187,9 +192,18 @@ async function handleToolsCall(
   }
   const args = parsed.data;
 
-  // SAME chokepoint as the PWA: scope (read/search), resource coverage, expiry, and revocation all here.
+  // SAME chokepoint as the PWA, EXTENDED with the owner-resolver so a notebook grant covers its notes
+  // (ROAD-0011 P1 §1): scope, hierarchy coverage, ownership belt, expiry, and revocation all decided here.
+  const db = d1Adapter(c.env.DB);
+  const ctx = { resolveResourceOwner: createResourceOwnerResolver(db) };
   const toolResource = tool.resource(args);
-  const allowed = await can(principal, tool.op, toolResource);
+  // COLLECTION tools (list_notebooks) are scope-gated, not resource-gated: any read-scoped token may call
+  // them, and the tool self-filters each item through the SAME evaluator (least-privilege visibility §1.5).
+  // Everything else is gated on hierarchy coverage of the addressed resource.
+  const allowed =
+    tool.gate === 'collection'
+      ? (resolvedGrantFor(principal) ?? []).some((g) => grantIsLive(g, Date.now()) && g.scope.includes(tool.op))
+      : await canWith(ctx, principal, tool.op, toolResource);
   // P3 audit: the MCP/agent path is exactly the "compromised client" case — record every tool-call
   // decision (allow + deny), tagged surface:'mcp', so the connected-AI access trail is queryable on its own.
   await audit(c, {
@@ -229,7 +243,9 @@ async function handleToolsCall(
     }
   }
 
-  const db = d1Adapter(c.env.DB);
-  const result = await tool.execute(args, { db, accountId, now, env: c.env });
+  // `authorize` lets collection tools filter each item through the SAME extended evaluator (per-notebook
+  // coverage), so a notebook-scoped token's list_notebooks returns ONLY its granted notebooks.
+  const authorize = (resource: Resource): Promise<boolean> => canWith(ctx, principal, 'read', resource);
+  const result = await tool.execute(args, { db, accountId, now, env: c.env, authorize });
   return c.json(rpcSuccess(id, result), 200);
 }

@@ -50,6 +50,30 @@ export type ClaimUsernameResult =
   | { status: 'account-has-username' };
 
 const ScopeArraySchema = z.array(ScopeSchema);
+const ResourceArraySchema = z.array(ResourceSchema);
+
+/**
+ * One resolved grant row (a single resource of a possibly-multi-resource token). `tokenGroupId` groups the
+ * rows minted together into one logical token (grant sets, ROAD-0011 P1); it is NULL on pre-grant-set /
+ * session / capability rows, where each row is its own token. Returned REGARDLESS of revoked/expired state —
+ * the chokepoint decides liveness.
+ */
+export interface ResolvedGrantRow {
+  grantId: string;
+  tokenGroupId: string | null;
+  principal: Principal;
+  resource: Resource;
+  scope: Scope[];
+  expiresAtMs: number | null;
+  revokedAt: string | null;
+}
+
+/** One resource in a non-secret token view — the per-resource grant row id + its addressed resource. */
+export interface AgentGrantResourceRow {
+  grantId: string;
+  kind: 'workspace' | 'notebook' | 'note';
+  id: string | null;
+}
 
 /** A row to append to the P3 `auditLog` projection (the user-facing audit mirror). */
 export interface AuditLogRow {
@@ -208,15 +232,21 @@ export interface AuthStore {
    * Resolve by token hash. Returns the row REGARDLESS of revoked/expired state — the chokepoint
    * applies freshness (expiresAtMs instant compare) and revocation (revokedAt presence) itself,
    * so it gets `expiresAtMs` + `revokedAt` back to decide. Null only if no row matches the hash.
+   *
+   * ⚠ With grant SETS (ROAD-0011 P1) a token hash can map to MANY rows (one per resource). This singular
+   * form returns an ARBITRARY matching row — kept for callers that resolve UNIQUE-hash grants (owner
+   * sessions) and only need a representative. The chokepoint uses {@link resolveGrantsByTokenHash}.
    */
-  resolveGrantByTokenHash(tokenHash: string): Promise<{
-    grantId: string;
-    principal: Principal;
-    resource: Resource;
-    scope: Scope[];
-    expiresAtMs: number | null;
-    revokedAt: string | null;
-  } | null>;
+  resolveGrantByTokenHash(tokenHash: string): Promise<ResolvedGrantRow | null>;
+
+  /**
+   * Resolve ALL grant rows sharing a token hash — the grant-set resolver (ROAD-0011 P1 §1.2). An agent token
+   * scoped to several notebooks/notes is N rows sharing one tokenHash + tokenGroupId; the chokepoint evaluates
+   * them ANY-OF. Returns every matching row REGARDLESS of revoked/expired (the chokepoint applies liveness);
+   * an empty array = no match. Single-resource grants (sessions, capability, workspace agent tokens) resolve
+   * to a one-element array, so the any-of degenerates to today's single-grant decision.
+   */
+  resolveGrantsByTokenHash(tokenHash: string): Promise<ResolvedGrantRow[]>;
 
   /** Revoke a single grant by its row id (capability / single-grant revoke). Idempotent. */
   revokeGrant(grantId: string): Promise<void>;
@@ -248,16 +278,37 @@ export interface AuthStore {
   }): Promise<void>;
 
   /**
-   * List an account's ACTIVE (revokedAt IS NULL) agent grants. Returns ONLY non-secret metadata — never
-   * the tokenHash, never the raw token (which is unrecoverable anyway). Account-scoped on principalId.
+   * Persist a GRANT SET — N agent grant rows sharing ONE `tokenHash` and ONE `tokenGroupId` (the mint event),
+   * one row per resource (ROAD-0011 P1 §1.2). All rows carry the SAME principal (owner accountId), scope
+   * (clamped at the route), and createdAt; they differ only in resourceKind/resourceId and their own grantId
+   * (so per-resource revocation is a single-row revoke). Inserted in ONE batch (atomic mint). `tokenHash`
+   * being shared is exactly why the 0002 UNIQUE(tokenHash) constraint was dropped (migration 0020).
+   */
+  insertAgentGrantSet(row: {
+    tokenGroupId: string;
+    tokenHash: string;
+    accountId: string;
+    label: string | null;
+    scope: Scope[]; // already CLAMPED at the route
+    createdAt: string; // ISO-8601 Z
+    clientId?: string | null;
+    // One entry per resource; each `grantId` is a fresh row id (per-resource revoke target).
+    rows: Array<{ grantId: string; resource: Resource }>;
+  }): Promise<void>;
+
+  /**
+   * List an account's ACTIVE (revokedAt IS NULL) first-party agent tokens, GROUPED into grant sets (ROAD-0011
+   * P1 §1.4): one entry per `tokenGroupId` carrying its per-resource set. Returns ONLY non-secret metadata —
+   * never the tokenHash, never the raw token. Account-scoped on principalId; OAuth-issued grants (clientId set)
+   * are excluded (they belong to the Connected-apps surface). A per-resource row that was individually revoked
+   * simply drops out of its token's `resources` set; a token with all resources revoked disappears entirely.
    */
   listAgentGrantsForAccount(accountId: string): Promise<
     Array<{
-      grantId: string;
+      tokenId: string;
       label: string | null;
       scope: Scope[];
-      resourceKind: 'workspace' | 'notebook';
-      resourceId: string | null;
+      resources: AgentGrantResourceRow[];
       createdAt: string;
     }>
   >;
@@ -270,6 +321,14 @@ export interface AuthStore {
    * Scoped to principalKind='agent' so this can never touch an owner session grant.
    */
   revokeAgentGrantForAccount(grantId: string, accountId: string): Promise<number>;
+
+  /**
+   * Whole-token revoke (ROAD-0011 P1 §1.4): revoke EVERY live row of a grant set by its `tokenGroupId`, ONLY
+   * when owned by `accountId` (BOLA — the account match is IN the WHERE) and only first-party (clientId IS
+   * NULL). Kills all of the token's resources at once (the "revoke this connection" button), as opposed to
+   * {@link revokeAgentGrantForAccount} which drops ONE resource. Returns rows affected (0 = not yours / gone).
+   */
+  revokeAgentTokenGroupForAccount(tokenGroupId: string, accountId: string): Promise<number>;
 
   /**
    * Per-device revocation (PIN-ID-5), atomic in one batch: revoke the device row (blocks FUTURE
@@ -513,7 +572,10 @@ export interface AuthStore {
     redirectUri: string;
     codeChallenge: string;
     scope: Scope[];
-    resource: string | null;
+    resource: string | null; // RFC-8707 audience url (NOT the resource-scope set below)
+    // The clamped resource SET the user approved at consent (grant sets, ROAD-0011 P1 §1.3). Carried on the
+    // code so /token can mint the matching N-row grant set. Empty/absent ⇒ [{workspace}] at redemption.
+    resources: Resource[];
     expiresAtMs: number;
     createdAt: string; // ISO-8601 Z
   }): Promise<void>;
@@ -534,6 +596,7 @@ export interface AuthStore {
     codeChallenge: string;
     scope: Scope[];
     resource: string | null;
+    resources: Resource[];
   } | null>;
 
   /**
@@ -542,10 +605,11 @@ export interface AuthStore {
    */
   listOauthGrantsForAccount(accountId: string): Promise<
     Array<{
-      grantId: string;
+      tokenId: string;
       clientId: string;
       clientName: string | null;
       scope: Scope[];
+      resources: AgentGrantResourceRow[];
       createdAt: string;
     }>
   >;
@@ -578,6 +642,107 @@ export interface PasswordCredentialRow {
   totpLastStep: number | null;
   /** P0 BELT (0005): false until the phrase-ack ceremony completes at FINALIZE. */
   recoveryEstablished: boolean;
+}
+
+/** The column projection every grant-resolve query shares (singular + resolve-all). */
+const GRANT_RESOLVE_SQL =
+  `SELECT grantId, tokenGroupId, principalKind, principalId, resourceKind, resourceId, scope, expiresAtMs, revokedAt
+     FROM grants WHERE tokenHash = ?`;
+
+interface GrantResolveRow {
+  grantId: string;
+  tokenGroupId: string | null;
+  principalKind: string;
+  principalId: string;
+  resourceKind: string;
+  resourceId: string | null;
+  scope: string;
+  expiresAtMs: number | null;
+  revokedAt: string | null;
+}
+
+/**
+ * Parse a raw grant row to a {@link ResolvedGrantRow}, fail-closed at the DB read boundary: a row that does
+ * not parse to a valid principal/resource/scope THROWS here rather than handing a malformed grant to the
+ * chokepoint. ⚠ RE-POINT (migration 0003): for owner/device grants `principalId` MEANS `accountId`, NOT a
+ * credential fingerprint — so the resolved `principal.id` is the account key the data layer scopes by.
+ */
+function parseResolvedGrantRow(row: GrantResolveRow): ResolvedGrantRow {
+  const principal = PrincipalSchema.parse({ kind: row.principalKind, id: row.principalId });
+  const resource = ResourceSchema.parse(
+    row.resourceKind === 'workspace'
+      ? { kind: 'workspace' }
+      : { kind: row.resourceKind, id: row.resourceId },
+  );
+  const scope = ScopeArraySchema.parse(JSON.parse(row.scope));
+  return {
+    grantId: row.grantId,
+    tokenGroupId: row.tokenGroupId,
+    principal,
+    resource,
+    scope,
+    expiresAtMs: row.expiresAtMs,
+    revokedAt: row.revokedAt,
+  };
+}
+
+/** A raw grant row for the grouped token listings (first-party + OAuth share the resource-grouping shape). */
+interface AgentGrantListRow {
+  grantId: string;
+  tokenGroupId: string | null;
+  label: string | null;
+  scope: string;
+  resourceKind: string;
+  resourceId: string | null;
+  createdAt: string;
+  clientId?: string | null;
+  clientName?: string | null;
+}
+
+/** Map a stored resourceKind string to the token-view kind (fail-safe to 'workspace' on anything unexpected). */
+function toResourceKind(k: string): AgentGrantResourceRow['kind'] {
+  return k === 'notebook' ? 'notebook' : k === 'note' ? 'note' : 'workspace';
+}
+
+interface GroupedToken {
+  tokenId: string;
+  label: string | null;
+  scope: Scope[];
+  resources: AgentGrantResourceRow[];
+  createdAt: string;
+  clientId: string | null;
+  clientName: string | null;
+}
+
+/**
+ * Group per-resource grant rows into logical TOKENS by `tokenGroupId` (grant sets, ROAD-0011 P1). A row with a
+ * NULL group (pre-grant-set / single-resource legacy) is its own token, keyed by its grantId. Rows arrive
+ * ordered (createdAt, grantId); groups keep first-seen order + the group's earliest createdAt. Scope/label/
+ * client are uniform within a group (one mint event), so the first row's values represent the token.
+ */
+function groupGrantRowsIntoTokens(rows: AgentGrantListRow[]): GroupedToken[] {
+  const byToken = new Map<string, GroupedToken>();
+  const order: string[] = [];
+  for (const r of rows) {
+    const tokenId = r.tokenGroupId ?? r.grantId;
+    let t = byToken.get(tokenId);
+    if (!t) {
+      t = {
+        tokenId,
+        label: r.label,
+        // Parse + re-validate the stored scope at this read boundary (fail-closed on a malformed row).
+        scope: ScopeArraySchema.parse(JSON.parse(r.scope)),
+        resources: [],
+        createdAt: r.createdAt,
+        clientId: r.clientId ?? null,
+        clientName: r.clientName ?? null,
+      };
+      byToken.set(tokenId, t);
+      order.push(tokenId);
+    }
+    t.resources.push({ grantId: r.grantId, kind: toResourceKind(r.resourceKind), id: r.resourceId });
+  }
+  return order.map((id) => byToken.get(id)!);
 }
 
 export function createAuthStore(db: DbAdapter): AuthStore {
@@ -768,42 +933,18 @@ export function createAuthStore(db: DbAdapter): AuthStore {
     },
 
     async resolveGrantByTokenHash(tokenHash) {
-      const row = await db.first<{
-        grantId: string;
-        principalKind: string;
-        principalId: string;
-        resourceKind: string;
-        resourceId: string | null;
-        scope: string;
-        expiresAtMs: number | null;
-        revokedAt: string | null;
-      }>(
-        `SELECT grantId, principalKind, principalId, resourceKind, resourceId, scope, expiresAtMs, revokedAt
-           FROM grants WHERE tokenHash = ?`,
+      const row = await db.first<GrantResolveRow>(GRANT_RESOLVE_SQL, [tokenHash]);
+      return row ? parseResolvedGrantRow(row) : null;
+    },
+
+    async resolveGrantsByTokenHash(tokenHash) {
+      // Grant SETS: a token hash can map to N rows (one per resource). Order is stable (createdAt, grantId)
+      // so the any-of iteration + the representative pick are deterministic.
+      const rows = await db.all<GrantResolveRow>(
+        `${GRANT_RESOLVE_SQL} ORDER BY createdAt, grantId`,
         [tokenHash],
       );
-      if (!row) return null;
-      // Fail-closed read: a row that does not parse to a valid principal/resource/scope throws here
-      // rather than handing a malformed grant to the chokepoint (DB read is a boundary).
-      // ⚠ RE-POINT (migration 0003): for owner/device grants `principalId` MEANS `accountId`, NOT a
-      // credential fingerprint — so the resolved `principal.id` is the account key the data layer scopes
-      // by. The minting credential/device is tracked separately on `mintedByKeyId`. Never treat this id
-      // as a fingerprint. (capability grants keep a capability id in principalId.)
-      const principal = PrincipalSchema.parse({ kind: row.principalKind, id: row.principalId });
-      const resource = ResourceSchema.parse(
-        row.resourceKind === 'workspace'
-          ? { kind: 'workspace' }
-          : { kind: row.resourceKind, id: row.resourceId },
-      );
-      const scope = ScopeArraySchema.parse(JSON.parse(row.scope));
-      return {
-        grantId: row.grantId,
-        principal,
-        resource,
-        scope,
-        expiresAtMs: row.expiresAtMs,
-        revokedAt: row.revokedAt,
-      };
+      return rows.map(parseResolvedGrantRow);
     },
 
     async revokeGrant(grantId) {
@@ -820,13 +961,16 @@ export function createAuthStore(db: DbAdapter): AuthStore {
       const resourceId = row.resource.kind === 'workspace' ? null : row.resource.id;
       await db.batch([
         {
+          // tokenGroupId = the row's own grantId: a single-resource token is its own group, so the
+          // grouped listing yields exactly one token for it (grant sets, ROAD-0011 P1).
           sql: `INSERT INTO grants
-                  (grantId, tokenHash, principalKind, principalId, mintedByKeyId,
+                  (grantId, tokenHash, tokenGroupId, principalKind, principalId, mintedByKeyId,
                    resourceKind, resourceId, scope, expiresAtMs, revokedAt, createdAt, label, clientId)
-                VALUES (?, ?, 'agent', ?, NULL, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+                VALUES (?, ?, ?, 'agent', ?, NULL, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
           params: [
             row.grantId,
             row.tokenHash,
+            row.grantId, // tokenGroupId = self
             row.accountId, // principalId = OWNER accountId (server-derived; reads scope to this account)
             row.resource.kind,
             resourceId,
@@ -839,32 +983,49 @@ export function createAuthStore(db: DbAdapter): AuthStore {
       ]);
     },
 
+    async insertAgentGrantSet(row) {
+      // ONE batch = ONE atomic mint: N rows, all sharing tokenHash + tokenGroupId + scope + createdAt, one
+      // per resource. tokenHash being shared is why 0002's UNIQUE(tokenHash) was dropped (migration 0020).
+      const scopeJson = JSON.stringify(row.scope);
+      const clientId = row.clientId ?? null;
+      await db.batch(
+        row.rows.map((r) => ({
+          sql: `INSERT INTO grants
+                  (grantId, tokenHash, tokenGroupId, principalKind, principalId, mintedByKeyId,
+                   resourceKind, resourceId, scope, expiresAtMs, revokedAt, createdAt, label, clientId)
+                VALUES (?, ?, ?, 'agent', ?, NULL, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+          params: [
+            r.grantId,
+            row.tokenHash,
+            row.tokenGroupId,
+            row.accountId,
+            r.resource.kind,
+            r.resource.kind === 'workspace' ? null : r.resource.id,
+            scopeJson,
+            row.createdAt,
+            row.label,
+            clientId,
+          ],
+        })),
+      );
+    },
+
     async listAgentGrantsForAccount(accountId) {
-      const rows = await db.all<{
-        grantId: string;
-        label: string | null;
-        scope: string;
-        resourceKind: string;
-        resourceId: string | null;
-        createdAt: string;
-      }>(
+      const rows = await db.all<AgentGrantListRow>(
         // clientId IS NULL keeps this the FIRST-PARTY agent-token list only — OAuth-issued grants (clientId
         // set) belong to the Connected-apps surface (listOauthGrantsForAccount), never the Settings token list.
-        `SELECT grantId, label, scope, resourceKind, resourceId, createdAt
+        `SELECT grantId, tokenGroupId, label, scope, resourceKind, resourceId, createdAt
            FROM grants
           WHERE principalKind = 'agent' AND principalId = ? AND clientId IS NULL AND revokedAt IS NULL
-          ORDER BY createdAt`,
+          ORDER BY createdAt, grantId`,
         [accountId],
       );
-      return rows.map((r) => ({
-        grantId: r.grantId,
-        label: r.label,
-        // Parse + re-validate the stored scope at this read boundary (fail-closed on a malformed row).
-        scope: ScopeArraySchema.parse(JSON.parse(r.scope)),
-        // resourceKind is constrained to workspace|notebook at mint (agent tokens never scope to a note).
-        resourceKind: (r.resourceKind === 'notebook' ? 'notebook' : 'workspace') as 'workspace' | 'notebook',
-        resourceId: r.resourceId,
-        createdAt: r.createdAt,
+      return groupGrantRowsIntoTokens(rows).map((t) => ({
+        tokenId: t.tokenId,
+        label: t.label,
+        scope: t.scope,
+        resources: t.resources,
+        createdAt: t.createdAt,
       }));
     },
 
@@ -877,6 +1038,20 @@ export function createAuthStore(db: DbAdapter): AuthStore {
           sql: `UPDATE grants SET revokedAt = ?
                  WHERE grantId = ? AND principalKind = 'agent' AND principalId = ? AND clientId IS NULL AND revokedAt IS NULL`,
           params: [now, grantId, accountId],
+        },
+      ]);
+      return res?.rowsWritten ?? 0;
+    },
+
+    async revokeAgentTokenGroupForAccount(tokenGroupId, accountId) {
+      // Whole-token revoke: every live row of the set, BOLA-scoped (account match IN the WHERE) + first-party
+      // (clientId IS NULL). rowsWritten counts INDEX writes on real D1 — treat >0 as revoked, never === N.
+      const now = new Date().toISOString();
+      const [res] = await db.batch([
+        {
+          sql: `UPDATE grants SET revokedAt = ?
+                 WHERE tokenGroupId = ? AND principalKind = 'agent' AND principalId = ? AND clientId IS NULL AND revokedAt IS NULL`,
+          params: [now, tokenGroupId, accountId],
         },
       ]);
       return res?.rowsWritten ?? 0;
@@ -1328,9 +1503,9 @@ export function createAuthStore(db: DbAdapter): AuthStore {
       await db.batch([
         {
           sql: `INSERT INTO oauthAuthCode
-                  (codeHash, clientId, accountId, redirectUri, codeChallenge, scope, resource,
+                  (codeHash, clientId, accountId, redirectUri, codeChallenge, scope, resource, resources,
                    expiresAtMs, consumedAt, createdAt)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
           params: [
             row.codeHash,
             row.clientId,
@@ -1339,6 +1514,7 @@ export function createAuthStore(db: DbAdapter): AuthStore {
             row.codeChallenge,
             JSON.stringify(row.scope),
             row.resource,
+            JSON.stringify(row.resources),
             row.expiresAtMs,
             row.createdAt,
           ],
@@ -1358,10 +1534,11 @@ export function createAuthStore(db: DbAdapter): AuthStore {
         codeChallenge: string;
         scope: string;
         resource: string | null;
+        resources: string | null;
       }>(
         `UPDATE oauthAuthCode SET consumedAt = ?
           WHERE codeHash = ? AND consumedAt IS NULL AND expiresAtMs > ?
-        RETURNING clientId, accountId, redirectUri, codeChallenge, scope, resource`,
+        RETURNING clientId, accountId, redirectUri, codeChallenge, scope, resource, resources`,
         [consumedAt, codeHash, nowMs],
       );
       if (!r) return null;
@@ -1372,31 +1549,29 @@ export function createAuthStore(db: DbAdapter): AuthStore {
         codeChallenge: r.codeChallenge,
         scope: ScopeArraySchema.parse(JSON.parse(r.scope)), // fail-closed re-validate at the boundary
         resource: r.resource,
+        // Resource SET carried from consent (grant sets). Absent/legacy codes ⇒ workspace (backward-safe).
+        resources: r.resources ? ResourceArraySchema.parse(JSON.parse(r.resources)) : [{ kind: 'workspace' }],
       };
     },
 
     async listOauthGrantsForAccount(accountId) {
-      const rows = await db.all<{
-        grantId: string;
-        clientId: string;
-        clientName: string | null;
-        scope: string;
-        createdAt: string;
-      }>(
-        `SELECT g.grantId, g.clientId, c.clientName, g.scope, g.createdAt
+      const rows = await db.all<AgentGrantListRow>(
+        `SELECT g.grantId, g.tokenGroupId, g.label, g.scope, g.resourceKind, g.resourceId, g.createdAt,
+                g.clientId, c.clientName
            FROM grants g
            LEFT JOIN oauthClient c ON c.clientId = g.clientId
           WHERE g.principalKind = 'agent' AND g.principalId = ? AND g.clientId IS NOT NULL
                 AND g.revokedAt IS NULL
-          ORDER BY g.createdAt`,
+          ORDER BY g.createdAt, g.grantId`,
         [accountId],
       );
-      return rows.map((r) => ({
-        grantId: r.grantId,
-        clientId: r.clientId,
-        clientName: r.clientName,
-        scope: ScopeArraySchema.parse(JSON.parse(r.scope)),
-        createdAt: r.createdAt,
+      return groupGrantRowsIntoTokens(rows).map((t) => ({
+        tokenId: t.tokenId,
+        clientId: t.clientId ?? '',
+        clientName: t.clientName,
+        scope: t.scope,
+        resources: t.resources,
+        createdAt: t.createdAt,
       }));
     },
 

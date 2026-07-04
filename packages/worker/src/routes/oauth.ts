@@ -5,6 +5,7 @@ import {
   AuthorizeConsentRequestSchema,
   TokenRequestSchema,
   clampAgentScopes,
+  clampAgentResources,
   buildAuthServerMetadata,
   buildProtectedResourceMetadata,
   type RegisterClientResponse,
@@ -17,6 +18,7 @@ import type { Context } from 'hono';
 import { guard, apiError } from '../http.js';
 import { createAuthStore } from '../db/authStore.js';
 import { d1Adapter } from '../db/schema.js';
+import { createResourceOwnerResolver } from '../db/resourceOwner.js';
 import { hashToken, randomToken } from '../authCrypto.js';
 import { stampAccountId } from '../db/accountScope.js';
 import { verifyStepUp } from '../stepUp.js';
@@ -238,6 +240,18 @@ oauth.post(
       // no opt-in ⇒ read-only). `share` can never appear. The step-up above already re-proved the human,
       // doubly-warranted for a write-capable consent.
       const scope = clampAgentScopes(undefined, req.write ? { allowWrite: req.write } : undefined);
+      // CLAMP the RESOURCE SET the user approved (grant sets, ROAD-0011 P1 §1.3) — the SAME clamp + ownership
+      // validation as manual mint, so a client-requested resource the user unchecked never survives, and a
+      // foreign selection is rejected. Absent picker ⇒ the whole workspace (today's OAuth default).
+      const resources = clampAgentResources(req.resources);
+      const resolveOwner = createResourceOwnerResolver(d1Adapter(c.env.DB));
+      for (const r of resources) {
+        if (r.kind === 'workspace') continue;
+        const owner = await resolveOwner(r);
+        if (!owner || owner.accountId !== accountId) {
+          return oauthError(c, 400, 'invalid_request', 'a selected resource was not found in your account');
+        }
+      }
       const rawCode = `dltos_code_${randomToken(32)}`;
       await store.insertOauthCode({
         codeHash: hashToken(rawCode), // only the hash is stored (F6)
@@ -246,7 +260,8 @@ oauth.post(
         redirectUri: req.redirect_uri,
         codeChallenge: req.code_challenge,
         scope,
-        resource: req.resource ?? null,
+        resource: req.resource ?? null, // RFC-8707 audience url (distinct from the resource-scope set below)
+        resources, // the approved resource-scope SET, carried to /token to mint the matching grant set
         expiresAtMs: nowMs + AUTH_CODE_TTL_MS,
         createdAt: new Date(nowMs).toISOString(),
       });
@@ -326,29 +341,34 @@ oauth.post('/token', async (c) => {
     return oauthError(c, 400, 'invalid_grant', 'PKCE verification failed');
   }
 
-  // Issue the access token: an agent grant carrying clientId (v1: non-expiring, read-only workspace).
+  // Issue the access token: an agent GRANT SET carrying clientId (v1: non-expiring). The resource set was
+  // clamped + ownership-validated at consent and carried on the code; a legacy/absent set ⇒ [{workspace}].
   const token = `dltos_oauth_${randomToken(32)}`;
-  const grantId = randomToken(16);
+  const tokenGroupId = randomToken(16);
   const createdAt = new Date(nowMs).toISOString();
-  await store.insertAgentGrant({
-    grantId,
+  const resources = claimed.resources.length > 0 ? claimed.resources : [OAUTH_V1_RESOURCE];
+  const rows = resources.map((resource) => ({ grantId: randomToken(16), resource }));
+  await store.insertAgentGrantSet({
+    tokenGroupId,
     tokenHash: hashToken(token),
     accountId: claimed.accountId,
     label: client.clientName, // display name for the Connected-apps surface
-    resource: OAUTH_V1_RESOURCE,
     scope: claimed.scope,
     createdAt,
     clientId: claimed.clientId,
+    rows,
   });
 
+  const primaryResource = resources[0] ?? OAUTH_V1_RESOURCE;
   await audit(c, {
     surface: 'auth',
     action: 'oauth.token',
     result: 'allow',
     principalKind: 'agent',
     accountId: claimed.accountId,
-    credentialRef: grantId,
-    resourceKind: OAUTH_V1_RESOURCE.kind,
+    credentialRef: tokenGroupId,
+    resourceKind: primaryResource.kind,
+    resourceId: primaryResource.kind === 'workspace' ? null : primaryResource.id,
     detail: `client:${claimed.clientId}`,
   });
 

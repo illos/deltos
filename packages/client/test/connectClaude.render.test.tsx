@@ -101,11 +101,10 @@ function installFetchMock(
         minted += 1;
         const body = init?.body ? (JSON.parse(init.body as string) as { label?: string }) : {};
         const created: AgentToken = {
-          grantId: `grant-${minted}`,
+          tokenId: `grant-${minted}`,
           label: body.label ?? null,
           scope: ['read', 'search'],
-          resourceKind: 'workspace',
-          resourceId: null,
+          resources: [{ grantId: `res-${minted}`, kind: 'workspace', id: null }],
           createdAt: '2026-06-29T10:00:00.000Z',
         };
         tokens = [...tokens, created];
@@ -114,9 +113,10 @@ function installFetchMock(
         });
       }
       if (method === 'DELETE') {
+        // Whole-token revoke targets /api/agent-tokens/token/:tokenId (grant sets, ROAD-0011 P1).
         const id = decodeURIComponent(url.split('/').pop() ?? '');
-        tokens = tokens.filter((t) => t.grantId !== id);
-        return new Response(JSON.stringify({ grantId: id, revoked: true }), { status: 200 });
+        tokens = tokens.filter((t) => t.tokenId !== id);
+        return new Response(JSON.stringify({ tokenId: id, revoked: true }), { status: 200 });
       }
     }
     return new Response(JSON.stringify({}), { status: 200 });
@@ -125,13 +125,12 @@ function installFetchMock(
   return fetchMock;
 }
 
-function seed(label: string, grantId: string): AgentToken {
+function seed(label: string, tokenId: string): AgentToken {
   return {
-    grantId,
+    tokenId,
     label,
     scope: ['read', 'search'],
-    resourceKind: 'workspace',
-    resourceId: null,
+    resources: [{ grantId: `res-${tokenId}`, kind: 'workspace', id: null }],
     createdAt: '2026-06-20T08:00:00.000Z',
   };
 }
@@ -255,7 +254,7 @@ describe('CC-R4 — revoke removes the connection', () => {
       ([, init]) => (init as RequestInit | undefined)?.method === 'DELETE',
     );
     expect(deleteCall).toBeDefined();
-    expect(String(deleteCall![0])).toContain('/api/agent-tokens/g9');
+    expect(String(deleteCall![0])).toContain('/api/agent-tokens/token/g9');
   });
 });
 

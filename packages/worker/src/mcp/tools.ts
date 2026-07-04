@@ -57,6 +57,12 @@ export interface McpToolContext {
    * key is still `{server-derived accountId}/{hash}` — `env` grants the binding, never a client-steerable key.
    */
   env: Env;
+  /**
+   * The extended `can()` bound to this request's principal + owner-resolver (ROAD-0011 P1 §1.5). COLLECTION
+   * tools (list_notebooks) filter each item through it, so a notebook-scoped token sees only its granted
+   * notebooks. The SAME chokepoint the per-call gate uses — advertised surface and enforced surface agree.
+   */
+  authorize: (resource: Resource) => Promise<boolean>;
 }
 
 /** The `op` each WRITE tool checks at the `can()` chokepoint — used to scope the daily write cap + list. */
@@ -80,6 +86,12 @@ export interface McpTool<A> {
   op: Op;
   /** The resource the call addresses — drives the `can()` resource-coverage + ownership belt. */
   resource: (args: A) => Resource;
+  /**
+   * How the call is gated (ROAD-0011 P1 §1.5). `'resource'` (default) = hierarchy coverage of the addressed
+   * resource. `'collection'` = scope-presence only (the tool returns a collection and self-filters each item
+   * through `ctx.authorize`, so a notebook-scoped token isn't denied outright at a workspace resource).
+   */
+  gate?: 'resource' | 'collection';
   execute: (args: A, ctx: McpToolContext) => Promise<McpToolResult>;
 }
 
@@ -92,6 +104,7 @@ function defineTool<S extends z.ZodTypeAny>(tool: {
   argsSchema: S;
   op: Op;
   resource: (args: z.infer<S>) => Resource;
+  gate?: 'resource' | 'collection';
   execute: (args: z.infer<S>, ctx: McpToolContext) => Promise<McpToolResult>;
 }): McpTool<unknown> {
   return tool as unknown as McpTool<unknown>;
@@ -272,15 +285,25 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
     argsSchema: z.object({}).strict(),
     op: 'read',
     resource: (): Resource => ({ kind: 'workspace' }),
-    execute: async (_a, { db, accountId }) => {
+    // COLLECTION gate (ROAD-0011 P1 §1.5): callable by any read-scoped token; results are filtered per
+    // notebook through the coverage check, so a notebook-scoped token sees ONLY its granted notebooks.
+    gate: 'collection',
+    execute: async (_a, { db, accountId, authorize }) => {
       // Notebooks + the owner's routing guide in ONE round trip — the agent already calls this before
       // filing, so it gets the collections AND the filing rules together (routingGuide is null when unset).
       const [rows, routingGuide] = await Promise.all([
         listNotebooksForAccount(db, accountId),
         getAccountRoutingGuide(db, accountId),
       ]);
+      // LEAST-PRIVILEGE VISIBILITY: keep only the notebooks this token's grant set covers. A workspace token
+      // covers all; a notebook-scoped token covers just its granted notebook(s). The SAME extended evaluator.
+      const visible = [];
+      for (const nb of rows) {
+        // nb.id is a stored, already-valid notebook id; parse re-brands it to the Resource union (cheap).
+        if (await authorize({ kind: 'notebook', id: NotebookIdSchema.parse(nb.id) })) visible.push(nb);
+      }
       return toolOk({
-        notebooks: rows.map((nb) => ({
+        notebooks: visible.map((nb) => ({
           id: nb.id,
           name: nb.name,
           defaultCollectionView: nb.defaultCollectionView,

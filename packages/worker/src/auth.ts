@@ -7,7 +7,7 @@ import {
   type Resource,
 } from '@deltos/shared';
 import type { AppContext } from './context.js';
-import { createAuthStore, type AuthStore } from './db/authStore.js';
+import { createAuthStore, type AuthStore, type ResolvedGrantRow } from './db/authStore.js';
 import { d1Adapter } from './db/schema.js';
 import { hashToken } from './authCrypto.js';
 
@@ -20,16 +20,16 @@ import { hashToken } from './authCrypto.js';
  * (op, resource), and `unverified` is the dev stub the F13 tripwire refuses in production.
  */
 
-/** Resolved grant data — exactly the shape authStore returns, kept on the principal out-of-band. */
-type ResolvedGrant = NonNullable<Awaited<ReturnType<AuthStore['resolveGrantByTokenHash']>>>;
+/** Resolved grant data — exactly the row shape authStore returns, kept on the principal out-of-band. */
+type ResolvedGrant = ResolvedGrantRow;
 
 /**
- * The resolved grant for a request principal, attached out-of-band (the frozen verification union
- * carries only `grantId`, never scope/resource). Keyed by the principal OBJECT, which is unique per
- * request, so this is request-scoped and garbage-collected with the principal — no cross-request
- * bleed, and no change to the locked contract.
+ * The resolved grant SET for a request principal, attached out-of-band (the frozen verification union
+ * carries only `grantId`, never scope/resource). A token may resolve to MANY rows (grant sets, ROAD-0011
+ * P1) — evaluation is ANY-OF over them. Keyed by the principal OBJECT, which is unique per request, so this
+ * is request-scoped and garbage-collected with the principal — no cross-request bleed, no contract change.
  */
-const resolvedGrants = new WeakMap<RequestPrincipal, ResolvedGrant>();
+const resolvedGrants = new WeakMap<RequestPrincipal, ResolvedGrant[]>();
 
 /**
  * The dev-only stub principal — no bearer present. Refused in production by the F13 tripwire.
@@ -98,7 +98,7 @@ export function grantIsLive(
  * reject a revoked/expired bearer at the door (401) using {@link grantIsLive}, instead of leaking the
  * decision into a per-tool `can()` deny.
  */
-export function resolvedGrantFor(principal: RequestPrincipal): ResolvedGrant | undefined {
+export function resolvedGrantFor(principal: RequestPrincipal): ResolvedGrant[] | undefined {
   return resolvedGrants.get(principal);
 }
 
@@ -154,16 +154,103 @@ export async function resolvePrincipal(c: AppContext, store?: AuthStore): Promis
   const token = parseBearerToken(c.req.header('Authorization'));
   if (token) {
     const authStore = store ?? createAuthStore(d1Adapter(c.env.DB));
-    const grant = await authStore.resolveGrantByTokenHash(hashToken(token));
-    if (grant) {
-      const principal = principalForGrant(grant);
-      resolvedGrants.set(principal, grant);
+    // Grant SETS (ROAD-0011 P1): resolve ALL rows sharing this token hash. All rows carry the same principal
+    // + scope (one mint event); evaluation is any-of over the set. The first row represents the principal.
+    const grants = await authStore.resolveGrantsByTokenHash(hashToken(token));
+    const [first] = grants;
+    if (first) {
+      const principal = principalForGrant(first);
+      resolvedGrants.set(principal, grants);
       return principal;
     }
     // Present but unrecognized token: fall through to the unverified stub (prod refuses it; dev has
     // no real auth anyway), so a bad bearer is never silently honored as an authenticated principal.
   }
   return LOCAL_OWNER;
+}
+
+// ── Extended coverage: the notebook→note hierarchy resolver (ROAD-0011 P1 §1) ────────────────────────
+
+/** The owning account + current notebook of a resolved resource — the resolver's return (null = unresolvable). */
+export interface ResourceOwner {
+  accountId: string;
+  /** For a `note`, the note's CURRENT notebook (null = uncategorized / All-Notes pool). For a `notebook`, itself. */
+  notebookId: string | null;
+}
+
+/**
+ * Resolve a resource to its owning account + current notebook — injected by the DB-bound caller (the MCP/REST
+ * route) so the account-less chokepoint (`auth.ts` holds no DB handle) can decide hierarchy coverage. Returns
+ * null when the resource does not exist / has no owner (fail-closed at {@link canWith}). This is the SAME
+ * owner-resolver §2/§3 (sharing) and §4 (RTC) build on — one implementation (see db/resourceOwner.ts).
+ */
+export type ResolveResourceOwner = (resource: Resource) => Promise<ResourceOwner | null>;
+
+/** The context the extended evaluator needs beyond the principal — just the injected owner-resolver today. */
+export interface CanContext {
+  resolveResourceOwner: ResolveResourceOwner;
+}
+
+/**
+ * The EXTENDED authorization decision (ROAD-0011 P1 §1): like {@link can} for grant-token/capability
+ * principals, but with the injected owner-resolver so a NOTEBOOK grant covers its notes. ANY-OF over the
+ * resolved grant set; the requested resource's owner is resolved LAZILY and at most once (only when a finer
+ * grant needs it). Non-grant verification methods (signed-request / unverified) delegate to {@link can}.
+ *
+ * Coverage per grant (fail-closed):
+ *   - WORKSPACE grant → covers any resource. The per-query `accountId` data-layer scope is the PRIMARY
+ *     cross-account control (a workspace token for A physically can't read B's rows), so — exactly as
+ *     today's `can()` — the owner-resolver/belt is NOT applied here; a nonexistent note stays a data-layer
+ *     "not found", never a spurious "forbidden".
+ *   - NOTEBOOK/NOTE grant → needs the resolved owner. OWNERSHIP BELT: owner.accountId MUST equal the grant's
+ *     account (a notebook grant for A can never reach B's note, even on a matching notebookId). A notebook(X)
+ *     grant covers note(N) IFF N currently lives in X (live) — move it out and coverage is lost; a
+ *     `notebookId = null` note is covered ONLY by a workspace grant. Unresolvable resource → deny.
+ *
+ * `can()` WITHOUT a resolver keeps exact-match — a notebook grant + note resource on the plain path is a
+ * DENY (the deliberate fail-closed default the DB-bound caller upgrades by using this).
+ */
+export async function canWith(
+  ctx: CanContext,
+  principal: RequestPrincipal,
+  op: Op,
+  resource: Resource,
+): Promise<boolean> {
+  const v = principal.verification;
+  if (v.method !== 'grant-token' && v.method !== 'capability') {
+    // signed-request / unverified / exhaustive default — identical to the plain chokepoint.
+    return can(principal, op, resource);
+  }
+  const grants = resolvedGrants.get(principal);
+  if (!grants || grants.length === 0) return false;
+  const nowMs = Date.now();
+
+  // Resolve the requested resource's owner at most once, and only if a finer grant actually needs it.
+  let ownerResolved = false;
+  let owner: ResourceOwner | null = null;
+  const getOwner = async (): Promise<ResourceOwner | null> => {
+    if (!ownerResolved) {
+      owner = resource.kind === 'workspace' ? null : await ctx.resolveResourceOwner(resource);
+      ownerResolved = true;
+    }
+    return owner;
+  };
+
+  for (const g of grants) {
+    if (!grantIsLive(g, nowMs)) continue;
+    if (!g.scope.includes(op)) continue;
+    const granted = g.resource;
+    if (granted.kind === 'workspace') return true; // covers everything in its account (data-layer scoped)
+    if (resource.kind === 'workspace') continue; // a finer grant never covers a workspace request
+    const o = await getOwner();
+    if (!o || o.accountId !== g.principal.id) continue; // unresolvable or cross-account → belt deny
+    if (granted.kind === 'notebook') {
+      if (resource.kind === 'notebook' ? granted.id === resource.id : o.notebookId === granted.id) return true;
+    } else if (granted.kind === 'note') {
+      if (resource.kind === 'note' && granted.id === resource.id) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -176,12 +263,15 @@ export const can: CanCheck = async (principal, op, resource) => {
   switch (v.method) {
     case 'grant-token':
     case 'capability': {
-      // Authority comes from the SERVER-RESOLVED grant attached at resolvePrincipal time — never from
-      // the principal's claimed id. A principal without a resolved grant (e.g. built outside the real
-      // resolution path) denies. The resolved grant gates scope/resource/expiry/revocation (CF-5).
-      const grant = resolvedGrants.get(principal);
-      if (!grant) return false;
-      return grantAllows(grant, op, resource, Date.now());
+      // Authority comes from the SERVER-RESOLVED grant SET attached at resolvePrincipal time — never from
+      // the principal's claimed id. A principal with no resolved set denies. Evaluation is ANY-OF over the
+      // set (grant sets, ROAD-0011 P1); each grant gates scope/resource/expiry/revocation (CF-5). This plain
+      // path uses exact-match coverage (no resolver) — a notebook grant + note resource is a fail-closed DENY
+      // (the hierarchy rule lives in canWith, which a DB-bound caller uses).
+      const grants = resolvedGrants.get(principal);
+      if (!grants || grants.length === 0) return false;
+      const nowMs = Date.now();
+      return grants.some((g) => grantAllows(g, op, resource, nowMs));
     }
     case 'signed-request':
       // DEAD post-pivot: the 2026-06-17 password pivot deleted the signed-challenge stack, so NOTHING
