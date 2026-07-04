@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ComposeNew, Search, Upload } from '../icons/index.js';
 import { useFilePickerUpload } from '../lib/upload/useFilePickerUpload.js';
+import { useNavSheetArm } from './NavSheet.js';
 
 /**
  * The Deck's NAVIGATION loadout (#69 slice B) — the lean browsing controls that own the bottom slot
@@ -27,6 +28,11 @@ export function DeckNavLoadout() {
   // Warm the lazy upload chunk on mount so the first tap is snappy; the change handler is resilient if
   // it hasn't loaded yet (falls back to an inline import — dynamic import() is cached, so it's one fetch).
   const uploadMod = useFilePickerUpload();
+  // Drag-up arm zone: a vertical drag off this bar reveals the nav sheet (the same pane the top-bar "…"
+  // opens). Spread on the toolbar root — useDragAxis only locks on a vertical drag past its slop, so the
+  // action taps below still fire and horizontal/tap gestures never arm. A no-op set when there's no enabled
+  // NavSheetProvider (desktop / note route), leaving the loadout unchanged there.
+  const armHandlers = useNavSheetArm();
 
   async function handleFiles(fileList: FileList | null) {
     const files = fileList ? Array.from(fileList) : [];
@@ -36,7 +42,7 @@ export function DeckNavLoadout() {
   }
 
   return (
-    <div className="deck-nav" role="toolbar" aria-label="Navigation">
+    <div className="deck-nav" role="toolbar" aria-label="Navigation" {...armHandlers}>
       <button
         type="button"
         className="deck-nav__action deck-nav__action--accent"

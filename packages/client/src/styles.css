@@ -2201,6 +2201,46 @@ a.auth__link { display: inline; }
 }
 .nb-sheet__cancel:active { background: var(--border); }
 
+/* ── Drag-up nav sheet (ROAD-0011) — the bottom-sheet entrance to the top-bar "…" nav pane ───────────────
+   A drag UP off the Deck's bottom nav zone reveals this over the list; drag DOWN on the grabber or tap the
+   scrim to dismiss. Content = NavContent (one source of truth, shared with the drawer / "…" overlay). The
+   panel + scrim are always mounted so the finger-follow drag has something to move from pixel one; parked
+   at translateY(100%) (scrim opacity 0, pointer-events off) until armed. z-index sits above the Deck (50),
+   BottomNav (300) and the "…" full-screen overlay (350) but below the move-picker (nb-sheet, 400). */
+.nav-sheet { position: fixed; inset: 0; z-index: 380; pointer-events: none; }
+.nav-sheet__backdrop {
+  position: absolute; inset: 0; background: rgba(0, 0, 0, 0.42);
+  opacity: 0; pointer-events: none;
+}
+.nav-sheet--open .nav-sheet__backdrop { opacity: 1; pointer-events: auto; }
+.nav-sheet__panel {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; flex-direction: column;
+  max-height: 82vh;
+  background: var(--nav);
+  border-top-left-radius: 22px; border-top-right-radius: 22px;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.22);
+  /* Parked off-screen until the drag drives it (JS then owns the inline transform + spring). */
+  transform: translateY(100%);
+  will-change: transform;
+  pointer-events: none;
+}
+.nav-sheet--open .nav-sheet__panel { pointer-events: auto; }
+/* Grabber — the dismiss grab point + the iOS-style handle affordance. touch-action:none so a vertical
+   drag here is fully JS-owned. */
+.nav-sheet__grabber {
+  flex-shrink: 0; display: flex; justify-content: center; align-items: center;
+  padding: 0.6rem 0 0.35rem; cursor: grab; touch-action: none;
+}
+.nav-sheet__grabber-bar {
+  display: block; width: 2.25rem; height: 4px; border-radius: 2px; background: var(--handle);
+}
+/* Scroll region — the pane content; safe-area padding clears the home indicator. */
+.nav-sheet__scroll {
+  flex: 1; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+
 /* Foreground: slides imperatively over the back layer; explicit bg to cover buttons */
 .swipe-row__foreground {
   position: relative;
@@ -3559,7 +3599,10 @@ body.deck-top .shell__main { padding-bottom: 0; }
    browsing (no note open). Host-side styling (the loadout is deltos-specific); mirrors the bottom-nav
    action slots for visual continuity. The label font is the host's --mono (not a Deck geometry invariant
    like the keypad — this is host chrome, not the pixel-matched keypad). */
-.deck-nav { display: flex; justify-content: center; gap: 36px; padding: 4px 0 8px; }
+/* touch-action:none — this fixed bottom bar owns its vertical gestures: the drag-up arm (NavSheet) is
+   handled by JS pointer events, and there's nothing to natively scroll here. Taps on the actions below are
+   unaffected. */
+.deck-nav { display: flex; justify-content: center; gap: 36px; padding: 4px 0 8px; touch-action: none; }
 .deck-nav__action {
   display: inline-flex; flex-direction: column; align-items: center; gap: 4px;
   background: none; border: none; color: var(--secondary); cursor: pointer;
