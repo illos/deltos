@@ -184,17 +184,27 @@ Jim's sync directive already names RTC the endgame ("eventual = realtime push").
     conflict-as-version as the safety net, unchanged. The same lease arbitrates the owner's OWN
     multi-device edits — which kills the most common real conflict (self, phone+laptop) — so lease
     handoff between own devices must be near-instant (release on blur, steal-on-request).
-  - **Collab mode = explicit per-note conversion to a CRDT-backed note** (a note type/state, not a
-    global system). Enabling realtime collab converts the note: the CRDT doc (Yjs-class) hosted at
-    the note's DO becomes the write path; the **spine becomes a derived one-way projection** (list,
-    search, versions, MCP reads keep working; never a second writable truth). **CRDT notes are
-    read-only offline** — the deliberate constraint that deletes CRDT's worst behavior (long-offline
-    divergence mash-merges); the CRDT only ever reconciles live concurrency. Conversion is
-    reversible: snapshot the projection, drop the CRDT metadata, back to a normal note. The offline
-    exception is per-note, opt-in, and badged in the UI — the offline-first ground rule for normal
-    notes is untouched.
-  - Plugins declare CRDT support in the manifest (see below); a note converts only if its blocks'
-    plugins support it — unsupported atoms degrade to render-only inside a collab note.
+  - **Collab mode = a SESSION-scoped escalation, not a persistent note type (REFINED, Jim
+    2026-07-04, second pass — supersedes the persistent-conversion draft).** When a second live
+    principal opens a checked-out note, the DO offers collab ("go live together" toast). On consent
+    it builds an **ephemeral CRDT doc (Yjs-class) from the current spine** and the live session
+    becomes co-editing; while the session runs, the DO periodically snapshots the CRDT projection to
+    the spine **through the normal write path** (versions, sync feeds, agents all keep working).
+    When the session drains (participants close/leave), the DO takes a final snapshot and **discards
+    the CRDT doc** — the note was, is, and remains a normal spine note. Nothing about collab is ever
+    persisted as a second truth.
+    - This deletes the persistent model's costs wholesale: **no stored note type, no reversibility
+      UX, no badge, and no offline carve-out at all** — the CRDT exists only inside a live session,
+      where everyone is online by definition; a note with no live session is a normal offline-first
+      note, always. ADR-0002 is fully intact: the ephemeral CRDT is a transient working
+      representation of the spine, exactly the pattern the editor already uses (spine ↔ PM doc),
+      lifted to session level.
+    - Known fiddly bits (contained, editor-side): live-rebinding an OPEN editor onto the session
+      doc — and back off it at session end — without cursor/undo jank; and the disconnect grace
+      window (ops typed in the last instants before a drop are keystroke-scale loss or
+      replay-on-reconnect — bounded by the same sync-asap philosophy).
+  - Plugins declare CRDT support in the manifest (see below); a session escalates to co-editing only
+    for blocks whose plugins support it — unsupported atoms degrade to render-only for the session.
 - **Per-plugin capability registration:** the manifest grows from the capability *hint* to a declared
   feature set per block type: `{ agentTooling?: …existing…, collaboration: 'realtime' | 'render-only' }`
   — mirroring the shipped plugin-declared-agent-tooling seam (`shared/src/mcp/agentTools.ts`; the
@@ -263,13 +273,16 @@ Jim's sync directive already names RTC the endgame ("eventual = realtime push").
    all (not even optional); add expiration later only if it proves desirable.
 4. **Recipient `create` rights — DECIDED (Jim, 2026-07-04): YES.** Write access to a shared notebook
    includes creating new notes; no separate opt-in bit.
-5. **RTC convergence — DECIDED (Jim, 2026-07-04): checkout by default + per-note CRDT conversion.**
-   The sequencer-as-merge-referee is dropped. Default shared-note mode = DO-held editing lease (one
-   editor at a time; live viewers follow read-only; conflict-as-version remains the offline safety
-   net). True realtime collab = explicit per-note conversion to a CRDT-backed note (plugins declare
-   `crdt` support in the manifest), with the deliberate constraint that **collab notes are read-only
-   offline** — eliminating long-offline CRDT divergence by construction. Reversible conversion;
-   spine stays the derived projection. See §4.
+5. **RTC convergence — DECIDED (Jim, 2026-07-04, refined same day): checkout by default + SESSION-
+   scoped CRDT collab.** The sequencer-as-merge-referee is dropped. Default shared-note mode =
+   DO-held editing lease (one editor at a time; live viewers follow read-only; conflict-as-version
+   remains the offline safety net). Realtime co-editing = an ephemeral session escalation: when two
+   principals are live on one note, a toast offers collab; the DO builds a transient CRDT doc from
+   the spine, snapshots back through the normal write path during the session, and discards it when
+   the session drains. **No persistent note type, no offline carve-out, no second stored truth** —
+   the CRDT is a session working-representation of the spine (same pattern as the editor's PM doc).
+   Plugins declare `crdt` support in the manifest; unsupported blocks degrade to render-only for the
+   session. See §4.
 6. **Un-share semantics (added by Jim, 2026-07-04) — DECIDED: revoke = FORK.** Read+write sharing is
    effectively giving the recipient a copy; on revoke the link breaks and a full copy stays with BOTH
    users (recipient's copy re-keyed as their own data). Corollary requirement: version history is
