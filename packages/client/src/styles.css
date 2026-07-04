@@ -19,11 +19,40 @@
   flex-shrink: 0;
 }
 
+/* Mobile brand block — the δ deltos wordmark stacked over the current-notebook caption. Rendered only in the
+   mobile shell bar (the desktop 3-region shell carries its own chrome, never .shell__bar). The δ is coloured
+   by .dt-wordmark-delta (accent serif — the desktop wordmark's treatment, shared token, no duplicated hex);
+   the caption reuses .dt-label. A tight flex column (line-height:1) that stays under the 44px nav-button row,
+   so the two lines stack WITHOUT growing the bar's height. */
+.shell__brand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  flex-shrink: 1;
+  text-decoration: none;
+}
+
+/* Wordmark line ("δ deltos"). "deltos" text takes --ink like the desktop wordmark-text; the δ span overrides
+   to the accent via .dt-wordmark-delta. line-height:1 keeps the stacked caption within the existing bar. */
 .shell__mark {
   font-weight: 600;
   letter-spacing: 0.01em;
-  color: inherit;
-  text-decoration: none;
+  color: var(--ink);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Notebook caption under the wordmark — tiny mono/uppercase label (.dt-label carries font/size/tracking/faint),
+   truncated with an ellipsis and pinned to ONE line (never wraps to a second caption line). */
+.shell__nb-caption {
+  max-width: 46vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1;
 }
 
 
@@ -2892,9 +2921,6 @@ a.auth__link { display: inline; }
 
 /* ── Bottom nav bar (#31) — mobile + tablet-portrait only ──────────────────── */
 
-/* Desktop defaults: show drawer + FAB; hide mobile-only elements. */
-.shell__nb-label--mobile-only { display: none; }
-
 .bottom-nav {
   display: none; /* shown only in mobile media query below */
   position: fixed;
@@ -3088,21 +3114,6 @@ a.auth__link { display: inline; }
   .shell__nb-trigger--desktop-only { display: none; }
   .shell__fab--desktop-only        { display: none; }
   .shell__search-btn--desktop-only { display: none; }
-
-  /* Mobile bar order: δ mark first, then notebook label (.shell__bar-end stays last). */
-  .shell__mark { order: -1; }
-
-  /* Show the mobile notebook name label. */
-  .shell__nb-label--mobile-only {
-    display: block;
-    font-size: 1rem;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 40vw;
-    flex-shrink: 1;
-  }
 
   /* Main content area clears the collapsed nav bar — in lockstep with .bottom-nav__bar clearance. */
   .shell__main {

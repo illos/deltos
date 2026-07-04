@@ -116,7 +116,9 @@ describe('register completes e2e (P0 ceremony-latch gate)', () => {
 
     // (3) Skip → finalizeAuth fires atomically → selectBootView sees shell → shell mounts.
     await user.click(screen.getByRole('button', { name: /Skip for now/i }));
-    await screen.findByText(/δ deltos/i); // shell header mark — shell is now mounted
+    // shell header mark — shell is now mounted. The mark is now a stacked brand block (δ span + " deltos"
+    // text), so match the .shell__mark line rather than the whole "δ deltos" string across nodes.
+    await screen.findByText(/deltos/i, { selector: '.shell__mark' });
 
     expect(document.querySelector('.shell')).not.toBeNull();
   });

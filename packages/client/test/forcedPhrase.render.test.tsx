@@ -111,7 +111,8 @@ describe('forced-phrase route e2e (P0-belt abandon-path latch)', () => {
     await user.click(screen.getByRole('button', { name: /^Continue$/i }));
 
     // (3) finalizeAuth fires → selectBootView sees isAuthed=true, isAuthing=false → shell mounts.
-    await screen.findByText(/δ deltos/i);
+    // The shell mark is now the stacked brand block (δ span + " deltos" text), so match the .shell__mark line.
+    await screen.findByText(/deltos/i, { selector: '.shell__mark' });
     expect(document.querySelector('.shell')).not.toBeNull();
   });
 });

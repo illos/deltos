@@ -526,11 +526,19 @@ export function AuthedShell() {
           <span className="shell__nb-name">{notebookName}</span>
           <span className="shell__nb-chevron"> ▾</span>
         </button>
-        {/* Mobile-only context label (no trigger): displayed instead of the button above */}
-        <span className="shell__nb-label shell__nb-label--mobile-only">
-          {notebookName}
-        </span>
-        <Link to="/" className="shell__mark">δ deltos</Link>
+        {/* Mobile brand block (ROAD-0011 refinement): the δ deltos wordmark with the current notebook as a
+            tiny caption directly UNDERNEATH (stacked, not side-by-side). The δ reuses .dt-wordmark-delta — the
+            SAME accent-serif treatment as the desktop DrawerNav wordmark (tokens.css: color:var(--accent)) — so
+            the mark is brand-coloured, not plain. The caption reuses .dt-label (mono/uppercase/faint, the app's
+            small-label language) and truncates with an ellipsis, never wrapping. The column is tight
+            (line-height:1) and stays well under the 44px nav-button row, so .shell__bar height is unchanged.
+            "All Notes" (the synthetic default) renders the same way. */}
+        <Link to="/" className="shell__brand" aria-label={`deltos — ${notebookName}`}>
+          <span className="shell__mark">
+            <span className="dt-wordmark-delta">δ</span> deltos
+          </span>
+          <span className="dt-label shell__nb-caption">{notebookName}</span>
+        </Link>
         <div className="shell__bar-end">
           {/* Desktop search button — hidden on mobile (BottomNav has the Search slot). */}
           <button className="shell__search-btn shell__search-btn--desktop-only" aria-label="Search" onClick={() => navigate('/search')}>🔍</button>
