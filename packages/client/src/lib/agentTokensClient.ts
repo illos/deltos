@@ -19,6 +19,7 @@ import type {
   ListAgentTokensResponse,
   MintAgentTokenRequest,
   MintAgentTokenResponse,
+  Resource,
 } from '@deltos/shared';
 
 const BASE = '/api/agent-tokens';
@@ -131,6 +132,8 @@ export async function mintAgentToken(params: {
   password: string;
   totp?: string;
   write?: AgentWriteOpt;
+  /** The resource SET to scope the token to (grant sets, ROAD-0011 P1). Omitted/empty ⇒ whole workspace. */
+  resources?: Resource[];
 }): Promise<MintAgentTokenResponse> {
   const trimmed = params.label?.trim();
   const body: MintAgentTokenRequest = {
@@ -138,6 +141,8 @@ export async function mintAgentToken(params: {
     ...(trimmed ? { label: trimmed } : {}),
     ...(params.totp ? { totp: params.totp } : {}),
     ...(params.write ? { write: params.write } : {}),
+    // Only send a resource set when the user narrowed scope — absent ⇒ the server clamps to whole workspace.
+    ...(params.resources && params.resources.length > 0 ? { resources: params.resources } : {}),
   };
   const res = await authedFetch(
     '',

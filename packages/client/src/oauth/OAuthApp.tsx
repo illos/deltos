@@ -17,9 +17,10 @@
  *      /api/oauth/authorize, and top-level-navigates to `redirect_uri?code&state` (that IS the OAuth
  *      redirect). Deny is a TERMINAL screen (never navigate to an unvalidated redirect_uri).
  */
-import { useEffect, useRef, useState } from 'react';
-import type { AuthorizeConsentRequest } from '@deltos/shared';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AuthorizeConsentRequest, Resource } from '@deltos/shared';
 import { Turnstile, turnstileEnabled, type TurnstileHandle } from '../components/Turnstile.js';
+import { ResourceScopePicker, type PickerNote, type PickerNotebook } from '../components/ResourceScopePicker.js';
 import {
   ConsentError,
   login as apiLogin,
@@ -27,6 +28,7 @@ import {
   refreshBearer,
   type SurfaceSession,
 } from './surfaceApi.js';
+import { fetchPickables } from './pickablesApi.js';
 
 /** The read-only scopes an OAuth v1 grant carries — surfaced verbatim on the consent screen. */
 const DISCLOSED_SCOPES = ['read', 'search'] as const;
@@ -254,11 +256,32 @@ function ConsentScreen({
   // WRITE opt-in — default OFF (read-only), the SAME default + mechanism as the manual mint toggle. When on,
   // the consent POSTs `write` and the disclosure below switches to name the write access honestly.
   const [allowWrite, setAllowWrite] = useState(false);
+  // The resource scope the user approved (empty ⇒ whole workspace — today's OAuth default). Fetched from the
+  // server (this surface has no Dexie), through the SAME picker the in-app Settings mint uses.
+  const [resources, setResources] = useState<Resource[]>([]);
+  const [pickerNotebooks, setPickerNotebooks] = useState<PickerNotebook[]>([]);
   // Reveal the password field when we didn't carry one from a just-completed login (or after an error, so a
   // wrong carried password can be corrected).
   const [revealPassword, setRevealPassword] = useState(!carriedPassword);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<ConsentPhase>('idle');
+
+  // Load the notebook LIST once (bounded set). Note SEARCH is on-demand below. Server-fetched, not Dexie.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchPickables(session.bearer).then((r) => {
+      if (!cancelled) setPickerNotebooks(r.notebooks.map((nb) => ({ id: nb.id, name: nb.name })));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [session.bearer]);
+
+  const searchNotesForPicker = useCallback(
+    (q: string): Promise<PickerNote[]> =>
+      fetchPickables(session.bearer, q).then((r) => r.notes.map((n) => ({ id: n.id, title: n.title }))),
+    [session.bearer],
+  );
 
   const approve = async () => {
     if (phase !== 'idle') return;
@@ -279,6 +302,8 @@ function ConsentScreen({
       ...(code ? { totp: code } : {}),
       // A single toggle grants the full write surface (create + edit + trash) — matches the manual mint UI.
       ...(allowWrite ? { write: { create: true, update: true, trash: true } } : {}),
+      // The approved resource scope (empty ⇒ whole workspace — the server clamps absent to workspace).
+      ...(resources.length > 0 ? { resources } : {}),
     };
     try {
       const res = await mintConsentCode(session.bearer, body);
@@ -364,6 +389,16 @@ function ConsentScreen({
           recoverable). Leave off for read-only access.
         </span>
       </label>
+
+      {/* Resource scope — the SAME picker the in-app mint uses; notebooks/notes come from the server (this
+          surface has no Dexie). Default = whole workspace. */}
+      <ResourceScopePicker
+        notebooks={pickerNotebooks}
+        searchNotes={searchNotesForPicker}
+        onChange={setResources}
+        disabled={busy}
+        idPrefix="consent"
+      />
 
       {/* Step-up: re-prove the human before granting (password always; a fresh TOTP when 2FA is on). */}
       {revealPassword && (

@@ -29,6 +29,11 @@ vi.mock('./surfaceApi.js', () => {
   return { refreshBearer, login, mintConsentCode, ConsentError };
 });
 
+// The consent-surface resource picker fetches notebooks/notes from the server (no Dexie here). Mock the
+// fetch layer: a bare call (notebook LIST) vs a `q` call (note SEARCH).
+const { fetchPickables } = vi.hoisted(() => ({ fetchPickables: vi.fn() }));
+vi.mock('./pickablesApi.js', () => ({ fetchPickables }));
+
 import { OAuthApp } from './OAuthApp.js';
 
 const VALID =
@@ -53,7 +58,11 @@ function setSearch(q: string) {
   });
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Default: an empty pickables set (no notebooks, no note matches) unless a test overrides it.
+  fetchPickables.mockResolvedValue({ notebooks: [], notes: [] });
+});
 afterEach(cleanup);
 
 describe('OAuthApp (separate consent surface)', () => {
@@ -144,6 +153,31 @@ describe('OAuthApp (separate consent surface)', () => {
     await waitFor(() =>
       expect(mintConsentCode).toHaveBeenCalledWith('b2', expect.objectContaining({ password: 'pw2' })),
     );
+  });
+
+  it('threads the picked resource scope into the consent POST (server-fed picker)', async () => {
+    setSearch(VALID);
+    refreshBearer.mockResolvedValue({ bearer: 'b1', totpEnabled: false });
+    mintConsentCode.mockResolvedValue({ code: 'authcode', redirect_uri: 'https://claude.ai/cb', state: 'st1' });
+    // The notebook LIST comes from the bare call; the note SEARCH would come from a `q` call (unused here).
+    fetchPickables.mockImplementation(async (_bearer: string, q?: string) =>
+      q ? { notebooks: [], notes: [] } : { notebooks: [{ id: 'nb-1', name: 'Work' }], notes: [] },
+    );
+
+    const { findByText, getByLabelText } = render(<OAuthApp />);
+    await findByText('Authorize access to your notes');
+
+    // Narrow to a notebook, then authorize.
+    fireEvent.click(getByLabelText('Pick notebooks'));
+    await waitFor(() => expect(getByLabelText('Notebook Work')).toBeTruthy());
+    fireEvent.click(getByLabelText('Notebook Work'));
+    fireEvent.change(getByLabelText('Your password'), { target: { value: 'pw' } });
+    fireEvent.click(getByLabelText('Authorize'));
+
+    await waitFor(() => expect(mintConsentCode).toHaveBeenCalled());
+    expect(mintConsentCode.mock.calls[0]?.[1]).toMatchObject({
+      resources: [{ kind: 'notebook', id: 'nb-1' }],
+    });
   });
 
   it('Deny is a terminal screen and never navigates the redirect_uri', async () => {

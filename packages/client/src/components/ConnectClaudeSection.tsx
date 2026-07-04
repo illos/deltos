@@ -10,15 +10,20 @@
  * which is itself `lazy()`-loaded in App.tsx, so it rides the settings chunk and never touches the mobile
  * first-load bundle. Its network client (`agentTokensClient`) is likewise off the entry chunk.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { Resource } from '@deltos/shared';
 import {
   listAgentTokens,
   mintAgentToken,
   revokeAgentToken,
+  revokeAgentTokenResource,
   AgentTokenError,
   type AgentToken,
 } from '../lib/agentTokensClient.js';
 import { useAuthStore } from '../auth/store.js';
+import { useNotebooks, useNotes } from '../db/storeHooks.js';
+import { searchNotes as fuzzySearchNotes } from '../lib/search.js';
+import { ResourceScopePicker, type PickerNote } from './ResourceScopePicker.js';
 
 function formatDate(iso: string): string {
   const t = Date.parse(iso);
@@ -37,13 +42,13 @@ function canWrite(token: AgentToken): boolean {
  * row honest about scope.
  */
 function resourceSummary(token: AgentToken): string {
-  if (token.resources.some((r) => r.kind === 'workspace')) return 'All notes';
+  if (token.resources.some((r) => r.kind === 'workspace')) return 'Whole workspace';
   const notebooks = token.resources.filter((r) => r.kind === 'notebook').length;
   const notes = token.resources.filter((r) => r.kind === 'note').length;
   const parts: string[] = [];
   if (notebooks) parts.push(`${notebooks} notebook${notebooks === 1 ? '' : 's'}`);
   if (notes) parts.push(`${notes} note${notes === 1 ? '' : 's'}`);
-  return parts.length ? parts.join(' · ') : 'All notes';
+  return parts.length ? parts.join(' · ') : 'Whole workspace';
 }
 
 /** A one-line "Created · access · scope" description for a list row. */
@@ -69,6 +74,8 @@ type GenState =
   | { tag: 'minted'; token: string; label: string | null }
   | { tag: 'error'; message: string };
 
+const EMPTY_FORM = { label: '', password: '', totp: '', allowWrite: false, error: null } as const;
+
 export function ConnectClaudeSection() {
   const [tokens, setTokens] = useState<AgentToken[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -77,6 +84,40 @@ export function ConnectClaudeSection() {
   const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   const totpEnabled = useAuthStore((s) => s.totpEnabled);
+
+  // Resource scope for the NEXT mint (empty ⇒ whole workspace). Lives outside GenState so re-renders of the
+  // step-up form (e.g. an inline error) don't reset the user's picker selection.
+  const [resources, setResources] = useState<Resource[]>([]);
+  // Which tokens have their resource detail expanded, + the per-resource revoke in flight.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [revokingResource, setRevokingResource] = useState<string | null>(null);
+
+  // Local-store data for the picker + for resolving a token's resource ids → names. The picker reads the
+  // LOCAL store (client is local-first); note search uses the EXISTING client fuzzy engine (lib/search.ts).
+  const notebooks = useNotebooks();
+  const notes = useNotes();
+  const notebookName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const nb of notebooks) m.set(nb.id, nb.name || 'Untitled notebook');
+    return m;
+  }, [notebooks]);
+  const noteTitle = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const n of notes) m.set(n.id, n.title || 'Untitled note');
+    return m;
+  }, [notes]);
+
+  const pickerNotebooks = useMemo(
+    () => notebooks.map((nb) => ({ id: nb.id as string, name: nb.name })),
+    [notebooks],
+  );
+  const searchNotesForPicker = useCallback(
+    (q: string): Promise<PickerNote[]> =>
+      Promise.resolve(
+        fuzzySearchNotes(notes, q).map((r) => ({ id: r.note.id as string, title: r.note.title })),
+      ),
+    [notes],
+  );
 
   const refresh = useCallback(async () => {
     setLoadError(null);
@@ -108,8 +149,11 @@ export function ConnectClaudeSection() {
         // A single toggle grants the full write surface (create + edit + trash) — matches "let Claude edit
         // and delete". Least-privilege per-scope splitting exists at the API for later granularity.
         ...(form.allowWrite ? { write: { create: true, update: true, trash: true } } : {}),
+        // The resource scope picked above (empty ⇒ whole workspace). Carried as the mint's resource SET.
+        ...(resources.length > 0 ? { resources } : {}),
       });
       setGen({ tag: 'minted', token: res.token, label: res.label });
+      setResources([]); // clear the picker for the next mint
       void refresh(); // the new token appears in the list immediately (without its secret)
     } catch (err) {
       // Step-up failure (wrong password / code) → stay in the form with an inline error so the label and
@@ -145,6 +189,43 @@ export function ConnectClaudeSection() {
     }
   };
 
+  /** Revoke ONE resource of a token (per-resource revocation) by its grantId; the siblings stay live. */
+  const handleRevokeResource = async (grantId: string) => {
+    setRevokingResource(grantId);
+    try {
+      await revokeAgentTokenResource(grantId);
+      await refresh();
+    } catch (err) {
+      setLoadError(messageFor(err));
+    } finally {
+      setRevokingResource(null);
+    }
+  };
+
+  /** Open a fresh generate form, resetting the resource picker to whole-workspace. */
+  const openForm = () => {
+    setResources([]);
+    setGen({ tag: 'form', ...EMPTY_FORM });
+  };
+
+  const toggleExpanded = (tokenId: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(tokenId)) next.delete(tokenId);
+      else next.add(tokenId);
+      return next;
+    });
+  };
+
+  /** Resolve one grant resource to a display name; ids that no longer resolve locally show as "(deleted)". */
+  const resourceLabel = (r: AgentToken['resources'][number]): string => {
+    if (r.kind === 'workspace') return 'Whole workspace';
+    if (r.id === null) return '(deleted)';
+    const name = r.kind === 'notebook' ? notebookName.get(r.id) : noteTitle.get(r.id);
+    const prefix = r.kind === 'notebook' ? 'Notebook' : 'Note';
+    return name ? `${prefix}: ${name}` : `${prefix}: (deleted)`;
+  };
+
   return (
     <section className="settings__section" aria-label="Connect to Claude">
       <h2 className="settings__section-title">Connect to Claude</h2>
@@ -161,10 +242,7 @@ export function ConnectClaudeSection() {
 
       {/* ── Generate sub-flow ─────────────────────────────────────────────── */}
       {gen.tag === 'idle' && (
-        <button
-          className="settings__action settings__action--primary"
-          onClick={() => setGen({ tag: 'form', label: '', password: '', totp: '', allowWrite: false, error: null })}
-        >
+        <button className="settings__action settings__action--primary" onClick={openForm}>
           Generate token
         </button>
       )}
@@ -204,6 +282,12 @@ export function ConnectClaudeSection() {
               maxLength={6}
             />
           )}
+          <ResourceScopePicker
+            notebooks={pickerNotebooks}
+            searchNotes={searchNotesForPicker}
+            onChange={setResources}
+            idPrefix="mint"
+          />
           <label className="settings__checkbox-row">
             <input
               type="checkbox"
@@ -269,10 +353,7 @@ export function ConnectClaudeSection() {
       {gen.tag === 'error' && (
         <div className="settings__row settings__row--btn-group">
           <p className="settings__error">{gen.message}</p>
-          <button
-            className="settings__row-action"
-            onClick={() => setGen({ tag: 'form', label: '', password: '', totp: '', allowWrite: false, error: null })}
-          >
+          <button className="settings__row-action" onClick={openForm}>
             Try again
           </button>
         </div>
@@ -293,38 +374,71 @@ export function ConnectClaudeSection() {
         tokens.map((token) => {
           const isConfirming = confirmRevoke === token.tokenId;
           const isRevoking = revoking === token.tokenId;
+          const isExpanded = expanded.has(token.tokenId);
+          const label = token.label || 'Untitled token';
           return (
-            <div key={token.tokenId} className="settings__row">
-              <span className="settings__token-row-main">
-                <span className="settings__row-label">{token.label || 'Untitled token'}</span>
-                <span className="settings__token-meta">{tokenMeta(token)}</span>
-              </span>
-              {isConfirming ? (
-                <>
-                  <button
-                    className="settings__row-action"
-                    onClick={() => void handleRevoke(token.tokenId)}
-                    disabled={isRevoking}
-                    aria-label={`Confirm revoke ${token.label || 'token'}`}
-                  >
-                    {isRevoking ? 'Revoking…' : 'Confirm'}
-                  </button>
-                  <button
-                    className="settings__row-action"
-                    onClick={() => setConfirmRevoke(null)}
-                    disabled={isRevoking}
-                  >
-                    Cancel
-                  </button>
-                </>
-              ) : (
-                <button
-                  className="settings__row-action"
-                  onClick={() => setConfirmRevoke(token.tokenId)}
-                  aria-label={`Revoke ${token.label || 'token'}`}
-                >
-                  Revoke
-                </button>
+            <div key={token.tokenId} className="settings__token-group">
+              <div className="settings__row">
+                <span className="settings__token-row-main">
+                  <span className="settings__row-label">{label}</span>
+                  <span className="settings__token-meta">{tokenMeta(token)}</span>
+                </span>
+                {isConfirming ? (
+                  <>
+                    <button
+                      className="settings__row-action"
+                      onClick={() => void handleRevoke(token.tokenId)}
+                      disabled={isRevoking}
+                      aria-label={`Confirm revoke ${label}`}
+                    >
+                      {isRevoking ? 'Revoking…' : 'Confirm'}
+                    </button>
+                    <button
+                      className="settings__row-action"
+                      onClick={() => setConfirmRevoke(null)}
+                      disabled={isRevoking}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className="settings__row-action"
+                      onClick={() => toggleExpanded(token.tokenId)}
+                      aria-expanded={isExpanded}
+                      aria-label={`${isExpanded ? 'Hide' : 'Show'} scope of ${label}`}
+                    >
+                      {isExpanded ? 'Hide' : 'Details'}
+                    </button>
+                    <button
+                      className="settings__row-action"
+                      onClick={() => setConfirmRevoke(token.tokenId)}
+                      aria-label={`Revoke ${label}`}
+                    >
+                      Revoke
+                    </button>
+                  </>
+                )}
+              </div>
+              {isExpanded && (
+                <ul className="settings__resource-list" aria-label={`Resources for ${label}`}>
+                  {token.resources.map((r) => (
+                    <li key={r.grantId} className="settings__resource-row">
+                      <span className="settings__resource-name">{resourceLabel(r)}</span>
+                      {r.kind !== 'workspace' && (
+                        <button
+                          className="settings__resource-remove"
+                          onClick={() => void handleRevokeResource(r.grantId)}
+                          disabled={revokingResource === r.grantId}
+                          aria-label={`Remove ${resourceLabel(r)} from ${label}`}
+                        >
+                          ×
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
           );
