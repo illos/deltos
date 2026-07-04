@@ -18,6 +18,12 @@ const NoteRoute = lazy(() => import('./routes/NoteRoute.js').then((m) => ({ defa
 const SettingsRoute = lazy(() =>
   import('./routes/SettingsRoute.js').then((m) => ({ default: m.SettingsRoute })),
 );
+// PROBE (disposable): /probe/nav — mobile nav-gesture feel test. LAZY + off-track (own chunk, ZERO
+// first-load cost), reached by URL only (not in any nav/menu). Delete src/probe/ + this line + the
+// onProbeNav block below to remove it in one commit.
+const ProbeNavRoute = lazy(() =>
+  import('./probe/ProbeNavRoute.js').then((m) => ({ default: m.ProbeNavRoute })),
+);
 // NOTE: OAuth consent is NO LONGER a route in this app. It is a SEPARATE standalone surface served at
 // /oauth/* (oauth-consent-surface-separation.md / DEC-0005), decoupled from this router / shell / service
 // worker. The notes SW passes /oauth/ navigations through to the network (sw.ts denylist).
@@ -338,6 +344,9 @@ export function AuthedShell() {
   // root), just WITHOUT the ThreeRegionShell / mobile-shell wrapper. useMatch('/note/:id') does NOT
   // match the deeper /note/:id/full pattern, so onNoteRoute stays false here (no shell-bar history seam).
   const onFullNote = useMatch('/note/:id/full') != null;
+  // PROBE (disposable): /probe/nav takes over the ENTIRE window (like the full-note view) so the gesture
+  // surface has no BottomNav / Deck / shell chrome fighting it. Reached by URL only.
+  const onProbeNav = useMatch('/probe/nav') != null;
   const location = useLocation();
   // The Deck is ALWAYS present on a touch-first device — it IS the mobile bottom control surface (the
   // 'navigation' loadout while browsing, the editor keypad while editing). Presence is gated ONLY by
@@ -431,6 +440,15 @@ export function AuthedShell() {
         <ConflictToastHostSlot />
         <UploadProgressHost />
       </>
+    );
+  }
+
+  // PROBE (disposable): full-window nav-gesture feel test — no shell chrome (own lazy chunk).
+  if (onProbeNav) {
+    return (
+      <Suspense fallback={<div className="auth"><div className="auth__spinner" aria-label="Loading" /></div>}>
+        <ProbeNavRoute />
+      </Suspense>
     );
   }
 

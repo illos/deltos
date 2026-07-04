@@ -1,0 +1,310 @@
+/*
+ * PROBE styles — self-contained, disposable. Imported ONLY by ProbeNavRoute.tsx, so it rides the lazy
+ * ProbeNavRoute chunk (its own CSS asset) and adds ZERO bytes to the first-load bundle. Delete the
+ * src/probe/ dir + the one lazy route registration to remove it entirely.
+ */
+
+.pb-root {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: #0d0f14;
+  color: #e7e9ee;
+  font-family: system-ui, -apple-system, sans-serif;
+  overscroll-behavior: none;
+}
+
+/* ── Any surface that OWNS a gesture: kill iOS long-press callout / selection / scroll-steal. ── */
+.pb-gesture {
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Top: segmented control + tunables + readout (all fixed above the scroll list). ── */
+.pb-top {
+  flex: 0 0 auto;
+  padding: max(env(safe-area-inset-top), 10px) 12px 8px;
+  background: #12151c;
+  border-bottom: 1px solid #232838;
+  z-index: 5;
+}
+.pb-title {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7b8496;
+  margin: 0 0 8px;
+}
+.pb-seg {
+  display: flex;
+  gap: 4px;
+  background: #1b2030;
+  border-radius: 10px;
+  padding: 3px;
+}
+.pb-seg button {
+  flex: 1;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #aeb6c6;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 4px;
+  border-radius: 8px;
+  transition: background 0.15s, color 0.15s;
+}
+.pb-seg button.is-active {
+  background: #3b6ef6;
+  color: #fff;
+}
+
+.pb-readout {
+  margin-top: 8px;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  background: #0a0c11;
+  border: 1px solid #232838;
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-height: 34px;
+  color: #9fe6b0;
+  white-space: pre-wrap;
+  line-height: 1.4;
+}
+.pb-readout .k { color: #6a7488; }
+
+.pb-tunables {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+.pb-tune {
+  display: grid;
+  grid-template-columns: 96px 1fr 52px;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #9aa3b4;
+}
+.pb-tune input[type="range"] { width: 100%; accent-color: #3b6ef6; }
+.pb-tune .v { text-align: right; font-family: ui-monospace, monospace; color: #cbd2e0; }
+.pb-haptic {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #9aa3b4;
+  margin-top: 4px;
+}
+
+/* ── Scrollable dummy note list (the gesture-vs-scroll interference surface). ── */
+.pb-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  padding-bottom: 140px; /* clear the bottom bar */
+}
+.pb-row {
+  padding: 14px 16px;
+  border-bottom: 1px solid #1a1e29;
+}
+.pb-row-title { font-size: 15px; font-weight: 600; }
+.pb-row-sub { font-size: 12px; color: #6f7889; margin-top: 3px; }
+
+/* ── Bottom bar (roughly where the Deck rides). ── */
+.pb-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 60px;
+  padding-bottom: env(safe-area-inset-bottom);
+  background: #141926;
+  border-top: 1px solid #262c3d;
+  display: flex;
+  align-items: stretch;
+  z-index: 6;
+}
+.pb-bar-label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: #8b93a5;
+}
+
+/* FAB (Model A secondary origin). */
+.pb-fab {
+  position: fixed;
+  right: 18px;
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: 0;
+  background: #3b6ef6;
+  color: #fff;
+  font-size: 26px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pb-fab.is-armed { background: #2450d8; transform: scale(0.94); }
+
+/* ── Model A: fan overlay. ── */
+.pb-fan-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+}
+.pb-bubble {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #232a3d;
+  border: 1px solid #38405a;
+  color: #cfd6e6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  animation: pb-pop 0.16s cubic-bezier(0.2, 1.3, 0.5, 1) both;
+}
+.pb-bubble.is-hi {
+  background: #3b6ef6;
+  border-color: #6d92ff;
+  color: #fff;
+  box-shadow: 0 6px 22px rgba(59, 110, 246, 0.6);
+}
+@keyframes pb-pop {
+  from { transform: translate(-50%, -50%) scale(0.2); opacity: 0; }
+  to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+.pb-fan-origin {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  background: rgba(59, 110, 246, 0.55);
+}
+
+/* ── Model B: pull-up sheet. ── */
+.pb-grabber {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(60px + env(safe-area-inset-bottom));
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #141926;
+  z-index: 8;
+}
+.pb-grabber::before {
+  content: "";
+  width: 44px;
+  height: 5px;
+  border-radius: 3px;
+  background: #48506a;
+}
+.pb-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 14;
+}
+.pb-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 72vh;
+  background: #171b26;
+  border-radius: 16px 16px 0 0;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.5);
+  will-change: transform;
+}
+.pb-sheet-handle {
+  flex: 0 0 auto;
+  padding: 10px 0 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pb-sheet-handle::before {
+  content: "";
+  width: 40px;
+  height: 5px;
+  border-radius: 3px;
+  background: #48506a;
+}
+.pb-sheet-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  touch-action: pan-y;
+  padding: 4px 0 calc(20px + env(safe-area-inset-bottom));
+}
+.pb-sheet-sect {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6a7488;
+  padding: 12px 18px 6px;
+}
+.pb-sheet-item {
+  padding: 15px 18px;
+  font-size: 16px;
+  border-bottom: 1px solid #1f2432;
+}
+.pb-sheet-item:active { background: #212636; }
+
+/* ── Model C: press-and-slide zones. ── */
+.pb-czone {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #8b93a5;
+  position: relative;
+  transition: color 0.08s;
+}
+.pb-czone.is-hot { color: #fff; }
+.pb-cpop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) scale(1);
+  background: #3b6ef6;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 14px;
+  border-radius: 10px;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  animation: pb-flick 0.1s ease both;
+}
+@keyframes pb-flick {
+  from { transform: translateX(-50%) scale(0.6); opacity: 0.4; }
+  to { transform: translateX(-50%) scale(1); opacity: 1; }
+}
