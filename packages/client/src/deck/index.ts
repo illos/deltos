@@ -11,6 +11,7 @@
 export { Deck } from './Deck.js';
 export { Keypad } from './loadouts/Keypad.js';
 export { KeypadLoadout } from './loadouts/KeypadLoadout.js';
+export { SearchKeypadLoadout } from './loadouts/SearchKeypadLoadout.js';
 export type { DeckContext, KeyActions, DeckLoadoutRegistry } from './types.js';
 
 // Local spellcheck (#69 §5) — the SymSpell engine, off-thread + lazy. Editor-agnostic (plain strings →

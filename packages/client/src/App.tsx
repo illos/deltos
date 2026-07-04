@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, lazy, Suspense } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import type { DragEvent } from 'react';
 import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate, useMatch, useLocation } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
@@ -31,8 +31,14 @@ import { DrawerNav } from './components/DrawerNav.js';
 import { ContextMenuSheet } from './components/ContextMenuSheet.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ThreeRegionShell } from './components/ThreeRegionShell.js';
-import { DeckHostProvider } from './components/DeckHost.js';
+import { DeckHostProvider, useDeckHost, DECK_SEARCH_CONTEXT } from './components/DeckHost.js';
 import { NavSheetProvider, NavSheet } from './components/NavSheet.js';
+// Direct module import (NOT the deck/index barrel) so the shell's first-load bundle doesn't pull the
+// barrel's voice/spellcheck re-exports — only the keys-only loadout + its Keypad.
+import { SearchKeypadLoadout } from './deck/loadouts/SearchKeypadLoadout.js';
+import { SearchResultsBody } from './components/SearchResults.js';
+import { buildQueryKeyActions } from './lib/queryKeyActions.js';
+import { useSearchModeStore } from './lib/searchModeStore.js';
 import { useIsDesktop } from './lib/useIsDesktop.js';
 import { useTouchPrimary } from './lib/useTouchPrimary.js';
 import { useNoteDnd } from './lib/dnd/useNoteDnd.js';
@@ -229,8 +235,54 @@ export function HomeView({ notebookId }: CollectionViewProps) {
     mutateNotes.duplicate(note).then(() => showToast('Duplicated')).catch(console.error);
   }, []);
 
+  // ── In-place search (mobile) ────────────────────────────────────────────────────────────────────
+  // Search is a mode over THIS list, not a route: the list stays put until the first character, then
+  // swaps for results. Desktop is untouched — it keeps the full-screen /search route (the pill below
+  // still navigates there when isDesktop). Entry on mobile: the Deck nav Search slot (shared store flag)
+  // or the pill. In keypad mode the field is inputMode=none and the Deck flips to a keys-only 'search'
+  // loadout; in native mode it's a plain inputMode=search field (cheap fallback, no Deck publish).
+  const keypadMode = useKeypadMode();
+  const { publishEditor } = useDeckHost();
+  const searchOpen = useSearchModeStore((s) => s.open);
+  const setSearchOpen = useSearchModeStore((s) => s.setOpen);
+  const inPlaceSearch = searchOpen && !isDesktop;
+  const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  // Stable KeyActions for the keys-only keypad — edits the plain query string (built once).
+  const queryActions = useMemo(() => buildQueryKeyActions(setQuery), []);
+  // 200ms debounce (matches SearchRoute) before the shared body runs the fuzzy engine.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query.trim()), 200);
+    return () => clearTimeout(t);
+  }, [query]);
+  // On open: clear + focus the field (keypad keys preventDefault, so focus stays → the caret shows and,
+  // in keypad mode, no native keyboard is summoned by inputMode=none). Reset on close.
+  useEffect(() => {
+    setQuery('');
+    if (!inPlaceSearch) return undefined;
+    const raf = requestAnimationFrame(() => searchInputRef.current?.focus());
+    return () => cancelAnimationFrame(raf);
+  }, [inPlaceSearch]);
+  // Publish the keys-only 'search' loadout to the Deck while in-place search is open in KEYPAD mode;
+  // withdraw (→ nav context) on close/unmount. Native mode summons the OS keyboard instead (no publish).
+  useEffect(() => {
+    if (!inPlaceSearch || !keypadMode) return undefined;
+    publishEditor({
+      context: DECK_SEARCH_CONTEXT,
+      loadouts: { [DECK_SEARCH_CONTEXT]: <SearchKeypadLoadout actions={queryActions} /> },
+    });
+    return () => publishEditor(null);
+  }, [inPlaceSearch, keypadMode, publishEditor, queryActions]);
+  // Exit search on unmount — peeking into a result note (or any route change) must not strand the Deck
+  // in the 'search' context; the publish effect's cleanup restores nav, this clears the shared flag.
+  useEffect(() => () => { setSearchOpen(false); }, [setSearchOpen]);
+  const closeSearch = useCallback(() => { setSearchOpen(false); setQuery(''); }, [setSearchOpen]);
+  // The list swaps for results on the first character (still in search mode when cleared → list returns).
+  const showResults = inPlaceSearch && query.trim().length > 0;
+
   return (
-    <div className={`home${fileDragOver ? ' home--file-drag' : ''}`} {...fileDropProps}>
+    <div className={`home${fileDragOver ? ' home--file-drag' : ''}${inPlaceSearch ? ' home--searching' : ''}`} {...fileDropProps}>
       {/* file-notes §5.1 desktop list-drop affordance — a panel-spanning drop surface shown while an OS file
           is dragged over the list pane. Absolutely positioned (inset:0) inside .home, which is an isolated
           stacking context filling the FULL list panel (min-height:100% in the 3-region list); z-index:1 lifts
@@ -253,15 +305,46 @@ export function HomeView({ notebookId }: CollectionViewProps) {
         </Link>
       </header>
 
-      {/* §2 persistent search field. Static-vibe: a real field-look that opens the search view (region 3). */}
+      {/* §2 search field. Desktop: a pill that opens the full-screen /search route (unchanged). Mobile:
+          the pill enters in-place search mode and — while open — morphs into a live input right here; the
+          note list below stays put until the first character is typed. */}
       <div className="home__search">
-        <button className="home__search-field" onClick={() => navigate('/search')}>
-          <Search className="home__search-icon" size={15} />
-          <span className="home__search-placeholder">Search</span>
-        </button>
+        {inPlaceSearch ? (
+          <div className="home__search-field home__search-field--active">
+            <Search className="home__search-icon" size={15} />
+            <input
+              ref={searchInputRef}
+              className="home__search-input"
+              type="search"
+              // Keypad mode → suppress the OS keyboard (the Deck's keys drive the query); native mode →
+              // a plain search input that summons the OS keyboard on focus (cheap fallback).
+              inputMode={keypadMode ? 'none' : 'search'}
+              placeholder="Search notes…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              aria-label="Search notes"
+            />
+            <button className="home__search-close" aria-label="Close search" onClick={closeSearch}>
+              ✕
+            </button>
+          </div>
+        ) : (
+          <button
+            className="home__search-field"
+            onClick={() => (isDesktop ? navigate('/search') : setSearchOpen(true))}
+          >
+            <Search className="home__search-icon" size={15} />
+            <span className="home__search-placeholder">Search</span>
+          </button>
+        )}
       </div>
 
-      {notes.length === 0 ? (
+      {showResults ? (
+        <SearchResultsBody debouncedQuery={debouncedQuery} showHintWhenEmpty={false} />
+      ) : notes.length === 0 ? (
         <p className="home__lede">No notes yet.</p>
       ) : (
         <ul className="home__notes">

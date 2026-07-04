@@ -66,6 +66,10 @@ vi.mock('./components/UploadProgressHost.js', () => ({ UploadProgressHost: () =>
 vi.mock('./components/ConflictBadgeSlot.js', () => ({ ConflictBadgeSlot: () => null }));
 vi.mock('./components/DeckHost.js', () => ({
   DeckHostProvider: ({ children }: { children: ReactNode }) => children,
+  // HomeView publishes the keys-only search loadout via useDeckHost; a no-op handle is enough here
+  // (this test asserts the top-bar brand block, not the Deck).
+  useDeckHost: () => ({ publishEditor: () => {} }),
+  DECK_SEARCH_CONTEXT: 'search',
 }));
 vi.mock('./components/NavSheet.js', () => ({
   NavSheetProvider: ({ children }: { children: ReactNode }) => children,

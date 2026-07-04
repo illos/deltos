@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ComposeNew, Search, Upload } from '../icons/index.js';
 import { useFilePickerUpload } from '../lib/upload/useFilePickerUpload.js';
 import { useNavSheetArm } from './NavSheet.js';
+import { useSearchModeStore } from '../lib/searchModeStore.js';
 
 /**
  * The Deck's NAVIGATION loadout (#69 slice B) — the lean browsing controls that own the bottom slot
@@ -33,6 +34,7 @@ export function DeckNavLoadout() {
   // action taps below still fire and horizontal/tap gestures never arm. A no-op set when there's no enabled
   // NavSheetProvider (desktop / note route), leaving the loadout unchanged there.
   const armHandlers = useNavSheetArm();
+  const openSearch = useSearchModeStore((s) => s.setOpen);
 
   async function handleFiles(fileList: FileList | null) {
     const files = fileList ? Array.from(fileList) : [];
@@ -56,7 +58,9 @@ export function DeckNavLoadout() {
         type="button"
         className="deck-nav__action"
         aria-label="Search"
-        onClick={() => navigate('/search')}
+        // Mobile search runs IN PLACE on the note list (not the /search route): ensure we're on the list,
+        // then flip the shared flag HomeView reads to open the in-place field + keys-only Deck keypad.
+        onClick={() => { navigate('/'); openSearch(true); }}
       >
         <Search size={24} />
         <span className="deck-nav__label">Search</span>

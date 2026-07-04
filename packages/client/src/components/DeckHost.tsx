@@ -40,6 +40,13 @@ export const DECK_NAV_CONTEXT: DeckContext = 'navigation';
  */
 export const DECK_TOOLBAR_CONTEXT: DeckContext = 'toolbar';
 
+/**
+ * The context HomeView publishes for the KEYS-ONLY search loadout while in-place search is open in keypad
+ * mode. Like the editor contexts, it enters via publishEditor and merges over the nav loadout; the active
+ * context alone selects it. Distinct from 'navigation'/'text'/'toolbar' so it never collides.
+ */
+export const DECK_SEARCH_CONTEXT: DeckContext = 'search';
+
 /** What the active editor publishes to the host while mounted. */
 export interface EditorDeckState {
   /** The editor's live, selection-derived context ('text' | 'node:<type>'). */
