@@ -173,19 +173,37 @@ Jim's sync directive already names RTC the endgame ("eventual = realtime push").
   immediate even mid-session.)
 - **Topology:** one DO per note (`idFromName(noteId)`) — the sequencer for that note's live session.
   Notebook-level collab is just per-note DOs; no notebook DO in v1.
-- **Convergence model (v1 = sequencer, not CRDT):** the DO is the single writer while a session is
-  live: clients send block-level ops; the DO orders them, applies to the spine, broadcasts, and
-  **persists through the normal write path** (CAS into the owner's rows + `accountSyncSeq` stamp) so
-  every non-live device — the owner's other devices, other grantees, agents — converges through the
-  ordinary feeds of §2. Offline/disconnected edits keep today's conflict-as-version path; a live
-  session simply makes conflicts rare rather than impossible. Full CRDT (per-block Yjs or similar) is
-  a **per-plugin upgrade** later — which is exactly why collaboration is plugin-gated.
+- **Convergence model (DECIDED, Jim 2026-07-04 — supersedes the v1-sequencer draft): CHECKOUT by
+  default, per-note CRDT conversion for true collab.** Two per-note modes, both simpler than the
+  dropped sequencer-as-merge-referee:
+  - **Default mode = checkout (lease lock).** The note's DO holds an editing lease: one principal
+    edits at a time; other live viewers are **read-only but follow live** (the DO broadcasts the
+    editor's changes as they persist — watch, don't type). Lease is heartbeat-renewed and
+    auto-releases on idle/blur/disconnect. No merge machinery exists in this mode: connected edits
+    cannot conflict by construction; offline edits (where the lock is unknowable) keep today's
+    conflict-as-version as the safety net, unchanged. The same lease arbitrates the owner's OWN
+    multi-device edits — which kills the most common real conflict (self, phone+laptop) — so lease
+    handoff between own devices must be near-instant (release on blur, steal-on-request).
+  - **Collab mode = explicit per-note conversion to a CRDT-backed note** (a note type/state, not a
+    global system). Enabling realtime collab converts the note: the CRDT doc (Yjs-class) hosted at
+    the note's DO becomes the write path; the **spine becomes a derived one-way projection** (list,
+    search, versions, MCP reads keep working; never a second writable truth). **CRDT notes are
+    read-only offline** — the deliberate constraint that deletes CRDT's worst behavior (long-offline
+    divergence mash-merges); the CRDT only ever reconciles live concurrency. Conversion is
+    reversible: snapshot the projection, drop the CRDT metadata, back to a normal note. The offline
+    exception is per-note, opt-in, and badged in the UI — the offline-first ground rule for normal
+    notes is untouched.
+  - Plugins declare CRDT support in the manifest (see below); a note converts only if its blocks'
+    plugins support it — unsupported atoms degrade to render-only inside a collab note.
 - **Per-plugin capability registration:** the manifest grows from the capability *hint* to a declared
   feature set per block type: `{ agentTooling?: …existing…, collaboration: 'realtime' | 'render-only' }`
   — mirroring the shipped plugin-declared-agent-tooling seam (`shared/src/mcp/agentTools.ts`; the
-  worker/DO aggregates declarations, never hardcodes plugins). In a live session, blocks whose plugin
-  declares `realtime` accept remote ops; `render-only` blocks broadcast whole-block replaces (viewers
-  see updates; no intra-block merging). Core text blocks are the first `realtime` registrants.
+  worker/DO aggregates declarations, never hardcodes plugins). Under the checkout/CRDT split the
+  declaration becomes `collaboration: 'crdt' | 'render-only'`: `crdt` blocks participate fully in a
+  converted collab note; `render-only` blocks broadcast whole-block replaces (viewers see updates; no
+  intra-block merging) and degrade gracefully inside collab notes. Core text blocks are the first
+  `crdt` registrants. Checkout-mode notes need no per-plugin anything — one editor at a time means
+  every plugin works unmodified.
 - **What §2 must provide so RTC needs NO rework (the "build in accordance" list):** (1) grant
   evaluation reusable at WS upgrade — satisfied by using `can()` itself; (2) the resource→owner
   resolver so the DO persists into the owner's rows/seq — built in §1; (3) share-feed consumers
@@ -245,9 +263,13 @@ Jim's sync directive already names RTC the endgame ("eventual = realtime push").
    all (not even optional); add expiration later only if it proves desirable.
 4. **Recipient `create` rights — DECIDED (Jim, 2026-07-04): YES.** Write access to a shared notebook
    includes creating new notes; no separate opt-in bit.
-5. **RTC convergence v1:** DO-sequencer with conflict-as-version fallback (this doc) vs. jumping
-   straight to CRDT — **OPEN: Jim wants further discussion before ruling.** *Recommendation stands:
-   the sequencer; CRDT arrives per-plugin where it earns its complexity.*
+5. **RTC convergence — DECIDED (Jim, 2026-07-04): checkout by default + per-note CRDT conversion.**
+   The sequencer-as-merge-referee is dropped. Default shared-note mode = DO-held editing lease (one
+   editor at a time; live viewers follow read-only; conflict-as-version remains the offline safety
+   net). True realtime collab = explicit per-note conversion to a CRDT-backed note (plugins declare
+   `crdt` support in the manifest), with the deliberate constraint that **collab notes are read-only
+   offline** — eliminating long-offline CRDT divergence by construction. Reversible conversion;
+   spine stays the derived projection. See §4.
 6. **Un-share semantics (added by Jim, 2026-07-04) — DECIDED: revoke = FORK.** Read+write sharing is
    effectively giving the recipient a copy; on revoke the link breaks and a full copy stays with BOTH
    users (recipient's copy re-keyed as their own data). Corollary requirement: version history is
