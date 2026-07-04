@@ -32,6 +32,7 @@ import { FullScreenNav } from './components/FullScreenNav.js';
 import { BottomNav } from './components/BottomNav.js';
 import { ThreeRegionShell } from './components/ThreeRegionShell.js';
 import { DeckHostProvider } from './components/DeckHost.js';
+import { NavSheetProvider, NavSheet } from './components/NavSheet.js';
 import { useIsDesktop } from './lib/useIsDesktop.js';
 import { useTouchPrimary } from './lib/useTouchPrimary.js';
 import { useNoteDnd } from './lib/dnd/useNoteDnd.js';
@@ -488,7 +489,13 @@ export function AuthedShell() {
   // DeckHostProvider — above <Routes> so it persists across route changes: the navigation loadout while
   // browsing (BOTTOM slot), the editor's keypad while a note is open in keypad mode (BOTTOM), or, in
   // native mode with a note open, the editor TOOLBAR riding the TOP as a sticky bar — body.deck-top.
+  // Drag-up nav sheet (ROAD-0011 handoff): armed only while BROWSING on the touch shell — off on the note
+  // route (the Deck shows the editor loadout there, not the nav zone) and off on desktop (no Deck at all).
+  // The provider wraps DeckHostProvider so the single sheet controller reaches BOTH the arm zone (the Deck's
+  // nav loadout, inside DeckHostProvider) and the <NavSheet/> surface in the shell chrome below.
+  const navSheetEnabled = deckActive && !onNoteRoute;
   return (
+    <NavSheetProvider enabled={navSheetEnabled}>
     <DeckHostProvider enabled={deckActive}>
     <div className="shell">
       {/* Desktop: left-drawer nav (hidden on mobile via CSS). Mobile: BottomNav below. */}
@@ -590,6 +597,11 @@ export function AuthedShell() {
       {/* Bottom nav bar — mobile + tablet-portrait only (CSS-gated). */}
       <BottomNav />
 
+      {/* Drag-up nav sheet — the second entrance to the top-bar "…" pane (same NavContent). Always mounted
+          (parked off-screen, inert) so the arming drag off the Deck nav zone can follow the finger; opens /
+          dismisses via the shared NavSheetProvider controller. Renders null when the provider is disabled. */}
+      <NavSheet />
+
       {/* TOAST-HOST MOUNT SLOT — gruntSys2 fills this with the conflict ToastHost for Part 2.
           Leave the slot; do not build the toast here. */}
       <ConflictToastHostSlot />
@@ -599,5 +611,6 @@ export function AuthedShell() {
       <UploadProgressHost />
     </div>
     </DeckHostProvider>
+    </NavSheetProvider>
   );
 }
