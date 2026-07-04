@@ -69,8 +69,8 @@ function mountShell(enabled = true) {
   return container;
 }
 
-/** Mounts the REAL Deck via DeckHost (as AuthedShell does) so the Deck-core grabber affordance is present —
- *  the arm point that carries the gesture into the editor/keypad placement (app-wide arming). */
+/** Mounts the REAL Deck via DeckHost (as AuthedShell does) so the universal floating pill is present —
+ *  the arm point that carries the gesture in the browsing placement (app-wide arming). */
 function mountDeckHost(enabled = true) {
   const { container } = render(
     <MemoryRouter initialEntries={['/']}>
@@ -101,7 +101,7 @@ function PublishKeypad({ insert }: { insert: (t: string) => void }) {
 }
 
 /** Mounts the REAL DeckHost with a note's keypad loadout published — exercising the floating-pill placement
- *  end-to-end (DeckHost decides in-pane vs floating grabber from the published editor state). */
+ *  end-to-end (the same universal pill floats above the keys). */
 function mountKeypad(insert: (t: string) => void, enabled = true) {
   const { container } = render(
     <MemoryRouter initialEntries={['/']}>
@@ -227,8 +227,8 @@ describe('NavSheet drag-up bottom sheet', () => {
     // And an up-drag off the (unchanged) Deck nav bar does nothing — no sheet appears.
     drag(armZone(c), 700, 150);
     expect(sheet(c)).toBeNull();
-    // The Deck core grabber is also withheld while disabled (a drag-UP off a TOP bar is nonsense) — and so
-    // is the floating keypad pill (deck-top / desktop never show either handle).
+    // The universal floating pill is withheld while disabled (a drag-UP off a TOP bar is nonsense) in BOTH
+    // placements — deck-top / desktop never show it; the in-pane grabber is gone entirely.
     const dh = mountDeckHost(false);
     expect(deckGrab(dh)).toBeNull();
     expect(floatGrab(dh)).toBeNull();
@@ -238,27 +238,27 @@ describe('NavSheet drag-up bottom sheet', () => {
     expect(floatGrab(kd)).toBeNull();
   });
 
-  // ── Task 3: app-wide arming — the Deck-core grabber (present in BOTH bottom placements, incl. the editor
-  //    keypad) carries the gesture, so the sheet arms beyond the browsing nav bar. ─────────────────────────
-  it('app-wide arming (BROWSING): the IN-PANE Deck grabber is present and a drag UP off it opens the sheet', () => {
+  // ── App-wide arming — ONE universal FLOATING pill (Jim) carries the gesture in BOTH bottom placements, so
+  //    the sheet arms from the browsing nav bar as well as the editor keypad. The in-pane grabber is gone
+  //    everywhere. ─────────────────────────────────────────────────────────────────────────────────────────
+  it('app-wide arming (BROWSING): the FLOATING pill is present (in-pane grabber gone) and a drag UP off it opens the sheet', () => {
     const c = mountDeckHost();
-    const grab = deckGrab(c);
-    expect(grab).not.toBeNull(); // the in-pane "pull me up" affordance stays for the browsing nav loadout
-    // ...and the FLOATING keypad pill is NOT rendered here (browsing keeps the in-pane grabber).
-    expect(floatGrab(c)).toBeNull();
+    // The in-pane Deck grabber is retired everywhere — browsing rides the same universal floating pill.
+    expect(deckGrab(c)).toBeNull();
+    const pill = floatGrab(c);
+    expect(pill).not.toBeNull();
     expect(sheet(c).classList.contains('nav-sheet--open')).toBe(false);
-    drag(grab, 700, 150);
+    drag(pill, 700, 150);
     expect(sheet(c).classList.contains('nav-sheet--open')).toBe(true);
   });
 
-  // ── Keypad placement (Jim feel-pass): the grabber floats ABOVE the keyboard; the in-pane one is gone so
-  //    the keypad keeps its exact native key geometry, and a thumb reaching the handle never hits Y/T. ──────
-  it('keypad placement: the grabber FLOATS above the keys (in-pane grabber removed) and still opens the sheet', () => {
+  // ── Keypad placement (Jim feel-pass): the same floating pill sits ABOVE the keyboard; no in-pane grabber
+  //    so the keypad keeps its exact native key geometry, and a thumb reaching the handle never hits Y/T. ────
+  it('keypad placement: the grabber FLOATS above the keys (in-pane grabber gone) and still opens the sheet', () => {
     const c = mountKeypad(vi.fn());
-    // The in-pane Deck grabber is WITHHELD in keypad mode (removing it restores the keypad's pre-grabber
-    // geometry — the ~14px no longer rides --deck-h).
+    // No in-pane Deck grabber in keypad mode (its ~14px no longer rides --deck-h → native key geometry).
     expect(deckGrab(c)).toBeNull();
-    // ...replaced by the free-floating pill, carrying the same arm handlers.
+    // ...the free-floating pill carries the arm handlers.
     const pill = floatGrab(c);
     expect(pill).not.toBeNull();
     expect(sheet(c).classList.contains('nav-sheet--open')).toBe(false);

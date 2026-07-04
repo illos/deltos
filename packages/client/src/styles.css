@@ -2303,38 +2303,38 @@ a.auth__link { display: inline; }
 .nav-sheet .nav-content__list { display: flex; flex-direction: column; gap: 2px; }
 .nav-sheet .nav-content__footer { padding-top: 10px; }
 
-/* ── Floating drag handle (keypad placement) — DeckHost, not the extractable Deck core ────────────────────
-   In the editor KEYPAD placement the "pull me up" grabber can't sit IN the Deck: an in-pane bar lands on the
-   top key row (Y/T) under a reaching thumb. So it becomes a free-floating pill ABOVE the keyboard with a
-   clear air gap. It's a fixed overlay anchored to the Deck's top edge via --deck-h (published live by the
-   Deck's ResizeObserver) so the two can never drift apart. NOT in-flow (GOTCHA-0002: the Deck is fixed; a
-   floating overlay adds no layout height — that's the point, and it means removing the in-pane grabber
-   restores the keypad's exact native key geometry). Reads as floating chrome (the app's overlay language,
-   like the desktop context-slot: solid nav fill + border + shadow) so overlapping the very bottom of the
-   editor content is fine. z-index above the Deck (50), BELOW the nav-sheet scrim (380) so an open/dragging
-   sheet blurs+obscures it (task 5 — it gets out of the way with no extra state). */
+/* ── Universal floating drag handle — DeckHost, not the extractable Deck core ─────────────────────────────
+   ONE handle for the "pull me up" nav sheet, in BOTH bottom placements (browsing nav bar + editor keypad).
+   In the keypad placement an in-pane bar would land on the top key row (Y/T) under a reaching thumb, so the
+   handle FLOATS above the Deck with a clear air gap; browsing rides the same pill for consistency + so the
+   Deck core carries no gesture chrome. It's a fixed overlay anchored to the Deck's top edge via --deck-h
+   (published live by the Deck's ResizeObserver) so the two can never drift apart. NOT in-flow (GOTCHA-0002:
+   the Deck is fixed; a floating overlay adds no layout height — that's the point, and it lets the keypad keep
+   its exact native key geometry). z-index above the Deck (50), BELOW the nav-sheet scrim (380) so an
+   open/dragging sheet blurs+obscures it (it gets out of the way with no extra state). */
 .deck-float-grab {
   position: fixed; left: 50%; z-index: 60;
-  /* Anchor to the Deck top edge + a ~10px air gap so a thumb catches the pill without touching the keys. */
+  /* Anchor to the Deck top edge + a ~10px air gap so a thumb catches the bar without touching the keys/bar
+     below. In browsing the Deck top edge is the (grabber-less, ~12px shorter) nav bar; the gap clears its
+     tap targets the same way. */
   bottom: calc(var(--deck-h, 0px) + 10px);
   transform: translateX(-50%);
   /* Generous invisible hit target — ≥44px wide, comfortably tall — but the element sits ENTIRELY ABOVE the
      gap (its whole height is above `bottom`), so the touch area never reaches DOWN into the keys. The small
-     visible pill is pinned to the bottom edge of this area (flex-end), nearest the thumb. */
+     visible bar is pinned to the bottom edge of this area (flex-end), nearest the thumb. */
   min-width: 100px; height: 40px; box-sizing: border-box;
   display: flex; align-items: flex-end; justify-content: center;
   cursor: grab; touch-action: none; -webkit-tap-highlight-color: transparent;
 }
-/* The visible pill — a small centered chip carrying the same grabber-bar line as the sheet's own grabber,
-   on a floating backing so it stays legible over whatever editor content sits behind it. */
+/* The visible element is JUST the grabber BAR (Jim: no box, no border, no chip). Colour = --body, a proper
+   contrast token (body-text weight): dark-on-light in light themes, light-on-dark in dark themes by
+   construction, so it reads against both light editor content AND the nav-bar/keypad fill behind it — far
+   higher contrast than the near-invisible --handle it replaced. A whisper of soft shadow gives it float
+   depth without any box. */
 .deck-float-grab__bar {
-  display: flex; align-items: center; justify-content: center;
-  width: 3rem; height: 22px; border-radius: 11px;
-  background: var(--nav); border: 1px solid var(--border);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
-}
-.deck-float-grab__bar::before {
-  content: ''; display: block; width: 1.75rem; height: 4px; border-radius: 2px; background: var(--handle);
+  display: block; width: 2.5rem; height: 5px; border-radius: 2.5px;
+  background: var(--body);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
 }
 
 /* Foreground: slides imperatively over the back layer; explicit bg to cover buttons */

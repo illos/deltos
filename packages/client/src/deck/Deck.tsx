@@ -8,20 +8,6 @@ interface DeckProps {
   /** Context → loadout node, injected by the host (no global registry in core — prop-injection keeps the
    *  boundary clean and is forward-compatible with a plugin-composed registry). */
   loadouts: DeckLoadoutRegistry;
-  /**
-   * Optional "pull me up" grabber affordance (host-driven gesture seam — kept generic so the Deck core stays
-   * app-agnostic). When {@link showGrabber} is set the Deck renders a slim grabber bar across the top of the
-   * surface and spreads these pointer handlers on it; deltos wires them to the drag-up nav sheet. The bar
-   * lives inside the fixed Deck (so its height flows through --deck-h to the editor's clearance — never
-   * bridged into in-flow layout, GOTCHA-0002), above the loadout so it can't steal a tool/key tap target.
-   * (deltos gates this to the BROWSING loadout only; the keypad placement floats the handle above the
-   * keyboard instead — a key-less nav loadout has nothing to collide with, but an in-pane bar on the keypad
-   * sits on the top key row. Same handlers either way.)
-   */
-  grabHandlers?: React.HTMLAttributes<HTMLDivElement>;
-  /** Show the grabber bar (host gates this — deltos: only the BOTTOM browsing loadout; the keypad placement
-   *  uses a floating pill and the top bar shows nothing). */
-  showGrabber?: boolean;
 }
 
 /**
@@ -31,7 +17,7 @@ interface DeckProps {
  * whole surface) guarantees a tap anywhere in the Deck — keys, gaps, padding — never steals focus from the
  * host's editor; the host's key actions handle focus.
  */
-export function Deck({ context, loadouts, grabHandlers, showGrabber }: DeckProps) {
+export function Deck({ context, loadouts }: DeckProps) {
   const loadout = loadouts[context];
   const ref = useRef<HTMLDivElement>(null);
   // #97: publish the REAL rendered Deck height as a CSS var (--deck-h on :root) so the editor's clearance
@@ -60,16 +46,6 @@ export function Deck({ context, loadouts, grabHandlers, showGrabber }: DeckProps
       aria-label="Controls"
       onPointerDown={(e) => e.preventDefault()}
     >
-      {/* "Pull me up" grabber (host-driven gesture seam). A slim bar across the top of the surface, ABOVE the
-          loadout so it never overlaps a tool slot / keypad key — a vertical drag off it arms the host gesture
-          (deltos: the nav sheet), while taps on the controls below are untouched. Present in both BOTTOM
-          placements (nav + keypad); the host withholds it in top-bar mode. Its height flows through --deck-h
-          naturally, so the editor clearance stays correct without any in-flow bridge (GOTCHA-0002). */}
-      {showGrabber && (
-        <div className="deck__grab" aria-hidden="true" {...grabHandlers}>
-          <span className="deck__grab-bar" />
-        </div>
-      )}
       {/* The loadout places its own layers (layer model §0.6) — e.g. the keypad carries its positioning
           band, the nav loadout sits flush. The Deck core just hosts whichever loadout the context selects. */}
       {loadout}
