@@ -278,7 +278,8 @@ export function NavSheet() {
             if (shouldSwallowClick()) { e.preventDefault(); e.stopPropagation(); }
           }}
         >
-          <NavContent onNavigate={close} />
+          {/* Wordmark hidden in the sheet — redundant with All Notes here (Jim). Kept on desktop DrawerNav. */}
+          <NavContent onNavigate={close} showWordmark={false} />
         </div>
       </div>
     </div>

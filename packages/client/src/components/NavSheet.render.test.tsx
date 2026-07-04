@@ -136,11 +136,12 @@ describe('NavSheet drag-up bottom sheet', () => {
     expect(sheetNav).not.toBeNull();
 
     // The sheet is just a CONTAINER around NavContent — pin its content against NavContent rendered
-    // directly (the single source of truth the desktop drawer also renders). No FullScreenNav anymore:
-    // the "…" button is repurposed to the ContextMenuSheet, so NavContent is asserted head-on here.
+    // directly (the single source of truth the desktop drawer also renders). The sheet drops the δ
+    // wordmark (showWordmark=false, Jim: redundant with All Notes there), so the direct comparison mounts
+    // with the same flag. No FullScreenNav anymore: the "…" button is repurposed to the ContextMenuSheet.
     const { container: direct } = render(
       <MemoryRouter>
-        <NavContent />
+        <NavContent showWordmark={false} />
       </MemoryRouter>,
     );
     const directNav = direct.querySelector('.nav-content') as HTMLElement;
@@ -151,6 +152,9 @@ describe('NavSheet drag-up bottom sheet', () => {
     for (const label of ['All Notes', 'Work', 'Ideas', 'Trash', 'Settings']) {
       expect(sheetNav.textContent).toContain(label);
     }
+    // ...but the δ wordmark is NOT in the sheet (it's redundant with All Notes here; kept on desktop).
+    expect(sheetNav.querySelector('.nav-content__wordmark')).toBeNull();
+    expect(sheetNav.textContent).not.toContain('deltos');
   });
 
   it('a drag DOWN on the grabber dismisses the open sheet', () => {

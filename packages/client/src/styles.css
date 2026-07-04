@@ -2861,6 +2861,18 @@ a.auth__link { display: inline; }
   width: 100%;
   touch-action: manipulation;
 }
+/* Route-aware active footer row (Trash / Settings) — mirrors the notebook current treatment: --sel
+   filled-bg + accent left-bar + accent icon + --ink label, so the highlight reads "where am I NOW". */
+.nav-content__footer-link {
+  border-left: 2px solid transparent;
+  border-radius: 7px;
+}
+.nav-content__footer-link--current {
+  background: var(--sel);
+  border-left-color: var(--accent);
+  color: var(--ink);
+}
+.nav-content__footer-link--current .nav-content__nb-icon { color: var(--accent); }
 
 /* ── All-notebooks screen (full-screen cold-start container for NavContent) ── */
 
