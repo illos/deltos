@@ -106,6 +106,18 @@ export function App() {
 
 function AppRoutes() {
   const isAuthed = useAuthStore((s) => s.isAuthed);
+  // PROBE (disposable): /probe/nav bypasses the boot/auth gate entirely — it's a gesture playground
+  // with dummy data only (no store reads), and it must be reachable on a static tailnet serve where
+  // no auth API exists. Sits ABOVE the boot switch so even the cold-boot spinner can't hold it.
+  // Delete with the rest of the probe glue (one commit).
+  const onProbeNav = useMatch('/probe/nav') != null;
+  if (onProbeNav) {
+    return (
+      <Suspense fallback={null}>
+        <ProbeNavRoute />
+      </Suspense>
+    );
+  }
   // A live auth ceremony (register/login/reset) pins the gate to the auth surface so the shell
   // can't short-circuit a ceremony before it fully completes (P0 anti-unmount latch).
   const isAuthing = useAuthStore((s) => s.isAuthing);
