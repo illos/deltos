@@ -2333,8 +2333,14 @@ a.auth__link { display: inline; }
    depth without any box. */
 .deck-float-grab__bar {
   display: block; width: 2.5rem; height: 5px; border-radius: 2.5px;
-  background: var(--body);
+  /* Light themes: --body read too heavy floating over paper (Jim feel-test) → the softer --secondary.
+     Dark themes re-point back to --body below (bright bar on dark ground was already right). */
+  background: var(--secondary);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+}
+[data-mode="dark"] .deck-float-grab__bar { background: var(--body); }
+@media (prefers-color-scheme: dark) {
+  [data-mode="system"] .deck-float-grab__bar { background: var(--body); }
 }
 
 /* Foreground: slides imperatively over the back layer; explicit bg to cover buttons */
