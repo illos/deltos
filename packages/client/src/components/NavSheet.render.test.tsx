@@ -40,11 +40,12 @@ vi.mock('../lib/useIsDesktop.js', () => ({ useIsDesktop: () => false }));
 vi.mock('../lib/dnd/useNoteDnd.js', () => ({ useNoteDnd: () => null }));
 vi.mock('../lib/upload/useFilePickerUpload.js', () => ({ useFilePickerUpload: () => undefined }));
 
-import { NavSheetProvider, NavSheet, useNavSheetArm } from './NavSheet.js';
+import { useEffect } from 'react';
+import { NavSheetProvider, NavSheet } from './NavSheet.js';
 import { DeckNavLoadout } from './DeckNavLoadout.js';
-import { DeckHostProvider } from './DeckHost.js';
+import { DeckHostProvider, useDeckHost } from './DeckHost.js';
 import { NavContent } from '../views/NavContent.js';
-import { Deck, Keypad } from '../deck/index.js';
+import { Keypad } from '../deck/index.js';
 import type { DeckContext, DeckLoadoutRegistry } from '../deck/index.js';
 import { _resetBodyScrollLockForTest } from '../lib/bodyScrollLock.js';
 
@@ -84,22 +85,32 @@ function mountDeckHost(enabled = true) {
   return container;
 }
 
-/** A Deck in the editor 'text' context (keypad loadout) wired to the sheet arm exactly as DeckHost does —
- *  proves a keypad key tap still fires while the grabber gesture is armed above the keys. */
-function KeypadDeck({ insert }: { insert: (t: string) => void }) {
-  const arm = useNavSheetArm();
-  const loadouts: DeckLoadoutRegistry = {
-    text: <Keypad actions={{ insert, backspace: () => {}, enter: () => {} }} />,
-  };
-  return <Deck context={'text' as DeckContext} loadouts={loadouts} grabHandlers={arm} showGrabber={'onPointerDown' in arm} />;
+/** Publishes an editor KEYPAD loadout into the real DeckHost (as ProseMirrorEditor does while a note is
+ *  open) so the Deck rides the bottom in keypad mode — the placement where the grabber must FLOAT above the
+ *  keys instead of sitting in-pane. */
+function PublishKeypad({ insert }: { insert: (t: string) => void }) {
+  const host = useDeckHost();
+  useEffect(() => {
+    const loadouts: DeckLoadoutRegistry = {
+      text: <Keypad actions={{ insert, backspace: () => {}, enter: () => {} }} />,
+    };
+    host.publishEditor({ context: 'text' as DeckContext, loadouts });
+    return () => host.publishEditor(null);
+  }, [host, insert]);
+  return null;
 }
-function mountKeypad(insert: (t: string) => void) {
+
+/** Mounts the REAL DeckHost with a note's keypad loadout published — exercising the floating-pill placement
+ *  end-to-end (DeckHost decides in-pane vs floating grabber from the published editor state). */
+function mountKeypad(insert: (t: string) => void, enabled = true) {
   const { container } = render(
     <MemoryRouter initialEntries={['/']}>
       <LocationProbe />
-      <NavSheetProvider enabled>
-        <KeypadDeck insert={insert} />
-        <NavSheet />
+      <NavSheetProvider enabled={enabled}>
+        <DeckHostProvider enabled>
+          <PublishKeypad insert={insert} />
+          <NavSheet />
+        </DeckHostProvider>
       </NavSheetProvider>
     </MemoryRouter>,
   );
@@ -109,6 +120,7 @@ function mountKeypad(insert: (t: string) => void) {
 const armZone = (c: HTMLElement) => c.querySelector('.deck-nav') as HTMLElement;
 const grabber = (c: HTMLElement) => c.querySelector('.nav-sheet__grabber') as HTMLElement;
 const deckGrab = (c: HTMLElement) => c.querySelector('.deck__grab') as HTMLElement;
+const floatGrab = (c: HTMLElement) => c.querySelector('.deck-float-grab') as HTMLElement;
 const sheet = (c: HTMLElement) => c.querySelector('.nav-sheet') as HTMLElement;
 
 /** A vertical pointer drag from → to on an element (locks the y-axis in useDragAxis). */
@@ -215,36 +227,58 @@ describe('NavSheet drag-up bottom sheet', () => {
     // And an up-drag off the (unchanged) Deck nav bar does nothing — no sheet appears.
     drag(armZone(c), 700, 150);
     expect(sheet(c)).toBeNull();
-    // The Deck core grabber is also withheld while disabled (a drag-UP off a TOP bar is nonsense).
+    // The Deck core grabber is also withheld while disabled (a drag-UP off a TOP bar is nonsense) — and so
+    // is the floating keypad pill (deck-top / desktop never show either handle).
     const dh = mountDeckHost(false);
     expect(deckGrab(dh)).toBeNull();
+    expect(floatGrab(dh)).toBeNull();
     expect(sheet(dh)).toBeNull();
+    const kd = mountKeypad(vi.fn(), false);
+    expect(deckGrab(kd)).toBeNull();
+    expect(floatGrab(kd)).toBeNull();
   });
 
   // ── Task 3: app-wide arming — the Deck-core grabber (present in BOTH bottom placements, incl. the editor
   //    keypad) carries the gesture, so the sheet arms beyond the browsing nav bar. ─────────────────────────
-  it('app-wide arming: a drag UP off the Deck core grabber opens the sheet', () => {
+  it('app-wide arming (BROWSING): the IN-PANE Deck grabber is present and a drag UP off it opens the sheet', () => {
     const c = mountDeckHost();
     const grab = deckGrab(c);
-    expect(grab).not.toBeNull(); // the "pull me up" affordance is present whenever the Deck rides the bottom
+    expect(grab).not.toBeNull(); // the in-pane "pull me up" affordance stays for the browsing nav loadout
+    // ...and the FLOATING keypad pill is NOT rendered here (browsing keeps the in-pane grabber).
+    expect(floatGrab(c)).toBeNull();
     expect(sheet(c).classList.contains('nav-sheet--open')).toBe(false);
     drag(grab, 700, 150);
     expect(sheet(c).classList.contains('nav-sheet--open')).toBe(true);
   });
 
-  it('a keypad key tap still fires (and does NOT arm the sheet) while the grabber gesture is live', () => {
+  // ── Keypad placement (Jim feel-pass): the grabber floats ABOVE the keyboard; the in-pane one is gone so
+  //    the keypad keeps its exact native key geometry, and a thumb reaching the handle never hits Y/T. ──────
+  it('keypad placement: the grabber FLOATS above the keys (in-pane grabber removed) and still opens the sheet', () => {
+    const c = mountKeypad(vi.fn());
+    // The in-pane Deck grabber is WITHHELD in keypad mode (removing it restores the keypad's pre-grabber
+    // geometry — the ~14px no longer rides --deck-h).
+    expect(deckGrab(c)).toBeNull();
+    // ...replaced by the free-floating pill, carrying the same arm handlers.
+    const pill = floatGrab(c);
+    expect(pill).not.toBeNull();
+    expect(sheet(c).classList.contains('nav-sheet--open')).toBe(false);
+    drag(pill, 700, 150);
+    expect(sheet(c).classList.contains('nav-sheet--open')).toBe(true);
+  });
+
+  it('a keypad key tap still fires (and does NOT arm the sheet) while the floating grabber is live', () => {
     const insert = vi.fn();
     const c = mountKeypad(insert);
     // Tapping a letter key inserts (keypad key handler fires on pointerdown) and does NOT arm the sheet —
-    // the keys are never an arm point (only the dedicated grabber above them is), so key taps are untouched.
+    // the keys are never an arm point (only the floating pill above them is), so key taps are untouched.
     const q = c.querySelector('[aria-label="Q"]') as HTMLElement;
     expect(q).not.toBeNull();
     fireEvent.pointerDown(q, { pointerId: 5, clientX: 50, clientY: 500 });
     fireEvent.pointerUp(q, { pointerId: 5, clientX: 50, clientY: 500 });
     expect(insert).toHaveBeenCalledWith('q');
     expect(sheet(c).classList.contains('nav-sheet--open')).toBe(false);
-    // ...and the grabber ABOVE the keys still arms the sheet in this keypad placement.
-    drag(deckGrab(c), 700, 150);
+    // ...and the floating pill ABOVE the keys still arms the sheet in this keypad placement.
+    drag(floatGrab(c), 700, 150);
     expect(sheet(c).classList.contains('nav-sheet--open')).toBe(true);
   });
 

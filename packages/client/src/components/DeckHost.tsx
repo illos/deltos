@@ -93,13 +93,38 @@ export function DeckHostProvider({ enabled, children }: DeckHostProviderProps) {
   // the keypad surface itself: the keys carry their own vertical gestures (backspace-repeat, long-press-space
   // caret trackpad), so a dedicated grabber ABOVE the keys is the only arm point there — no key interference.
   const armHandlers = useNavSheetArm();
-  const showGrabber = 'onPointerDown' in armHandlers;
+  // The gesture is armed in BOTH bottom placements; emptiness gates it off in deck-top / desktop.
+  const bottomArmed = 'onPointerDown' in armHandlers;
+  // WHERE the grabber lives depends on the placement (Jim feel-pass — keypad key collision):
+  //  • BROWSING (nav loadout, no editor) — the grabber stays IN the Deck's top edge (.deck__grab): the nav
+  //    loadout has no keys under it, so nothing to collide with. Unchanged.
+  //  • KEYPAD / editor bottom loadout (a note is open → editor.loadouts ride the bottom) — an in-pane
+  //    grabber sits right on the top key row, so a thumb reaching for it hits Y/T. There the in-pane grabber
+  //    is WITHHELD (so the keypad keeps its exact native geometry — the grabber's ~14px no longer rides
+  //    --deck-h) and a free-FLOATING pill above the keyboard carries the same arm handlers instead (below).
+  // `editor` (not the live context) is the signal: present ⇒ a note's editor loadout owns the bottom.
+  const editorAtBottom = bottomArmed && editor !== null;
+  const browsingGrabber = bottomArmed && editor === null;
 
   return (
     <DeckHostCtx.Provider value={handle}>
       {children}
       {enabled && (
-        <Deck context={context} loadouts={loadouts} grabHandlers={armHandlers} showGrabber={showGrabber} />
+        <>
+          <Deck context={context} loadouts={loadouts} grabHandlers={armHandlers} showGrabber={browsingGrabber} />
+          {/* Floating drag handle for the KEYPAD placement — a fixed pill anchored to the Deck's top edge
+              (via --deck-h) with a clear air gap, carrying the SAME nav-sheet arm handlers. Rendered OUTSIDE
+              the fixed Deck (GOTCHA-0002: a floating overlay adds no in-flow layout height — the point) so it
+              clears the keys without shifting them. Present ONLY in the keypad/editor bottom placement:
+              withheld while browsing (the in-pane grabber handles that) and in deck-top / desktop
+              (bottomArmed is false there). It's below the nav-sheet scrim (z), so an open/dragging sheet
+              obscures it. */}
+          {editorAtBottom && (
+            <div className="deck-float-grab" aria-hidden="true" {...armHandlers}>
+              <span className="deck-float-grab__bar" />
+            </div>
+          )}
+        </>
       )}
     </DeckHostCtx.Provider>
   );

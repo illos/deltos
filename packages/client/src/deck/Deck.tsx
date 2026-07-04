@@ -14,9 +14,13 @@ interface DeckProps {
    * surface and spreads these pointer handlers on it; deltos wires them to the drag-up nav sheet. The bar
    * lives inside the fixed Deck (so its height flows through --deck-h to the editor's clearance — never
    * bridged into in-flow layout, GOTCHA-0002), above the loadout so it can't steal a tool/key tap target.
+   * (deltos gates this to the BROWSING loadout only; the keypad placement floats the handle above the
+   * keyboard instead — a key-less nav loadout has nothing to collide with, but an in-pane bar on the keypad
+   * sits on the top key row. Same handlers either way.)
    */
   grabHandlers?: React.HTMLAttributes<HTMLDivElement>;
-  /** Show the grabber bar (host gates this — deltos: only in the two BOTTOM placements, not the top bar). */
+  /** Show the grabber bar (host gates this — deltos: only the BOTTOM browsing loadout; the keypad placement
+   *  uses a floating pill and the top bar shows nothing). */
   showGrabber?: boolean;
 }
 
