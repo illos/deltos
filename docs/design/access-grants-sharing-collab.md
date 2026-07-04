@@ -167,7 +167,10 @@ Jim's sync directive already names RTC the endgame ("eventual = realtime push").
 
 - **Authorization:** a DO session begins with a WebSocket upgrade to `/collab/note/<id>`; the upgrade
   handler resolves the bearer and requires `can(principal,'write',note(id))` — the SAME grant that §2
-  minted; there is no DO-specific credential. The DO caches the decision with a short TTL and
+  minted; there is no DO-specific credential. **Confirmed at lock-in (Jim, 2026-07-04): RTC is now
+  auth-complete with zero new vocabulary** — authorization happens once at the session door via the
+  ordinary grant check; everything past it (lease, follow, session-CRDT) is editing mechanics, "just
+  another mode of editing." All auth work in this program lives in P1–P3; P4 adds none. The DO caches the decision with a short TTL and
   **re-validates periodically and on reconnect**; revocation also actively kicks: the revoke route
   RPCs the note's DO to drop that principal's sessions. (Grant re-check + kick = revocation is
   immediate even mid-session.)
