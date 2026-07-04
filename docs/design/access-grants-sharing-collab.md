@@ -106,13 +106,21 @@ not a projection.**
   migration). The #52 isolation rule generalizes: *partition by owner account*, not "one account owns
   the store." liveQuery merges own + shared for the UI; per-grant cursors persist beside the main cursor
   (`deltos.sync.shared.<grantId>`).
-- **Revocation:** A revokes the grant row (or B "leaves the share"); the next `GET /api/sync/shared`
-  returns `revoked: [grantId]` and the client **purges local rows for that grantId**. Purge-on-revoke is
-  the contract (shared data is a projection of a live grant, never the recipient's property).
-- **UI:** notebook-grants surface as a foreign notebook under a **"Shared with me"** nav section
-  (badged `@username`); note-grants collect in a synthetic shared collection (same pattern as the
-  All-Notes synthetic aggregate). Recipient edits ride the normal editor; `create` in a shared notebook
-  is a scope bit A chooses at share time.
+- **Revocation = FORK, not purge (DECIDED, Jim 2026-07-04 — supersedes the purge-on-revoke draft):**
+  granting read+write is effectively giving the recipient a copy of the data, so un-sharing cannot
+  claw it back. A revokes the grant row (or B "leaves the share"); the next `GET /api/sync/shared`
+  returns `revoked: [grantId]` and the client **converts** that grant's local rows into
+  recipient-owned copies — re-keyed to new note identities under B's account (a snapshot fork at
+  revocation time) — instead of deleting them. The live link is broken: no further sync in either
+  direction; both sides keep a full copy. Provenance (`forkedFromGrant`) is recorded on the copy.
+- **Version attribution (required by the fork model):** every version row is tagged with the
+  principal that made the edit (owner / recipient accountId / agent token), the same model as
+  LLM-agent edit attribution. Both parties' histories stay honest across the fork boundary.
+- **UI (DECIDED, Jim 2026-07-04 — supersedes the "Shared with me" section draft):** shared notebooks
+  and notes appear **inline** among the recipient's own, marked with a **"shared" pill**. At the
+  notebook level the pill is a marker only (no behavioral change); at the note level "shared" also
+  becomes a **filter facet** when the planned filters system lands. Recipient edits ride the normal
+  editor; **write access includes creating new notes** in a shared notebook (no separate opt-in bit).
 - **Invitation flow:** A shares to `@username` (D6 directory lookup → accountId), which mints the grant;
   B sees the share appear (share feed lists grants where `principalId = B`). No accept step in v1
   (revocable both ways is the control; an accept ceremony is additive later).
@@ -207,8 +215,10 @@ Jim's sync directive already names RTC the endgame ("eventual = realtime push").
    are enumerated in `secSys-cross-account-sweep.md` — that list must not grow.)
 4. **Client-store code partitions by owner account** (provenance `{ownerAccountId, grantId}` on shared
    rows); nothing may assume "everything in Dexie is mine."
-5. **Sync consumers must tolerate rows appearing/vanishing without local edits** (grant/revoke).
-   Revocation-purge is not note deletion; UI and queue logic must not conflate them.
+5. **Sync consumers must tolerate rows appearing without local edits (grant) and rows changing
+   ownership in place (revoke → fork).** Revocation converts shared rows into recipient-owned copies
+   under new note identities — it is neither note deletion nor a normal edit; UI and queue logic must
+   not conflate it with either, and nothing may assume a row's owner is immutable for its lifetime.
 6. **Plugins declare capabilities in the manifest; core aggregates.** MCP tooling, collaboration mode,
    render-only — never a hardcoded per-plugin branch in a core surface (the shipped agentTools seam is
    the pattern).
@@ -228,12 +238,18 @@ Jim's sync directive already names RTC the endgame ("eventual = realtime push").
    BOTH in v1, with picker shape matched to collection size — notebooks = list select (bounded set),
    notes = search select (unbounded set, search is the picker).** This shape is the standing pattern
    for every grant-resource picker (mint UX, OAuth consent, and the later share-sheet).
-2. **Shared-with-me presentation:** foreign notebooks inline among your own vs. a dedicated "Shared"
-   nav section — *Recommend the dedicated section with `@username` badges; inline placement can be a
-   later per-share pin option.*
-3. **URL-share defaults:** non-expiring + revocable (agent-token philosophy) vs. default expiry —
-   *Recommend non-expiring + revocable; expiry as an optional constraint.*
-4. **Recipient `create` rights in a shared notebook (add new notes) in v1 of 1:1 sharing** —
-   *Recommend yes as an explicit checkbox at share time, default off.*
+2. **Shared-with-me presentation — DECIDED (Jim, 2026-07-04): INLINE + "shared" pill.** No dedicated
+   nav section. Shared notebooks/notes sit among the recipient's own with a shared pill; notebook
+   pill is a marker only; note-level "shared" becomes a filter facet when the filters system lands.
+3. **URL-share defaults — DECIDED (Jim, 2026-07-04): permanent until revoked.** No expiry in v1 at
+   all (not even optional); add expiration later only if it proves desirable.
+4. **Recipient `create` rights — DECIDED (Jim, 2026-07-04): YES.** Write access to a shared notebook
+   includes creating new notes; no separate opt-in bit.
 5. **RTC convergence v1:** DO-sequencer with conflict-as-version fallback (this doc) vs. jumping
-   straight to CRDT — *Recommend the sequencer; CRDT arrives per-plugin where it earns its complexity.*
+   straight to CRDT — **OPEN: Jim wants further discussion before ruling.** *Recommendation stands:
+   the sequencer; CRDT arrives per-plugin where it earns its complexity.*
+6. **Un-share semantics (added by Jim, 2026-07-04) — DECIDED: revoke = FORK.** Read+write sharing is
+   effectively giving the recipient a copy; on revoke the link breaks and a full copy stays with BOTH
+   users (recipient's copy re-keyed as their own data). Corollary requirement: version history is
+   attributed per editing principal (same model as LLM-agent edits) so both forks carry an honest
+   record of who wrote what. See §3 P3 revocation + assumption guard 5.
