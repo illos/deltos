@@ -237,3 +237,76 @@ describe('content-addressed local blob cache', () => {
     expect(await db.blobCache.get(['acctA', 'imgHash'])).toBeUndefined();
   });
 });
+
+/**
+ * On-auth-reject re-mint (blob path parity with syncFetch). A blob GET carries the short-TTL access token; an
+ * expired token 403s. Before this, the blob path threw straight to the placeholder chip and only a later
+ * bearer-identity change re-fired the load — the "images render as placeholders until I leave and come back"
+ * bug. Now the fetch re-mints from the refresh cookie ONCE and retries, so a stale-token open self-heals.
+ */
+describe('blob load re-mints the bearer on a 401/403/503 and retries', () => {
+  const realRemint = useAuthStore.getState().remintBearer;
+  afterEach(() => {
+    useAuthStore.setState({ remintBearer: realRemint }); // restore the real action on the shared singleton
+  });
+
+  it('a 403 (expired access token) re-mints ONCE and retries → bytes returned, no remount needed', async () => {
+    const payload = bytesOf(8, 5);
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 403 } as unknown as Response) // stale token
+      .mockResolvedValueOnce(okResponse(payload)); // retry with the fresh bearer
+    const remint = vi.fn(async () => {
+      useAuthStore.setState({ bearerToken: 'fresh' });
+      return 'ok' as const;
+    });
+    useAuthStore.setState({ remintBearer: remint });
+
+    const out = await loadBlobBytes('expiredHash');
+    expect(new Uint8Array(out)).toEqual(new Uint8Array(payload));
+    expect(remint).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // first 403, then the retry
+  });
+
+  it('a 503 (absent bearer) also re-mints and retries', async () => {
+    const payload = bytesOf(8, 6);
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 503 } as unknown as Response)
+      .mockResolvedValueOnce(okResponse(payload));
+    useAuthStore.setState({ remintBearer: vi.fn(async () => 'ok' as const) });
+
+    const out = await loadBlobBytes('absentHash');
+    expect(new Uint8Array(out)).toEqual(new Uint8Array(payload));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT latch a failure: a revoked re-mint throws, and a LATER read re-fetches clean (no cached failure)', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 403 } as unknown as Response);
+    useAuthStore.setState({ remintBearer: vi.fn(async () => 'revoked' as const) });
+    await expect(loadBlobBytes('flapHash')).rejects.toThrow();
+
+    // After a real re-login the very next read of the SAME hash must hit the network again — never a stuck chip.
+    fetchMock.mockResolvedValueOnce(okResponse(bytesOf(8, 9)));
+    useAuthStore.setState({ remintBearer: vi.fn(async () => 'ok' as const) });
+    const out = await loadBlobBytes('flapHash');
+    expect(new Uint8Array(out)).toEqual(new Uint8Array(bytesOf(8, 9)));
+  });
+
+  it('coalesces concurrent re-mints: two images racing a 403 share ONE /refresh', async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 403 } as unknown as Response) // first image, stale
+      .mockResolvedValueOnce({ ok: false, status: 403 } as unknown as Response) // second image, stale
+      .mockResolvedValue(okResponse(bytesOf(8, 1))); // both retries
+    let remints = 0;
+    useAuthStore.setState({
+      remintBearer: vi.fn(async () => {
+        remints++;
+        await new Promise((r) => setTimeout(r, 10)); // hold the in-flight window open so both loads join it
+        useAuthStore.setState({ bearerToken: 'fresh' });
+        return 'ok' as const;
+      }),
+    });
+
+    await Promise.all([loadBlobBytes('coalX'), loadBlobBytes('coalY')]);
+    expect(remints).toBe(1); // ONE shared re-mint, not one per image
+  });
+});

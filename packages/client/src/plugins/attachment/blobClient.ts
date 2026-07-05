@@ -162,10 +162,29 @@ async function evictToBudget(): Promise<void> {
 }
 
 /**
+ * Coalesce the on-auth-reject access-token re-mint so N blob reads on one note share ONE `/refresh` (mirrors
+ * `syncEngine.remintOnce`). A blob GET carries the SHORT-TTL (15-min) in-memory access token; the sync engine
+ * already re-mints-and-retries on this exact 401/403/503 family (GOTCHA-0001), but the blob path did NOT — so
+ * a note opened with a just-expired token got a 403 straight to the placeholder chip, and only a LATER bearer-
+ * identity change (a sync cycle's own re-mint) re-fired the load. That's the "images render as placeholders
+ * until I leave and come back" bug: leave+return remounts the NodeView after the sync remint has landed. Now
+ * the blob path re-mints in place and retries, so the image resolves on FIRST open. Module-level = shared.
+ */
+let _blobRemintInFlight: Promise<'ok' | 'revoked' | 'offline'> | null = null;
+function remintBlobBearerOnce(): Promise<'ok' | 'revoked' | 'offline'> {
+  if (!_blobRemintInFlight) {
+    _blobRemintInFlight = useAuthStore.getState().remintBearer().finally(() => { _blobRemintInFlight = null; });
+  }
+  return _blobRemintInFlight;
+}
+
+/**
  * The single cached-fetch primitive every blob read goes through. memory → IndexedDB (account-scoped) →
  * network (authed). On an IndexedDB hit: touch lastAccess, populate memory, return — no network, no bearer.
  * On a network success: populate memory + persist fire-and-forget. With `accountId===null` the cache is
- * bypassed entirely (network-only). Throws on a network miss/offline → the caller degrades.
+ * bypassed entirely (network-only). On a 401/403/503 (expired/absent access token) it re-mints the bearer
+ * ONCE and retries — the same recovery the sync engine does (GOTCHA-0001), so a stale-token open self-heals
+ * instead of latching the placeholder. Throws on a network miss/offline → the caller degrades (shows the chip).
  */
 async function fetchBytesCached(
   accountId: string | null,
@@ -199,11 +218,23 @@ async function fetchBytesCached(
       return row.bytes;
     }
   }
-  const headers = authHeaders();
-  const hadBearer = 'Authorization' in headers;
+  // Send with the CURRENT bearer each attempt (re-read after a re-mint so the retry carries the fresh token).
+  let hadBearer = false;
+  const send = (): Promise<Response> => {
+    const headers = authHeaders();
+    hadBearer = 'Authorization' in headers;
+    return fetch(fetchPath, { headers });
+  };
   let res: Response;
   try {
-    res = await fetch(fetchPath, { headers });
+    res = await send();
+    // 403 = expired access token (the common 15-min-TTL case), 401 = defensive, 503 = absent bearer. Re-mint
+    // from the httpOnly refresh cookie ONCE and retry — mirrors syncFetch. A dead cookie ('revoked') or no
+    // network ('offline') means the retry can't help, so fall through and let the !ok / catch degrade to the chip.
+    if (res.status === 401 || res.status === 403 || res.status === 503) {
+      const outcome = await remintBlobBearerOnce();
+      if (outcome === 'ok') res = await send();
+    }
   } catch {
     // The fetch itself rejected → offline / no response. Carry that (no HTTP status) for diagnosis.
     throw new BlobLoadError('blob load failed (network)', { hadBearer, offline: true });

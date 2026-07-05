@@ -40,12 +40,17 @@ export function AttachmentView({
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const safeImage = isInlineRenderableImage(mime);
-  // Re-attempt the blob load when the bearer (re)appears. The editor is local-first: on a cold/offline
+  // Re-attempt the blob load when the auth state (re)settles. The editor is local-first: on a cold/offline
   // open it mounts BEFORE auth rehydrates, so the first blob GET can land with no bearer → 401 → reject.
   // Keying the effect on the token means that transient failure no longer LATCHES into a permanent bare
   // chip (the "image stopped previewing" bug) — when the refresh mints the token the load retries and the
   // image appears. loadBlobUrl is session-cached by hash, so a token rotation after success is a no-op.
+  // Also key on accountId: the cache path (fetchBytesCached) is account-scoped, and on cold boot accountId
+  // can settle a beat AFTER the bearer — re-fire so the IndexedDB tier engages once the account resolves.
+  // (loadBlobUrl itself now re-mints + retries on a 403/expired token, so the common warm-open stale-token
+  // case resolves on the FIRST attempt without needing a bearer-identity change here.)
   const bearerToken = useAuthStore((s) => s.bearerToken);
+  const accountId = useAuthStore((s) => s.accountId);
 
   useEffect(() => {
     if (!hash || !safeImage) return; // only safe images are ever loaded into an object URL
@@ -55,7 +60,7 @@ export function AttachmentView({
       .then((u) => { if (alive) setUrl(u); })
       .catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; };
-  }, [hash, mime, safeImage, bearerToken]);
+  }, [hash, mime, safeImage, bearerToken, accountId]);
 
   if (safeImage) {
     // safe image: inline once loaded; while loading / on failure, the chip (no inline render of nothing).
