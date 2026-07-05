@@ -192,12 +192,37 @@ async function extractImage(
     // go through a permissive cast of the BINDING — not a detached method: an unbound `run` loses `this` and
     // the AI client throws "Cannot set properties of undefined (setting '#options')" (caught live 2026-07-05).
     const ai = env.AI as unknown as { run(model: string, input: unknown): Promise<unknown> };
+    // INPUT CONTRACT (verified the hard way, live 2026-07-05, twice): `{prompt, image: number[]}` (old
+    // llava form) runs as a BLIND text completion (degenerate prompt loop); `{messages, image: dataUrl}`
+    // (the llama-3.2-vision form) is ALSO ignored by this model — it hallucinated a caption for a clean
+    // text image. This model is served OpenAI-compatible (vLLM `choices` output), so the image rides IN
+    // the message as an OpenAI content part (`image_url` with a base64 data URL).
     const result = (await ai.run(OCR_MODEL, {
-      prompt: OCR_PROMPT,
-      image: Array.from(bytes),
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: `data:image/webp;base64,${toBase64(bytes)}` } },
+          { type: 'text', text: OCR_PROMPT },
+        ],
+      }],
       max_tokens: OCR_MAX_TOKENS,
-    })) as { response?: string; description?: string; text?: string };
-    text = normalizeText(result.response ?? result.description ?? result.text ?? '');
+    })) as {
+      response?: string;
+      description?: string;
+      choices?: Array<{ message?: { content?: string }; text?: string }>;
+    };
+    // OUTPUT: this model answers OpenAI/vLLM-style ({choices:[{message:{content}} | {text}]}); older CF
+    // models answer {response}/{description}. Read all known shapes.
+    const choice = result.choices?.[0];
+    text = normalizeText(choice?.message?.content ?? choice?.text ?? result.response ?? result.description ?? '');
+    if (!text) {
+      // Empty transcription becomes a FINAL extract below — a silent dead-end if the real cause is an
+      // input/output-contract mismatch with the model (untestable locally: Workers AI has no local
+      // inference). Log the raw shape so prod tails can distinguish "no text in image" from "wrong contract".
+      console.warn(
+        `extraction: OCR empty for ${accountId}/${att.hash} — raw result: ${JSON.stringify(result).slice(0, 600)}`,
+      );
+    }
   } catch (err) {
     // Model error / transient capacity → RETRYABLE (leave no extract; the cron sweep re-attempts).
     console.error(`extraction: OCR failed for ${accountId}/${att.hash} (retry)`, err);
@@ -216,6 +241,16 @@ async function extractImage(
 /** Collapse runs of whitespace (incl. the newlines PDFs/OCR emit) to single spaces + trim. */
 function normalizeText(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
+}
+
+/** Chunked bytes→base64 (a spread over a ~1MB view.webp would blow the call stack). */
+function toBase64(bytes: Uint8Array): string {
+  let bin = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
 }
 
 // ---------------------------------------------------------------------------
