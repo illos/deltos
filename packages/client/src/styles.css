@@ -375,15 +375,45 @@
   border-radius: 6px;
 }
 .file-view__preview--pdf {
-  display: block;
+  display: flex; /* flex parent so .pdf-reader fills the preview's height */
   padding: 0;
   min-height: 0;
   overflow: hidden;
+  flex: 1 1 auto; /* file-note preview rev: fill all remaining height below the header/actions/metadata */
+  width: 100%;
+  border: none;
+  border-radius: 0;
 }
+
+/* ── PDF file note (file-note preview rev, Jim) — the reader is the DOMINANT surface ─────────────────────
+   The reader escapes the centered 680 column and flex-fills the full note-pane width + all remaining height
+   below the meta bar, with its OWN internal scroll. This min-height:0 chain (here → preview → .pdf-reader →
+   __body → __scroll) is what lets the reader own the scroll instead of the note pane (the classic flexbox
+   overflow trap): a literal height:100vh under a header would overflow and double-scroll. The
+   header/actions/metadata stay in the centered column ABOVE, so the PDF runs to the bottom of the pane. */
+.file-view--pdf {
+  align-items: stretch;   /* preview + inner span the pane width; inner re-centers itself */
+  min-height: 0;          /* airtight flex chain — let children bound to the pane, not grow it */
+  overflow: hidden;
+  padding: 0;             /* preview reaches the pane edges + bottom; inner re-adds the column padding */
+  gap: 0;
+}
+.file-view--pdf .file-view__inner {
+  max-width: 680px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 1rem; /* was .editor's padding — re-added here so only the preview bleeds full-width */
+  gap: 1rem;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+/* Full-bleed reader → drop the reader's rounded corners so they don't fight the pane edges. */
+.file-view--pdf .pdf-reader__scroll,
+.file-view--pdf .pdf-reader__thumbs { border-radius: 0; }
 /* PDF reader (pdf-reader.md §3.1, Slice 1) — a sticky compact toolbar over a scrollable, virtualized page
    column. The scroll region is the Intersection.../scroll-math root; pages are absolutely positioned at their
    computed offsets so the scrollbar + jump math stay exact while only windowed pages hold live canvases. */
-.pdf-reader { display: flex; flex-direction: column; width: 100%; }
+.pdf-reader { display: flex; flex-direction: column; width: 100%; flex: 1 1 auto; min-height: 0; }
 .pdf-reader__toolbar {
   display: flex;
   align-items: center;
@@ -408,8 +438,10 @@
   position: relative;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  height: 70vh;
-  max-height: 70vh;
+  /* file-note preview rev: was height:70vh — now flex-fills the reader body (which fills the note pane), so the
+     PDF runs full-height with its own scroll. Height comes from the flex chain + __body's align-items:stretch. */
+  flex: 1 1 auto;
+  min-height: 0;
   background: var(--list);
   border-radius: 0 0 12px 12px;
 }
@@ -500,7 +532,7 @@
 .pdf-reader__pagetotal { white-space: nowrap; }
 
 /* The body is the flex row that hosts the docked rail (desktop) beside the scrollable page column. */
-.pdf-reader__body { position: relative; display: flex; align-items: stretch; }
+.pdf-reader__body { position: relative; display: flex; align-items: stretch; flex: 1 1 auto; min-height: 0; }
 .pdf-reader__body .pdf-reader__scroll { flex: 1 1 auto; min-width: 0; border-radius: 0 0 12px 0; }
 
 /* The virtualized rail: a narrow scroll column; thumbs are absolutely positioned at their computed offsets so
@@ -508,8 +540,9 @@
 .pdf-reader__thumbs {
   flex: 0 0 auto;
   width: 132px;
-  height: 70vh;
-  max-height: 70vh;
+  /* file-note preview rev: was height:70vh — the rail now matches the reader height via __body's
+     align-items:stretch (min-height:0 keeps its tall track from growing the pane). */
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   background: var(--nav, var(--list));

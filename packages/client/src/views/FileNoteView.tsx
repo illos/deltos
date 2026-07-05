@@ -105,77 +105,102 @@ export function FileNoteView({ note, onSave }: NoteEditorProps) {
   const ext = name.match(/\.([a-z0-9]+)$/i)?.[1]?.toUpperCase();
   const showImage = image && viewUrl && !previewFailed;
 
+  // Header / actions / metadata are shared across both layouts (factored so the PDF branch can hoist the
+  // preview OUT of the centered 680 column without duplicating this chrome).
+  const header = (
+    <header className="file-view__header">
+      {renaming ? (
+        <form
+          className="file-view__rename"
+          onSubmit={(e) => { e.preventDefault(); void submitRename(); }}
+        >
+          <input
+            className="file-view__rename-input"
+            value={draft}
+            aria-label="Filename"
+            autoFocus
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => void submitRename()}
+          />
+          <button type="submit" className="file-view__rename-save">Save</button>
+        </form>
+      ) : (
+        <h1 className="file-view__title" title={name}>{name}</h1>
+      )}
+      <p className="file-view__sub">
+        {[ext, mime || null, att && att.size > 0 ? formatFileSize(att.size) : null].filter(Boolean).join(' · ')}
+      </p>
+    </header>
+  );
+
+  const actions = (
+    <div className="file-view__actions">
+      <button type="button" className="file-view__action file-view__action--primary" onClick={handleDownload} disabled={!hash}>
+        Download
+      </button>
+      <button type="button" className="file-view__action" onClick={beginRename}>
+        Rename
+      </button>
+      <button type="button" className="file-view__action file-view__action--danger" onClick={handleDelete}>
+        Delete
+      </button>
+    </div>
+  );
+
+  const metadata = (
+    <dl className="file-view__metadata">
+      <div className="file-view__meta-row"><dt>Filename</dt><dd>{name}</dd></div>
+      <div className="file-view__meta-row"><dt>Type</dt><dd>{mime || 'unknown'}</dd></div>
+      <div className="file-view__meta-row"><dt>Size</dt><dd>{att ? formatFileSize(att.size) : '—'}</dd></div>
+      <div className="file-view__meta-row"><dt>Edited</dt><dd>{formatSmartDate(note.updatedAt)}</dd></div>
+    </dl>
+  );
+
+  // PDF layout (file-note preview rev, Jim): the reader is the DOMINANT surface — it escapes the 680 column
+  // and flex-fills the full note-pane width + all remaining height below the meta bar, with its OWN internal
+  // scroll (the min-height:0 chain lives in .file-view--pdf, styles.css). The header/actions/metadata stay in
+  // the centered column ABOVE it, so the reader runs to the bottom of the pane. The in-app reader replaces the
+  // old "No preview available" branch for pdfs; Suspense covers the second-level lazy chunk and the reader
+  // degrades to the icon + Download itself on a parse/offline failure (gate PDF-2), so the chrome always works.
+  if (pdf && hash) {
+    return (
+      <div className="editor file-view file-view--pdf">
+        <div className="file-view__inner">
+          {header}
+          {actions}
+          {metadata}
+        </div>
+        <div className="file-view__preview file-view__preview--pdf">
+          <Suspense fallback={<div className="pdf-reader__spinner" role="status">Loading reader…</div>}>
+            <LazyPdfReader hash={hash} name={name} onDownload={handleDownload} />
+          </Suspense>
+        </div>
+      </div>
+    );
+  }
+
+  // Image / no-preview layout — unchanged: everything stays inside the centered 680 column, preview between
+  // the header and the actions row.
   return (
     <div className="editor file-view">
       <div className="file-view__inner">
-        <header className="file-view__header">
-          {renaming ? (
-            <form
-              className="file-view__rename"
-              onSubmit={(e) => { e.preventDefault(); void submitRename(); }}
-            >
-              <input
-                className="file-view__rename-input"
-                value={draft}
-                aria-label="Filename"
-                autoFocus
-                onChange={(e) => setDraft(e.target.value)}
-                onBlur={() => void submitRename()}
-              />
-              <button type="submit" className="file-view__rename-save">Save</button>
-            </form>
+        {header}
+        <div className="file-view__preview">
+          {showImage ? (
+            <img className="file-view__image" src={viewUrl!} alt={name} decoding="async" />
           ) : (
-            <h1 className="file-view__title" title={name}>{name}</h1>
+            <div className="file-view__nopreview">
+              <span className="file-view__nopreview-icon" aria-hidden="true">
+                <Icon size={72} />
+              </span>
+              {/* Non-image, non-pdf (office/unknown): a deliberate v1 boundary per the safe-serving design
+                  (octet-stream + Content-Disposition: attachment), NOT a bug. Icon + Download is the path. */}
+              {!image && <span className="file-view__nopreview-label">No preview available</span>}
+            </div>
           )}
-          <p className="file-view__sub">
-            {[ext, mime || null, att && att.size > 0 ? formatFileSize(att.size) : null].filter(Boolean).join(' · ')}
-          </p>
-        </header>
-
-        {pdf && hash ? (
-          // The in-app PDF reader (pdf-reader.md §2.1) replaces the old "No preview available" branch for pdfs.
-          // Suspense covers the second-level lazy chunk; the reader degrades to the icon + Download itself on a
-          // parse/offline failure (gate PDF-2), so the surrounding chrome (Download/Rename/Delete) always works.
-          <div className="file-view__preview file-view__preview--pdf">
-            <Suspense fallback={<div className="pdf-reader__spinner" role="status">Loading reader…</div>}>
-              <LazyPdfReader hash={hash} name={name} onDownload={handleDownload} />
-            </Suspense>
-          </div>
-        ) : (
-          <div className="file-view__preview">
-            {showImage ? (
-              <img className="file-view__image" src={viewUrl!} alt={name} decoding="async" />
-            ) : (
-              <div className="file-view__nopreview">
-                <span className="file-view__nopreview-icon" aria-hidden="true">
-                  <Icon size={72} />
-                </span>
-                {/* Non-image, non-pdf (office/unknown): a deliberate v1 boundary per the safe-serving design
-                    (octet-stream + Content-Disposition: attachment), NOT a bug. Icon + Download is the path. */}
-                {!image && <span className="file-view__nopreview-label">No preview available</span>}
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="file-view__actions">
-          <button type="button" className="file-view__action file-view__action--primary" onClick={handleDownload} disabled={!hash}>
-            Download
-          </button>
-          <button type="button" className="file-view__action" onClick={beginRename}>
-            Rename
-          </button>
-          <button type="button" className="file-view__action file-view__action--danger" onClick={handleDelete}>
-            Delete
-          </button>
         </div>
-
-        <dl className="file-view__metadata">
-          <div className="file-view__meta-row"><dt>Filename</dt><dd>{name}</dd></div>
-          <div className="file-view__meta-row"><dt>Type</dt><dd>{mime || 'unknown'}</dd></div>
-          <div className="file-view__meta-row"><dt>Size</dt><dd>{att ? formatFileSize(att.size) : '—'}</dd></div>
-          <div className="file-view__meta-row"><dt>Edited</dt><dd>{formatSmartDate(note.updatedAt)}</dd></div>
-        </dl>
+        {actions}
+        {metadata}
       </div>
     </div>
   );

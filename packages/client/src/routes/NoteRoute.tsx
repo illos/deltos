@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useParams, Link, useSearchParams, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import type { Note, NoteId } from '@deltos/shared';
-import { NoteIdSchema, isFileNote } from '@deltos/shared';
+import { NoteIdSchema } from '@deltos/shared';
 import { getStore } from '../db/store.js';
 import { noteHasContent } from '../lib/noteContent.js';
 import { useNote } from '../db/storeHooks.js';
@@ -13,9 +13,9 @@ import { NoteEditor } from '../editor/NoteEditor.js';
 import { resolveNoteView } from '../editor/views.js';
 import { ConflictView } from '../components/ConflictView.js';
 import { HistoryPanel } from '../components/HistoryPanel.js';
+import { NoteMetaBar } from '../components/NoteMetaBar.js';
 import { useNoteVersions } from '../db/conflict.js';
-import { SyncIndicator } from '../components/SyncIndicator.js';
-import { VersionHistory, Trash, Expand, Collapse, PopOut } from '../icons/index.js';
+import { Collapse } from '../icons/index.js';
 import { useIsDesktop } from '../lib/useIsDesktop.js';
 import { showActionToast } from '../lib/toastEvents.js';
 import type { ClientNote, NoteVersion } from '../db/schema.js';
@@ -210,61 +210,25 @@ export function NoteRoute({ variant = 'regular' }: NoteRouteProps = {}) {
   return (
     <>
       {/* §3 note meta toolbar — DESKTOP ONLY (#82): the desktop 3-region note pane has no global shell bar,
-          so it carries Synced + version-history + delete here. On MOBILE the global shell__bar is the single
-          note bar (history lives there via ?history), so editor__meta is omitted entirely — no second bar,
-          no back chevron (the δ wordmark → '/' covers return). The edited-time is above the title (#77). */}
-      {/* File notes render their own chrome (delete/rename/download) in FileNoteView, so the desktop
-          meta toolbar is suppressed for them — otherwise the pane shows two headers + a redundant delete. */}
-      {isDesktop && !isFileNote(note) && (
-        <header className="editor__meta">
-          <div className="editor__meta-end">
-            {/* Relocated sync indicator (was the top-bar pill; the §3 home is its place now). */}
-            <SyncIndicator />
-            <button className="editor__meta-btn" onClick={() => setShowHistory(true)} aria-label="Version history">
-              <VersionHistory size={18} />
-            </button>
-            {/* Desktop delete trashcan, next to history. Soft-delete → Trash, recoverable. */}
-            <button className="editor__meta-btn" onClick={handleDeleteNote} aria-label="Delete note">
-              <Trash size={18} />
-            </button>
-            {/* ROAD-0010 full-window controls. In the full view the entry controls are REPLACED by a
-                single back-to-regular EXIT control (no full-screen-inside-full-screen). */}
-            {isFull ? (
-              <Link
-                to={`/note/${parsedNoteId}`}
-                className="editor__meta-btn"
-                aria-label="Exit full screen"
-              >
-                <Collapse size={18} />
-              </Link>
-            ) : (
-              <>
-                {/* Full screen — navigate the CURRENT window to the bare full-window view in place. */}
-                <button
-                  className="editor__meta-btn"
-                  onClick={() => navigate(`/note/${parsedNoteId}/full`)}
-                  aria-label="Full screen"
-                >
-                  <Expand size={18} />
-                </button>
-                {/* Pop out — the same full-window view in its own popup window. */}
-                <button
-                  className="editor__meta-btn"
-                  onClick={() =>
-                    window.open(`/note/${parsedNoteId}/full`, '_blank', 'popup,width=900,height=760')
-                  }
-                  aria-label="Pop out"
-                >
-                  <PopOut size={18} />
-                </button>
-              </>
-            )}
-          </div>
-        </header>
+          so it carries Synced + version-history + delete + the full-window controls here. On MOBILE the
+          global shell__bar is the single note bar (history lives there via ?history), so this is omitted
+          entirely — no second bar, no back chevron (the δ wordmark → '/' covers return).
+          File notes now get the SAME bar above FileNoteView (Jim): history / full-screen / pop-out / delete.
+          FileNoteView keeps its own download/rename/delete actions row; the delete here and there are the
+          identical soft-delete → Trash path. File notes have no version capture, so History opens to a sane
+          empty state ("No earlier versions"), never a crash. */}
+      {isDesktop && (
+        <NoteMetaBar
+          noteId={note.id}
+          isFull={isFull}
+          onShowHistory={() => setShowHistory(true)}
+          onDelete={handleDeleteNote}
+        />
       )}
-      {/* ROAD-0010 full-window fallback exit — when the desktop meta toolbar is absent (a file note, or a
-          mobile visit to /note/:id/full), still guarantee ONE unobtrusive way back to the 3-region view. */}
-      {isFull && !(isDesktop && !isFileNote(note)) && (
+      {/* ROAD-0010 full-window fallback exit — the desktop meta toolbar now renders for EVERY note (incl. file
+          notes), so it carries the exit in desktop full mode. This fallback only covers a MOBILE visit to
+          /note/:id/full (no meta toolbar there), guaranteeing ONE unobtrusive way back to the 3-region view. */}
+      {isFull && !isDesktop && (
         <Link to={`/note/${parsedNoteId}`} className="editor__full-exit" aria-label="Exit full screen">
           <Collapse size={20} />
         </Link>
