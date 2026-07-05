@@ -79,7 +79,7 @@ export async function accountUsage(bucket: R2Bucket, accountId: string): Promise
  *     upload still succeeds; the list just falls back to the format icon and the open-view to the large icon.
  * Degrades cleanly (no-op) when IMAGES is unbound (gate FN-W1).
  */
-async function bakeImageDerivatives(env: Env, accountId: string, hash: string, buf: ArrayBuffer): Promise<void> {
+export async function bakeImageDerivatives(env: Env, accountId: string, hash: string, buf: ArrayBuffer): Promise<void> {
   const images = env.IMAGES;
   const bucket = env.BLOBS;
   if (!images || !bucket) return;

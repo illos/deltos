@@ -86,14 +86,31 @@ function d1Over(raw: Database.Database): D1Database {
 function stubR2() {
   const store = new Map<string, { bytes: Uint8Array; size: number }>();
   const bucket = {
-    put(key: string, bytes: Uint8Array, size?: number) { store.set(key, { bytes, size: size ?? bytes.byteLength }); },
+    // Accepts Uint8Array (tests) or ArrayBuffer (bakeImageDerivatives writes with put(key, ArrayBuffer, opts)).
+    put(key: string, bytes: Uint8Array | ArrayBuffer, size?: number) {
+      const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes as ArrayBuffer);
+      store.set(key, { bytes: u8, size: typeof size === 'number' ? size : u8.byteLength });
+    },
+    async head(key: string) { return store.has(key) ? { size: store.get(key)!.size } : null; },
     async get(key: string) {
       const o = store.get(key);
       if (!o) return null;
       return { size: o.size, async arrayBuffer() { return o.bytes.buffer.slice(o.bytes.byteOffset, o.bytes.byteOffset + o.bytes.byteLength); } };
     },
   };
-  return { bucket: bucket as unknown as R2Bucket & { put(k: string, b: Uint8Array, s?: number): void }, store };
+  return { bucket: bucket as unknown as R2Bucket & { put(k: string, b: Uint8Array | ArrayBuffer, s?: number): void }, store };
+}
+
+/** Stub Workers Images binding: input().transform().output() → a fixed webp payload (or a throwing bake). */
+function stubImages(throws = false) {
+  return {
+    input() {
+      return { transform() { return { async output() {
+        if (throws) throw new Error('images transform unavailable');
+        return { image() { return new Uint8Array([7, 7, 7]); } };
+      } }; } };
+    },
+  } as unknown;
 }
 
 function stubAI(text = 'transcribed invoice total 42', throws = false) {
@@ -218,11 +235,30 @@ describe('extractForNote — image OCR', () => {
     expect((await searchNotes(db, undefined, ACCT, 'needle')).map((r) => r.id)).toEqual([uuid(10)]);
   });
 
-  it('a missing derivative → empty FINAL extract', async () => {
-    const { bucket } = stubR2(); // no view.webp
+  it('no derivative AND no original → empty FINAL extract (nothing to OCR, ever)', async () => {
+    const { bucket } = stubR2(); // no view.webp, no original
     await makeFileNote(uuid(11), 'noderiv', 'image/heic', 'photo.heic');
     await extractForNote({ DB: d1Over(raw), BLOBS: bucket, AI: stubAI() } as unknown as Env, ACCT, uuid(11));
     expect(readExtract(uuid(11)).extract).toMatchObject({ method: 'ocr', pages: [] });
+  });
+
+  it('a missing derivative SELF-HEALS: re-bakes from the original, then OCRs it', async () => {
+    const { bucket } = stubR2();
+    bucket.put(`${ACCT}/healme`, new Uint8Array([1, 2, 3])); // original present, NO view.webp (transient bake miss)
+    await makeFileNote(uuid(15), 'healme', 'image/png', 'heal.png');
+    const env = { DB: d1Over(raw), BLOBS: bucket, AI: stubAI('healed needle text'), IMAGES: stubImages() } as unknown as Env;
+    await extractForNote(env, ACCT, uuid(15));
+    expect(readExtract(uuid(15)).extract).toMatchObject({ method: 'ocr', pages: [{ p: null, t: 'healed needle text' }] });
+    expect(await (bucket as unknown as R2Bucket).head(`${ACCT}/healme.view.webp`)).not.toBeNull(); // bake landed
+  });
+
+  it('a missing derivative whose re-bake still fails is RETRYABLE (no extract written)', async () => {
+    const { bucket } = stubR2();
+    bucket.put(`${ACCT}/stuckbake`, new Uint8Array([1, 2, 3])); // original present, bake keeps failing
+    await makeFileNote(uuid(16), 'stuckbake', 'image/png', 'stuck.png');
+    const env = { DB: d1Over(raw), BLOBS: bucket, AI: stubAI(), IMAGES: stubImages(true) } as unknown as Env;
+    await extractForNote(env, ACCT, uuid(16));
+    expect(readExtract(uuid(16)).extract).toBeNull();
   });
 
   it('an empty successful transcription is FINAL (image has no text)', async () => {

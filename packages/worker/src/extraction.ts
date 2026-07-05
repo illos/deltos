@@ -12,6 +12,7 @@ import {
   type AttachmentContent,
 } from '@deltos/shared';
 import type { Env } from './env.js';
+import { bakeImageDerivatives } from './blobStore.js';
 import { d1Adapter } from './db/schema.js';
 import type { DbAdapter, NoteRow } from './db/schema.js';
 import { BUMP_SEQ_SQL, READ_SEQ_SQL } from './db/mutate.js';
@@ -28,8 +29,9 @@ import { upsertNoteFts } from './db/searchIndex.js';
  *     PDF legitimately extracts to nothing. A PDF over the threshold is a HONEST SKIP: an empty extract with
  *     `truncated:true` so it is marked processed (memory guard — Jim has 100+MB PDFs; 128MB Worker memory).
  *   - IMAGE (mime image/*): OCR of the pre-baked `{hash}.view.webp` DERIVATIVE (uniform input, sidesteps HEIC)
- *     via Workers AI {@link OCR_MODEL} with a strict verbatim-transcription prompt. A missing derivative → an
- *     empty (final) extract; a successful-but-empty transcription is FINAL; a model error is RETRYABLE.
+ *     via Workers AI {@link OCR_MODEL} with a strict verbatim-transcription prompt. A missing derivative
+ *     SELF-HEALS (re-bake from the original, else RETRYABLE); only an absent ORIGINAL finalizes empty; a
+ *     successful-but-empty transcription is FINAL; a model error is RETRYABLE.
  *
  * TRIGGER: `waitUntil` after a sync-push note upsert (see routes/sync.ts) + the daily cron sweep (index.ts)
  * that backfills existing uploads + catches missed waitUntils. Extraction NEVER fails or slows the push.
@@ -167,10 +169,19 @@ async function extractImage(
   };
 
   // OCR runs on the pre-baked `.view.webp` DERIVATIVE, never the original bytes (uniform input; sidesteps
-  // HEIC, which no CF extraction path decodes). A MISSING derivative (IMAGES unbound at upload, a failed
-  // bake, or e.g. a HEIC whose bake didn't land) → an empty FINAL extract, not a retry.
-  const obj = await env.BLOBS!.get(`${accountId}/${att.hash}.view.webp`);
-  if (!obj) return { status: 'ok', extract: emptyFinal };
+  // HEIC, which no CF extraction path decodes). A missing derivative (a transient IMAGES failure at upload —
+  // hit live 2026-07-05) SELF-HEALS: re-bake from the original here, re-fetch. Finalizing empty on a bake
+  // miss permanently froze the note unextracted; now only a truly absent ORIGINAL finalizes empty, and a
+  // still-failing bake stays RETRYABLE for the cron.
+  const viewKey = `${accountId}/${att.hash}.view.webp`;
+  let obj = await env.BLOBS!.get(viewKey);
+  if (!obj) {
+    const original = await env.BLOBS!.get(`${accountId}/${att.hash}`);
+    if (!original) return { status: 'ok', extract: emptyFinal }; // no source bytes at all → nothing to OCR, ever
+    await bakeImageDerivatives(env, accountId, att.hash, await original.arrayBuffer());
+    obj = await env.BLOBS!.get(viewKey);
+    if (!obj) return { status: 'retry' }; // bake still failing (IMAGES hiccup / undecodable) → cron re-attempts
+  }
 
   if (!env.AI) return { status: 'retry' }; // binding not wired here → let the cron retry when it is
 
@@ -178,9 +189,10 @@ async function extractImage(
   try {
     const bytes = new Uint8Array(await obj.arrayBuffer());
     // `Ai.run`'s model/input types are a pinned literal union that may not carry this (2026-04) model, so we
-    // call through a permissive signature. The unified image-to-text contract: bytes as a number[] + prompt.
-    const run = env.AI.run as unknown as (model: string, input: unknown) => Promise<unknown>;
-    const result = (await run(OCR_MODEL, {
+    // go through a permissive cast of the BINDING — not a detached method: an unbound `run` loses `this` and
+    // the AI client throws "Cannot set properties of undefined (setting '#options')" (caught live 2026-07-05).
+    const ai = env.AI as unknown as { run(model: string, input: unknown): Promise<unknown> };
+    const result = (await ai.run(OCR_MODEL, {
       prompt: OCR_PROMPT,
       image: Array.from(bytes),
       max_tokens: OCR_MAX_TOKENS,
