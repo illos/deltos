@@ -25,9 +25,9 @@ const transforms = () => buildEditorTransformRegistry(S, createDefaultFormulaReg
 
 describe('registration order — §5.4 pinned (a reordering must edit THIS table deliberately)', () => {
   const r = transforms();
-  it('insert: formula → bracket → markdown blocks → marks → autolink', () => {
+  it('insert: formula → bracket → absorb → markdown blocks → marks → autolink', () => {
     expect(r.insert.map((t) => t.id)).toEqual([
-      'formula-auto-=', 'formula-auto-space', 'formula-bracket',
+      'formula-auto-=', 'formula-auto-space', 'formula-bracket', 'formula-absorb',
       'md-h1', 'md-h2', 'md-h3', 'md-quote', 'md-codeblock', 'md-bullet', 'md-ordered', 'md-todo', 'md-divider',
       'md-bold', 'md-italic', 'md-strike', 'md-highlight', 'md-code',
       'autolink-scheme', 'autolink-bare',

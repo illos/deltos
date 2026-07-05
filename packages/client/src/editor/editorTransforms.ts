@@ -13,7 +13,7 @@ import { deleteInlineAtomBackspace, deleteInlineAtomDelete } from './plugins/blo
  * invariant corpus, and the surface-parity tests, so they can never drift apart.
  *
  * Registration order IS execution order (design §5.4) and a registration-order test pins it:
- *   insert        : formula-auto → formula-bracket → md blocks → md marks → autolink space rules
+ *   insert        : formula-auto → formula-bracket → formula-absorb → md blocks → md marks → autolink space rules
  *   backspace     : undo-autoformat (D3) → formula-unwrap → link-unwrap → atom-delete
  *   forwardDelete : formula-unwrap-delete → atom-delete
  *   enterBoundary : formula-boundary-wrap → linkify

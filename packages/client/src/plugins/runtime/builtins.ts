@@ -18,20 +18,25 @@ import type { PluginManifest } from './manifest.js';
 import { mathType } from '../math/mathType.js';
 import { hexColorType } from '../hexcolor/hexColorType.js';
 import { imperialType } from '../imperial/imperialType.js';
+import { referenceType } from '../formula/referenceType.js';
 import { LinkCardNodeView } from '../embeds/LinkCardNodeView.js';
 import { linkCardPastePlugin } from '../embeds/index.js';
 import { attachmentDropPlugin } from '../attachment/attachmentDrop.js';
 import { EDITOR_TOOLS } from '../../editor/editorTools.js';
 
-/** Inline-formula framework — MATH + HEXCOLOR + IMPERIAL types merged into the shared FormulaRegistry.
- *  Order matters on the bracket path: math is tried BEFORE imperial so a purely-arithmetic `[12-15/16]`
- *  (no unit mark) routes to math; imperial only claims label-or-mark content, keeping the two disjoint. */
+/** Inline-formula framework — IMPERIAL + MATH + HEXCOLOR + REFERENCE types merged into the shared
+ *  FormulaRegistry. Order matters on the bracket path (Step 2): imperial is tried BEFORE math because both
+ *  grammars now carry the substrate-common `Label:` tag, and a labeled body both can parse
+ *  (`[Trim: 12-15/16]` — mixed-number feet vs subtraction) must keep resolving to imperial exactly as
+ *  pre-Step-2. Unlabeled unmarked content (`[12-15/16]`, `[1 + 1]`) still routes to math — imperial's
+ *  recognize gate (label OR unit mark) declines it regardless of order. The reference type never
+ *  self-claims (doc-gated in the bracket handlers); it registers for ftype dispatch (NodeView render). */
 const formulaPlugin: PluginManifest = {
   id: 'formula',
   name: 'Formula',
   capabilities: ['offline'],
   schemaVersion: 1,
-  load: () => ({ formulaTypes: [mathType, hexColorType, imperialType] }),
+  load: () => ({ formulaTypes: [imperialType, mathType, hexColorType, referenceType] }),
 };
 
 /** Rich-embeds — the link_card plugin_block (bare-URL paste → card) + its NodeView. */

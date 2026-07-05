@@ -11,14 +11,17 @@
  * ADD-ONLY: there are no negative values; a '-' is ONLY a whole/fraction separator (`12-15/16`).
  */
 
+import { bindRefs, extractLabel, REF_OPEN, REF_CLOSE } from '../formula/refBinding.js';
+
 /** Feet-mark characters (straight apostrophe, curly quotes, prime). */
 const FEET_MARKS = /[’‘′']/g;
 /** Inch-mark characters (straight quote, curly quotes, double-prime). */
 const INCH_MARKS = /[”“″"]/g;
 
-/** A leading `word:` label — letters then letters/digits/spaces, ending in a colon. A token that STARTS
- *  with a digit (a time like `3:30`) is deliberately NOT a label (the class requires a leading letter). */
-const LABEL_RE = /^\s*([A-Za-z][A-Za-z0-9 ]*):\s*/;
+/** A bound-reference sentinel token (`<index>`, refBinding.ts) — the ONE reference production
+ *  (formula-engine.md §6): it resolves to a raw value in INCHES (imperial's canonical unit), explicitly
+ *  NOT the bare-number-means-feet literal. */
+const SENTINEL_RE = new RegExp(`^${REF_OPEN}(\\d+)${REF_CLOSE}$`);
 
 export interface ImperialParse {
   /** The summed value of every token, in inches. */
@@ -68,9 +71,17 @@ interface Token {
  *   `12` `4`     → FEET                     (no mark at all → the number is feet)
  * Returns null if the token is malformed (so the caller can decline the whole spec).
  */
-function parseToken(raw: string): Token | null {
+function parseToken(raw: string, resolveIndex?: (index: number) => number | null): Token | null {
   const t = raw.trim();
   if (t === '') return null;
+  // Reference sentinel → the bound value, already in INCHES (never the feet default). A reference does
+  // not count as a unit mark (the recognize gate stays label-or-mark).
+  const ref = SENTINEL_RE.exec(t);
+  if (ref) {
+    const v = resolveIndex ? resolveIndex(Number(ref[1])) : null;
+    if (v === null || !Number.isFinite(v)) return null; // unresolved reference → the whole spec declines
+    return { inches: v, hasMark: false };
+  }
   // Canonicalize every feet/inch glyph to the straight ' / " so the structural parse is single-case.
   const norm = t.replace(FEET_MARKS, "'").replace(INCH_MARKS, '"');
   const hasFeetMark = norm.includes("'");
@@ -111,22 +122,35 @@ function parseToken(raw: string): Token | null {
 }
 
 /**
- * Parse a full imperial spec: strip an optional leading label, split the remainder on commas/whitespace,
- * parse + sum every token (accumulating in INCHES so feet convert exactly via ×12). Returns the total plus
- * the two gating flags, or null if there are no tokens or ANY token is malformed.
+ * Parse a full imperial spec: strip an optional leading label (the SHARED substrate extraction —
+ * refBinding.extractLabel, lifted out of this file in Step 2, semantics identical), bind any `[Ref]`
+ * tokens to sentinels, split the remainder on commas/whitespace, parse + sum every token (accumulating in
+ * INCHES so feet convert exactly via ×12). Returns the total plus the two gating flags, or null if there
+ * are no tokens or ANY token is malformed.
+ *
+ * `resolveRef` resolves a reference NAME to a raw scalar in INCHES (the engine's NumericEnv seam). Omit it
+ * (every pre-Step-2 caller) and a spec containing references simply declines — ref-free specs behave
+ * exactly as before.
  */
-export function parseImperial(content: string): ImperialParse | null {
-  const labelMatch = LABEL_RE.exec(content);
-  const hasLabel = labelMatch !== null;
-  const rest = hasLabel ? content.slice(labelMatch[0].length) : content;
+export function parseImperial(
+  content: string,
+  resolveRef?: (name: string) => number | null,
+): ImperialParse | null {
+  const { label, body } = extractLabel(content);
+  const hasLabel = label !== null;
+  const { skeleton, refs } = bindRefs(body);
+  const resolveIndex = (index: number): number | null => {
+    const name = refs[index];
+    return name === undefined || !resolveRef ? null : resolveRef(name);
+  };
 
-  const tokens = rest.split(/[,\s]+/).filter((s) => s.length > 0);
+  const tokens = skeleton.split(/[,\s]+/).filter((s) => s.length > 0);
   if (tokens.length === 0) return null;
 
   let totalInches = 0;
   let hasMark = false;
   for (const tok of tokens) {
-    const parsed = parseToken(tok);
+    const parsed = parseToken(tok, resolveIndex);
     if (parsed === null) return null;
     totalInches += parsed.inches;
     hasMark = hasMark || parsed.hasMark;

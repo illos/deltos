@@ -13,14 +13,22 @@
  *   factor     := ('+' | '-') factor | number | '(' expression ')'
  */
 
+import { REF_OPEN, REF_CLOSE } from '../formula/refBinding.js';
+
 /** Result of {@link evaluate}: a clean numeric value, or a non-throwing failure with a reason. */
 export type EvalResult =
   | { ok: true; value: number }
   | { ok: false; error: string };
 
+/** Resolve a bound-reference SENTINEL (`<index>`, see refBinding.ts) to its scalar — the ONE
+ *  grammar production the reactive engine adds (formula-engine.md §6): a bound reference reads as a raw
+ *  number token. null = unknown/unresolved → the expression fails quietly. */
+export type SentinelResolver = (index: number) => number | null;
+
 type Token =
   | { t: 'num'; v: number }
   | { t: 'op'; v: '+' | '-' | '*' | '/' }
+  | { t: 'ref'; i: number }
   | { t: '(' }
   | { t: ')' };
 
@@ -57,6 +65,15 @@ function tokenize(s: string): Token[] | null {
     if (c === '/' || c === '÷') { toks.push({ t: 'op', v: '/' }); i++; continue; }
     if (c === '(') { toks.push({ t: '(' }); i++; continue; }
     if (c === ')') { toks.push({ t: ')' }); i++; continue; }
+    // Bound-reference sentinel `<digits>` (refBinding.ts) — the reference production.
+    if (c === REF_OPEN) {
+      let j = i + 1;
+      while (j < s.length && s[j]! >= '0' && s[j]! <= '9') j++;
+      if (j === i + 1 || s[j] !== REF_CLOSE) return null; // malformed sentinel = unknown character
+      toks.push({ t: 'ref', i: Number(s.slice(i + 1, j)) });
+      i = j + 1;
+      continue;
+    }
     return null; // unknown character
   }
   return toks;
@@ -73,8 +90,12 @@ function clean(n: number): number {
 /**
  * Evaluate an arithmetic expression. Never throws: malformed input, an unknown character, trailing
  * tokens, division by zero, and non-finite results all return `{ ok: false }`.
+ *
+ * `resolveRef` backs the reference production (sentinels from refBinding.bindRefs): a resolved reference
+ * is a raw number token (math's canonical unit is the bare number — locked decision #2); an unresolved
+ * one (null / no resolver) fails the whole expression quietly.
  */
-export function evaluate(expr: string): EvalResult {
+export function evaluate(expr: string, resolveRef?: SentinelResolver): EvalResult {
   const toks = tokenize(expr);
   if (toks === null) return { ok: false, error: 'unrecognized character' };
   if (toks.length === 0) return { ok: false, error: 'empty expression' };
@@ -111,6 +132,12 @@ export function evaluate(expr: string): EvalResult {
       return t.v === '-' ? -f : f;
     }
     if (t.t === 'num') { advance(); return t.v; }
+    if (t.t === 'ref') {
+      advance();
+      const v = resolveRef ? resolveRef(t.i) : null;
+      if (v === null || !Number.isFinite(v)) throw new MathError('unresolved reference');
+      return v;
+    }
     if (t.t === '(') {
       advance();
       const v = parseExpression();

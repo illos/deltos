@@ -19,7 +19,7 @@ import { buildPluginIslandNodeViews, getPluginIslandFactory } from './nodeviews/
 // the editor assembled inline before. The core formula machinery (plugins + NodeView) is still built here
 // FROM the aggregated registry. Editor core never imports a plugin directly; this is the single seam.
 import { pluginRegistry, collectEagerContributions } from '../plugins/runtime/index.js';
-import { buildFormulaNodeView } from '../plugins/formula/index.js';
+import { buildFormulaNodeView, createFormulaBroker } from '../plugins/formula/index.js';
 import { TodoItemView } from './nodeviews/TodoItem.js';
 import { sliceToPlainText } from './clipboard.js';
 import { EditorControlStrip } from './EditorControlStrip.js';
@@ -660,6 +660,11 @@ export function ProseMirrorEditor({
       catch { /* malformed doc — the default start selection is fine */ }
     }
 
+    // Formula reactive-environment broker (formula-engine.md §6/§8) — ONE per view: NodeView registration
+    // is the content-presence gate that lazy-loads the engine chunk; disposing on teardown rebuilds the
+    // whole environment on the next note open (ephemeral per-open node identity, nothing persisted).
+    const formulaBroker = createFormulaBroker();
+
     // NodeViews map, built via a function (not an inline literal) so it can be REBUILT to force PM to re-create
     // node views after a lazy plugin's island factory registers on content-presence activation (below). A
     // fresh map handed to view.setProps makes PM redraw, upgrading a placeholder island to the real NodeView.
@@ -669,7 +674,7 @@ export function ProseMirrorEditor({
       todo_item: (node: PmNode, v: EditorView, getPos: () => number | undefined) =>
         new TodoItemView(node, v, getPos),
       // Inline-formula node → type-dispatched NodeView (editable spec + per-type output widget).
-      formula: buildFormulaNodeView(formulaRegistry),
+      formula: buildFormulaNodeView(formulaRegistry, formulaBroker),
     });
 
     const view = new EditorView(containerRef.current, {
@@ -801,6 +806,7 @@ export function ProseMirrorEditor({
       // Signal the note is being left (after the final save so Dexie has latest content).
       onLeaveRef.current?.();
       view.destroy();
+      formulaBroker.dispose(); // tear down the formula environment (rebuilt fresh on the next note open)
       viewRef.current = null;
       onViewInit?.(null);
     };

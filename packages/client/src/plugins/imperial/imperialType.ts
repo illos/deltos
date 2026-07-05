@@ -15,18 +15,20 @@ import { parseImperial, formatInches } from './imperialParse.js';
  * Reachable ONLY via the explicit `[...]` bracket path (no autoTrigger). The parse/format core is the pure
  * imperialParse module; this wrapper is recognize glue + the substrate hookup.
  *
- * DISJOINT from math by construction (both live on the bracket path): imperial CLAIMS content only when
- * every token parses AND it is unambiguously imperial — there is a `label:` prefix OR at least one token
- * carries a feet/inch mark. So a bare `[12]` or an arithmetic `[12 + 3]` fall through to math; `[12']` and
- * `[Trim: …]` route here. Math, in turn, only claims content that is ENTIRELY a valid expression, which an
- * imperial spec (unit marks, labels, commas) never is.
+ * DISJOINT from math (both live on the bracket path): imperial CLAIMS content only when every token
+ * parses AND it is unambiguously imperial — there is a `label:` prefix OR at least one token carries a
+ * feet/inch mark. So a bare `[12]` or an arithmetic `[12 + 3]` fall through to math; `[12']` and
+ * `[Trim: …]` route here. Since Step 2 math ALSO understands labels (`[Y: 2+2]`), the residual ambiguity —
+ * a labeled body BOTH grammars parse, e.g. `[Trim: 12-15/16]` (imperial mixed-number feet vs math
+ * subtraction+division) — is settled by REGISTRY ORDER: imperial registers BEFORE math, preserving
+ * imperial's pre-Step-2 claim over labeled measurement specs exactly.
  */
 
 /** Imperial's numeric core: measurement list → total INCHES (canonical unit), formatted feet+inches.
- *  References (`env`) arrive with the reactive engine; a bound ref will read as raw inches, NOT as a
- *  bare-number-means-feet literal. */
+ *  A bound `[Ref]` resolves through `env` as raw INCHES (the engine's NumericEnv seam), NOT as the
+ *  bare-number-means-feet literal (formula-engine.md locked decision #2). */
 export const imperialNumeric: NumericFormula = {
-  toNumber: (spec, _env) => parseImperial(spec)?.totalInches ?? null,
+  toNumber: (spec, env) => parseImperial(spec, (name) => env.resolveRef(name))?.totalInches ?? null,
   format: formatInches,
 };
 
@@ -35,8 +37,10 @@ export const imperialType: FormulaType = {
 
   // EXPLICIT [...] ONLY (no autoTrigger). Claim iff it parses AND is unambiguously imperial (label OR a
   // unit mark). The stored spec is the trimmed content (label included — it stays as an editable tag).
+  // Recognition uses a PROBE reference binding (every ref resolves to 0) — structural validity only; the
+  // real values arrive from the engine environment at evaluation time.
   recognize: (content) => {
-    const parsed = parseImperial(content);
+    const parsed = parseImperial(content, () => 0);
     if (!parsed) return null;
     if (!parsed.hasLabel && !parsed.hasMark) return null; // bare numbers → let math's domain have it
     return content.trim();
