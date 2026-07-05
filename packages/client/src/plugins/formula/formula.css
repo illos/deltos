@@ -9,7 +9,8 @@
    inside this pill — typing/recompute/backspace-unwrap unchanged). box-decoration-break keeps the pill
    coherent if it wraps across lines. */
 .formula {
-  white-space: pre; /* keep the spec's spaces intact */
+  white-space: pre-wrap; /* keep the spec's spaces intact, but WRAP at them so a long formula never overflows */
+  overflow-wrap: anywhere; /* + break inside a long spaceless spec rather than run off the screen edge */
   font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
   background: var(--list);
   border: 1px solid var(--border);
