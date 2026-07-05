@@ -376,6 +376,11 @@
 }
 .file-view__preview--pdf {
   display: flex; /* flex parent so .pdf-reader fills the preview's height */
+  /* Override the base preview's image-centering: with align-items:center a taller-than-box reader
+     takes CONTENT height and centers — bleeding symmetrically past both edges (the 3-pane break).
+     Stretch pins the reader to the box so its internal min-height:0 chain bounds the scroll region. */
+  align-items: stretch;
+  justify-content: flex-start;
   padding: 0;
   min-height: 0;
   overflow: hidden;
@@ -391,7 +396,10 @@
    __body → __scroll) is what lets the reader own the scroll instead of the note pane (the classic flexbox
    overflow trap): a literal height:100vh under a header would overflow and double-scroll. The
    header/actions/metadata stay in the centered column ABOVE, so the PDF runs to the bottom of the pane. */
-.file-view--pdf {
+.editor.file-view--pdf {
+  /* .editor.file-view--pdf (not bare .file-view--pdf): the base .editor rule is declared LATER in this
+     file at equal single-class specificity, so a bare modifier's padding:0 silently LOSES the cascade
+     to .editor's 24/20/48 padding. The compound selector outranks it regardless of order. */
   align-items: stretch;   /* preview + inner span the pane width; inner re-centers itself */
   min-height: 0;          /* airtight flex chain — let children bound to the pane, not grow it */
   overflow: hidden;
