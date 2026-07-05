@@ -4,6 +4,7 @@ import { EditorView, Decoration, DecorationSet } from 'prosemirror-view';
 import { history, undo, redo, undoDepth, redoDepth } from 'prosemirror-history';
 import { dropCursor } from 'prosemirror-dropcursor';
 import { gapCursor } from 'prosemirror-gapcursor';
+import type { Node as PmNode } from 'prosemirror-model';
 import type { BlockBody } from '@deltos/shared';
 import { deltoSchema } from './schema.js';
 import { uniqueBlockIdPlugin } from './plugins/blockId.js';
@@ -11,7 +12,7 @@ import { buildKeymapPlugin } from './keymap.js';
 import { buildInputPipelinePlugin } from './inputPipeline/index.js';
 import { buildEditorTransformRegistry } from './editorTransforms.js';
 import { spineToPmDoc, pmDocToSpine, extractTitleFromDoc } from './serializer.js';
-import { buildPluginIslandNodeViews } from './nodeviews/PluginIsland.js';
+import { buildPluginIslandNodeViews, getPluginIslandFactory } from './nodeviews/PluginIsland.js';
 // A1 (#123): plugins are sourced through the manifest spine. `collectEagerContributions` aggregates the
 // built-in plugins' (formula, link_card, tools) contributions — the formula registry, extra PM plugins
 // (the link_card paste handler), and island NodeViews (registered into the PluginIsland map) — exactly what
@@ -659,6 +660,18 @@ export function ProseMirrorEditor({
       catch { /* malformed doc — the default start selection is fine */ }
     }
 
+    // NodeViews map, built via a function (not an inline literal) so it can be REBUILT to force PM to re-create
+    // node views after a lazy plugin's island factory registers on content-presence activation (below). A
+    // fresh map handed to view.setProps makes PM redraw, upgrading a placeholder island to the real NodeView.
+    const buildNodeViews = () => ({
+      // A1: name an unregistered/not-yet-loaded plugin_block from its manifest (friendly placeholder, §6).
+      ...buildPluginIslandNodeViews(deltoSchema, (type) => pluginRegistry.manifestForBlockType(type)?.name),
+      todo_item: (node: PmNode, v: EditorView, getPos: () => number | undefined) =>
+        new TodoItemView(node, v, getPos),
+      // Inline-formula node → type-dispatched NodeView (editable spec + per-type output widget).
+      formula: buildFormulaNodeView(formulaRegistry),
+    });
+
     const view = new EditorView(containerRef.current, {
       state,
       // #69 §5: ALWAYS suppress the NATIVE browser spellcheck (spellcheck="false") — deltos spellcheck is
@@ -670,14 +683,7 @@ export function ProseMirrorEditor({
         spellcheck: 'false',
         ...(customKb ? { inputmode: 'none', autocorrect: 'off', autocapitalize: 'off' } : {}),
       },
-      nodeViews: {
-        // A1: name an unregistered/not-yet-loaded plugin_block from its manifest (friendly placeholder, §6).
-        ...buildPluginIslandNodeViews(deltoSchema, (type) => pluginRegistry.manifestForBlockType(type)?.name),
-        todo_item: (node, view, getPos) =>
-          new TodoItemView(node, view, getPos as () => number | undefined),
-        // Inline-formula node → type-dispatched NodeView (editable spec + per-type output widget).
-        formula: buildFormulaNodeView(formulaRegistry),
-      },
+      nodeViews: buildNodeViews(),
       // Plain text clipboard: markdown-flavoured structure for text/plain flavour.
       clipboardTextSerializer: sliceToPlainText,
       // Strip scripts and on* event handlers from HTML pasted from external sources.
@@ -758,6 +764,30 @@ export function ProseMirrorEditor({
     setDeckContext(deriveDeckContext(view.state));
     onViewInit?.(view);
     if (autoFocus) view.focus();
+
+    // CONTENT-PRESENCE plugin activation (#123 lazy plugins). A note that CONTAINS a lazy plugin block — most
+    // visibly an attachment/image — must load that plugin's runtime on OPEN, not only on insert. The ONLY other
+    // caller of loadRuntime was attachmentDrop (on insert), so before this an opened/reloaded note rendered every
+    // EXISTING attachment as the generic "Unknown block" placeholder — permanently (a client nav didn't fix it
+    // either; nothing ever loaded the runtime). Scan the doc for present-but-unregistered plugin block types,
+    // load each runtime (which registers its island factory), then re-set nodeViews so PM re-creates the
+    // placeholder islands as the REAL NodeView. setProps redraws with the SAME state (no transaction → no save).
+    void (async () => {
+      const pendingTypes = new Set<string>();
+      view.state.doc.descendants((node) => {
+        if (node.type.name === 'plugin_block') {
+          const t = node.attrs.pluginType as string | undefined;
+          if (t && !getPluginIslandFactory(t)) pendingTypes.add(t);
+        }
+      });
+      if (pendingTypes.size === 0) return;
+      const loaded = await Promise.all([...pendingTypes].map((t) => pluginRegistry.loadRuntime(t)));
+      // Refresh only if a runtime actually loaded (ignore unknown/dead types) AND this view is still the live one
+      // (guard a fast note-switch / unmount during the dynamic import).
+      if (loaded.some((rt) => rt != null) && viewRef.current === view && !view.isDestroyed) {
+        view.setProps({ nodeViews: buildNodeViews() });
+      }
+    })();
 
     return () => {
       // Cleanup flush: covers programmatic unmounts where blur may not have fired.
