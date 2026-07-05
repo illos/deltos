@@ -17,18 +17,21 @@
 import type { PluginManifest } from './manifest.js';
 import { mathType } from '../math/mathType.js';
 import { hexColorType } from '../hexcolor/hexColorType.js';
+import { imperialType } from '../imperial/imperialType.js';
 import { LinkCardNodeView } from '../embeds/LinkCardNodeView.js';
 import { linkCardPastePlugin } from '../embeds/index.js';
 import { attachmentDropPlugin } from '../attachment/attachmentDrop.js';
 import { EDITOR_TOOLS } from '../../editor/editorTools.js';
 
-/** Inline-formula framework — MATH + HEXCOLOR types merged into the shared FormulaRegistry. */
+/** Inline-formula framework — MATH + HEXCOLOR + IMPERIAL types merged into the shared FormulaRegistry.
+ *  Order matters on the bracket path: math is tried BEFORE imperial so a purely-arithmetic `[12-15/16]`
+ *  (no unit mark) routes to math; imperial only claims label-or-mark content, keeping the two disjoint. */
 const formulaPlugin: PluginManifest = {
   id: 'formula',
   name: 'Formula',
   capabilities: ['offline'],
   schemaVersion: 1,
-  load: () => ({ formulaTypes: [mathType, hexColorType] }),
+  load: () => ({ formulaTypes: [mathType, hexColorType, imperialType] }),
 };
 
 /** Rich-embeds — the link_card plugin_block (bare-URL paste → card) + its NodeView. */
