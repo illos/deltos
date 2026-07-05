@@ -54,6 +54,7 @@ import { SyncIndicator } from './components/SyncIndicator.js';
 import { SessionStatus } from './components/SessionStatus.js';
 import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
 import { UploadProgressHost } from './components/UploadProgressHost.js';
+import { Lightbox } from './components/Lightbox.js';
 import { ConflictBadgeSlot } from './components/ConflictBadgeSlot.js';
 import { SwipeRow } from './components/SwipeRow.js';
 import { FileNotePill } from './components/FileNotePill.js';
@@ -549,6 +550,7 @@ export function AuthedShell() {
         </Routes>
         <ConflictToastHostSlot />
         <UploadProgressHost />
+        <Lightbox />
       </>
     );
   }
@@ -577,6 +579,7 @@ export function AuthedShell() {
         {/* Upload-first large-file progress (direct-r2-upload.md §6.3): transient pills for in-flight
             direct-to-R2 uploads; persists across navigation while a big file streams. */}
         <UploadProgressHost />
+        <Lightbox />
       </>
     );
   }
@@ -721,6 +724,9 @@ export function AuthedShell() {
       {/* Upload-first large-file progress (direct-r2-upload.md §6.3): transient "uploading… NN%" pills for
           in-flight direct-to-R2 uploads; persists across route changes while a big file streams. */}
       <UploadProgressHost />
+
+      {/* Full-screen image lightbox — renders null until an inline image is tapped (openLightbox). */}
+      <Lightbox />
     </div>
     </DeckHostProvider>
     </NavSheetProvider>

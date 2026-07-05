@@ -9,6 +9,7 @@ import { useAuthStore } from '../../auth/store.js';
 import { pluginRegistry } from '../runtime/index.js';
 import { createBlockDragHandle, blockHandleStopEvent } from '../../editor/plugins/blockDragHandle.js';
 import { computeResizeWidth, applyWidthToContent } from './imageResize.js';
+import { useLightboxStore } from '../../lib/lightboxStore.js';
 
 interface AttachmentPayload {
   hash?: string;
@@ -146,7 +147,22 @@ export function ResizableImage({
   const imgStyle = effectiveWidth != null ? { width: `${effectiveWidth}px` } : undefined;
   return (
     <span className="attachment-image-wrap">
-      <img ref={imgRef} className="attachment-image" src={src} alt={alt} style={imgStyle} draggable={false} />
+      {/* Tap the image → open the full-screen lightbox. preventDefault/stopPropagation keep the tap off PM's
+          caret/atom-selection in the contentEditable NodeView. A resize DRAG fires on the grip (a separate
+          sibling), not the img, so this onClick only runs on a genuine tap on the image. */}
+      <img
+        ref={imgRef}
+        className="attachment-image"
+        src={src}
+        alt={alt}
+        style={imgStyle}
+        draggable={false}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          useLightboxStore.getState().openLightbox(src, alt);
+        }}
+      />
       {resizable && (
         <span
           className="attachment-resize-grip"

@@ -58,6 +58,7 @@
   object-fit: contain;
   border-radius: 10px;
   border: 1px solid var(--border);
+  cursor: zoom-in; /* tap → full-screen lightbox */
 }
 /* Drag-to-resize grip (DEC-0001 salvage) — a subtle bottom-right corner tab, same restraint as the block drag
    handle. Generous touch target (min 44px hit area via padding is overkill inline; 22px is the deliberate size

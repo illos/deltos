@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/react';
 import { computeResizeWidth, applyWidthToContent, MIN_IMAGE_WIDTH } from './imageResize.js';
 import { ResizableImage } from './AttachmentNodeView.js';
+import { useLightboxStore } from '../../lib/lightboxStore.js';
 
 /**
  * Drag-resize for inline images (DEC-0001 salvage). The pointer plumbing lives in the NodeView; the clamp math
@@ -82,5 +83,14 @@ describe('ResizableImage', () => {
     const grip = container.querySelector('.attachment-resize-grip') as HTMLElement;
     fireEvent.doubleClick(grip);
     expect(onCommitWidth).toHaveBeenCalledWith(undefined);
+  });
+
+  it('tapping the image opens the lightbox with its src', () => {
+    useLightboxStore.getState().close(); // clean slate
+    const { container } = render(<ResizableImage src="blob:pic-url" alt="a cat" width={undefined} onCommitWidth={vi.fn()} />);
+    const img = container.querySelector('img.attachment-image') as HTMLImageElement;
+    fireEvent.click(img);
+    expect(useLightboxStore.getState()).toMatchObject({ open: true, src: 'blob:pic-url', alt: 'a cat' });
+    useLightboxStore.getState().close();
   });
 });
