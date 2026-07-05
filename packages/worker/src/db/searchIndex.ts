@@ -1,4 +1,4 @@
-import { bodyJsonToPlainText } from '@deltos/shared';
+import { bodyJsonToPlainText, extractPropsText } from '@deltos/shared';
 import type { DbAdapter, NoteRow } from './schema.js';
 
 /**
@@ -18,9 +18,18 @@ import type { DbAdapter, NoteRow } from './schema.js';
  * for free: whatever the row now holds is what gets indexed.
  */
 
-/** Replace the note's FTS row (delete-then-insert) with fresh title + body-plaintext. */
+/**
+ * Replace the note's FTS row (delete-then-insert) with fresh title + body-plaintext.
+ *
+ * ROAD-0014: the indexed body = the block-derived plaintext PLUS a file note's `sys:extract` page text
+ * (digital-PDF text layer / image OCR), derived at upsert time from the authoritative row's `properties`
+ * JSON — no sidecar table, no migration. So a note whose ONLY searchable content is inside its file (e.g.
+ * a PDF's text) becomes findable by the server FTS engine the moment the extract write-back re-indexes it.
+ */
 export async function upsertNoteFts(db: DbAdapter, row: NoteRow): Promise<void> {
-  const body = bodyJsonToPlainText(row.body);
+  const blockText = bodyJsonToPlainText(row.body);
+  const extractText = extractPropsText(row.properties);
+  const body = extractText ? `${blockText} ${extractText}` : blockText;
   await db.batch([
     { sql: `DELETE FROM notesFts WHERE noteId = ?`, params: [row.id] },
     {

@@ -42,13 +42,16 @@ function Highlight({ text, ranges }: { text: string; ranges: MatchRange[] }) {
 // ---------------------------------------------------------------------------
 
 function ResultRow({ result }: { result: NoteSearchResult }) {
-  const { note, snippet, snippetRanges, titleRanges } = result;
+  const { note, snippet, snippetRanges, titleRanges, page } = result;
   const displayTitle = note.title || 'Untitled';
   const date = formatSmartDate(note.updatedAt);
+  // ROAD-0014: a match found inside a file's extract carries its PDF page → deep-link the peek to that page
+  // (FileNoteView reads ?page and scrolls the reader there) + show a "p. N" badge. Image OCR has no page.
+  const to = page != null ? `/note/${note.id}?page=${page}` : `/note/${note.id}`;
 
   return (
     <li className="search__row">
-      <Link to={`/note/${note.id}`} className="search__row-link">
+      <Link to={to} className="search__row-link">
         <span className="search__row-title">
           <Highlight text={displayTitle} ranges={titleRanges} />
         </span>
@@ -58,6 +61,7 @@ function ResultRow({ result }: { result: NoteSearchResult }) {
               <Highlight text={snippet} ranges={snippetRanges} />
             </span>
           )}
+          {page != null && <span className="search__row-page">p. {page}</span>}
           <span className="search__row-date">{date}</span>
         </span>
       </Link>

@@ -11,6 +11,7 @@
  */
 
 import type { Note } from '@deltos/shared';
+import { getExtract } from '@deltos/shared';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -24,12 +25,49 @@ export interface MatchRange {
 export interface NoteSearchResult {
   note: Note;
   score: number;
-  /** Short excerpt from body around the best match (~100 chars, with ellipsis). */
+  /** Short excerpt around the best match (~100 chars, with ellipsis) — from body OR a file's extract page. */
   snippet: string;
   /** Ranges within `snippet` to highlight. */
   snippetRanges: MatchRange[];
   /** Ranges within `note.title` to highlight. */
   titleRanges: MatchRange[];
+  /**
+   * ROAD-0014: the 1-based PDF PAGE the winning snippet came from, or null when the match is in the note body
+   * or an image OCR extract (no page). Drives the "p. N" result badge + the page-jump deep-link.
+   */
+  page: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Searchable text sources (ROAD-0014)
+// ---------------------------------------------------------------------------
+
+/** One searchable text region of a note: the body (page null) or a file's extract page (PDF page / null). */
+interface TextSource {
+  page: number | null;
+  raw: string;
+  low: string;
+}
+
+/**
+ * The body-plus-extract text sources for a note. Normal notes → just the body (one source, page null).
+ * File notes carrying a `sys:extract` (ROAD-0014) additionally contribute one source PER extract page, so a
+ * match inside a PDF/image maps back to its page for the snippet + badge + jump. Cheap for non-file notes:
+ * `getExtract` is an O(1) key miss (no parse) when there is no extract.
+ */
+function noteSources(note: Note): TextSource[] {
+  const sources: TextSource[] = [];
+  const bodyRaw = noteBodyText(note);
+  sources.push({ page: null, raw: bodyRaw, low: bodyRaw.toLowerCase() });
+
+  const extract = getExtract(note.properties);
+  if (extract) {
+    for (const pg of extract.pages) {
+      if (!pg.t) continue;
+      sources.push({ page: pg.p, raw: pg.t, low: pg.t.toLowerCase() });
+    }
+  }
+  return sources;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,26 +260,42 @@ export function searchNotes(notes: readonly Note[], query: string): NoteSearchRe
 
   for (const note of notes) {
     const titleLow = (note.title ?? '').toLowerCase();
-    const bodyRaw = noteBodyText(note);
-    const bodyLow = bodyRaw.toLowerCase();
+    // Body + (for file notes) each extract page — so a match inside a PDF/image scores + maps to its page.
+    const sources = noteSources(note);
 
     let total = 0;
     let allMatch = true;
+    // Per-source aggregate term score → the source the snippet + page come from (the best-matching region).
+    const sourceAgg = new Array<number>(sources.length).fill(0);
 
     for (const term of terms) {
       const ts = scoreTerm(term, titleLow);
-      const bs = scoreTerm(term, bodyLow);
-      const combined = ts * 3 + bs;
+      let bestBody = 0;
+      for (let si = 0; si < sources.length; si++) {
+        const s = scoreTerm(term, sources[si]!.low);
+        if (s > 0) sourceAgg[si]! += s;
+        if (s > bestBody) bestBody = s;
+      }
+      const combined = ts * 3 + bestBody;
       if (combined === 0) { allMatch = false; break; }
       total += combined;
     }
 
     if (!allMatch || total === 0) continue;
 
-    const titleRanges = highlightRanges(note.title ?? '', terms);
-    const { text: snippet, ranges: snippetRanges } = extractSnippet(bodyRaw, terms);
+    // Pick the winning source: the one with the highest aggregate term score. A title-only match (no source
+    // scored) falls back to the body source (index 0), so the snippet/page behave exactly as before.
+    let bestIdx = 0;
+    let bestAgg = -1;
+    for (let si = 0; si < sources.length; si++) {
+      if (sourceAgg[si]! > bestAgg) { bestAgg = sourceAgg[si]!; bestIdx = si; }
+    }
+    const chosen = sources[bestIdx]!;
 
-    results.push({ note, score: total, snippet, snippetRanges, titleRanges });
+    const titleRanges = highlightRanges(note.title ?? '', terms);
+    const { text: snippet, ranges: snippetRanges } = extractSnippet(chosen.raw, terms);
+
+    results.push({ note, score: total, snippet, snippetRanges, titleRanges, page: chosen.page });
   }
 
   results.sort((a, b) => b.score - a.score);

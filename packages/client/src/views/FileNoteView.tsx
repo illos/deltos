@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, lazy, Suspense } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
 import type { NoteEditorProps } from '../editor/NoteEditor.js';
 import { resolveFileIcon } from '../icons/index.js';
@@ -46,6 +46,10 @@ const LazyPdfReader = lazy(() => import('./pdf/PdfReader.js').then((m) => ({ def
 
 export function FileNoteView({ note, onSave }: NoteEditorProps) {
   const navigate = useNavigate();
+  // ROAD-0014: a search hit inside a PDF deep-links here as `?page=N` → open the reader ON that page.
+  const [searchParams] = useSearchParams();
+  const pageParam = parseInt(searchParams.get('page') ?? '', 10);
+  const initialPage = Number.isFinite(pageParam) && pageParam >= 1 ? pageParam : undefined;
   const att = fileNoteAttachment(note);
   const name = att?.name || note.title || 'File';
   const mime = att?.mime ?? '';
@@ -172,7 +176,7 @@ export function FileNoteView({ note, onSave }: NoteEditorProps) {
         </div>
         <div className="file-view__preview file-view__preview--pdf">
           <Suspense fallback={<div className="pdf-reader__spinner" role="status">Loading reader…</div>}>
-            <LazyPdfReader hash={hash} name={name} onDownload={handleDownload} />
+            <LazyPdfReader hash={hash} name={name} onDownload={handleDownload} initialPage={initialPage} />
           </Suspense>
         </div>
       </div>

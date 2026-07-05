@@ -5,11 +5,13 @@ import {
 } from '@deltos/shared';
 import type { SyncPushResult, NotebookPushResult, DictionaryPushResult, SyncNote, SyncNotebook, SyncDictionaryWord, NoteResponse } from '@deltos/shared';
 import type { Resource } from '@deltos/shared';
+import { needsExtraction, type PropertyBag, type Block } from '@deltos/shared';
 import type { AppEnv } from '../context.js';
-import { guard, apiError } from '../http.js';
+import { guard, type AppContext } from '../http.js';
 import { d1Adapter } from '../db/schema.js';
 import type { NoteRow, NotebookRow, DictionaryWordRow } from '../db/schema.js';
 import { insertNote, updateNote, pullSince } from '../db/mutate.js';
+import { extractForNote } from '../extraction.js';
 import { insertNotebook, renameNotebook, deleteNotebook } from '../db/notebooks.js';
 import { addWord, removeWord } from '../db/dictionary.js';
 import { requireAccountId } from '../db/accountScope.js';
@@ -84,6 +86,37 @@ function notebookConflictRow(row: NotebookRow): NonNullable<Extract<NotebookPush
   };
 }
 
+/**
+ * ROAD-0014: after an accepted note upsert, kick off FILE-CONTENT extraction (digital-PDF text / image OCR)
+ * OUT OF BAND via `waitUntil` so it never fails or slows the push response. Cheap-gated: only file notes with
+ * an extractable, not-yet-extracted attachment schedule work ({@link needsExtraction}); everything else is a
+ * no-op. The extractor re-checks the predicate under a fresh read, so a lost waitUntil is caught by the cron.
+ *
+ * `executionCtx.waitUntil` is unavailable in the unit-test harness (`app.request` without an ExecutionContext)
+ * — there it throws, so we fall back to letting the promise run detached (harmless: test notes aren't file
+ * notes, and the extractor no-ops without BLOBS anyway).
+ */
+function scheduleExtraction(c: AppContext, accountId: string, row: NoteRow): void {
+  if (!c.env.BLOBS) return;
+  let properties: PropertyBag;
+  let body: Block[];
+  try {
+    properties = JSON.parse(row.properties) as PropertyBag;
+    body = JSON.parse(row.body) as Block[];
+  } catch {
+    return;
+  }
+  if (!needsExtraction({ properties, body })) return;
+  const task = extractForNote(c.env, accountId, row.id).catch((err) =>
+    console.error(`extraction: waitUntil failed for note ${row.id}`, err),
+  );
+  try {
+    c.executionCtx.waitUntil(task);
+  } catch {
+    void task;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/sync/push  (PIN-SYNC-1)
 // ---------------------------------------------------------------------------
@@ -142,6 +175,7 @@ sync.post(
           const outcome = await insertNote(db, { ...entry, notebookId }, accountId, now);
           if (outcome.outcome === 'accepted') {
             results.push({ id: entry.id, outcome: 'accepted', version: outcome.version, syncSeq: outcome.syncSeq });
+            scheduleExtraction(c, accountId, outcome.row);
           } else {
             results.push({ id: entry.id, outcome: 'conflict', serverNote: null });
           }
@@ -149,6 +183,7 @@ sync.post(
           const outcome = await updateNote(db, entry, accountId, now);
           if (outcome.outcome === 'accepted') {
             results.push({ id: entry.id, outcome: 'accepted', version: outcome.version, syncSeq: outcome.syncSeq });
+            scheduleExtraction(c, accountId, outcome.row);
           } else {
             const serverNote = outcome.serverRow ? rowToResponse(outcome.serverRow) : null;
             results.push({ id: entry.id, outcome: 'conflict', serverNote });

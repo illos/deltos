@@ -44,6 +44,11 @@ interface PdfReaderProps {
   name: string;
   /** Rendered when the engine can't open the PDF (offline/parse-fail) — the icon + Download fallback. */
   onDownload: () => void;
+  /**
+   * ROAD-0014: 1-based page to scroll to once on open (a search hit inside the PDF deep-links here). Applied
+   * a single time after the doc opens + that page's layout offset is known; manual scrolling afterwards wins.
+   */
+  initialPage?: number | undefined;
 }
 
 // How many CSS px above/below the viewport count as "in window" (the ±1–2 page buffer, §4.2). Generous so a
@@ -61,7 +66,7 @@ const THUMB_CSS_WIDTH = 108;
 const THUMB_GAP_PX = 10;
 const THUMB_WINDOW_BUFFER_PX = 600;
 
-export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
+export function PdfReader({ hash, name, onDownload, initialPage }: PdfReaderProps) {
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading');
   // A short, human-readable diagnostic of WHY the open failed (temporary instrument): distinguishes a byte-fetch
   // failure (status / bearer / offline) from a pdf.js open/parse failure (error name + which cache tier the bytes
@@ -92,6 +97,8 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
   }, [isDesktop]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // ROAD-0014: fire the one-time initial-page jump at most once per opened doc.
+  const didInitialJump = useRef(false);
 
   // Bearer-retry on the FIRST cold open (mirrors AttachmentNodeView). The reader is local-first: on a
   // cold/evicted mobile return it can mount BEFORE auth rehydrates, so a never-cached PDF's first blob GET
@@ -126,6 +133,7 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
     setQuery('');
     setActiveMatch(0);
     pageTextInflight.current.clear();
+    didInitialJump.current = false;
 
     (async () => {
       // Two distinct failure modes, each with its own ground-truth diagnostic (gate PDF-2):
@@ -283,6 +291,20 @@ export function PdfReader({ hash, name, onDownload }: PdfReaderProps) {
     },
     [opened, layout, recomputeWindow],
   );
+
+  // ROAD-0014: one-time deep-link jump to `initialPage` (a search hit inside this PDF). Waits until the doc
+  // is open, the fit-width is known, AND that page's offset is exact (its dims measured) — or the whole
+  // layout has settled — so we land accurately. Fires once per opened doc; user scrolling afterwards wins.
+  useEffect(() => {
+    if (didInitialJump.current) return;
+    if (!opened || !initialPage || initialPage < 1) return;
+    if (!targetWidth) return;
+    const measured = dims[initialPage - 1] != null;
+    const settled = dims.length > 0 && dims.every((d) => d != null);
+    if (!measured && !settled) return;
+    didInitialJump.current = true;
+    scrollToPage(initialPage);
+  }, [opened, initialPage, targetWidth, dims, scrollToPage]);
 
   // ===================== Slice 3: text extraction + the match index (§5.2) =====================
   // Latest-value refs so the extraction/jump callbacks stay stable (no churn) while reading fresh state.

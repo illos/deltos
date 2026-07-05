@@ -1022,6 +1022,18 @@
   flex-shrink: 0;
 }
 
+/* ROAD-0014: page badge on a search hit that came from inside a PDF (e.g. "p. 12"). */
+.search__row-page {
+  font-size: 0.7rem;
+  color: var(--secondary);
+  flex-shrink: 0;
+  padding: 0 0.35rem;
+  border: 1px solid var(--border, var(--secondary));
+  border-radius: 999px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
 .search__mark {
   background: rgba(255, 210, 0, 0.25);
   color: inherit;

@@ -38,6 +38,7 @@ import { auditRoutes } from './routes/audit.js';
 import { mcp } from './routes/mcp.js';
 import { oauth, oauthWellKnown, oauthConsentSurface } from './routes/oauth.js';
 import { createAuthStore } from './db/authStore.js';
+import { sweepExtractions } from './extraction.js';
 import {
   AUDIT_LOG_RETENTION_DAYS,
   USAGE_COUNTER_RETENTION_DAYS,
@@ -429,9 +430,16 @@ async function pruneRetention(env: Env): Promise<void> {
 const worker = app as typeof app & {
   scheduled: (controller: ScheduledController, env: Env, ctx: ExecutionContext) => void;
 };
-/** Cron entrypoint (wrangler.jsonc `triggers.crons`) — fire-and-forget the retention prune (P4 Tier 3). */
+/**
+ * Cron entrypoint (wrangler.jsonc `triggers.crons`, daily 04:00 UTC) — fire-and-forget two INDEPENDENT
+ * fire-and-forget tasks (a failure in one must never block the other):
+ *   1. the retention prune (ROAD-0005 P4 Tier 3);
+ *   2. the file-content extraction backfill/sweep (ROAD-0014) — a bounded batch of file notes needing
+ *      digital-PDF text / image OCR, backfilling existing uploads + catching any missed push waitUntil.
+ */
 worker.scheduled = (_controller, env, ctx) => {
   ctx.waitUntil(pruneRetention(env));
+  ctx.waitUntil(sweepExtractions(env).catch((err) => console.error('extraction sweep failed (non-fatal)', err)));
 };
 
 export default worker;
