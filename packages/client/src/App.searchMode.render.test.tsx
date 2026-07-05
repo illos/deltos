@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, fireEvent, act, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
 
 /**
@@ -20,8 +20,10 @@ import type { Note } from '@deltos/shared';
  * structural contract (context flip + which loadout renders + the list⇄results swap).
  */
 
-// Mobile shell → in-place search is active (desktop keeps the /search route).
-vi.mock('./lib/useIsDesktop.js', () => ({ useIsDesktop: () => false }));
+// Device class is per-test controllable: mobile (in-place search-mode ceremony) vs desktop (always-live
+// field, results in the list pane — no /search route hop).
+const desktop = vi.hoisted(() => ({ value: false }));
+vi.mock('./lib/useIsDesktop.js', () => ({ useIsDesktop: () => desktop.value }));
 // Keypad mode is per-test controllable (keypad path vs native fallback).
 const kp = vi.hoisted(() => ({ value: true }));
 vi.mock('./lib/useKeypadMode.js', () => ({ useKeypadMode: () => kp.value }));
@@ -75,6 +77,23 @@ function mountHome() {
   return utils.container;
 }
 
+// Surfaces the current router path so a desktop search can assert it NEVER routes to /search.
+function LocationProbe() {
+  const loc = useLocation();
+  return <div data-testid="loc" data-path={loc.pathname} />;
+}
+function mountHomeDesktop() {
+  const utils = render(
+    <MemoryRouter>
+      <DeckHostProvider enabled>
+        <HomeView notebookId={null} />
+        <LocationProbe />
+      </DeckHostProvider>
+    </MemoryRouter>,
+  );
+  return utils.container;
+}
+
 function fakeNote(id: string): Note {
   const now = Date.now();
   return {
@@ -93,6 +112,7 @@ const deck = (c: HTMLElement) => c.querySelector('.deck') as HTMLElement;
 
 beforeEach(() => {
   kp.value = true;
+  desktop.value = false;
   notesRef.current = [fakeNote('a'), fakeNote('b')];
   useSearchModeStore.setState({ open: false });
 });
@@ -202,5 +222,44 @@ describe('HomeView in-place search — native fallback (keypad mode off)', () =>
     fireEvent.change(input, { target: { value: '' } });
     await waitFor(() => expect(c.querySelector('.home__notes')).not.toBeNull());
     expect(c.querySelector('.search__body')).toBeNull();
+  });
+});
+
+describe('HomeView search — desktop (in-place in the list pane, no /search hop)', () => {
+  // Desktop = no keypad (native input), no open ceremony (the field is always live).
+  beforeEach(() => { desktop.value = true; kp.value = false; });
+
+  it('renders a live input immediately — not the navigate-pill — with the list still shown', () => {
+    const c = mountHomeDesktop();
+    expect(c.querySelector('.home__search-input')).not.toBeNull();    // always-live field
+    expect(c.querySelector('.home__search-placeholder')).toBeNull();  // NOT the pill/button that routed away
+    expect(c.querySelector('.home__notes')).not.toBeNull();           // list shown until a query is typed
+    expect(c.querySelector('[data-testid="loc"]')?.getAttribute('data-path')).toBe('/');
+  });
+
+  it('typing shows results IN PLACE (the list pane) and never navigates to /search', async () => {
+    const c = mountHomeDesktop();
+    const input = c.querySelector('.home__search-input') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'gro' } });
+
+    await waitFor(() => expect(c.querySelector('.search__body')).not.toBeNull());
+    expect(c.querySelector('.home__notes')).toBeNull();               // list swapped for results, in place
+    // The whole point: results render here, the router NEVER left "/" for the right-pane /search route.
+    expect(c.querySelector('[data-testid="loc"]')?.getAttribute('data-path')).toBe('/');
+  });
+
+  it('the ✕ clears the query and restores the list; the field stays live (no closed state)', async () => {
+    const c = mountHomeDesktop();
+    const input = c.querySelector('.home__search-input') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'gro' } });
+    await waitFor(() => expect(c.querySelector('.search__body')).not.toBeNull());
+
+    const clear = c.querySelector('.home__search-close') as HTMLElement;
+    expect(clear).not.toBeNull();
+    fireEvent.click(clear);
+
+    await waitFor(() => expect(c.querySelector('.home__notes')).not.toBeNull());
+    expect(c.querySelector('.search__body')).toBeNull();
+    expect(c.querySelector('.home__search-input')).not.toBeNull();    // field remains (desktop has no "closed" pill)
   });
 });

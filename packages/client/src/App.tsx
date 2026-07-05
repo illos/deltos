@@ -191,7 +191,6 @@ export function HomeView({ notebookId }: CollectionViewProps) {
   // HomeView renders OUTSIDE the note Route (useMatch reads the current location anywhere).
   const noteMatch = useMatch('/note/:id');
   const openNoteId = noteMatch?.params.id ?? null;
-  const navigate = useNavigate();
   // Single-open invariant: only one swipe row open at a time
   const [openId, setOpenId] = useState<string | null>(null);
   // #78 swipe-to-move: the note whose notebook-picker sheet is open (null = closed).
@@ -235,17 +234,22 @@ export function HomeView({ notebookId }: CollectionViewProps) {
     mutateNotes.duplicate(note).then(() => showToast('Duplicated')).catch(console.error);
   }, []);
 
-  // ── In-place search (mobile) ────────────────────────────────────────────────────────────────────
+  // ── In-place search ─────────────────────────────────────────────────────────────────────────────
   // Search is a mode over THIS list, not a route: the list stays put until the first character, then
-  // swaps for results. Desktop is untouched — it keeps the full-screen /search route (the pill below
-  // still navigates there when isDesktop). Entry on mobile: the Deck nav Search slot (shared store flag)
-  // or the pill. In keypad mode the field is inputMode=none and the Deck flips to a keys-only 'search'
-  // loadout; in native mode it's a plain inputMode=search field (cheap fallback, no Deck publish).
+  // swaps for results RIGHT HERE (the middle list pane on desktop, the single column on mobile) — never
+  // the right note pane. MOBILE: entry via the Deck nav Search slot (shared store flag) or the pill; the
+  // pill morphs into the live field on open. In keypad mode the field is inputMode=none and the Deck flips
+  // to a keys-only 'search' loadout; in native mode it's a plain inputMode=search field (no Deck publish).
+  // DESKTOP: no open ceremony — the field is ALWAYS a live input (mouse+keyboard), so results render in
+  // place in the list pane instead of the old (wrong) navigate('/search') into the right note region.
   const keypadMode = useKeypadMode();
   const { publishEditor } = useDeckHost();
   const searchOpen = useSearchModeStore((s) => s.open);
   const setSearchOpen = useSearchModeStore((s) => s.setOpen);
+  // inPlaceSearch = the MOBILE search-mode flag (drives the Deck publish + focus-on-open). liveSearch =
+  // "render the real input + let a non-empty query show results" — always on for desktop, flag-gated on mobile.
   const inPlaceSearch = searchOpen && !isDesktop;
+  const liveSearch = inPlaceSearch || isDesktop;
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -264,6 +268,9 @@ export function HomeView({ notebookId }: CollectionViewProps) {
     const raf = requestAnimationFrame(() => searchInputRef.current?.focus());
     return () => cancelAnimationFrame(raf);
   }, [inPlaceSearch]);
+  // Clear the query when the notebook changes so a lingering desktop search doesn't mask a notebook switch
+  // (desktop keeps the field live across notebook clicks; without this the stale results would hide the list).
+  useEffect(() => { setQuery(''); }, [notebookId]);
   // Publish the keys-only 'search' loadout to the Deck while in-place search is open in KEYPAD mode;
   // withdraw (→ nav context) on close/unmount. Native mode summons the OS keyboard instead (no publish).
   useEffect(() => {
@@ -279,7 +286,7 @@ export function HomeView({ notebookId }: CollectionViewProps) {
   useEffect(() => () => { setSearchOpen(false); }, [setSearchOpen]);
   const closeSearch = useCallback(() => { setSearchOpen(false); setQuery(''); }, [setSearchOpen]);
   // The list swaps for results on the first character (still in search mode when cleared → list returns).
-  const showResults = inPlaceSearch && query.trim().length > 0;
+  const showResults = liveSearch && query.trim().length > 0;
 
   return (
     <div className={`home${fileDragOver ? ' home--file-drag' : ''}${inPlaceSearch ? ' home--searching' : ''}`} {...fileDropProps}>
@@ -305,11 +312,11 @@ export function HomeView({ notebookId }: CollectionViewProps) {
         </Link>
       </header>
 
-      {/* §2 search field. Desktop: a pill that opens the full-screen /search route (unchanged). Mobile:
-          the pill enters in-place search mode and — while open — morphs into a live input right here; the
+      {/* §2 search field. Desktop: ALWAYS a live input — results render in place in this (list) pane. Mobile:
+          a pill that enters in-place search mode and, while open, morphs into the live input right here; the
           note list below stays put until the first character is typed. */}
       <div className="home__search">
-        {inPlaceSearch ? (
+        {liveSearch ? (
           <div className="home__search-field home__search-field--active">
             <Search className="home__search-icon" size={15} />
             <input
@@ -327,15 +334,20 @@ export function HomeView({ notebookId }: CollectionViewProps) {
               spellCheck={false}
               aria-label="Search notes"
             />
-            <button className="home__search-close" aria-label="Close search" onClick={closeSearch}>
-              ✕
-            </button>
+            {/* ✕ — mobile: exit search mode (back to the pill). Desktop: clear the query (the field stays,
+                since there is no "closed" state), only shown when there's something to clear. */}
+            {(inPlaceSearch || query) && (
+              <button
+                className="home__search-close"
+                aria-label={isDesktop ? 'Clear search' : 'Close search'}
+                onClick={isDesktop ? () => { setQuery(''); searchInputRef.current?.focus(); } : closeSearch}
+              >
+                ✕
+              </button>
+            )}
           </div>
         ) : (
-          <button
-            className="home__search-field"
-            onClick={() => (isDesktop ? navigate('/search') : setSearchOpen(true))}
-          >
+          <button className="home__search-field" onClick={() => setSearchOpen(true)}>
             <Search className="home__search-icon" size={15} />
             <span className="home__search-placeholder">Search</span>
           </button>
