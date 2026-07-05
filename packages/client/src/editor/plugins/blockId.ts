@@ -67,6 +67,42 @@ function isManaged(node: PmNode, parent: PmNode | null): boolean {
   return true;
 }
 
+/**
+ * ORPHANED render-only id: a managed node still carrying a synthetic wrapper id (`…~w` / `…~q` / `…~empty`)
+ * that spineToPmDoc mints for a plugin-atom wrapper paragraph, a blockquote's first paragraph, or an empty
+ * list's fallback item — but whose wrapper STRUCTURE is gone (its atom / blockquote / list was deleted, or the
+ * node gained siblings/content). pmDocToSpine re-mints such an id at the PERSIST boundary (sanitizeBlockIds),
+ * so if the LIVE doc keeps it, the saved spine's id diverges from the live doc's → the #90 reconcile echo-guard
+ * (`incoming.eq(doc)`) fails → a full-doc replace with addToHistory:false WIPES the undo stack. That is the
+ * delete-an-image-then-undo regression: deleting the inline atom leaves its `${atomId}~w` wrapper paragraph
+ * behind, empty, still bearing the synthetic id. Stripping it here routes it to Step 3, which re-mints a clean
+ * UUID in the LIVE doc → live == persisted → the guard short-circuits → history survives.
+ *
+ * Real UUIDs never contain `~`, so a `~` is an unambiguous synthetic marker. A STILL-VALID wrapper is matched
+ * by STRUCTURE (not id-equality) so a paste-re-minted atom can't falsely orphan its own wrapper.
+ */
+function isOrphanedRenderOnlyId(node: PmNode, parent: PmNode | null, index: number): boolean {
+  const id = node.attrs.id;
+  if (typeof id !== 'string' || !id.includes('~')) return false; // clean UUID (or null) → not synthetic
+  if (id.endsWith('~w')) {
+    // valid: a paragraph wrapping exactly one inline plugin_block atom (spineToPmDoc's isolated-atom wrapper)
+    return !(node.type.name === 'paragraph' && node.childCount === 1 && node.firstChild?.type.name === 'plugin_block');
+  }
+  if (id.endsWith('~q')) {
+    // valid: the FIRST paragraph inside a blockquote (render-only; its id is derived, never persisted)
+    return !(node.type.name === 'paragraph' && parent?.type.name === 'blockquote' && index === 0);
+  }
+  if (id.endsWith('~empty')) {
+    // valid: the sole list_item of an (otherwise empty) list — the empty-list fallback item
+    return !(
+      node.type.name === 'list_item' &&
+      (parent?.type.name === 'bullet_list' || parent?.type.name === 'ordered_list') &&
+      parent.childCount === 1
+    );
+  }
+  return true; // a `~`-bearing managed id with no recognised suffix is malformed → re-mint a clean one
+}
+
 export const uniqueBlockIdPlugin = new Plugin({
   appendTransaction(transactions, oldState, newState) {
     const docChanged = transactions.some((tr) => tr.docChanged);
@@ -96,7 +132,7 @@ export const uniqueBlockIdPlugin = new Plugin({
     const idToPositions = new Map<string, number[]>();
     const nullPositions: number[] = [];
     const strayIdPositions: number[] = []; // unmanaged (list-inner) nodes that carry a stray id → null it out
-    newState.doc.descendants((node, pos, parent) => {
+    newState.doc.descendants((node, pos, parent, index) => {
       if (!isManaged(node, parent)) {
         // List-inner nodes must stay id-less so spineToPmDoc round-trips deterministically. (The title is also
         // unmanaged but is intentionally left untouched — see isManaged.)
@@ -105,6 +141,12 @@ export const uniqueBlockIdPlugin = new Plugin({
       }
       const id = node.attrs.id as string | null;
       if (!id) {
+        nullPositions.push(pos);
+      } else if (isOrphanedRenderOnlyId(node, parent, index)) {
+        // A synthetic wrapper id left behind after its atom/quote/list was deleted (e.g. deleting an inline
+        // image orphans its `${atomId}~w` paragraph). Route it to Step 3 like a null id → a clean UUID is
+        // minted in the LIVE doc so it matches what pmDocToSpine persists, keeping the #90 reconcile guard
+        // from replacing the doc and wiping undo. See isOrphanedRenderOnlyId.
         nullPositions.push(pos);
       } else {
         const arr = idToPositions.get(id);

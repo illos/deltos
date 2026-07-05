@@ -183,6 +183,60 @@ describe('undo survives for a list item added during the session', () => {
   });
 });
 
+// ── 3c. UNDO survives DELETING an inline plugin atom (the orphaned-`~w`-wrapper regression) ──
+// Deleting an inline image leaves its `${atomId}~w` wrapper paragraph behind — empty, still bearing the
+// synthetic id. pmDocToSpine re-mints that id at the persist boundary but the live doc kept it, so the #90
+// echo-guard's incoming.eq(doc) failed → a full-doc replace wiped the undo stack → the image never came back.
+// The blockId plugin now re-mints an orphaned synthetic id to a clean UUID in the LIVE doc so live == persisted.
+describe('undo survives deleting an inline plugin atom (delete-an-image regression)', () => {
+  function findAtom(state: EditorState): { pos: number; node: PMNode } {
+    let found: { pos: number; node: PMNode } | null = null;
+    state.doc.descendants((n, pos) => {
+      if (!found && n.type.name === 'plugin_block') found = { pos, node: n };
+    });
+    if (!found) throw new Error('fixture has no plugin_block atom');
+    return found;
+  }
+  function countAtoms(state: EditorState): number {
+    let n = 0;
+    state.doc.descendants((node) => { if (node.type.name === 'plugin_block') n++; });
+    return n;
+  }
+
+  it('delete the atom → the orphaned wrapper is re-minted to a clean uuid in the LIVE doc', () => {
+    let state = mkState(spineToPmDoc(deltoSchema, PLUGIN, 'Title'));
+    const { pos, node } = findAtom(state);
+    state = state.apply(state.tr.delete(pos, pos + node.nodeSize)); // blockId appendTransaction re-mints the wrapper
+    // The empty wrapper paragraph must no longer carry a synthetic `~w` id (real uuids never contain `~`).
+    const liveIds: string[] = [];
+    state.doc.forEach((n, _o, i) => {
+      if (i === 0 && n.type.name === 'title') return;
+      if (typeof n.attrs.id === 'string') liveIds.push(n.attrs.id);
+    });
+    expect(liveIds.length).toBeGreaterThan(0);
+    expect(liveIds.some((id) => id.includes('~'))).toBe(false);
+  });
+
+  it('delete the atom → the reconcile echo-guard still short-circuits (history NOT wiped)', () => {
+    let state = mkState(spineToPmDoc(deltoSchema, PLUGIN, 'Title'));
+    const { pos, node } = findAtom(state);
+    state = state.apply(state.tr.delete(pos, pos + node.nodeSize));
+    const { replaced } = reconcileEcho(state);
+    expect(replaced).toBe(false);
+  });
+
+  it('delete the atom → reconcile → undo brings the atom back', () => {
+    let state = mkState(spineToPmDoc(deltoSchema, PLUGIN, 'Title'));
+    const { pos, node } = findAtom(state);
+    expect(countAtoms(state)).toBe(1);
+    state = state.apply(state.tr.delete(pos, pos + node.nodeSize));
+    expect(countAtoms(state)).toBe(0);
+    state = reconcileEcho(state).state; // the 400ms autosave echo fires the reconcile
+    state = applyCmd(state, undo);       // undo MUST restore the atom (history survived)
+    expect(countAtoms(state)).toBe(1);
+  });
+});
+
 // ── 4. ROUND-TRIP: the stored spine is unchanged ─────────────────────────────────
 describe('round-trip: pmDocToSpine(spineToPmDoc(spine)) deep-equals the spine', () => {
   for (const [name, spine] of FIXTURES) {
