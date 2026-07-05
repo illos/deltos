@@ -4,7 +4,6 @@ import type { Note } from '@deltos/shared';
 import type { NoteEditorProps } from '../editor/NoteEditor.js';
 import { resolveFileIcon } from '../icons/index.js';
 import { fileNoteAttachment, formatFileSize } from '../plugins/attachment/attachmentBlock.js';
-import { formatSmartDate } from '../lib/notePreview.js';
 import { mutateNotes } from '../db/mutate.js';
 import { showActionToast } from '../lib/toastEvents.js';
 
@@ -151,14 +150,9 @@ export function FileNoteView({ note, onSave }: NoteEditorProps) {
     </div>
   );
 
-  const metadata = (
-    <dl className="file-view__metadata">
-      <div className="file-view__meta-row"><dt>Filename</dt><dd>{name}</dd></div>
-      <div className="file-view__meta-row"><dt>Type</dt><dd>{mime || 'unknown'}</dd></div>
-      <div className="file-view__meta-row"><dt>Size</dt><dd>{att ? formatFileSize(att.size) : '—'}</dd></div>
-      <div className="file-view__meta-row"><dt>Edited</dt><dd>{formatSmartDate(note.updatedAt)}</dd></div>
-    </dl>
-  );
+  // File metadata (Filename / Type / Size / Edited) moved OUT of the inline view into the per-note Info (ⓘ)
+  // panel (InfoPanel.tsx) — the file view keeps only its primary open/preview + download/rename/delete
+  // actions. The header sub-line still carries a compact type · size glance.
 
   // PDF layout (file-note preview rev, Jim): the reader is the DOMINANT surface — it escapes the 680 column
   // and flex-fills the full note-pane width + all remaining height below the meta bar, with its OWN internal
@@ -172,7 +166,6 @@ export function FileNoteView({ note, onSave }: NoteEditorProps) {
         <div className="file-view__inner">
           {header}
           {actions}
-          {metadata}
         </div>
         <div className="file-view__preview file-view__preview--pdf">
           <Suspense fallback={<div className="pdf-reader__spinner" role="status">Loading reader…</div>}>
@@ -204,7 +197,6 @@ export function FileNoteView({ note, onSave }: NoteEditorProps) {
           )}
         </div>
         {actions}
-        {metadata}
       </div>
     </div>
   );

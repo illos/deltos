@@ -13,6 +13,7 @@ import { NoteEditor } from '../editor/NoteEditor.js';
 import { resolveNoteView } from '../editor/views.js';
 import { ConflictView } from '../components/ConflictView.js';
 import { HistoryPanel } from '../components/HistoryPanel.js';
+import { InfoPanel } from '../components/InfoPanel.js';
 import { NoteMetaBar } from '../components/NoteMetaBar.js';
 import { useNoteVersions } from '../db/conflict.js';
 import { Collapse } from '../icons/index.js';
@@ -53,6 +54,9 @@ export function NoteRoute({ variant = 'regular' }: NoteRouteProps = {}) {
   // Paths that set it: badge-tap (ConflictBadgeSlot) and back-with-conflict (← Notes below).
   const isResolving = searchParams.has('resolve');
   const [showHistory, setShowHistory] = useState(false);
+  // Per-note Info panel — parallel to showHistory. Desktop opens via the meta-bar ⓘ button (showInfo);
+  // mobile opens via the shell bar's ⓘ (the ?info URL param, mirroring ?history).
+  const [showInfo, setShowInfo] = useState(false);
   const navigate = useNavigate();
   // Desktop-only note-delete trashcan lives in the §3 meta row (mobile keeps swipe-to-delete).
   const isDesktop = useIsDesktop();
@@ -192,6 +196,25 @@ export function NoteRoute({ variant = 'regular' }: NoteRouteProps = {}) {
     );
   }
 
+  // Info panel — full-screen overlay, parallel to History. Opened by the desktop meta-bar ⓘ (showInfo)
+  // OR, on mobile, the global shell bar's Info button via the ?info URL param.
+  if (showInfo || searchParams.has('info')) {
+    return (
+      <InfoPanel
+        note={note}
+        onSave={handleSave}
+        onBack={() => {
+          setShowInfo(false);
+          if (searchParams.has('info')) {
+            const next = new URLSearchParams(searchParams);
+            next.delete('info');
+            setSearchParams(next, { replace: true });
+          }
+        }}
+      />
+    );
+  }
+
   // Conflict resolution view — only when explicitly requested via ?resolve.
   if (isResolving) {
     // Conflict was just resolved (hasConflict cleared): drop ?resolve and show the editor.
@@ -222,6 +245,7 @@ export function NoteRoute({ variant = 'regular' }: NoteRouteProps = {}) {
           noteId={note.id}
           isFull={isFull}
           onShowHistory={() => setShowHistory(true)}
+          onShowInfo={() => setShowInfo(true)}
           onDelete={handleDeleteNote}
         />
       )}

@@ -49,7 +49,7 @@ import { resolveCollectionView } from './lib/collectionViews.js';
 import type { CollectionViewProps } from './lib/collectionViews.js';
 import { useNotebookStore } from './lib/notebookStore.js';
 import { notePreview, formatSmartDate } from './lib/notePreview.js';
-import { ComposeNew, Search, Ellipsis, VersionHistory } from './icons/index.js';
+import { ComposeNew, Search, Ellipsis, VersionHistory, Info } from './icons/index.js';
 import { SyncIndicator } from './components/SyncIndicator.js';
 import { SessionStatus } from './components/SessionStatus.js';
 import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
@@ -651,6 +651,17 @@ export function AuthedShell() {
               aria-label="Version history"
             >
               <VersionHistory size={20} />
+            </button>
+          )}
+          {/* Per-note Info (ⓘ) — mobile counterpart of the desktop meta-bar button. Sets ?info on the
+              current /note/:id URL; NoteRoute opens its InfoPanel on that param (mirrors ?history). */}
+          {onNoteRoute && (
+            <button
+              className="shell__nav-btn shell__nav-btn--mobile-only"
+              onClick={() => navigate(`${location.pathname}?info`)}
+              aria-label="Note info"
+            >
+              <Info size={20} />
             </button>
           )}
           {/* "…" contextual-options button — mobile-only (stays visible in body.deck-custom). Opens the

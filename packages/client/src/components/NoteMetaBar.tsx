@@ -1,7 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import type { NoteId } from '@deltos/shared';
 import { SyncIndicator } from './SyncIndicator.js';
-import { VersionHistory, Trash, Expand, Collapse, PopOut } from '../icons/index.js';
+import { VersionHistory, Info, Trash, Expand, Collapse, PopOut } from '../icons/index.js';
 
 /**
  * The §3 note meta toolbar — the DESKTOP-ONLY row of note controls (#82): sync indicator + version-history +
@@ -22,11 +22,13 @@ export interface NoteMetaBarProps {
   isFull: boolean;
   /** Open the version-history panel (NoteRoute owns the `showHistory` state). */
   onShowHistory: () => void;
+  /** Open the per-note info panel (NoteRoute owns the `showInfo` state). */
+  onShowInfo: () => void;
   /** Soft-delete → Trash (NoteRoute owns the recoverable delete + Undo toast). */
   onDelete: () => void;
 }
 
-export function NoteMetaBar({ noteId, isFull, onShowHistory, onDelete }: NoteMetaBarProps) {
+export function NoteMetaBar({ noteId, isFull, onShowHistory, onShowInfo, onDelete }: NoteMetaBarProps) {
   const navigate = useNavigate();
   return (
     <header className="editor__meta">
@@ -35,6 +37,10 @@ export function NoteMetaBar({ noteId, isFull, onShowHistory, onDelete }: NoteMet
         <SyncIndicator />
         <button className="editor__meta-btn" onClick={onShowHistory} aria-label="Version history">
           <VersionHistory size={18} />
+        </button>
+        {/* Per-note info (ⓘ) — sits beside history; opens the full-screen InfoPanel. */}
+        <button className="editor__meta-btn" onClick={onShowInfo} aria-label="Note info">
+          <Info size={18} />
         </button>
         {/* Desktop delete trashcan, next to history. Soft-delete → Trash, recoverable. */}
         <button className="editor__meta-btn" onClick={onDelete} aria-label="Delete note">

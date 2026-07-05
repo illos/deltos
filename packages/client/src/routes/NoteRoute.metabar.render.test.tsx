@@ -20,7 +20,7 @@ import { useAuthStore } from '../auth/store.js';
 // Mutable render state, hoisted so the mocks below can read it and each test can flip it.
 const state = vi.hoisted(() => ({ note: null as unknown, versions: [] as unknown[], desktop: true }));
 
-vi.mock('../db/storeHooks.js', () => ({ useNote: () => state.note }));
+vi.mock('../db/storeHooks.js', () => ({ useNote: () => state.note, useNotebooks: () => [] }));
 vi.mock('../db/conflict.js', () => ({ useNoteVersions: () => state.versions }));
 vi.mock('../lib/useIsDesktop.js', () => ({ useIsDesktop: () => state.desktop }));
 vi.mock('../db/mutate.js', () => ({
@@ -86,11 +86,22 @@ describe('NoteRoute meta bar — file notes get the same bar', () => {
     expect(container.querySelector('.editor__meta')).not.toBeNull();
     expect(screen.getByTestId('sync-indicator')).not.toBeNull();
     expect(screen.getByLabelText('Version history')).not.toBeNull();
+    expect(screen.getByLabelText('Note info')).not.toBeNull();
     expect(screen.getByLabelText('Delete note')).not.toBeNull();
     expect(screen.getByLabelText('Full screen')).not.toBeNull();
     expect(screen.getByLabelText('Pop out')).not.toBeNull();
     // The resolved file view renders below the bar.
     expect(screen.getByTestId('resolved-view')).not.toBeNull();
+  });
+
+  it('Info button opens the full-screen InfoPanel (Created row present)', () => {
+    state.note = fileNote();
+    mount();
+    fireEvent.click(screen.getByLabelText('Note info'));
+    // The panel header + the common "Created" row render; the resolved view is swapped out.
+    expect(screen.getByRole('heading', { name: 'Info' })).not.toBeNull();
+    expect(screen.getByText('Created')).not.toBeNull();
+    expect(screen.queryByTestId('resolved-view')).toBeNull();
   });
 
   it('History opens to a sane EMPTY state for a file note (no versions → "No earlier versions", no crash)', () => {

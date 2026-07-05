@@ -68,10 +68,10 @@ describe('FileNoteView — PDF preview rev layout', () => {
     expect(preview!.parentElement).toBe(root);
     expect(inner!.contains(preview)).toBe(false);
 
-    // Header + actions + metadata stay in the centered column.
+    // Header + actions stay in the centered column. (File metadata moved to the Info panel — no longer inline.)
     expect(inner!.querySelector('.file-view__header')).not.toBeNull();
     expect(inner!.querySelector('.file-view__actions')).not.toBeNull();
-    expect(inner!.querySelector('.file-view__metadata')).not.toBeNull();
+    expect(inner!.querySelector('.file-view__metadata')).toBeNull();
 
     // The lazy reader resolves inside the preview.
     expect(await screen.findByTestId('pdf-reader')).not.toBeNull();
@@ -89,6 +89,7 @@ describe('FileNoteView — PDF preview rev layout', () => {
     expect(preview).not.toBeNull();
     expect(preview!.classList.contains('file-view__preview--pdf')).toBe(false);
     expect(inner!.querySelector('.file-view__actions')).not.toBeNull();
-    expect(inner!.querySelector('.file-view__metadata')).not.toBeNull();
+    // File metadata moved to the Info panel — the inline dl is gone from the file view.
+    expect(inner!.querySelector('.file-view__metadata')).toBeNull();
   });
 });
