@@ -1,12 +1,25 @@
-import type { FormulaType, FormulaOutput } from '../formula/formulaTypes.js';
+import type { FormulaType } from '../formula/formulaTypes.js';
+import { evaluateNumeric, numericRenderOutput, type NumericFormula } from '../formula/numericFormula.js';
 import { evaluate as evalMath, detectTrailingExpression } from './mathEngine.js';
 
 /**
  * The MATH formula type (docs/specs/inline-formulas.md §3) — the first consumer of the inline-formula
- * framework. Wraps the existing safe arithmetic engine (src/plugins/math/mathEngine.ts, no eval). Output
- * kind = STATIC DERIVED value: recomputes when the spec is edited; div0/malformed → a subtle '= ?'. No
- * state (the `state` slot is for interactive types like dice).
+ * framework, now on the shared NUMERIC substrate (numericFormula.ts): its compute core is the safe
+ * arithmetic engine (src/plugins/math/mathEngine.ts, no eval), its canonical unit is the bare number, and
+ * its display is the plain decimal. Output kind = STATIC DERIVED value: recomputes when the spec is edited;
+ * div0/malformed → a subtle '= ?'. No state (the `state` slot is for interactive types like dice).
  */
+
+/** Math's numeric core: expression → scalar (canonical unit = the number itself), formatted as decimal.
+ *  References (`env`) arrive with the reactive engine; the arithmetic grammar itself has none yet. */
+export const mathNumeric: NumericFormula = {
+  toNumber: (spec, _env) => {
+    const r = evalMath(spec);
+    return r.ok ? r.value : null;
+  },
+  format: (value) => String(value),
+};
+
 export const mathType: FormulaType = {
   id: 'math',
 
@@ -24,27 +37,8 @@ export const mathType: FormulaType = {
     return detectTrailingExpression(trimmed) === trimmed && trimmed.length > 0 ? trimmed : null;
   },
 
-  evaluate: (spec): FormulaOutput => {
-    const r = evalMath(spec);
-    return r.ok ? { ok: true, display: String(r.value) } : { ok: false };
-  },
+  evaluate: (spec) => evaluateNumeric(mathNumeric, spec),
 
-  // Output DOM: ' = <value>' with the value emphasized; div0/malformed → a subtle ' = ?' error. Math is
-  // static, so the render context (state/setState) is unused.
-  renderOutput: (_spec, output) => {
-    const span = document.createElement('span');
-    span.contentEditable = 'false';
-    if (output.ok) {
-      span.className = 'formula-output formula-output--math';
-      span.append(' = ');
-      const value = document.createElement('span');
-      value.className = 'formula-output__value';
-      value.textContent = output.display ?? '';
-      span.appendChild(value);
-    } else {
-      span.className = 'formula-output formula-output--math formula-output--error';
-      span.textContent = ' = ?';
-    }
-    return span;
-  },
+  // Output DOM: the shared numeric ' = <value>' widget (subtle ' = ?' on div0/malformed).
+  renderOutput: numericRenderOutput('math'),
 };
