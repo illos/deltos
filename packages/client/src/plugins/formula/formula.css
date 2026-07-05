@@ -6,18 +6,19 @@
 /* The whole formula reads as ONE defined inline PILL — [ spec = output ] together (Jim) — styled at the
    FRAMEWORK level (the outer NodeView wrapper) so math now + future hexcolor/dice all inherit the unified
    look; a type still owns what renders INSIDE its output slot. The spec stays editable (it's the contentDOM
-   inside this pill — typing/recompute/backspace-unwrap unchanged). box-decoration-break keeps the pill
-   coherent if it wraps across lines. */
+   inside this pill — typing/recompute/backspace-unwrap unchanged). It's ONE inline-block box so a long
+   formula wraps onto its OWN internal lines inside a single coherent pill (the embedded line grows), rather
+   than fragmenting into per-line pills that read as separate formulas. */
 .formula {
-  white-space: pre-wrap; /* keep the spec's spaces intact, but WRAP at them so a long formula never overflows */
+  display: inline-block; /* one coherent box — a long formula wraps INTERNALLY, not into per-line pills */
+  max-width: 100%; /* stay within the editor column; wrap inside when too wide instead of overflowing */
+  white-space: pre-wrap; /* keep the spec's spaces intact, but WRAP at them inside the pill */
   overflow-wrap: anywhere; /* + break inside a long spaceless spec rather than run off the screen edge */
   font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
   background: var(--list);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 1px 5px;
-  -webkit-box-decoration-break: clone;
-  box-decoration-break: clone;
 }
 
 /* The editable expression — just the mono text inside the pill (the pill is the chrome now, not the spec). */
