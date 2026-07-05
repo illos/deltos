@@ -41,6 +41,14 @@
    max-width:100% still caps a large image at the reading column. height:auto keeps aspect; max-height
    caps a very tall portrait so it can't run off the screen; object-fit:contain letterboxes (never
    distorts) on the rare image the cap engages on. Still no per-image sizing/align UI. */
+/* Wrap the image so the resize grip can anchor to the IMAGE box (not the full column): inline-block shrinks to
+   the rendered image, so the bottom-right grip always hugs the real corner even for a small natural-size image. */
+.attachment-image-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  line-height: 0; /* kill the inline-image descender gap so the wrap is exactly the image box */
+}
 .attachment-image {
   display: block;
   width: auto;
@@ -51,6 +59,40 @@
   border-radius: 10px;
   border: 1px solid var(--border);
 }
+/* Drag-to-resize grip (DEC-0001 salvage) — a subtle bottom-right corner tab, same restraint as the block drag
+   handle. Generous touch target (min 44px hit area via padding is overkill inline; 22px is the deliberate size
+   for a corner affordance that must not cover the image). touch-action:none so a drag never scrolls the page. */
+.attachment-resize-grip {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: var(--list);
+  border: 1px solid var(--border);
+  cursor: nwse-resize;
+  opacity: 0.35;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 120ms ease;
+}
+/* The corner-arrow glyph, drawn with a small ⌟-style mark so it reads as "resize" without an icon dependency. */
+.attachment-resize-grip::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--secondary);
+  border-bottom: 2px solid var(--secondary);
+  border-bottom-right-radius: 3px;
+}
+.attachment-image-wrap:hover .attachment-resize-grip { opacity: 0.7; }
+.attachment-resize-grip:active { opacity: 0.95; }
 /* Download chip (non-image / unsafe types — never inline-rendered) is a bare button around the chip. */
 .attachment-download {
   appearance: none;
