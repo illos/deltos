@@ -1,9 +1,13 @@
 /**
  * SharesPanel render test (ROAD-0011 P2 / standing ui-features-need-rendered-ui-gate). Mounts the REAL
- * panel over a mocked shareApi and proves the user-visible contract:
+ * panel over a mocked shareApi + a fake (in-memory) client-local url store, and proves the user-visible
+ * contract:
  *   - it lists a resource's existing share links, each with a Revoke button;
- *   - "Create share link" → mint → the returned URL is shown ONCE with a working copy-to-clipboard;
- *   - Revoke calls DELETE (revokeShare) with the shareId and optimistically drops the row.
+ *   - "Create share link" → mint → the returned URL is shown with a working copy-to-clipboard, PERSISTED
+ *     locally, and stays visible in the list row (with its own Copy) after the one-time reveal is dismissed;
+ *   - reopening the panel re-hydrates the persisted url into the list row;
+ *   - Revoke calls DELETE (revokeShare), optimistically drops the row, AND forgets the local url;
+ *   - a share with NO local url (minted on another device) renders "link not saved on this device" + Re-mint.
  *
  * Uses a note with notebookId=null so ONLY the note share-target renders (no notebook target), keeping
  * the button/row assertions unambiguous.
@@ -19,6 +23,28 @@ const { createShare, listShares, revokeShare, showToast } = vi.hoisted(() => ({
   showToast: vi.fn(),
 }));
 
+// In-memory stand-in for the account-isolated Dexie url store (db/shareUrls.ts). Keyed `${accountId}::${shareId}`.
+const { urlStore, saveShareUrl, getShareUrls, deleteShareUrl } = vi.hoisted(() => {
+  const urlStore = new Map<string, string>();
+  return {
+    urlStore,
+    saveShareUrl: vi.fn(async (accountId: string | null, shareId: string, url: string) => {
+      if (accountId) urlStore.set(`${accountId}::${shareId}`, url);
+    }),
+    getShareUrls: vi.fn(async (accountId: string | null, ids: string[]) => {
+      const out: Record<string, string> = {};
+      if (accountId) for (const id of ids) {
+        const u = urlStore.get(`${accountId}::${id}`);
+        if (u) out[id] = u;
+      }
+      return out;
+    }),
+    deleteShareUrl: vi.fn(async (accountId: string | null, shareId: string) => {
+      if (accountId) urlStore.delete(`${accountId}::${shareId}`);
+    }),
+  };
+});
+
 vi.mock('../lib/shareApi.js', () => {
   class ShareError extends Error {
     status?: number | undefined;
@@ -32,10 +58,16 @@ vi.mock('../lib/shareApi.js', () => {
 });
 vi.mock('../lib/toastEvents.js', () => ({ showToast }));
 vi.mock('../db/storeHooks.js', () => ({ useNotebooks: () => [] }));
+vi.mock('../db/shareUrls.js', () => ({ saveShareUrl, getShareUrls, deleteShareUrl }));
+// The panel reads the resident accountId off the auth store — pin it to a fixed account for the isolation scope.
+vi.mock('../auth/store.js', () => ({
+  useAuthStore: (sel: (s: { accountId: string | null }) => unknown) => sel({ accountId: 'acct-1' }),
+}));
 
 import { SharesPanel } from './SharesPanel.js';
 
 const NOTE = { id: 'note-1', title: 'Test note', notebookId: null } as unknown as Note;
+const URL_1 = 'https://deltos.blackgate.studio/s/tok_secret';
 
 function share(over: Partial<{ shareId: string; createdAt: string }> = {}) {
   return {
@@ -49,6 +81,7 @@ function share(over: Partial<{ shareId: string; createdAt: string }> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  urlStore.clear();
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
     value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -57,38 +90,74 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('SharesPanel', () => {
-  it('mints a link, shows the URL once, and copies it', async () => {
-    listShares.mockResolvedValue([]);
-    createShare.mockResolvedValue({
-      shareId: 's1',
-      token: 'tok_secret',
-      url: 'https://deltos.blackgate.studio/s/tok_secret',
-    });
+  it('mints a link, shows + persists the URL, and keeps it copyable in the list', async () => {
+    // Empty on mount; after mint the refresh returns the new share so the list row appears.
+    listShares.mockResolvedValueOnce([]).mockResolvedValue([share({ shareId: 's1' })]);
+    createShare.mockResolvedValue({ shareId: 's1', token: 'tok_secret', url: URL_1 });
 
     const { getByLabelText, getByText } = render(<SharesPanel note={NOTE} onBack={() => {}} />);
 
-    // The note share-target loaded its (empty) list on mount.
     await waitFor(() => expect(listShares).toHaveBeenCalledWith('note', 'note-1'));
 
     fireEvent.click(getByLabelText('Create share link for “Test note”'));
 
-    // The minted URL is surfaced once, in a selectable field.
+    // The minted URL is surfaced (one-time reveal) in a selectable field.
     const field = (await waitFor(() => getByLabelText('Share link'))) as HTMLTextAreaElement;
-    expect(field.value).toBe('https://deltos.blackgate.studio/s/tok_secret');
+    expect(field.value).toBe(URL_1);
     expect(createShare).toHaveBeenCalledWith('note', 'note-1');
+    // …and was persisted locally, account-scoped.
+    expect(saveShareUrl).toHaveBeenCalledWith('acct-1', 's1', URL_1);
 
-    // Copy writes the URL to the clipboard and confirms.
+    // Copy from the one-time reveal writes the URL + toasts.
     fireEvent.click(getByLabelText('Copy share link'));
-    await waitFor(() =>
-      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-        'https://deltos.blackgate.studio/s/tok_secret',
-      ),
-    );
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(URL_1));
     await waitFor(() => expect(getByText('Copied!')).toBeTruthy());
     expect(showToast).toHaveBeenCalledWith('Share link copied');
+
+    // Dismiss the one-time reveal — the URL persists in the list row with its own Copy button.
+    fireEvent.click(getByText('Done'));
+    const listField = (await waitFor(() =>
+      getByLabelText('Share link created Jun 1, 2026'),
+    )) as HTMLInputElement;
+    expect(listField.value).toBe(URL_1);
+    (navigator.clipboard.writeText as ReturnType<typeof vi.fn>).mockClear();
+    fireEvent.click(getByLabelText('Copy share link created Jun 1, 2026'));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(URL_1));
   });
 
-  it('lists an existing link and Revoke drops the row + calls DELETE', async () => {
+  it('re-hydrates a persisted URL into the list row on (re)open', async () => {
+    urlStore.set('acct-1::s1', URL_1); // as if minted earlier on this device
+    listShares.mockResolvedValue([share({ shareId: 's1' })]);
+
+    const { getByLabelText } = render(<SharesPanel note={NOTE} onBack={() => {}} />);
+
+    const listField = (await waitFor(() =>
+      getByLabelText('Share link created Jun 1, 2026'),
+    )) as HTMLInputElement;
+    expect(listField.value).toBe(URL_1);
+    expect(getShareUrls).toHaveBeenCalledWith('acct-1', ['s1']);
+  });
+
+  it('shows a Re-mint affordance for a link with no local URL', async () => {
+    // No urlStore entry for s1 → minted on another device.
+    listShares.mockResolvedValue([share({ shareId: 's1' })]);
+
+    const { getByText, getByLabelText, queryByLabelText } = render(
+      <SharesPanel note={NOTE} onBack={() => {}} />,
+    );
+
+    await waitFor(() => expect(getByText('link not saved on this device')).toBeTruthy());
+    // No copyable url field for this row.
+    expect(queryByLabelText('Share link created Jun 1, 2026')).toBeNull();
+    // Re-mint mints a fresh link and persists it.
+    createShare.mockResolvedValue({ shareId: 's2', token: 'tok2', url: 'https://x/s/tok2' });
+    fireEvent.click(getByLabelText('Re-mint share link'));
+    await waitFor(() => expect(createShare).toHaveBeenCalledWith('note', 'note-1'));
+    await waitFor(() => expect(saveShareUrl).toHaveBeenCalledWith('acct-1', 's2', 'https://x/s/tok2'));
+  });
+
+  it('lists an existing link and Revoke drops the row, calls DELETE, and forgets the local URL', async () => {
+    urlStore.set('acct-1::s1', URL_1);
     listShares.mockResolvedValueOnce([share({ shareId: 's1' })]).mockResolvedValueOnce([]);
     revokeShare.mockResolvedValue(undefined);
 
@@ -96,14 +165,13 @@ describe('SharesPanel', () => {
       <SharesPanel note={NOTE} onBack={() => {}} />,
     );
 
-    // The existing link row renders with a Revoke button (getByLabelText throws until it appears, so
-    // waitFor retries past the async list load).
     const revokeBtn = await waitFor(() => getByLabelText(/^Revoke share link/));
     expect(revokeBtn).toBeTruthy();
 
     fireEvent.click(revokeBtn);
 
     await waitFor(() => expect(revokeShare).toHaveBeenCalledWith('s1'));
+    expect(deleteShareUrl).toHaveBeenCalledWith('acct-1', 's1');
     // Optimistic drop → the row (and its Revoke button) is gone.
     await waitFor(() => expect(queryByLabelText(/^Revoke share link/)).toBeNull());
   });

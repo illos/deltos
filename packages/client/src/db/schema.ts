@@ -148,6 +148,26 @@ export interface BlobCacheRow {
 }
 
 /**
+ * Client-local memory of a minted share link's URL (ROAD-0011 P2). The server hash-stores the share token
+ * (F6) and never re-serves it, so `GET /api/shares` returns metadata ONLY — no url. To keep each active
+ * share's URL visible with a Copy button in the in-app share sheet, we remember the full `url` locally at
+ * mint (the url embeds the secret token, so this IS a token-at-rest — deliberately client-local, per-device,
+ * NEVER synced or sent to the server; the server custody model is unchanged, still hash-only).
+ *
+ * ACCOUNT ISOLATION (HARD, #52 lineage — mirrors {@link BlobCacheRow}): the PK is the COMPOUND
+ * `[accountId+shareId]`, so a share url is only ever readable under the account that minted it, and the whole
+ * table is dropped by `wipeLocalState` (db/accountScope.ts) on every account-switch + logout. A share minted
+ * on ANOTHER device is simply absent here (the row lives only where it was minted) → the sheet shows the
+ * "link not saved on this device" + re-mint affordance for it.
+ */
+export interface ShareUrlRow {
+  accountId: string;     // resident account (mint-time owner) — half the compound PK
+  shareId: string;       // the share's stable id — the other half of the PK
+  url: string;           // the full public share URL (embeds the token); shown with a Copy button
+  createdAt: string;     // ISO-8601 (when remembered locally)
+}
+
+/**
  * Size-only LRU sidecar mirroring {@link BlobCacheRow} by the SAME compound PK `[accountId+resourceKey]`,
  * holding ONLY the bytes' length + last-access timestamp — never the bytes. Eviction (blobClient) sums sizes
  * and selects oldest-first victims entirely from THIS table, so a normal blob persist never deserializes any
@@ -174,6 +194,7 @@ class DeltosDB extends Dexie {
   // key-property name; a compound key has none, so the key type is the tuple [accountId, resourceKey]).
   blobCache!: Table<BlobCacheRow, [string, string]>;
   blobCacheMeta!: Table<BlobCacheMetaRow, [string, string]>;
+  shareUrls!: Table<ShareUrlRow, [string, string]>;
 
   constructor() {
     super('deltos');
@@ -220,6 +241,12 @@ class DeltosDB extends Dexie {
       // Size-only LRU sidecar for blobCache: mirrors the compound PK so eviction sums sizes + picks oldest
       // victims WITHOUT deserializing any bytes row (perf — Jim's load north-star). lastAccess index = LRU order.
       blobCacheMeta: '[accountId+resourceKey], lastAccess',
+    });
+    this.version(10).stores({
+      // Client-local memory of minted share URLs (ROAD-0011 P2): COMPOUND PK [accountId+shareId] (account
+      // isolation — a share url is only readable under the account that minted it), + an accountId index for
+      // scoped sweeps. Wiped in wipeLocalState on account-switch/logout, exactly like blobCache.
+      shareUrls: '[accountId+shareId], accountId',
     });
   }
 }

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Note } from '@deltos/shared';
 import { useNotebooks } from '../db/storeHooks.js';
+import { useAuthStore } from '../auth/store.js';
 import { showToast } from '../lib/toastEvents.js';
+import { saveShareUrl, getShareUrls, deleteShareUrl } from '../db/shareUrls.js';
 import {
   createShare,
   listShares,
@@ -18,9 +20,11 @@ import {
  * HistoryPanel / InfoPanel's full-screen overlay shell (`.history` container + sticky header).
  *
  * For the note (always) and its notebook (when the note lives in one — not the synthetic "All Notes"), it
- * offers a "Create share link" action that mints a link, surfaces the returned URL ONCE with a copy
- * button (the token is never recoverable — the list can't re-show it), and lists the resource's existing
- * links each with a Revoke button (optimistic drop + refetch).
+ * offers a "Create share link" action that mints a link and surfaces the returned URL with a copy button,
+ * and lists the resource's existing links each with a Revoke button (optimistic drop + refetch). The server
+ * hash-stores the token (F6) and never re-serves it, so the URL is remembered CLIENT-LOCAL + account-isolated
+ * (db/shareUrls.ts) to stay visible + copyable per row; a link minted on another device shows a "not saved
+ * on this device" note + a Re-mint action instead.
  *
  * RESIDENCY (lazy off-track surface — CONV-0004 / plugins-lazy-past-first-paint): NoteRoute `lazy()`-loads
  * this as its OWN chunk on the `?share` param, so neither this panel nor its `shareApi` client ever enters
@@ -47,35 +51,49 @@ function formatDate(iso: string): string {
 /**
  * One share target (a note or a notebook): the mint action, the once-shown minted URL, and the manage list
  * of existing links. Self-contained so the panel can drop in one per resource without duplicating state.
+ *
+ * The share token is hash-stored server-side (F6) and never re-served, so the list from `GET /api/shares`
+ * carries no url. To keep each active link's URL visible with a Copy button, we remember minted urls
+ * CLIENT-LOCAL + ACCOUNT-ISOLATED (db/shareUrls.ts) and look them up per row. A share with no local url
+ * (minted on another device) renders a "link not saved on this device" note + a Re-mint action.
  */
 function ShareTarget({
   resourceType,
   resourceId,
   heading,
   targetLabel,
+  accountId,
 }: {
   resourceType: ShareResourceType;
   resourceId: string;
   heading: string;
   targetLabel: string;
+  /** Resident account — the isolation scope for the locally-remembered share urls. */
+  accountId: string | null;
 }) {
   const [shares, setShares] = useState<ShareRecord[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [minting, setMinting] = useState(false);
   const [minted, setMinted] = useState<MintedShare | null>(null);
   const [mintError, setMintError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  // Which url was just copied (key = shareId, or 'minted' for the one-time reveal) — drives the "Copied!" flash.
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
+  // shareId → locally-remembered url, for the rows whose url this device minted. Absent = not saved here.
+  const [urls, setUrls] = useState<Record<string, string>>({});
 
   const refresh = useCallback(async () => {
     setLoadError(null);
     try {
-      setShares(await listShares(resourceType, resourceId));
+      const list = await listShares(resourceType, resourceId);
+      setShares(list);
+      // Hydrate the locally-known urls for exactly these shares (account-scoped) so each row can show + copy it.
+      setUrls(await getShareUrls(accountId, list.map((s) => s.shareId)));
     } catch (err) {
       setShares([]);
       setLoadError(messageFor(err));
     }
-  }, [resourceType, resourceId]);
+  }, [resourceType, resourceId, accountId]);
 
   useEffect(() => {
     void refresh();
@@ -84,11 +102,15 @@ function ShareTarget({
   const handleCreate = async () => {
     setMinting(true);
     setMintError(null);
-    setCopied(false);
+    setCopiedKey(null);
     try {
       const result = await createShare(resourceType, resourceId);
+      // Remember the url locally (account-isolated) BEFORE surfacing it, so it stays visible + copyable in the
+      // list after the one-time reveal is dismissed (and across reopening the sheet on this device).
+      await saveShareUrl(accountId, result.shareId, result.url);
+      setUrls((prev) => ({ ...prev, [result.shareId]: result.url }));
       setMinted(result);
-      void refresh(); // the new link appears in the list immediately (without its token)
+      void refresh(); // the new link appears in the list immediately (now WITH its remembered url)
     } catch (err) {
       setMintError(messageFor(err));
     } finally {
@@ -96,12 +118,12 @@ function ShareTarget({
     }
   };
 
-  const handleCopy = async (url: string) => {
+  const handleCopy = async (url: string, key: string) => {
     try {
       await navigator.clipboard.writeText(url);
-      setCopied(true);
+      setCopiedKey(key);
       showToast('Share link copied');
-      window.setTimeout(() => setCopied(false), 2000);
+      window.setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 2000);
     } catch {
       // Clipboard blocked (insecure context / denied) — the field stays selectable as the fallback.
     }
@@ -111,6 +133,12 @@ function ShareTarget({
     setRevoking(shareId);
     // Optimistic: drop the link from the list immediately, then reconcile from the server.
     setShares((prev) => (prev ? prev.filter((s) => s.shareId !== shareId) : prev));
+    setUrls((prev) => {
+      const next = { ...prev };
+      delete next[shareId];
+      return next;
+    });
+    void deleteShareUrl(accountId, shareId); // forget the local url too — the link is dead
     try {
       await revokeShare(shareId);
       await refresh();
@@ -146,10 +174,10 @@ function ShareTarget({
           <div className="settings__token-box-actions">
             <button
               className="settings__row-action"
-              onClick={() => void handleCopy(minted.url)}
+              onClick={() => void handleCopy(minted.url, 'minted')}
               aria-label="Copy share link"
             >
-              {copied ? 'Copied!' : 'Copy link'}
+              {copiedKey === 'minted' ? 'Copied!' : 'Copy link'}
             </button>
             <button className="settings__row-action" onClick={() => setMinted(null)}>
               Done
@@ -187,20 +215,55 @@ function ShareTarget({
       ) : (
         shares.map((share) => {
           const isRevoking = revoking === share.shareId;
+          const url = urls[share.shareId];
           return (
-            <div key={share.shareId} className="settings__row">
-              <span className="settings__token-row-main">
-                <span className="settings__row-label">Share link</span>
-                <span className="settings__token-meta">Created {formatDate(share.createdAt)}</span>
-              </span>
-              <button
-                className="settings__row-action"
-                onClick={() => void handleRevoke(share.shareId)}
-                disabled={isRevoking}
-                aria-label={`Revoke share link created ${formatDate(share.createdAt)}`}
-              >
-                {isRevoking ? 'Revoking…' : 'Revoke'}
-              </button>
+            <div key={share.shareId} className="settings__row settings__share-row">
+              <div className="settings__share-row-head">
+                <span className="settings__token-row-main">
+                  <span className="settings__row-label">Share link</span>
+                  <span className="settings__token-meta">Created {formatDate(share.createdAt)}</span>
+                </span>
+                <button
+                  className="settings__row-action"
+                  onClick={() => void handleRevoke(share.shareId)}
+                  disabled={isRevoking}
+                  aria-label={`Revoke share link created ${formatDate(share.createdAt)}`}
+                >
+                  {isRevoking ? 'Revoking…' : 'Revoke'}
+                </button>
+              </div>
+              {url ? (
+                // The url was minted on THIS device (remembered locally) — show it, readonly + copyable.
+                <div className="settings__share-url">
+                  <input
+                    className="settings__token-value"
+                    readOnly
+                    value={url}
+                    aria-label={`Share link created ${formatDate(share.createdAt)}`}
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                  <button
+                    className="settings__row-action"
+                    onClick={() => void handleCopy(url, share.shareId)}
+                    aria-label={`Copy share link created ${formatDate(share.createdAt)}`}
+                  >
+                    {copiedKey === share.shareId ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+              ) : (
+                // The url isn't remembered on this device (minted elsewhere) — offer a fresh mint.
+                <div className="settings__share-url settings__share-url--absent">
+                  <span className="settings__token-meta">link not saved on this device</span>
+                  <button
+                    className="settings__row-action"
+                    onClick={() => void handleCreate()}
+                    disabled={minting}
+                    aria-label="Re-mint share link"
+                  >
+                    {minting ? 'Creating…' : 'Re-mint'}
+                  </button>
+                </div>
+              )}
             </div>
           );
         })
@@ -220,6 +283,8 @@ function ShareTarget({
 
 export function SharesPanel({ note, onBack }: SharesPanelProps) {
   const notebooks = useNotebooks();
+  // Resident account — the isolation scope for the locally-remembered share urls (db/shareUrls.ts).
+  const accountId = useAuthStore((s) => s.accountId);
   // Null notebookId = the synthetic "All Notes" aggregate — no real notebook to share (App.tsx / InfoPanel
   // use the same rule). A known id resolves to its name; an unresolved id still shares by id.
   const notebookName = useMemo(() => {
@@ -243,6 +308,7 @@ export function SharesPanel({ note, onBack }: SharesPanelProps) {
         resourceId={note.id}
         heading="Share this note"
         targetLabel={`“${noteTitle}”`}
+        accountId={accountId}
       />
 
       {note.notebookId !== null && notebookName !== null && (
@@ -251,6 +317,7 @@ export function SharesPanel({ note, onBack }: SharesPanelProps) {
           resourceId={note.notebookId}
           heading="Share this notebook"
           targetLabel={`the notebook “${notebookName}”`}
+          accountId={accountId}
         />
       )}
     </div>

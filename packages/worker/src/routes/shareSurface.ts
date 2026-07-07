@@ -133,11 +133,14 @@ function renderSharePage(opts: {
 @media (prefers-color-scheme: dark) { :root { --paper:#1a1a1d; --ink:#f0f0f2; --secondary:#9a9aa3; --border:#2a2a2e; --sync:#30d158; --faint:#6e6e76; } }
 * { box-sizing: border-box; }
 body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.65 -apple-system,system-ui,"IBM Plex Sans",sans-serif; -webkit-font-smoothing:antialiased; }
-.share-wrap { max-width:44rem; margin:0 auto; padding:2rem 1.25rem 6rem; }
+.share-wrap { max-width:44rem; margin:0 auto; padding:2rem 1.25rem 3rem; }
 .share-head { display:flex; align-items:center; gap:.5rem; color:var(--secondary); font-size:.8rem; letter-spacing:.02em; text-transform:uppercase; margin-bottom:1rem; }
 .share-back { display:inline-block; margin-bottom:1rem; color:var(--secondary); text-decoration:none; font-size:.9rem; }
 .share-back:hover { color:var(--ink); }
 h1.doc-title { font-size:1.9rem; line-height:1.2; margin:.2rem 0 1.2rem; }
+/* Title row: the heading with the bare live dot inline immediately after it, vertically centered. */
+.doc-title-row { display:flex; align-items:center; flex-wrap:wrap; gap:.4rem .6rem; margin:.2rem 0 1.2rem; }
+.doc-title-row h1.doc-title { margin:0; }
 article :is(h1,h2,h3,h4,h5,h6) { line-height:1.25; margin:1.6rem 0 .6rem; }
 article p { margin:.6rem 0; }
 article pre { background:rgba(127,127,127,.12); padding:.8rem 1rem; border-radius:8px; overflow:auto; }
@@ -152,8 +155,7 @@ article img { max-width:100%; height:auto; border-radius:8px; }
 .note-list li { border-bottom:1px solid var(--border); }
 .note-list a { display:block; padding:.85rem .25rem; color:var(--ink); text-decoration:none; }
 .note-list a:hover { color:var(--sync); }
-.share-foot { position:fixed; left:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; gap:.6rem; padding:.6rem; background:color-mix(in srgb, var(--paper) 88%, transparent); backdrop-filter:blur(8px); border-top:1px solid var(--border); font-size:.85rem; color:var(--secondary); }
-.share-reload { appearance:none; border:1px solid var(--border); background:var(--paper); color:var(--ink); border-radius:999px; padding:.35rem .8rem; font-size:.85rem; cursor:pointer; }
+.share-reload { appearance:none; border:1px solid var(--border); background:var(--paper); color:var(--ink); border-radius:999px; padding:.3rem .7rem; font-size:.8rem; cursor:pointer; }
 /* #105 sonar-ping dot — COPIED from client SyncIndicator.css, reused as pure CSS (no React component here). */
 .sync-indicator { position:relative; display:inline-flex; align-items:center; justify-content:center; line-height:0; }
 .sync-indicator__dot { width:8px; height:8px; border-radius:50%; background:var(--sync); flex-shrink:0; }
@@ -170,30 +172,31 @@ article img { max-width:100%; height:auto; border-radius:8px; }
 <div class="share-wrap">
 ${backLink}
 <div class="share-head">${escapeHtmlText(opts.metaLabel)}</div>
+<div class="doc-title-row">
 ${opts.headingHtml}
-${opts.contentHtml}
-</div>
-<div class="share-foot">
 <span class="sync-indicator sync-indicator--synced" id="share-dot"><span class="sync-indicator__dot"></span><span class="sync-indicator__ring"></span></span>
-<span id="share-status">Live</span>
 <button class="share-reload" id="share-reload" hidden></button>
+</div>
+${opts.contentHtml}
 </div>
 <span id="share-live" data-token="${escapeHtmlAttr(opts.token)}" data-version="${String(opts.version)}" data-kind="${opts.kind}" hidden></span>
 <script nonce="${escapeHtmlAttr(opts.nonce)}">
 (function(){
   var el=document.getElementById('share-live');if(!el)return;
   var token=el.getAttribute('data-token');var rendered=Number(el.getAttribute('data-version'));
-  var dot=document.getElementById('share-dot');var status=document.getElementById('share-status');var btn=document.getElementById('share-reload');
-  function set(cls,text){dot.className='sync-indicator '+cls;status.textContent=text;}
+  var dot=document.getElementById('share-dot');var btn=document.getElementById('share-reload');
+  // The dot carries NO text — only its class (green=live / amber=updated / grey=offline-or-dead) changes.
+  // The only text that ever appears is the inline reload/dead affordance on the button, near the title.
+  function set(cls){dot.className='sync-indicator '+cls;}
   btn.addEventListener('click',function(){if(btn.getAttribute('data-mode')==='reload')location.reload();});
   function poll(){
     fetch('/s/'+encodeURIComponent(token)+'/live',{cache:'no-store'}).then(function(r){
       if(r.status!==200)throw new Error('dead');return r.json();
     }).then(function(d){
-      if(d.version>rendered){set('sync-indicator--error','Updated');btn.hidden=false;btn.setAttribute('data-mode','reload');btn.textContent='New version — reload';}
-      else{set('sync-indicator--synced','Live');btn.hidden=true;}
+      if(d.version>rendered){set('sync-indicator--error');btn.hidden=false;btn.setAttribute('data-mode','reload');btn.textContent='New version — reload';}
+      else{set('sync-indicator--synced');btn.hidden=true;}
     }).catch(function(e){
-      set('sync-indicator--offline', e&&e.message==='dead'?'Link no longer available':'Offline');
+      set('sync-indicator--offline');
       if(e&&e.message==='dead'){btn.hidden=false;btn.setAttribute('data-mode','dead');btn.textContent='This link is no longer available';}
     });
   }
