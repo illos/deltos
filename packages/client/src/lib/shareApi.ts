@@ -4,8 +4,9 @@
  * and revokes one. A share link is a capability grant the owner hands out; the SECRET token is returned
  * ONCE at mint and never again (the list only carries non-secret metadata).
  *
- * RESIDENCY: this is a LAZY off-track-route module — it is imported only by SharesPanel, which NoteRoute
- * `lazy()`-loads (its own chunk) on the `?share` param, so it never enters the mobile first-load bundle.
+ * RESIDENCY: this is a LAZY off-track-route module — it is imported only by ShareLinkSection (in the
+ * combined ShareExportPanel), which NoteRoute `lazy()`-loads (its own chunk) on the `?share` param, so it
+ * never enters the mobile first-load bundle.
  * The contract types are declared inline (the backend is the schema-first source of truth; the shapes
  * here are read-only views the UI casts the response into — no zod tags along), matching the
  * sessionsClient / auditClient convention. If `@deltos/shared` later exports Share* schemas, swap these
@@ -27,7 +28,7 @@ export type ShareResourceType = 'note' | 'notebook';
 /**
  * The owner's current theme, STAMPED onto a share at mint (ROAD-0011 P2) so the public `/s/<token>` render
  * uses the owner's palette + font (honoring the viewer's system light/dark). Read from themeStore at the
- * call site (SharesPanel); the server validates both against strict enums before storing.
+ * call site (ShareLinkSection); the server validates both against strict enums before storing.
  */
 export interface ShareThemeStamp {
   palette: Palette;

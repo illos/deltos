@@ -51,7 +51,7 @@ import { useNotebookStore } from './lib/notebookStore.js';
 import { notePreview, formatSmartDate } from './lib/notePreview.js';
 // `Link as ShareLink` — the icons module's chain-link glyph, our Share affordance, aliased to avoid
 // colliding with react-router's Link imported above.
-import { ComposeNew, Search, Ellipsis, VersionHistory, Info, Link as ShareLink, Upload } from './icons/index.js';
+import { ComposeNew, Search, Ellipsis, VersionHistory, Info, Link as ShareLink } from './icons/index.js';
 import { SyncIndicator } from './components/SyncIndicator.js';
 import { SessionStatus } from './components/SessionStatus.js';
 import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
@@ -666,9 +666,10 @@ export function AuthedShell() {
               <Info size={20} />
             </button>
           )}
-          {/* Per-note Share (ROAD-0011 P2) — mobile counterpart of the desktop meta-bar Share button. Sets
-              ?share on the current /note/:id URL; NoteRoute opens its (lazy) SharesPanel on that param
-              (mirrors ?history / ?info). Its eventual home is the ROAD-0013 "…" context menu. */}
+          {/* Per-note Share (ROAD-0011 P2 + ROAD-0017) — mobile counterpart of the desktop meta-bar Share
+              button. Sets ?share on the current /note/:id URL; NoteRoute opens its (lazy) ShareExportPanel on
+              that param (mirrors ?history / ?info). The one screen now carries export too, so export is
+              reachable on mobile via here. Its eventual home is the ROAD-0013 "…" context menu. */}
           {onNoteRoute && (
             <button
               className="shell__nav-btn shell__nav-btn--mobile-only"
@@ -676,18 +677,6 @@ export function AuthedShell() {
               aria-label="Share note"
             >
               <ShareLink size={20} />
-            </button>
-          )}
-          {/* Per-note Export (ROAD-0017) — mobile counterpart of the desktop meta-bar Export button. Sets
-              ?export on the current /note/:id URL; NoteRoute opens its (lazy) ExportPanel on that param
-              (mirrors ?share / ?info). Its eventual home is the ROAD-0013 "…" context menu. */}
-          {onNoteRoute && (
-            <button
-              className="shell__nav-btn shell__nav-btn--mobile-only"
-              onClick={() => navigate(`${location.pathname}?export`)}
-              aria-label="Export note"
-            >
-              <Upload size={20} />
             </button>
           )}
           {/* "…" contextual-options button — mobile-only (stays visible in body.deck-custom). Opens the

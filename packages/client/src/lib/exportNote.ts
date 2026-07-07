@@ -13,8 +13,8 @@ import { loadBlobUrl } from '../plugins/attachment/blobClient.js';
  * exportNote — the client side of ROAD-0017 export controls. Two emitters over the SAME `Block[]` note body
  * (CONV-0004): a Markdown `.md` download (via the shared `spineToMarkdown`) and a Print / Save-as-PDF path
  * (via the shared `spineToHtml` rendered into a print-only container on the MAIN document → the OS
- * print/share sheet). Everything here is reached ONLY from the lazy ExportPanel chunk, so it never enters the
- * mobile first-load bundle.
+ * print/share sheet). Everything here is reached ONLY from the lazy ExportSection (in the combined
+ * ShareExportPanel chunk), so it never enters the mobile first-load bundle.
  *
  * Attachment URLs (a note's own image/file blobs) resolve to session blob: object-URLs through the attachment
  * plugin's `loadBlobUrl` — best-effort: a blob that can't load (offline + uncached) degrades to its bare

@@ -15,9 +15,9 @@ import {
 } from '../lib/shareApi.js';
 
 /**
- * SharesPanel — the in-app surface to CREATE and MANAGE read-only share links for the open note and its
- * notebook (ROAD-0011 P2). Opened from the note action surface via the `?share` URL param, it mirrors
- * HistoryPanel / InfoPanel's full-screen overlay shell (`.history` container + sticky header).
+ * ShareLinkSection — the "Share link" body of the combined Share screen (ShareExportPanel). Renders NO
+ * overlay shell or header of its own (the parent panel owns those), only the `.settings__section`(s) that
+ * CREATE and MANAGE read-only share links for the open note and its notebook (ROAD-0011 P2).
  *
  * For the note (always) and its notebook (when the note lives in one — not the synthetic "All Notes"), it
  * offers a "Create share link" action that mints a link (no separate reveal step — the new link just drops
@@ -26,15 +26,13 @@ import {
  * URL is remembered CLIENT-LOCAL + account-isolated (db/shareUrls.ts) to stay visible + copyable per row; a
  * link minted on another device shows a "not saved on this device" note + a Re-mint action instead.
  *
- * RESIDENCY (lazy off-track surface — CONV-0004 / plugins-lazy-past-first-paint): NoteRoute `lazy()`-loads
- * this as its OWN chunk on the `?share` param, so neither this panel nor its `shareApi` client ever enters
- * the mobile first-load bundle or the editor first-load path.
+ * RESIDENCY (lazy off-track surface — CONV-0004 / plugins-lazy-past-first-paint): this rides the combined
+ * ShareExportPanel chunk, which NoteRoute `lazy()`-loads on the `?share` param, so neither this section nor
+ * its `shareApi` client ever enters the mobile first-load bundle or the editor first-load path.
  */
-export interface SharesPanelProps {
+export interface ShareLinkSectionProps {
   /** The open note — the note itself is one share target; its `notebookId` supplies the notebook target. */
   note: Note;
-  /** Dismiss the panel (NoteRoute clears the `?share` param). */
-  onBack: () => void;
 }
 
 function messageFor(err: unknown): string {
@@ -255,7 +253,7 @@ function ShareTarget({
   );
 }
 
-export function SharesPanel({ note, onBack }: SharesPanelProps) {
+export function ShareLinkSection({ note }: ShareLinkSectionProps) {
   const notebooks = useNotebooks();
   // Resident account — the isolation scope for the locally-remembered share urls (db/shareUrls.ts).
   const accountId = useAuthStore((s) => s.accountId);
@@ -269,14 +267,7 @@ export function SharesPanel({ note, onBack }: SharesPanelProps) {
   const noteTitle = note.title.trim() || 'Untitled';
 
   return (
-    <div className="history share">
-      <div className="history__header">
-        <button className="history__back" onClick={onBack} aria-label="Back to note">
-          ←
-        </button>
-        <h2 className="history__title">Share</h2>
-      </div>
-
+    <>
       <ShareTarget
         resourceType="note"
         resourceId={note.id}
@@ -294,6 +285,6 @@ export function SharesPanel({ note, onBack }: SharesPanelProps) {
           accountId={accountId}
         />
       )}
-    </div>
+    </>
   );
 }
