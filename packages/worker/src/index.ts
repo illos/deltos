@@ -418,6 +418,9 @@ async function pruneRetention(env: Env): Promise<void> {
   // OAuth authorization codes (migration 0017): 60s TTL, so reaping everything already-expired-or-consumed
   // as of `nowMs` leaves only the handful of still-live codes. The raw code is unrecoverable regardless.
   await store.pruneOauthCodes(nowMs);
+  // OAuth refresh tokens (migration 0021): drop any past the durable window OR already rotated/revoked; the
+  // live HEAD of an active family is kept, so a connected app is never orphaned. Only the hash is stored.
+  await store.pruneOauthRefreshTokens(nowMs);
   // OAuth clients: drop stale registrations (no live grant, older than the retention window) — the durable
   // backstop against DCR row-spam (adversarial-review MED-2). A client with a live grant is always kept.
   await store.pruneOauthClients(new Date(nowMs - OAUTH_CLIENT_RETENTION_DAYS * dayMs).toISOString());

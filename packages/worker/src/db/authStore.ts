@@ -292,6 +292,12 @@ export interface AuthStore {
     scope: Scope[]; // already CLAMPED at the route
     createdAt: string; // ISO-8601 Z
     clientId?: string | null;
+    // Access-token expiry. Omitted/NULL = non-expiring (first-party manual agent tokens — unchanged). The
+    // OAuth rotating path (oauth-provider.md §5) passes a 1h expiry so the access token is short-lived.
+    expiresAtMs?: number | null;
+    // The refresh-rotation family this access grant belongs to (grants.familyId, migration 0014). Omitted/NULL
+    // for first-party agent tokens. OAuth passes it so a family-nuke (theft) revokes this access grant too.
+    familyId?: string | null;
     // One entry per resource; each `grantId` is a fresh row id (per-resource revoke target).
     rows: Array<{ grantId: string; resource: Resource }>;
   }): Promise<void>;
@@ -615,14 +621,67 @@ export interface AuthStore {
   >;
 
   /**
-   * BOLA-CRITICAL per-client revoke: revoke ALL of an account's live OAuth grants for one clientId. The
-   * account match is IN the WHERE, scoped to principalKind='agent' AND clientId — so it can neither touch
-   * another account's tokens nor an owner session grant. Returns rows affected (0 = nothing to revoke).
+   * BOLA-CRITICAL per-client revoke: revoke ALL of an account's live OAuth grants for one clientId — BOTH
+   * the access grants (principalKind='agent' AND clientId) AND the outstanding refresh tokens (theft can't
+   * survive a disconnect). The account match is IN every WHERE, so it can neither touch another account's
+   * tokens nor an owner session grant. Returns the ACCESS rows affected (0 = nothing to revoke → 404).
    */
   revokeOauthGrantsForClient(clientId: string, accountId: string): Promise<number>;
 
+  // --- OAuth rotating refresh tokens (migration 0021, oauth-provider.md §5 "v1-rotating") ----------
+
+  /** Persist a freshly minted OAuth refresh token. Only the HASH is stored (F6); carries the re-mint binding. */
+  insertOauthRefreshToken(row: {
+    tokenHash: string;
+    familyId: string;
+    clientId: string;
+    accountId: string;
+    scope: Scope[]; // the clamped consent scope — carried unchanged across every rotation (never widens)
+    resources: Resource[]; // the approved resource SET — carried unchanged so rotation re-mints it exactly
+    resource: string | null; // RFC-8707 audience url, carried unchanged
+    issuedAtMs: number;
+    expiresAtMs: number;
+  }): Promise<void>;
+
+  /**
+   * Resolve an OAuth refresh token by hash REGARDLESS of rotated/revoked/expired state — the route decides
+   * (reuse-detection needs to SEE a spent/revoked row to trigger the family-nuke). Null only if no row matches.
+   */
+  getOauthRefreshToken(tokenHash: string): Promise<{
+    familyId: string;
+    clientId: string;
+    accountId: string;
+    scope: Scope[];
+    resources: Resource[];
+    resource: string | null;
+    expiresAtMs: number;
+    rotatedAt: string | null;
+    revokedAt: string | null;
+  } | null>;
+
+  /**
+   * ATOMICALLY claim an OAuth refresh token for rotation: latch `rotatedAt` IFF it is still unrotated, in ONE
+   * guarded UPDATE (`WHERE tokenHash = ? AND rotatedAt IS NULL`). Returns whether THIS call won the claim —
+   * `true` = we latched it (proceed to issue the successor), `false` = it was already rotated out from under us
+   * (a concurrent rotation or a replay), so the caller MUST treat it as reuse (family-nuke) and issue nothing.
+   * Making the claim atomic is what stops two concurrent refreshes both passing the reuse guard and both minting
+   * a successor (which would silently skip theft detection). Test the result as `> 0`, NOT `=== 1`: real D1
+   * counts INDEX writes so a single-row UPDATE can report >1 (gotcha d1-rowswritten-index-inflation).
+   */
+  markOauthRefreshRotated(tokenHash: string, rotatedAt: string): Promise<boolean>;
+
+  /**
+   * THEFT-NUKE (reuse-detection): revoke the ENTIRE rotation family — every refresh token AND every
+   * outstanding OAuth access grant sharing `familyId` (grants.familyId, 0014) — in ONE batch. Fired when a
+   * spent/revoked refresh token is presented again. After this, the family's access token AND refresh both fail.
+   */
+  revokeOauthRefreshFamily(familyId: string, revokedAt: string): Promise<void>;
+
   /** Reap authorization codes past their TTL or already consumed (cron retention; the raw code is unrecoverable). */
   pruneOauthCodes(beforeMs: number): Promise<void>;
+
+  /** Reap OAuth refresh tokens past their durable window OR already rotated/revoked (cron retention). */
+  pruneOauthRefreshTokens(beforeMs: number): Promise<void>;
 
   /**
    * Reap registered clients older than `beforeIso` that hold NO live grant — the durable backstop against
@@ -988,12 +1047,14 @@ export function createAuthStore(db: DbAdapter): AuthStore {
       // per resource. tokenHash being shared is why 0002's UNIQUE(tokenHash) was dropped (migration 0020).
       const scopeJson = JSON.stringify(row.scope);
       const clientId = row.clientId ?? null;
+      const expiresAtMs = row.expiresAtMs ?? null; // NULL = non-expiring (first-party); OAuth passes a 1h TTL
+      const familyId = row.familyId ?? null; // links OAuth access grants to their rotation family (0014)
       await db.batch(
         row.rows.map((r) => ({
           sql: `INSERT INTO grants
                   (grantId, tokenHash, tokenGroupId, principalKind, principalId, mintedByKeyId,
-                   resourceKind, resourceId, scope, expiresAtMs, revokedAt, createdAt, label, clientId)
-                VALUES (?, ?, ?, 'agent', ?, NULL, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+                   resourceKind, resourceId, scope, expiresAtMs, revokedAt, createdAt, label, clientId, familyId)
+                VALUES (?, ?, ?, 'agent', ?, NULL, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
           params: [
             r.grantId,
             row.tokenHash,
@@ -1002,9 +1063,11 @@ export function createAuthStore(db: DbAdapter): AuthStore {
             r.resource.kind,
             r.resource.kind === 'workspace' ? null : r.resource.id,
             scopeJson,
+            expiresAtMs,
             row.createdAt,
             row.label,
             clientId,
+            familyId,
           ],
         })),
       );
@@ -1303,10 +1366,18 @@ export function createAuthStore(db: DbAdapter): AuthStore {
       // accountId and are non-expiring BY DESIGN (no TTL — revocability is the control, Jim 2026-06-29),
       // so a credential change / revoke-all MUST kill outstanding agent tokens too — otherwise a leaked
       // token survives the exact "I think I'm compromised, reset everything" action meant to kill it.
+      // ALSO nuke this account's OAuth refresh tokens (migration 0021) in the same batch: revoke-all is the
+      // "I think I'm compromised" action, so a rotating refresh must die with the access grants it re-mints —
+      // otherwise a stolen refresh would silently re-issue access right past the sweep meant to end it.
       await db.batch([
         {
           sql: `UPDATE grants SET revokedAt = ?
                  WHERE principalKind IN ('owner', 'agent') AND principalId = ? AND revokedAt IS NULL`,
+          params: [revokedAt, accountId],
+        },
+        {
+          sql: `UPDATE oauthRefreshToken SET revokedAt = ?
+                 WHERE accountId = ? AND revokedAt IS NULL`,
           params: [revokedAt, accountId],
         },
       ]);
@@ -1580,6 +1651,8 @@ export function createAuthStore(db: DbAdapter): AuthStore {
       // reach another account's rows or an owner session grant. Idempotent re-revoke = 0 rows. The route
       // treats the result as >0 (revoked) vs 0 (nothing/not-yours → 404): real D1 `rowsWritten` counts
       // INDEX writes (grants_byClientId + others), so it is NOT a reliable grant CARDINALITY — never test ===.
+      // The SECOND statement kills the client's outstanding refresh tokens for this account (migration 0021)
+      // in the same batch — a disconnect must revoke BOTH access AND refresh, or the app reconnects silently.
       const now = new Date().toISOString();
       const [res] = await db.batch([
         {
@@ -1587,8 +1660,103 @@ export function createAuthStore(db: DbAdapter): AuthStore {
                  WHERE principalKind = 'agent' AND principalId = ? AND clientId = ? AND revokedAt IS NULL`,
           params: [now, accountId, clientId],
         },
+        {
+          sql: `UPDATE oauthRefreshToken SET revokedAt = ?
+                 WHERE accountId = ? AND clientId = ? AND revokedAt IS NULL`,
+          params: [now, accountId, clientId],
+        },
       ]);
+      // The ACCESS-grant UPDATE (res[0]) is the 404 signal — a client with only stale/rotated refresh rows and
+      // no live access grant is already effectively disconnected.
       return res?.rowsWritten ?? 0;
+    },
+
+    async insertOauthRefreshToken(row) {
+      await db.batch([
+        {
+          sql: `INSERT INTO oauthRefreshToken
+                  (tokenHash, familyId, clientId, accountId, scope, resources, resource,
+                   issuedAtMs, expiresAtMs, rotatedAt, revokedAt)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+          params: [
+            row.tokenHash,
+            row.familyId,
+            row.clientId,
+            row.accountId,
+            JSON.stringify(row.scope),
+            JSON.stringify(row.resources),
+            row.resource,
+            row.issuedAtMs,
+            row.expiresAtMs,
+          ],
+        },
+      ]);
+    },
+
+    async getOauthRefreshToken(tokenHash) {
+      const r = await db.first<{
+        familyId: string;
+        clientId: string;
+        accountId: string;
+        scope: string;
+        resources: string;
+        resource: string | null;
+        expiresAtMs: number;
+        rotatedAt: string | null;
+        revokedAt: string | null;
+      }>(
+        `SELECT familyId, clientId, accountId, scope, resources, resource, expiresAtMs, rotatedAt, revokedAt
+           FROM oauthRefreshToken WHERE tokenHash = ?`,
+        [tokenHash],
+      );
+      if (!r) return null;
+      // Fail-closed re-validate at the boundary: a malformed persisted scope/resources row resolves to null
+      // (the route maps null → invalid_grant) rather than throwing a 500 — a corrupt row denies, never crashes.
+      try {
+        return {
+          familyId: r.familyId,
+          clientId: r.clientId,
+          accountId: r.accountId,
+          scope: ScopeArraySchema.parse(JSON.parse(r.scope)),
+          resources: ResourceArraySchema.parse(JSON.parse(r.resources)),
+          resource: r.resource,
+          expiresAtMs: r.expiresAtMs,
+          rotatedAt: r.rotatedAt,
+          revokedAt: r.revokedAt,
+        };
+      } catch {
+        return null;
+      }
+    },
+
+    async markOauthRefreshRotated(tokenHash, rotatedAt) {
+      // ATOMIC claim: the `rotatedAt IS NULL` guard makes this the single authority on "did I win the rotation".
+      // rowsWritten > 0 = we latched it; 0 = already rotated (concurrent/replay) → caller nukes the family.
+      // Test > 0, NOT === 1 — real D1 counts INDEX writes (gotcha d1-rowswritten-index-inflation).
+      const [res] = await db.batch([
+        {
+          sql: `UPDATE oauthRefreshToken SET rotatedAt = ? WHERE tokenHash = ? AND rotatedAt IS NULL`,
+          params: [rotatedAt, tokenHash],
+        },
+      ]);
+      return (res?.rowsWritten ?? 0) > 0;
+    },
+
+    async revokeOauthRefreshFamily(familyId, revokedAt) {
+      // ONE batch = ONE transaction: kill every refresh row in the family AND every outstanding OAuth access
+      // grant linked to it (grants.familyId, 0014). This is the theft-nuke — after it, the family's access
+      // token AND refresh both fail. Idempotent (revokedAt IS NULL guards re-revoke).
+      await db.batch([
+        {
+          sql: `UPDATE oauthRefreshToken SET revokedAt = ? WHERE familyId = ? AND revokedAt IS NULL`,
+          params: [revokedAt, familyId],
+        },
+        {
+          sql: `UPDATE grants SET revokedAt = ?
+                 WHERE familyId = ? AND principalKind = 'agent' AND revokedAt IS NULL`,
+          params: [revokedAt, familyId],
+        },
+      ]);
     },
 
     async pruneOauthCodes(beforeMs) {
@@ -1596,6 +1764,18 @@ export function createAuthStore(db: DbAdapter): AuthStore {
       await db.batch([
         {
           sql: `DELETE FROM oauthAuthCode WHERE expiresAtMs < ? OR consumedAt IS NOT NULL`,
+          params: [beforeMs],
+        },
+      ]);
+    },
+
+    async pruneOauthRefreshTokens(beforeMs) {
+      // Reap refresh tokens past their durable window OR already spent (rotated) OR revoked — the live HEAD of
+      // an active family (unrotated, unrevoked, unexpired) is always kept, so a connected app is never orphaned.
+      await db.batch([
+        {
+          sql: `DELETE FROM oauthRefreshToken
+                 WHERE expiresAtMs < ? OR rotatedAt IS NOT NULL OR revokedAt IS NOT NULL`,
           params: [beforeMs],
         },
       ]);

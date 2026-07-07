@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   RegisterClientRequestSchema,
   AuthorizeConsentRequestSchema,
-  TokenRequestSchema,
+  TokenGrantRequestSchema,
   clampAgentScopes,
   clampAgentResources,
   buildAuthServerMetadata,
@@ -12,11 +12,12 @@ import {
   type AuthorizeConsentResponse,
   type TokenResponse,
   type Resource,
+  type Scope,
 } from '@deltos/shared';
 import type { AppEnv } from '../context.js';
 import type { Context } from 'hono';
 import { guard, apiError } from '../http.js';
-import { createAuthStore } from '../db/authStore.js';
+import { createAuthStore, type AuthStore } from '../db/authStore.js';
 import { d1Adapter } from '../db/schema.js';
 import { createResourceOwnerResolver } from '../db/resourceOwner.js';
 import { hashToken, randomToken } from '../authCrypto.js';
@@ -24,13 +25,21 @@ import { stampAccountId } from '../db/accountScope.js';
 import { verifyStepUp } from '../stepUp.js';
 import { audit, credentialRefOf } from '../audit.js';
 import { principalRateAllow } from '../rateLimit.js';
-import { MINT_BACKOFF, backoffDelayMs } from '../authPolicy.js';
+import { MINT_BACKOFF, backoffDelayMs, REFRESH_TTL_MS } from '../authPolicy.js';
 import { isRegisterableRedirectUri, matchRedirectUri, verifyPkceS256 } from '../oauth.js';
 
 /** The concrete deltos resource an OAuth v1 grant authorizes: the whole workspace, read-only. */
 const OAUTH_V1_RESOURCE: Resource = { kind: 'workspace' };
 /** Authorization codes live 60s — long enough for a token exchange, short enough to bound theft/replay. */
 const AUTH_CODE_TTL_MS = 60_000;
+/**
+ * OAuth access-token lifetime — SHORT (1h). v1-rotating (oauth-provider.md §5 follow-up): the durable session
+ * lives in the rotating refresh token, so the access bearer is short-lived (smaller theft window) and resolved
+ * as expired by the existing agent path (auth.ts freshness gate) once its TTL elapses.
+ */
+const OAUTH_ACCESS_TTL_MS = 60 * 60 * 1000;
+/** OAuth refresh-token window — the durable (sliding) session horizon; each rotation issues a fresh expiry. */
+const OAUTH_REFRESH_TTL_MS = REFRESH_TTL_MS;
 
 /**
  * OAuth 2.1 provider — deltos as the Authorization Server for its own MCP resource (`/api/mcp`). See
@@ -286,12 +295,87 @@ oauth.post(
 );
 
 /**
- * POST /api/oauth/token — the authorization-code → access-token exchange (RFC 6749 §4.1.3 + PKCE). PUBLIC
- * (no bearer): the PKCE `code_verifier` + the single-use code ARE the proof. Accepts form-encoded (the spec
- * default) or JSON. Security ordering: the code is ATOMICALLY consumed FIRST (burned regardless of what
- * follows), so a wrong verifier can't be retried against the same code (no PKCE brute-force). Then every
- * binding is re-checked (client, redirect, PKCE) — any mismatch → invalid_grant on an already-dead code.
- * The issued token is an `agent` grant carrying the clientId — inheriting the whole hardened agent path.
+ * Mint one rotation of OAuth tokens: a SHORT-lived access grant set (an `agent` grant carrying clientId +
+ * familyId) PLUS a rotating refresh token in the SAME `familyId`, both bound to the identical (clientId,
+ * accountId, scope, resources, audience) — carried UNCHANGED from the original consent through every rotation
+ * (a refresh can never widen scope). Shared by the authorization-code exchange and the refresh rotation so
+ * the two paths issue byte-identical response shapes. Returns the RFC 6749 §5.1 token response.
+ */
+async function issueOauthTokens(
+  c: Context<AppEnv>,
+  store: AuthStore,
+  nowMs: number,
+  grant: {
+    familyId: string;
+    clientId: string;
+    clientName: string;
+    accountId: string;
+    scope: Scope[];
+    resources: Resource[];
+    resource: string | null; // RFC-8707 audience url
+    action: 'oauth.token' | 'oauth.refresh';
+  },
+): Promise<TokenResponse> {
+  const resources = grant.resources.length > 0 ? grant.resources : [OAUTH_V1_RESOURCE];
+  const accessToken = `dltos_oauth_${randomToken(32)}`;
+  const refreshToken = `dltos_refresh_${randomToken(32)}`;
+  const tokenGroupId = randomToken(16);
+  const createdAt = new Date(nowMs).toISOString();
+
+  await store.insertAgentGrantSet({
+    tokenGroupId,
+    tokenHash: hashToken(accessToken),
+    accountId: grant.accountId,
+    label: grant.clientName, // display name for the Connected-apps surface
+    scope: grant.scope,
+    createdAt,
+    clientId: grant.clientId,
+    expiresAtMs: nowMs + OAUTH_ACCESS_TTL_MS, // SHORT-lived (1h); the durable session is the refresh token
+    familyId: grant.familyId, // links this access grant to its family so a theft-nuke revokes it too
+    rows: resources.map((resource) => ({ grantId: randomToken(16), resource })),
+  });
+  await store.insertOauthRefreshToken({
+    tokenHash: hashToken(refreshToken), // F6 — only the hash is stored
+    familyId: grant.familyId,
+    clientId: grant.clientId,
+    accountId: grant.accountId,
+    scope: grant.scope,
+    resources,
+    resource: grant.resource,
+    issuedAtMs: nowMs,
+    expiresAtMs: nowMs + OAUTH_REFRESH_TTL_MS,
+  });
+
+  const primaryResource = resources[0] ?? OAUTH_V1_RESOURCE;
+  await audit(c, {
+    surface: 'auth',
+    action: grant.action,
+    result: 'allow',
+    principalKind: 'agent',
+    accountId: grant.accountId,
+    credentialRef: tokenGroupId,
+    resourceKind: primaryResource.kind,
+    resourceId: primaryResource.kind === 'workspace' ? null : primaryResource.id,
+    detail: `client:${grant.clientId}`,
+  });
+
+  return {
+    access_token: accessToken,
+    token_type: 'Bearer',
+    expires_in: Math.floor(OAUTH_ACCESS_TTL_MS / 1000),
+    refresh_token: refreshToken,
+    scope: grant.scope.join(' '),
+  };
+}
+
+/**
+ * POST /api/oauth/token — the token endpoint (RFC 6749). PUBLIC (no bearer); the proof is the PKCE
+ * `code_verifier` + single-use code (authorization_code) or the opaque refresh token (refresh_token). Accepts
+ * form-encoded (the spec default) or JSON. `grant_type` discriminates the two flows (fail-closed at the
+ * schema — any other grant is rejected). v1-rotating (oauth-provider.md §5 follow-up): both flows issue a
+ * 1h access token + a rotating refresh token in a shared family; reusing a spent/revoked refresh nukes the
+ * family (theft detection). The issued access token is an `agent` grant carrying clientId — inheriting the
+ * whole hardened agent path.
  */
 oauth.post('/token', async (c) => {
   // IP rate-limit (Tier-1 native binding) — /token is UNAUTHENTICATED and does a D1 write per call
@@ -317,7 +401,7 @@ oauth.post('/token', async (c) => {
     return oauthError(c, 400, 'invalid_request', 'unparseable token request');
   }
 
-  const parsed = TokenRequestSchema.safeParse(raw);
+  const parsed = TokenGrantRequestSchema.safeParse(raw);
   if (!parsed.success) return oauthError(c, 400, 'invalid_request', 'invalid token request');
   const req = parsed.data;
 
@@ -327,6 +411,52 @@ oauth.post('/token', async (c) => {
   const client = await store.getOauthClient(req.client_id);
   if (!client) return oauthError(c, 401, 'invalid_client', 'unknown client');
 
+  // --- refresh_token grant: verify → ROTATE (new access + new refresh in the same family) ---------
+  if (req.grant_type === 'refresh_token') {
+    const session = await store.getOauthRefreshToken(hashToken(req.refresh_token));
+    // Bind the refresh to the presenting client — a token issued to another client is not this client's.
+    if (!session || session.clientId !== req.client_id) {
+      return oauthError(c, 400, 'invalid_grant', 'refresh token is invalid');
+    }
+    // THEFT DETECTION: a spent (rotated) OR revoked refresh presented again ⇒ nuke the WHOLE family (every
+    // refresh row + every outstanding access grant sharing familyId). After this the family is fully dead.
+    if (session.rotatedAt !== null || session.revokedAt !== null) {
+      await store.revokeOauthRefreshFamily(session.familyId, new Date(nowMs).toISOString());
+      return oauthError(c, 400, 'invalid_grant', 'refresh token is invalid');
+    }
+    if (session.expiresAtMs <= nowMs) {
+      return oauthError(c, 400, 'invalid_grant', 'refresh token has expired');
+    }
+
+    // Rotate: ATOMICALLY CLAIM this refresh (latch rotatedAt) BEFORE issuing anything. Claim-first is the
+    // correct security ordering: if two concurrent refreshes race, only ONE wins the claim; the loser gets
+    // `claimed === false` and is treated EXACTLY like the reuse branch above (family-nuke → invalid_grant), so
+    // two live successors can never exist. The consciously-accepted tradeoff (LOW-1): if issuance below fails
+    // after a successful claim the client is briefly locked out and heals on reconnect — strictly safer than an
+    // issue-first ordering that would risk two live tokens. Do NOT reorder to issue-first.
+    const claimed = await store.markOauthRefreshRotated(hashToken(req.refresh_token), new Date(nowMs).toISOString());
+    if (!claimed) {
+      // The row was rotated out from under us between the reuse check and the claim (concurrent-or-replay reuse)
+      // → treat it as theft: nuke the whole family, deny. Same handling as the spent/revoked branch above.
+      await store.revokeOauthRefreshFamily(session.familyId, new Date(nowMs).toISOString());
+      return oauthError(c, 400, 'invalid_grant', 'refresh token is invalid');
+    }
+    // Scope + resources + audience are carried UNCHANGED from the stored session — a refresh can never widen
+    // (nor narrow) scope.
+    const resp = await issueOauthTokens(c, store, nowMs, {
+      familyId: session.familyId,
+      clientId: session.clientId,
+      clientName: client.clientName,
+      accountId: session.accountId,
+      scope: session.scope,
+      resources: session.resources,
+      resource: session.resource,
+      action: 'oauth.refresh',
+    });
+    return c.json(resp, 200);
+  }
+
+  // --- authorization_code grant: PKCE exchange, single-use ----------------------------------------
   // ATOMIC single-use claim — see consumeOauthCode. Burning first prevents PKCE retry brute-forcing.
   const claimed = await store.consumeOauthCode(hashToken(req.code), nowMs);
   if (!claimed) return oauthError(c, 400, 'invalid_grant', 'code is invalid, expired, or already used');
@@ -341,43 +471,19 @@ oauth.post('/token', async (c) => {
     return oauthError(c, 400, 'invalid_grant', 'PKCE verification failed');
   }
 
-  // Issue the access token: an agent GRANT SET carrying clientId (v1: non-expiring). The resource set was
-  // clamped + ownership-validated at consent and carried on the code; a legacy/absent set ⇒ [{workspace}].
-  const token = `dltos_oauth_${randomToken(32)}`;
-  const tokenGroupId = randomToken(16);
-  const createdAt = new Date(nowMs).toISOString();
-  const resources = claimed.resources.length > 0 ? claimed.resources : [OAUTH_V1_RESOURCE];
-  const rows = resources.map((resource) => ({ grantId: randomToken(16), resource }));
-  await store.insertAgentGrantSet({
-    tokenGroupId,
-    tokenHash: hashToken(token),
-    accountId: claimed.accountId,
-    label: client.clientName, // display name for the Connected-apps surface
-    scope: claimed.scope,
-    createdAt,
+  // Fresh rotation family for this connection: the access grant set + the first refresh token share it, so a
+  // later theft-nuke or per-client disconnect reaches both. The resource set was clamped + ownership-validated
+  // at consent and carried on the code; a legacy/absent set ⇒ [{workspace}].
+  const resp = await issueOauthTokens(c, store, nowMs, {
+    familyId: randomToken(16),
     clientId: claimed.clientId,
-    rows,
-  });
-
-  const primaryResource = resources[0] ?? OAUTH_V1_RESOURCE;
-  await audit(c, {
-    surface: 'auth',
-    action: 'oauth.token',
-    result: 'allow',
-    principalKind: 'agent',
+    clientName: client.clientName,
     accountId: claimed.accountId,
-    credentialRef: tokenGroupId,
-    resourceKind: primaryResource.kind,
-    resourceId: primaryResource.kind === 'workspace' ? null : primaryResource.id,
-    detail: `client:${claimed.clientId}`,
+    scope: claimed.scope,
+    resources: claimed.resources,
+    resource: claimed.resource,
+    action: 'oauth.token',
   });
-
-  const resp: TokenResponse = {
-    access_token: token,
-    token_type: 'Bearer',
-    scope: claimed.scope.join(' '),
-  };
-  // No expires_in, no refresh_token — v1 tokens are non-expiring (revocation is the control).
   return c.json(resp, 200);
 });
 

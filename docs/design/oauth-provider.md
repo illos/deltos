@@ -117,7 +117,37 @@ malformed row exactly like `resolveGrantByTokenHash`.
    `can()`; counts against the P4 per-account daily MCP quota (per OWNING account, so more OAuth clients can't
    multiply budget — recon §5); every `tools/call` audited with `clientId` now in the trail.
 
-## 5. Token lifetime — LOCKED: non-expiring, no refresh token (Jim, 2026-07-01)
+## 5. Token lifetime — SUPERSEDED: v1-rotating shipped (2026-07-07)
+
+> **UPDATE (2026-07-07): the gate-watch below FIRED and v1-rotating is now IMPLEMENTED.** Confirmed in prod
+> D1: with `/token` returning no `refresh_token`/`expires_in`, Claude's connector could not maintain a durable
+> session — it re-registered (14 DCR client rows in 5 days) and re-ran the full consent flow on essentially
+> every session (the *opposite* of "grant once, keep access forever"). Per the gate-watch escalation, the
+> designed-for **v1-rotating** option below was built: `/token`(authorization_code) now returns a 1h
+> `access_token` + `expires_in: 3600` + a rotating `refresh_token`; `/token`(refresh_token) rotates
+> (new access + new refresh in the same family) and reusing a spent/revoked refresh **nukes the family**
+> (theft detection). Scope/resources/audience are carried UNCHANGED through every rotation (a refresh never
+> widens scope). Storage: **migration 0021** `oauthRefreshToken` (a dedicated table — refreshSessions is
+> cookie/device-shaped and feeds the password "Active sessions" UI; OAuth refresh must stay off it and carry
+> the client/scope/resource binding to re-mint self-contained). The access side needed no schema change —
+> `grants.familyId` (0014) links OAuth access grants to their family, so a family-nuke / per-client disconnect
+> / revoke-all reaches both access AND refresh. `principalKind` stays `'agent'` (the H3 revoke-all sweep still
+> covers it by construction). Discovery now advertises `grant_types_supported: ["authorization_code",
+> "refresh_token"]`. The rest of §5 below is the ORIGINAL v1-simple decision, kept for the rationale record.
+
+### Original decision (v1-simple, 2026-07-01) — kept for history
+
+The non-expiring-by-design decision ([[agent-tokens-non-expiring-by-design]]) was made for **Settings-minted**
+agent tokens: "revocability is the control, a TTL is theater." OAuth raises the question again because the
+ecosystem *has* a refresh pattern. Two coherent options:
+
+- **(v1-simple) Non-expiring access token, NO refresh token.** Consistent with the agent-token decision;
+  per-client revoke + revoke-all already give immediate kill; least code. The client holds one bearer
+  forever (until revoked). `/token` returns no `expires_in`, no `refresh_token`.
+- **(v1-rotating) Short access token + rotating refresh token.** Standard OAuth 2.1; the rotation gives
+  refresh-reuse *theft detection* — and we already have the exact machinery: refresh **families**
+  (`grants.familyId`, migration 0014) where reusing a revoked refresh nukes the family. More code, more
+  ecosystem-conformant.
 
 The non-expiring-by-design decision ([[agent-tokens-non-expiring-by-design]]) was made for **Settings-minted**
 agent tokens: "revocability is the control, a TTL is theater." OAuth raises the question again because the

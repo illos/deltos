@@ -43,7 +43,7 @@ const migrations = [
   '0014_grant-family-link.sql',
   '0015_audit-log.sql',
   '0016_usage-counter.sql',
-  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0020_grant-sets.sql', // adds grants.familyId (the mintGrant INSERT lists it) — ALTER works on the 0002 table
+  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0020_grant-sets.sql', '0021_oauth-refresh-token.sql', // adds grants.familyId (the mintGrant INSERT lists it) — ALTER works on the 0002 table
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function sqliteAdapter(db: Database.Database): DbAdapter {

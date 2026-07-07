@@ -15,6 +15,7 @@ import app from '../src/index.js';
 import type { Env } from '../src/env.js';
 import { createAuthStore } from '../src/db/authStore.js';
 import { d1Adapter } from '../src/db/schema.js';
+import { hashToken } from '../src/authCrypto.js';
 import { signupToken } from './helpers/passwordToken.js';
 
 // Canonical RFC 7636 Appendix B PKCE pair.
@@ -29,7 +30,7 @@ const ALL_MIGRATIONS = [
   '0007_reconcile-account-sync-seq.sql', '0008_notebooks.sql', '0009_backfill-default-notebooks.sql',
   '0010_nullable-notebookid-all-notes.sql', '0011_drop-isdefault-notebooksyncseg-notes_pull.sql',
   '0012_custom-dictionary.sql', '0013_agent-token-label.sql', '0014_grant-family-link.sql',
-  '0015_audit-log.sql', '0016_usage-counter.sql', '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', '0020_grant-sets.sql',
+  '0015_audit-log.sql', '0016_usage-counter.sql', '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', '0020_grant-sets.sql', '0021_oauth-refresh-token.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function d1Over(raw: Database.Database): D1Database {
@@ -85,7 +86,8 @@ describe('OAuth discovery documents', () => {
     expect(md.authorization_endpoint).not.toContain('/api/oauth/authorize');
     expect(md.token_endpoint).toContain('/api/oauth/token');
     expect(md.code_challenge_methods_supported).toEqual(['S256']); // no 'plain'
-    expect(md.grant_types_supported).toEqual(['authorization_code']);
+    // v1-rotating: the refresh grant is advertised alongside the code grant.
+    expect(md.grant_types_supported).toEqual(['authorization_code', 'refresh_token']);
     expect(md.token_endpoint_auth_methods_supported).toEqual(['none']); // public clients
   });
 
@@ -187,8 +189,10 @@ describe('authorize (consent) → token (PKCE) — the full flow', () => {
     const tok = await tRes.json();
     expect(tok.token_type).toBe('Bearer');
     expect(tok.scope).toBe('read search');
-    expect(tok).not.toHaveProperty('expires_in'); // non-expiring
-    expect(tok).not.toHaveProperty('refresh_token');
+    // v1-rotating: a 1h access token paired with a rotating refresh token.
+    expect(tok.expires_in).toBe(3600);
+    expect(typeof tok.refresh_token).toBe('string');
+    expect(tok.refresh_token.length).toBeGreaterThan(0);
 
     // The issued token authenticates to the MCP endpoint (inherits the agent path).
     const mcpRes = await app.request('/api/mcp', {
@@ -368,6 +372,163 @@ describe('authorize (consent) → token (PKCE) — the full flow', () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe('invalid_grant');
+  });
+});
+
+// POST a refresh_token grant (form-encoded, the OAuth default).
+const refreshGrant = (clientId: string, refreshToken: string) =>
+  tokenExchange({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: clientId });
+
+// Full connect → return the owner bearer, the client, and the parsed token response (access + refresh).
+async function fullConnect(
+  username: string,
+  consentExtra: Record<string, unknown> = {},
+): Promise<{ owner: string; clientId: string; redirect: string; tok: Record<string, string> }> {
+  const { token: owner } = await signupToken(env, username, OWNER_PW);
+  const { clientId, redirect } = await registerClient();
+  const { code } = await (await consent(owner, consentBody(clientId, redirect, consentExtra))).json();
+  const tok = await (await tokenExchange({
+    grant_type: 'authorization_code', code, redirect_uri: redirect, client_id: clientId, code_verifier: PKCE_VERIFIER,
+  })).json();
+  return { owner, clientId, redirect, tok };
+}
+
+describe('refresh_token grant — rotation, theft detection, scope, revocation', () => {
+  it('rotates: a NEW access token + a NEW refresh token, and the new access works on MCP', async () => {
+    const { clientId, tok } = await fullConnect('rt-rotate');
+    const r = await refreshGrant(clientId, tok.refresh_token);
+    expect(r.status).toBe(200);
+    const rotated = await r.json();
+    expect(rotated.token_type).toBe('Bearer');
+    expect(rotated.expires_in).toBe(3600);
+    expect(rotated.scope).toBe('read search');
+    // Both the access AND the refresh token are FRESH (rotation, not a re-issue of the same string).
+    expect(rotated.access_token).not.toBe(tok.access_token);
+    expect(rotated.refresh_token).not.toBe(tok.refresh_token);
+    // The rotated access token authenticates to MCP (inherits the agent path).
+    const mcp = await app.request('/api/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${rotated.access_token}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    }, env);
+    expect(mcp.status).toBe(200);
+  });
+
+  it('reusing a CONSUMED refresh token nukes the family (theft detection)', async () => {
+    const { clientId, tok } = await fullConnect('rt-theft');
+    // First rotation succeeds and spends the original refresh token.
+    const first = await (await refreshGrant(clientId, tok.refresh_token)).json();
+    expect(first.refresh_token).toBeTruthy();
+
+    // Replaying the now-SPENT original refresh token = theft signal → invalid_grant + family nuke.
+    const replay = await refreshGrant(clientId, tok.refresh_token);
+    expect(replay.status).toBe(400);
+    expect((await replay.json()).error).toBe('invalid_grant');
+
+    // The successor refresh token is now DEAD too (whole family revoked)...
+    const successor = await refreshGrant(clientId, first.refresh_token);
+    expect(successor.status).toBe(400);
+    expect((await successor.json()).error).toBe('invalid_grant');
+    // ...and the successor's ACCESS token no longer authenticates (family nuke revoked the access grant).
+    const mcp = await app.request('/api/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', Authorization: `Bearer ${first.access_token}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    }, env);
+    expect(mcp.status).toBe(401);
+  });
+
+  it('markOauthRefreshRotated is an ATOMIC claim: the SECOND rotate of the same token returns false (MED-1)', async () => {
+    // The atomic-claim primitive behind MED-1: two concurrent refreshes of the same token can't BOTH mint a
+    // successor. The FIRST claim latches rotatedAt and wins (true); the SECOND finds it already rotated (false),
+    // so the route treats it as reuse. Asserts the boolean directly at the store, not just the route behavior.
+    const store = createAuthStore(d1Adapter(env.DB));
+    const now = new Date().toISOString();
+    const tokenHash = hashToken('claim-race-token');
+    await store.insertOauthRefreshToken({
+      tokenHash,
+      familyId: 'fam-claim',
+      clientId: 'client-claim',
+      accountId: 'acct-claim',
+      scope: ['read', 'search'],
+      resources: [{ kind: 'workspace' }],
+      resource: null,
+      issuedAtMs: Date.now(),
+      expiresAtMs: Date.now() + 60_000,
+    });
+    expect(await store.markOauthRefreshRotated(tokenHash, now)).toBe(true); // first claim wins
+    expect(await store.markOauthRefreshRotated(tokenHash, now)).toBe(false); // second is rotated out → no mint
+  });
+
+  it('when the rotation claim fails the route nukes the family + returns invalid_grant (claim-fail path)', async () => {
+    // Integration for the claim-fail branch: a refresh that has already been rotated (its claim would fail) must
+    // nuke the whole family and deny — never mint a second live successor. Driven by rotating once then replaying
+    // the now-spent token; the observable security outcome is IDENTICAL whether caught by the reuse guard or the
+    // new atomic `!claimed` branch (the latter is the true-concurrency backstop that serial tests can't race).
+    const { clientId, tok } = await fullConnect('rt-claimfail');
+    const first = await (await refreshGrant(clientId, tok.refresh_token)).json();
+    expect(first.refresh_token).toBeTruthy();
+
+    const replay = await refreshGrant(clientId, tok.refresh_token);
+    expect(replay.status).toBe(400);
+    expect((await replay.json()).error).toBe('invalid_grant');
+
+    // Family nuked: the successor refresh no longer rotates (no second live successor was minted).
+    const successor = await refreshGrant(clientId, first.refresh_token);
+    expect(successor.status).toBe(400);
+    expect((await successor.json()).error).toBe('invalid_grant');
+  });
+
+  it('a CORRUPT persisted refresh row fails closed to invalid_grant, not a 500 (INFO-1)', async () => {
+    // A malformed stored scope/resources JSON must DENY (getOauthRefreshToken → null → invalid_grant), never
+    // throw a 500. Simulated by corrupting the persisted scope column directly in D1.
+    const { clientId, tok } = await fullConnect('rt-corrupt');
+    raw.prepare('UPDATE oauthRefreshToken SET scope = ? WHERE tokenHash = ?')
+      .run('not-valid-json{{', hashToken(tok.refresh_token));
+    const res = await refreshGrant(clientId, tok.refresh_token);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('invalid_grant');
+  });
+
+  it('a refresh cannot WIDEN scope — a read-only grant stays read-only across rotation', async () => {
+    // Consent read-only (no write opt-in). Even a client that later injects a scope param cannot widen:
+    // the schema strips it and the stored (clamped) scope is carried unchanged.
+    const { clientId, tok } = await fullConnect('rt-scope');
+    expect(tok.scope).toBe('read search');
+    const widened = await tokenExchange({
+      grant_type: 'refresh_token', refresh_token: tok.refresh_token, client_id: clientId,
+      scope: 'read search write create delete', // ride-along — must be ignored (stripped)
+    });
+    expect(widened.status).toBe(200);
+    const rotated = await widened.json();
+    expect(rotated.scope).toBe('read search'); // unchanged — never widened
+  });
+
+  it('a refresh bound to another client is invalid_grant (client binding)', async () => {
+    const { tok } = await fullConnect('rt-bind');
+    const other = await registerClient('https://claude.ai/other');
+    const res = await refreshGrant(other.clientId, tok.refresh_token);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('invalid_grant');
+  });
+
+  it('per-client disconnect kills the REFRESH token too (not just access)', async () => {
+    const { owner, clientId, tok } = await fullConnect('rt-disc');
+    const del = await app.request(`/api/oauth/clients/${clientId}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${owner}` },
+    }, env);
+    expect(del.status).toBe(200);
+    // The refresh token must no longer rotate — disconnect revoked the refresh family, not only the access grant.
+    const res = await refreshGrant(clientId, tok.refresh_token);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('invalid_grant');
+  });
+
+  it('an unknown grant_type is rejected at the boundary (fail-closed schema)', async () => {
+    const { clientId } = await fullConnect('rt-badgrant');
+    const res = await tokenExchange({ grant_type: 'client_credentials', client_id: clientId } as Record<string, string>);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('invalid_request');
   });
 });
 

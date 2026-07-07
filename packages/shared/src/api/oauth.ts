@@ -13,8 +13,8 @@ import { TimestampSchema } from '../spine/ids.js';
  *   * an OAuth access token IS an `agent` grant carrying a `clientId` — NOT a new principalKind.
  *   * READ is the default; WRITE is a per-scope opt-in at consent ({@link AgentWriteOptSchema} →
  *     clampAgentScopes) — the SAME mechanism the manual mint route uses, so both are ONE auth path for
- *     write. Tokens are NON-EXPIRING (no expires_in, no refresh token — the standing no-TTL stance; revoke
- *     is the control).
+ *     write. v1-rotating (§5 follow-up): the access token is SHORT-lived (1h) + paired with a ROTATING
+ *     refresh token (families → theft detection); revocation (per-client + revoke-all) is still the control.
  *   * PUBLIC PKCE clients only (no client_secret); PKCE S256 is mandatory; redirect_uri is exact-match
  *     (loopback port-exception per RFC 8252). These are the anti-phishing controls, not niceties.
  */
@@ -133,12 +133,42 @@ export const TokenRequestSchema = z
 export type TokenRequest = z.infer<typeof TokenRequestSchema>;
 
 /**
- * Token response. v1 is NON-EXPIRING with NO refresh token (locked): there is deliberately no `expires_in`
- * and no `refresh_token` field — the bearer is durable until revoked. `scope` echoes the (clamped) grant.
+ * Refresh grant request (RFC 6749 §6). The client presents the opaque refresh token it holds plus its
+ * `client_id`; the server verifies + ROTATES it (a new access token + a NEW refresh token in the same
+ * family) — reusing a spent/revoked refresh nukes the whole family (theft detection). A `scope` param is
+ * DELIBERATELY not accepted: a refresh can never widen (nor narrow) the consented scope, which is carried
+ * unchanged from the original grant through every rotation. `.strip()` drops any ride-along field.
+ */
+export const RefreshTokenRequestSchema = z
+  .object({
+    grant_type: z.literal('refresh_token'),
+    refresh_token: z.string().min(1),
+    client_id: z.string().min(1),
+  })
+  .strip();
+export type RefreshTokenRequest = z.infer<typeof RefreshTokenRequestSchema>;
+
+/**
+ * The `/token` request union — `grant_type` discriminates authorization-code exchange from refresh
+ * rotation. A discriminated union fails closed on any `grant_type` deltos does not implement (only the two
+ * advertised in {@link buildAuthServerMetadata}), so an unsupported grant is a schema reject at the boundary.
+ */
+export const TokenGrantRequestSchema = z.discriminatedUnion('grant_type', [
+  TokenRequestSchema,
+  RefreshTokenRequestSchema,
+]);
+export type TokenGrantRequest = z.infer<typeof TokenGrantRequestSchema>;
+
+/**
+ * Token response (RFC 6749 §5.1). v1-rotating: a SHORT-lived access token (`expires_in` seconds) paired
+ * with a rotating `refresh_token`. Both the authorization-code exchange and the refresh rotation return
+ * this same shape. `scope` echoes the (clamped) grant — identical across every rotation of a family.
  */
 export const TokenResponseSchema = z.object({
   access_token: z.string().min(1),
   token_type: z.literal('Bearer'),
+  expires_in: z.number().int().positive(),
+  refresh_token: z.string().min(1),
   scope: z.string(),
 });
 export type TokenResponse = z.infer<typeof TokenResponseSchema>;
@@ -201,7 +231,9 @@ export function buildAuthServerMetadata(origin: string) {
     token_endpoint: `${origin}/api/oauth/token`,
     scopes_supported: [...OAUTH_V1_SCOPES],
     response_types_supported: ['code'],
-    grant_types_supported: ['authorization_code'],
+    // v1-rotating (oauth-provider.md §5 follow-up): the authorization-code exchange now returns a rotating
+    // refresh token, so the refresh grant is advertised alongside the code grant.
+    grant_types_supported: ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported: [PKCE_METHOD],
     token_endpoint_auth_methods_supported: ['none'],
   } as const;
