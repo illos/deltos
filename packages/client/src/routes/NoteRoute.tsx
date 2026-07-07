@@ -28,6 +28,14 @@ const SharesPanel = lazy(() =>
   import('../components/SharesPanel.js').then((m) => ({ default: m.SharesPanel })),
 );
 
+// ExportPanel (ROAD-0017) is a LAZY off-track surface exactly like SharesPanel: its own chunk, imported only
+// when the `?export` param is set, so neither the panel nor the export serializers / print machinery it pulls
+// in (exportNote → shared serializers + the attachment blob client) ever ride this route's static graph or
+// the mobile first-load bundle (CONV-0004 / plugins-lazy-past-first-paint).
+const ExportPanel = lazy(() =>
+  import('../components/ExportPanel.js').then((m) => ({ default: m.ExportPanel })),
+);
+
 /**
  * Loads a note by ID through the LocalStore seam and renders the appropriate view.
  *
@@ -233,6 +241,24 @@ export function NoteRoute({ variant = 'regular' }: NoteRouteProps = {}) {
           onBack={() => {
             const next = new URLSearchParams(searchParams);
             next.delete('share');
+            setSearchParams(next, { replace: true });
+          }}
+        />
+      </Suspense>
+    );
+  }
+
+  // Export panel — full-screen overlay, parallel to Share/History/Info. Opened by the note action surface's
+  // Export button via the ?export URL param (mobile shell bar + desktop meta bar both navigate here). Lazy
+  // chunk — dynamic-imported above so it never touches the first-load shell.
+  if (searchParams.has('export')) {
+    return (
+      <Suspense fallback={<div className="history share" aria-busy="true" />}>
+        <ExportPanel
+          note={note}
+          onBack={() => {
+            const next = new URLSearchParams(searchParams);
+            next.delete('export');
             setSearchParams(next, { replace: true });
           }}
         />

@@ -25,9 +25,11 @@ export interface SpineHtmlOptions {
   /**
    * Resolve an attachment block to a servable URL (image src / download href). The share route passes a
    * token-scoped resolver (`/s/<token>/blob/<hash>`); omitted ⇒ the attachment renders as inert filename
-   * text (no live URL). Return value is escaped as an attribute by the renderer.
+   * text (no live URL). A resolver that returns `null` for a given attachment (e.g. a blob it can't resolve)
+   * renders the same inert filename as an omitted resolver — the render already null-checks the result.
+   * Return value is escaped as an attribute by the renderer.
    */
-  attachmentUrl?: (att: AttachmentContent) => string;
+  attachmentUrl?: (att: AttachmentContent) => string | null;
 }
 
 /** Escape text for HTML text content (`&`, `<`, `>`). */
