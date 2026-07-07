@@ -1426,6 +1426,26 @@
   gap: 0.5rem;
 }
 
+/* Share-link row (ROAD-0011 P2): a header line (label/meta + Revoke) stacked over the url + Copy row. */
+.settings__share-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+.settings__share-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.settings__share-url {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.settings__share-url .settings__token-value { flex: 1; min-width: 0; }
+.settings__share-url .settings__row-action { flex: none; }
+.settings__share-url--absent .settings__token-meta { flex: 1; min-width: 0; font-style: italic; }
+
 /* Agent-token resource detail (ROAD-0011 P1) — the expandable per-resource list under a token row, with a
    per-resource ×-revoke. */
 .settings__token-group {

@@ -147,6 +147,23 @@ describe('URL sharing — mint / render / live / revoke', () => {
     expect(html).not.toContain('<script type="module"'); // no SPA entry
   });
 
+  it('renders the live pip as a bare dot inline by the title, with NO bottom status bar/label', async () => {
+    const { token } = await mintNoteShare();
+    const html = await (await get(env, `/s/${token}`)).text();
+    // The live dot lives in the title row (inline next to the heading), not a bottom bar.
+    expect(html).toContain('class="doc-title-row"');
+    expect(html).toContain('id="share-dot"');
+    expect(html).toContain('sync-indicator__dot'); // the sonar-ping dot visual is kept
+    // The bottom status bar + its text label are gone.
+    expect(html).not.toContain('share-foot');
+    expect(html).not.toContain('id="share-status"');
+    // The heartbeat still runs under the per-response nonce (no unsafe-inline for scripts).
+    expect(html).toMatch(/<script nonce="[^"]+">/); // the poll script is nonce'd inline
+    const csp = (await get(env, `/s/${token}`)).headers.get('content-security-policy') ?? '';
+    expect(csp).toMatch(/script-src 'nonce-[^']+'/);
+    expect(csp).not.toContain("script-src 'unsafe-inline'");
+  });
+
   it('the /live heartbeat returns the note version, and increments are visible', async () => {
     const { token } = await mintNoteShare();
     const res = await get(env, `/s/${token}/live`);
