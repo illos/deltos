@@ -180,13 +180,12 @@ ${themeCss}
 * { box-sizing: border-box; }
 body { margin:0; background:var(--paper); color:var(--ink); font-size:16px; line-height:1.65; -webkit-font-smoothing:antialiased; }
 .share-wrap { max-width:44rem; margin:0 auto; padding:2rem 1.25rem 3rem; }
+/* Header row: the "Shared note/notebook" label with the bare live dot inline immediately after it,
+   vertically centered (the reload/dead affordance rides here too, only shown when the poll flips). */
 .share-head { display:flex; align-items:center; gap:.5rem; color:var(--secondary); font-size:.8rem; letter-spacing:.02em; text-transform:uppercase; margin-bottom:1rem; }
 .share-back { display:inline-block; margin-bottom:1rem; color:var(--secondary); text-decoration:none; font-size:.9rem; }
 .share-back:hover { color:var(--ink); }
 h1.doc-title { font-size:1.9rem; line-height:1.2; margin:.2rem 0 1.2rem; }
-/* Title row: the heading with the bare live dot inline immediately after it, vertically centered. */
-.doc-title-row { display:flex; align-items:center; flex-wrap:wrap; gap:.4rem .6rem; margin:.2rem 0 1.2rem; }
-.doc-title-row h1.doc-title { margin:0; }
 article :is(h1,h2,h3,h4,h5,h6) { line-height:1.25; margin:1.6rem 0 .6rem; color:var(--ink); }
 article p { margin:.6rem 0; color:var(--body); }
 article a { color:var(--accent); }
@@ -202,7 +201,7 @@ article img { max-width:100%; height:auto; border-radius:8px; }
 .note-list li { border-bottom:1px solid var(--border); }
 .note-list a { display:block; padding:.85rem .25rem; color:var(--ink); text-decoration:none; }
 .note-list a:hover { color:var(--accent); }
-.share-reload { appearance:none; border:1px solid var(--border); background:var(--paper); color:var(--ink); border-radius:999px; padding:.3rem .7rem; font-size:.8rem; cursor:pointer; }
+.share-reload { appearance:none; border:1px solid var(--border); background:var(--paper); color:var(--ink); border-radius:999px; padding:.3rem .7rem; font-size:.8rem; text-transform:none; letter-spacing:normal; cursor:pointer; }
 /* #105 sonar-ping dot — COPIED from client SyncIndicator.css, reused as pure CSS (no React component here). */
 .sync-indicator { position:relative; display:inline-flex; align-items:center; justify-content:center; line-height:0; }
 .sync-indicator__dot { width:8px; height:8px; border-radius:50%; background:var(--sync); flex-shrink:0; }
@@ -218,12 +217,8 @@ article img { max-width:100%; height:auto; border-radius:8px; }
 <body>
 <div class="share-wrap">
 ${backLink}
-<div class="share-head">${escapeHtmlText(opts.metaLabel)}</div>
-<div class="doc-title-row">
+<div class="share-head"><span class="share-head-label">${escapeHtmlText(opts.metaLabel)}</span><span class="sync-indicator sync-indicator--synced" id="share-dot"><span class="sync-indicator__dot"></span><span class="sync-indicator__ring"></span></span><button class="share-reload" id="share-reload" hidden></button></div>
 ${opts.headingHtml}
-<span class="sync-indicator sync-indicator--synced" id="share-dot"><span class="sync-indicator__dot"></span><span class="sync-indicator__ring"></span></span>
-<button class="share-reload" id="share-reload" hidden></button>
-</div>
 ${opts.contentHtml}
 </div>
 <span id="share-live" data-token="${escapeHtmlAttr(opts.token)}" data-version="${String(opts.version)}" data-kind="${opts.kind}" hidden></span>
@@ -233,7 +228,7 @@ ${opts.contentHtml}
   var token=el.getAttribute('data-token');var rendered=Number(el.getAttribute('data-version'));
   var dot=document.getElementById('share-dot');var btn=document.getElementById('share-reload');
   // The dot carries NO text — only its class (green=live / amber=updated / grey=offline-or-dead) changes.
-  // The only text that ever appears is the inline reload/dead affordance on the button, near the title.
+  // The only text that ever appears is the inline reload/dead affordance on the button, in the header row.
   function set(cls){dot.className='sync-indicator '+cls;}
   btn.addEventListener('click',function(){if(btn.getAttribute('data-mode')==='reload')location.reload();});
   function poll(){

@@ -10,7 +10,6 @@ import {
   listShares,
   revokeShare,
   ShareError,
-  type MintedShare,
   type ShareRecord,
   type ShareResourceType,
 } from '../lib/shareApi.js';
@@ -21,11 +20,11 @@ import {
  * HistoryPanel / InfoPanel's full-screen overlay shell (`.history` container + sticky header).
  *
  * For the note (always) and its notebook (when the note lives in one — not the synthetic "All Notes"), it
- * offers a "Create share link" action that mints a link and surfaces the returned URL with a copy button,
- * and lists the resource's existing links each with a Revoke button (optimistic drop + refetch). The server
- * hash-stores the token (F6) and never re-serves it, so the URL is remembered CLIENT-LOCAL + account-isolated
- * (db/shareUrls.ts) to stay visible + copyable per row; a link minted on another device shows a "not saved
- * on this device" note + a Re-mint action instead.
+ * offers a "Create share link" action that mints a link (no separate reveal step — the new link just drops
+ * into the list below with its own URL + Copy), and lists the resource's existing links each with a Revoke
+ * button (optimistic drop + refetch). The server hash-stores the token (F6) and never re-serves it, so the
+ * URL is remembered CLIENT-LOCAL + account-isolated (db/shareUrls.ts) to stay visible + copyable per row; a
+ * link minted on another device shows a "not saved on this device" note + a Re-mint action instead.
  *
  * RESIDENCY (lazy off-track surface — CONV-0004 / plugins-lazy-past-first-paint): NoteRoute `lazy()`-loads
  * this as its OWN chunk on the `?share` param, so neither this panel nor its `shareApi` client ever enters
@@ -50,8 +49,9 @@ function formatDate(iso: string): string {
 }
 
 /**
- * One share target (a note or a notebook): the mint action, the once-shown minted URL, and the manage list
- * of existing links. Self-contained so the panel can drop in one per resource without duplicating state.
+ * One share target (a note or a notebook): the mint action and the manage list of existing links. Minting
+ * has NO separate reveal dialog — the new link simply appears in the list below with its own URL + Copy.
+ * Self-contained so the panel can drop in one per resource without duplicating state.
  *
  * The share token is hash-stored server-side (F6) and never re-served, so the list from `GET /api/shares`
  * carries no url. To keep each active link's URL visible with a Copy button, we remember minted urls
@@ -75,9 +75,8 @@ function ShareTarget({
   const [shares, setShares] = useState<ShareRecord[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [minting, setMinting] = useState(false);
-  const [minted, setMinted] = useState<MintedShare | null>(null);
   const [mintError, setMintError] = useState<string | null>(null);
-  // Which url was just copied (key = shareId, or 'minted' for the one-time reveal) — drives the "Copied!" flash.
+  // Which url was just copied (key = shareId) — drives the per-row "Copied!" flash.
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   // shareId → locally-remembered url, for the rows whose url this device minted. Absent = not saved here.
@@ -108,12 +107,12 @@ function ShareTarget({
       // Stamp the owner's CURRENT theme (palette+voice) onto the share so the public render matches it.
       const { palette, voice } = useThemeStore.getState();
       const result = await createShare(resourceType, resourceId, { palette, voice });
-      // Remember the url locally (account-isolated) BEFORE surfacing it, so it stays visible + copyable in the
-      // list after the one-time reveal is dismissed (and across reopening the sheet on this device).
+      // Remember the url locally (account-isolated) BEFORE the list refresh, so the new row shows it inline
+      // (and it survives reopening the sheet on this device). No separate reveal step — the row IS the reveal.
       await saveShareUrl(accountId, result.shareId, result.url);
       setUrls((prev) => ({ ...prev, [result.shareId]: result.url }));
-      setMinted(result);
-      void refresh(); // the new link appears in the list immediately (now WITH its remembered url)
+      showToast('Share link created');
+      void refresh(); // the new link appears in the list immediately (WITH its remembered url + Copy)
     } catch (err) {
       setMintError(messageFor(err));
     } finally {
@@ -161,44 +160,16 @@ function ShareTarget({
         it any time to kill access.
       </p>
 
-      {minted ? (
-        <div className="settings__token-box">
-          <p className="settings__token-warning">
-            Copy this link now — the URL is shown once and can&rsquo;t be retrieved again.
-          </p>
-          <textarea
-            className="settings__token-value"
-            readOnly
-            rows={2}
-            value={minted.url}
-            aria-label="Share link"
-            onFocus={(e) => e.currentTarget.select()}
-          />
-          <div className="settings__token-box-actions">
-            <button
-              className="settings__row-action"
-              onClick={() => void handleCopy(minted.url, 'minted')}
-              aria-label="Copy share link"
-            >
-              {copiedKey === 'minted' ? 'Copied!' : 'Copy link'}
-            </button>
-            <button className="settings__row-action" onClick={() => setMinted(null)}>
-              Done
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="settings__row settings__row--btn-group">
-          <button
-            className="settings__row-action"
-            onClick={() => void handleCreate()}
-            disabled={minting}
-            aria-label={`Create share link for ${targetLabel}`}
-          >
-            {minting ? 'Creating…' : 'Create share link'}
-          </button>
-        </div>
-      )}
+      <div className="settings__row settings__row--btn-group">
+        <button
+          className="settings__row-action"
+          onClick={() => void handleCreate()}
+          disabled={minting}
+          aria-label={`Create share link for ${targetLabel}`}
+        >
+          {minting ? 'Creating…' : 'Create share link'}
+        </button>
+      </div>
 
       {mintError && (
         <div className="settings__row settings__row--btn-group">
