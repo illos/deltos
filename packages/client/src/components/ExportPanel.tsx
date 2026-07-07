@@ -13,9 +13,9 @@ import { exportMarkdown, printNote } from '../lib/exportNote.js';
  * machinery it pulls in (`exportNote` → shared serializers + the attachment blob client) ever enter the
  * mobile first-load bundle or the editor first-load path.
  *
- * Print + PDF are ONE path (Jim's call): both render the note into a hidden iframe and invoke the OS
- * print/share sheet — Save-as-PDF is the user picking it there. The iOS-PWA no-op is surfaced as a VISIBLE
- * fallback message, never swallowed.
+ * Print + PDF are ONE path (Jim's call): both render the note into a print-only container on the main
+ * document and invoke the OS print/share sheet — Save-as-PDF is the user picking it there. The iOS-PWA no-op
+ * is surfaced as a VISIBLE fallback message, never swallowed.
  */
 export interface ExportPanelProps {
   /** The open note — its title + body are what we serialize / print. */
