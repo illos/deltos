@@ -70,6 +70,9 @@ async function resolveShare(c: AppContext, token: string): Promise<ShareContext 
   const store = createAuthStore(db);
   const principal = await resolveTokenPrincipal(store, token);
   if (!principal) return null;
+  // The PUBLIC /s/* surface resolves ONLY anonymous share grants. A read-capable agent/session token
+  // pasted as `/s/<token>` must NOT render the resource here (that path is the app/MCP, not this surface).
+  if (principal.kind !== 'anonymous') return null;
   const grants = resolvedGrantFor(principal);
   const grant = grants?.[0];
   if (!grant) return null;
@@ -264,39 +267,40 @@ function safeParseProps(raw: string): PropertyBag {
 /** GET /s/:token/live — the heartbeat probe (cheap; own generous rate bucket). JSON, never HTML. */
 shareSurface.get('/:token/live', async (c: AppContext) => {
   const token = c.req.param('token') ?? '';
-  const store = createAuthStore(d1Adapter(c.env.DB));
-  if (!(await underRate(store, 'share-live', token, LIVE_RATE))) {
-    return c.json({ revoked: true }, 429);
-  }
+  // Resolve the token FIRST — an unknown/invalid token 404s with NO rate-limit D1 write (only KNOWN tokens
+  // get a rate bucket, so probing random tokens performs no write). Revoked/invalid → 404.
   const ctx = await resolveShare(c, token);
-  // Revoked/invalid → 404 (the client treats any non-200 as a dead link). No cookies, no owner state.
-  if (!ctx) return c.json({ revoked: true }, 404);
+  if (!ctx) return c.json({ revoked: true }, 404, { 'X-Content-Type-Options': 'nosniff' });
+  if (!(await underRate(ctx.store, 'share-live', token, LIVE_RATE))) {
+    return c.json({ revoked: true }, 429, { 'X-Content-Type-Options': 'nosniff' });
+  }
   const allowed = await canWith(ctx.can, ctx.principal, 'read', ctx.resource);
-  if (!allowed) return c.json({ revoked: true }, 404);
+  if (!allowed) return c.json({ revoked: true }, 404, { 'X-Content-Type-Options': 'nosniff' });
 
   let version = 0;
   if (ctx.resource.kind === 'note') {
     const note = await getNoteForAccount(ctx.db, ctx.ownerAccountId, ctx.resource.id);
-    if (!note) return c.json({ revoked: true }, 404);
+    if (!note) return c.json({ revoked: true }, 404, { 'X-Content-Type-Options': 'nosniff' });
     version = note.version;
   } else if (ctx.resource.kind === 'notebook') {
     version = await notebookRevision(ctx.db, ctx.ownerAccountId, ctx.resource.id);
   }
-  return c.json({ version, revoked: false });
+  return c.json({ version, revoked: false }, 200, { 'X-Content-Type-Options': 'nosniff' });
 });
 
 /** GET /s/:token/blob/:hash — token-scoped blob serving (image src / download), access-checked vs THIS grant. */
 shareSurface.get('/:token/blob/:hash', async (c: AppContext) => {
   const token = c.req.param('token') ?? '';
   const hash = c.req.param('hash') ?? '';
-  const store = createAuthStore(d1Adapter(c.env.DB));
-  if (!(await underRate(store, 'share', token, PAGE_RATE))) {
+  // Resolve the token FIRST — an unknown/invalid token 404s with NO rate-limit D1 write (only KNOWN tokens
+  // get a rate bucket, so probing random tokens performs no write).
+  const ctx = await resolveShare(c, token);
+  if (!ctx) return new Response('not found', { status: 404 });
+  if (!(await underRate(ctx.store, 'share', token, PAGE_RATE))) {
     return new Response('rate limited', { status: 429 });
   }
   if (!hash || !/^[0-9a-f]{64}$/.test(hash)) return new Response('bad request', { status: 400 });
 
-  const ctx = await resolveShare(c, token);
-  if (!ctx) return new Response('not found', { status: 404 });
   // Liveness/revocation gate at the SAME chokepoint (guard #1/#10).
   if (!(await canWith(ctx.can, ctx.principal, 'read', ctx.resource))) return new Response('not found', { status: 404 });
   if (!c.env.BLOBS) return new Response('not found', { status: 404 });
@@ -330,12 +334,13 @@ shareSurface.get('/:token/n/:noteId', async (c: AppContext) => {
   const token = c.req.param('token') ?? '';
   const noteId = c.req.param('noteId') ?? '';
   const nonce = randomToken(16);
-  const store = createAuthStore(d1Adapter(c.env.DB));
-  if (!(await underRate(store, 'share', token, PAGE_RATE))) {
-    return new Response('rate limited', { status: 429, headers: { 'Cache-Control': 'no-store' } });
-  }
+  // Resolve the token FIRST — an unknown/invalid token 404s with NO rate-limit D1 write (only KNOWN tokens
+  // get a rate bucket, so probing random tokens performs no write).
   const ctx = await resolveShare(c, token);
   if (!ctx) return notFoundPage(nonce);
+  if (!(await underRate(ctx.store, 'share', token, PAGE_RATE))) {
+    return new Response('rate limited', { status: 429, headers: { 'Cache-Control': 'no-store' } });
+  }
 
   // THE per-note gate (guard #1 + hierarchy): can(read, note) passes IFF the note currently lives in the
   // granted notebook AND the owner matches — a note moved out of the notebook, or a note-scoped share asked
@@ -345,6 +350,10 @@ shareSurface.get('/:token/n/:noteId', async (c: AppContext) => {
 
   const note = await getNoteForAccount(ctx.db, ctx.ownerAccountId, noteId);
   if (!note) return notFoundPage(nonce);
+  // Fail CLOSED on a trashed note: the owner trashed it, so it must NOT be publicly served (matches the
+  // list filter). Share-surface only — the shared resolver intentionally still exposes trashed rows to
+  // agent-token reads.
+  if (isTrashed(safeParseProps(note.properties))) return notFoundPage(nonce);
 
   const { headingHtml, contentHtml } = renderNoteContent(note, token);
   const backHref = ctx.resource.kind === 'notebook' ? `/s/${token}` : null;
@@ -365,12 +374,13 @@ shareSurface.get('/:token/n/:noteId', async (c: AppContext) => {
 shareSurface.get('/:token', async (c: AppContext) => {
   const token = c.req.param('token') ?? '';
   const nonce = randomToken(16);
-  const store = createAuthStore(d1Adapter(c.env.DB));
-  if (!(await underRate(store, 'share', token, PAGE_RATE))) {
-    return new Response('rate limited', { status: 429, headers: { 'Cache-Control': 'no-store' } });
-  }
+  // Resolve the token FIRST — an unknown/invalid token 404s with NO rate-limit D1 write (only KNOWN tokens
+  // get a rate bucket, so probing random tokens performs no write).
   const ctx = await resolveShare(c, token);
   if (!ctx) return notFoundPage(nonce);
+  if (!(await underRate(ctx.store, 'share', token, PAGE_RATE))) {
+    return new Response('rate limited', { status: 429, headers: { 'Cache-Control': 'no-store' } });
+  }
 
   // Access decision at the SAME chokepoint against the granted resource (liveness/revocation gate).
   if (!(await canWith(ctx.can, ctx.principal, 'read', ctx.resource))) return notFoundPage(nonce);
@@ -378,6 +388,8 @@ shareSurface.get('/:token', async (c: AppContext) => {
   if (ctx.resource.kind === 'note') {
     const note = await getNoteForAccount(ctx.db, ctx.ownerAccountId, ctx.resource.id);
     if (!note) return notFoundPage(nonce);
+    // Fail CLOSED on a trashed note (see /n/:noteId) — a note the owner trashed is not publicly served.
+    if (isTrashed(safeParseProps(note.properties))) return notFoundPage(nonce);
     const { headingHtml, contentHtml } = renderNoteContent(note, token);
     const html = renderSharePage({
       headingHtml,

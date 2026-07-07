@@ -51,12 +51,17 @@ function escapeAttr(s: string): string {
  * (no scheme) are allowed as-is — they resolve against the share origin, harmless.
  */
 function safeHref(href: string): string | null {
-  const trimmed = href.trim();
+  // Strip ALL C0 controls + spaces (U+0000–U+0020) before the scheme match, mirroring the browser URL
+  // parser (which removes U+0009/0A/0D from ANYWHERE in a URL and trims leading/trailing controls+space).
+  // Otherwise a scheme split by a control char — `java\tscript:` / `java\nscript:` — slips past the
+  // allowlist here yet the browser still parses it as a live `javascript:` scheme. We gate on the sanitized
+  // form `t` and, when allowed, EMIT `t` so the rendered href is exactly what the browser would parse.
+  const t = href.replace(/[\u0000-\u0020]/g, '');
   // A scheme is `word chars + :` at the very start. No scheme ⇒ relative ⇒ allowed.
-  const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(trimmed);
-  if (!schemeMatch) return trimmed;
+  const schemeMatch = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(t);
+  if (!schemeMatch) return t;
   const scheme = (schemeMatch[1] ?? '').toLowerCase();
-  return scheme === 'http' || scheme === 'https' || scheme === 'mailto' ? trimmed : null;
+  return scheme === 'http' || scheme === 'https' || scheme === 'mailto' ? t : null;
 }
 
 // ── inline segments ────────────────────────────────────────────────────────────────────────────

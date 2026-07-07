@@ -121,6 +121,17 @@ describe('spineToHtml — escaping + link safety (security)', () => {
     expect(spineToHtml([{ id: '1', type: 'paragraph', content: { segments: [seg] } }])).toBe('<p>click &lt;me&gt;</p>');
   });
 
+  it('blocks a control-char-obfuscated javascript: scheme (tab/newline split), keeping it inert', () => {
+    // The browser URL parser strips U+0009/0A/0D, so `java\tscript:` / `java\nscript:` would parse as a
+    // live javascript: scheme. safeHref strips those controls BEFORE the allowlist so the anchor is dropped.
+    const mk = (link: string) => spineToHtml([{ id: '1', type: 'paragraph', content: { segments: [{ text: 'x', link }] } }]);
+    expect(mk('java\tscript:alert(1)')).toBe('<p>x</p>');
+    expect(mk('java\nscript:alert(1)')).toBe('<p>x</p>');
+    expect(mk('java\rscript:alert(1)')).toBe('<p>x</p>');
+    // Leading-control obfuscation of the whole scheme is likewise inert.
+    expect(mk('\tjavascript:alert(1)')).toBe('<p>x</p>');
+  });
+
   it('drops a data: link but keeps an http(s)/mailto/relative link', () => {
     const mk = (link: string) => spineToHtml([{ id: '1', type: 'paragraph', content: { segments: [{ text: 't', link }] } }]);
     expect(mk('data:text/html,<x>')).toBe('<p>t</p>');

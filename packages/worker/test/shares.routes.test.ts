@@ -175,9 +175,23 @@ describe('URL sharing — mint / render / live / revoke', () => {
     expect(after.shares).toHaveLength(0);
   });
 
-  it('an unknown / malformed token 404s (no oracle)', async () => {
+  it('an unknown / malformed token 404s (no oracle) and records NO throttle row (resolve-before-limit)', async () => {
     expect((await get(env, '/s/dltos_share_not-a-real-token')).status).toBe(404);
     expect((await get(env, '/s/dltos_share_not-a-real-token/live')).status).toBe(404);
+    // Resolve-before-limit: an unknown token performs no D1 rate-limit write, so unauthenticated probing of
+    // random tokens leaves the throttle table empty (only KNOWN tokens get a bucket).
+    const cnt = raw.prepare('SELECT COUNT(*) AS n FROM authThrottle').get() as { n: number };
+    expect(cnt.n).toBe(0);
+  });
+
+  it('does not serve a note the owner has TRASHED (fail closed → 404)', async () => {
+    const { token } = await mintNoteShare();
+    // The share is live while the note is live.
+    expect((await get(env, `/s/${token}`)).status).toBe(200);
+    // Owner trashes the note (sys:trashedAt property flag) → the public surface fails closed.
+    raw.prepare('UPDATE notes SET properties = ? WHERE id = ?')
+      .run(JSON.stringify({ 'sys:trashedAt': { type: 'date', value: now } }), NOTE_ID);
+    expect((await get(env, `/s/${token}`)).status).toBe(404);
   });
 });
 
@@ -219,6 +233,18 @@ describe('URL sharing — notebook shares + per-note gating', () => {
     // /live returns the notebook revision (max note syncSeq).
     expect(await (await get(env, `/s/${token}/live`)).json()).toEqual({ version: 7, revoked: false });
   });
+
+  it('does not serve a TRASHED note within a notebook share (fail closed → 404, dropped from list)', async () => {
+    const res = await post(env, '/api/shares', { resourceType: 'notebook', resourceId: NB_ID }, owner.token);
+    const { token } = (await res.json()) as { token: string };
+    // The covered note is live → per-note page 200 and listed.
+    expect((await get(env, `/s/${token}/n/${NOTE_IN_NB}`)).status).toBe(200);
+    // Owner trashes it → the per-note page fails closed and the root list drops it.
+    raw.prepare('UPDATE notes SET properties = ? WHERE id = ?')
+      .run(JSON.stringify({ 'sys:trashedAt': { type: 'date', value: now } }), NOTE_IN_NB);
+    expect((await get(env, `/s/${token}/n/${NOTE_IN_NB}`)).status).toBe(404);
+    expect(await (await get(env, `/s/${token}`)).text()).not.toContain(`/n/${NOTE_IN_NB}`);
+  });
 });
 
 describe('URL sharing — access control (BOLA + agent-cannot-share)', () => {
@@ -254,5 +280,14 @@ describe('URL sharing — access control (BOLA + agent-cannot-share)', () => {
     // The agent token holds ['read','search'] — no 'share' — so the mint chokepoint 403s.
     const res = await post(env, '/api/shares', { resourceType: 'note', resourceId: NOTE_ID }, agentToken);
     expect(res.status).toBe(403);
+  });
+
+  it('a read-capable AGENT token used AS a /s/ share token 404s (public surface = anonymous grants only)', async () => {
+    // Mint a read-capable agent token, then paste it into the PUBLIC share surface. Even though it can
+    // read via the app/MCP, the /s/* surface resolves ONLY anonymous share grants → 404 (LOW-1).
+    const mintRes = await post(env, '/api/agent-tokens', { password: PW }, alice.token);
+    const agentToken = ((await mintRes.json()) as { token: string }).token;
+    expect((await get(env, `/s/${agentToken}`)).status).toBe(404);
+    expect((await get(env, `/s/${agentToken}/live`)).status).toBe(404);
   });
 });
