@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import { useParams, Link, useSearchParams, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import type { Note, NoteId } from '@deltos/shared';
 import { NoteIdSchema } from '@deltos/shared';
@@ -20,6 +20,13 @@ import { Collapse } from '../icons/index.js';
 import { useIsDesktop } from '../lib/useIsDesktop.js';
 import { showActionToast } from '../lib/toastEvents.js';
 import type { ClientNote, NoteVersion } from '../db/schema.js';
+
+// SharesPanel (ROAD-0011 P2) is a LAZY off-track surface: its own chunk, imported only when the `?share`
+// param is set, so neither the panel nor its shareApi client rides this route's static graph or the mobile
+// first-load bundle (CONV-0004 / plugins-lazy-past-first-paint). Mirrors App.tsx's route-level lazy() usage.
+const SharesPanel = lazy(() =>
+  import('../components/SharesPanel.js').then((m) => ({ default: m.SharesPanel })),
+);
 
 /**
  * Loads a note by ID through the LocalStore seam and renders the appropriate view.
@@ -212,6 +219,24 @@ export function NoteRoute({ variant = 'regular' }: NoteRouteProps = {}) {
           }
         }}
       />
+    );
+  }
+
+  // Share panel — full-screen overlay, parallel to History/Info. Opened by the note action surface's Share
+  // button via the ?share URL param (mobile shell bar + desktop meta bar both navigate here). Lazy chunk —
+  // dynamic-imported above so it never touches the first-load shell.
+  if (searchParams.has('share')) {
+    return (
+      <Suspense fallback={<div className="history share" aria-busy="true" />}>
+        <SharesPanel
+          note={note}
+          onBack={() => {
+            const next = new URLSearchParams(searchParams);
+            next.delete('share');
+            setSearchParams(next, { replace: true });
+          }}
+        />
+      </Suspense>
     );
   }
 

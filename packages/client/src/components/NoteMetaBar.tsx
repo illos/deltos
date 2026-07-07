@@ -1,7 +1,9 @@
 import { Link, useNavigate } from 'react-router-dom';
 import type { NoteId } from '@deltos/shared';
 import { SyncIndicator } from './SyncIndicator.js';
-import { VersionHistory, Info, Trash, Expand, Collapse, PopOut } from '../icons/index.js';
+// `Link as ShareLink` — the icons module's Link (a chain-link glyph, our Share affordance) aliased to
+// avoid colliding with react-router's Link imported above.
+import { VersionHistory, Info, Trash, Expand, Collapse, PopOut, Link as ShareLink } from '../icons/index.js';
 
 /**
  * The §3 note meta toolbar — the DESKTOP-ONLY row of note controls (#82): sync indicator + version-history +
@@ -41,6 +43,16 @@ export function NoteMetaBar({ noteId, isFull, onShowHistory, onShowInfo, onDelet
         {/* Per-note info (ⓘ) — sits beside history; opens the full-screen InfoPanel. */}
         <button className="editor__meta-btn" onClick={onShowInfo} aria-label="Note info">
           <Info size={18} />
+        </button>
+        {/* Share (ROAD-0011 P2) — opens the read-only share-link panel via the ?share URL param (the same
+            route seam History/Info use). Minimal, discoverable entry point; its eventual home is the
+            ROAD-0013 "…" context menu. */}
+        <button
+          className="editor__meta-btn"
+          onClick={() => navigate(`/note/${noteId}?share`)}
+          aria-label="Share note"
+        >
+          <ShareLink size={18} />
         </button>
         {/* Desktop delete trashcan, next to history. Soft-delete → Trash, recoverable. */}
         <button className="editor__meta-btn" onClick={onDelete} aria-label="Delete note">
