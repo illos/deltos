@@ -1,11 +1,11 @@
 /**
- * SharesPanel render test (ROAD-0011 P2 / standing ui-features-need-rendered-ui-gate). Mounts the REAL
- * panel over a mocked shareApi + a fake (in-memory) client-local url store, and proves the user-visible
- * contract:
+ * ShareLinkSection render test (ROAD-0011 P2 / standing ui-features-need-rendered-ui-gate). Mounts the REAL
+ * "Share link" body (extracted from the old SharesPanel) over a mocked shareApi + a fake (in-memory)
+ * client-local url store, and proves the user-visible contract:
  *   - it lists a resource's existing share links, each with a Revoke button;
  *   - "Create share link" → mint → NO separate reveal dialog: the new link drops straight into the list row
  *     with its URL + a working copy-to-clipboard, and is PERSISTED locally;
- *   - reopening the panel re-hydrates the persisted url into the list row;
+ *   - reopening re-hydrates the persisted url into the list row;
  *   - Revoke calls DELETE (revokeShare), optimistically drops the row, AND forgets the local url;
  *   - a share with NO local url (minted on another device) renders "link not saved on this device" + Re-mint.
  *
@@ -58,17 +58,17 @@ vi.mock('../lib/shareApi.js', () => {
 });
 vi.mock('../lib/toastEvents.js', () => ({ showToast }));
 vi.mock('../db/storeHooks.js', () => ({ useNotebooks: () => [] }));
-// The panel reads the CURRENT theme off themeStore at mint to STAMP it onto the share (ROAD-0011 P2).
+// The section reads the CURRENT theme off themeStore at mint to STAMP it onto the share (ROAD-0011 P2).
 vi.mock('../lib/themeStore.js', () => ({
   useThemeStore: { getState: () => ({ palette: 'ember', voice: 'mono' }) },
 }));
 vi.mock('../db/shareUrls.js', () => ({ saveShareUrl, getShareUrls, deleteShareUrl }));
-// The panel reads the resident accountId off the auth store — pin it to a fixed account for the isolation scope.
+// The section reads the resident accountId off the auth store — pin it to a fixed account for the isolation scope.
 vi.mock('../auth/store.js', () => ({
   useAuthStore: (sel: (s: { accountId: string | null }) => unknown) => sel({ accountId: 'acct-1' }),
 }));
 
-import { SharesPanel } from './SharesPanel.js';
+import { ShareLinkSection } from './ShareLinkSection.js';
 
 const NOTE = { id: 'note-1', title: 'Test note', notebookId: null } as unknown as Note;
 const URL_1 = 'https://deltos.blackgate.studio/s/tok_secret';
@@ -93,14 +93,14 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe('SharesPanel', () => {
+describe('ShareLinkSection', () => {
   it('mints a link (no reveal dialog), persists it, and surfaces it in the list row with Copy', async () => {
     // Empty on mount; after mint the refresh returns the new share so the list row appears.
     listShares.mockResolvedValueOnce([]).mockResolvedValue([share({ shareId: 's1' })]);
     createShare.mockResolvedValue({ shareId: 's1', token: 'tok_secret', url: URL_1 });
 
     const { getByLabelText, getByText, queryByLabelText, queryByText } = render(
-      <SharesPanel note={NOTE} onBack={() => {}} />,
+      <ShareLinkSection note={NOTE} />,
     );
 
     await waitFor(() => expect(listShares).toHaveBeenCalledWith('note', 'note-1'));
@@ -131,7 +131,7 @@ describe('SharesPanel', () => {
     urlStore.set('acct-1::s1', URL_1); // as if minted earlier on this device
     listShares.mockResolvedValue([share({ shareId: 's1' })]);
 
-    const { getByLabelText } = render(<SharesPanel note={NOTE} onBack={() => {}} />);
+    const { getByLabelText } = render(<ShareLinkSection note={NOTE} />);
 
     const listField = (await waitFor(() =>
       getByLabelText('Share link created Jun 1, 2026'),
@@ -145,7 +145,7 @@ describe('SharesPanel', () => {
     listShares.mockResolvedValue([share({ shareId: 's1' })]);
 
     const { getByText, getByLabelText, queryByLabelText } = render(
-      <SharesPanel note={NOTE} onBack={() => {}} />,
+      <ShareLinkSection note={NOTE} />,
     );
 
     await waitFor(() => expect(getByText('link not saved on this device')).toBeTruthy());
@@ -164,7 +164,7 @@ describe('SharesPanel', () => {
     revokeShare.mockResolvedValue(undefined);
 
     const { getByLabelText, queryByLabelText } = render(
-      <SharesPanel note={NOTE} onBack={() => {}} />,
+      <ShareLinkSection note={NOTE} />,
     );
 
     const revokeBtn = await waitFor(() => getByLabelText(/^Revoke share link/));
