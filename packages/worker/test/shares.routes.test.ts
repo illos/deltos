@@ -32,6 +32,7 @@ const ALL_MIGRATIONS = [
   '0012_custom-dictionary.sql', '0013_agent-token-label.sql', '0014_grant-family-link.sql',
   '0015_audit-log.sql', '0016_usage-counter.sql', '0017_oauth-provider.sql', '0018_fts5-note-search.sql',
   '0019_note-routing-guide.sql', '0020_grant-sets.sql', '0021_oauth-refresh-token.sql',
+  '0022_share-theme.sql',
 ].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
 
 function d1Over(raw: Database.Database): D1Database {
@@ -209,6 +210,67 @@ describe('URL sharing — mint / render / live / revoke', () => {
     raw.prepare('UPDATE notes SET properties = ? WHERE id = ?')
       .run(JSON.stringify({ 'sys:trashedAt': { type: 'date', value: now } }), NOTE_ID);
     expect((await get(env, `/s/${token}`)).status).toBe(404);
+  });
+
+  it('STAMPS the owner theme at mint and renders it (data-* + light+dark tokens + voice @font-face + font-src)', async () => {
+    // Mint WITH the owner's theme (ember × mono).
+    const res = await post(env, '/api/shares', { resourceType: 'note', resourceId: NOTE_ID, palette: 'ember', voice: 'mono' }, owner.token);
+    expect(res.status).toBe(201);
+    const { token, shareId } = (await res.json()) as { token: string; shareId: string };
+
+    // Persisted with the grant (JSON), enum-validated at the boundary.
+    const themeRow = raw.prepare('SELECT shareTheme FROM grants WHERE grantId = ?').get(shareId) as { shareTheme: string | null };
+    expect(JSON.parse(themeRow.shareTheme ?? '{}')).toEqual({ palette: 'ember', voice: 'mono' });
+
+    const pageRes = await get(env, `/s/${token}`);
+    const html = await pageRes.text();
+    // The viewer's OS decides light/dark → data-mode="system" is FORCED, with the stamped palette + voice.
+    expect(html).toContain('data-mode="system"');
+    expect(html).toContain('data-palette="ember"');
+    expect(html).toContain('data-voice="mono"');
+    // The stamped palette's LIGHT tokens ride the tokens.css selector shape (light AND system match)...
+    expect(html).toContain('[data-palette="ember"][data-mode="light"],[data-palette="ember"][data-mode="system"]');
+    expect(html).toContain('--accent:#EE431C'); // ember light accent (verbatim from tokens.css)
+    // ...and a prefers-color-scheme:dark media re-points system→dark.
+    expect(html).toMatch(/@media \(prefers-color-scheme: dark\)\{\[data-palette="ember"\]\[data-mode="system"\]\{/);
+    expect(html).toContain('--accent:#FF6242'); // ember dark accent
+    // The stamped VOICE loads a same-origin woff2 @font-face.
+    expect(html).toContain("@font-face{font-family:'IBM Plex Mono'");
+    expect(html).toContain("src:url('/fonts/ibm-plex-mono-400.woff2') format('woff2')");
+    // CSP now allows the font from same-origin, and keeps the nonce'd script (no unsafe-inline for scripts).
+    const csp = pageRes.headers.get('content-security-policy') ?? '';
+    expect(csp).toContain("font-src 'self'");
+    expect(csp).toMatch(/script-src 'nonce-[^']+'/);
+    expect(csp).not.toContain("script-src 'unsafe-inline'");
+  });
+
+  it('a share with NO stamp (older client) falls back to graphite × sans, still system-aware', async () => {
+    // Mint WITHOUT palette/voice — the pre-change client shape.
+    const res = await post(env, '/api/shares', { resourceType: 'note', resourceId: NOTE_ID }, owner.token);
+    const { token, shareId } = (await res.json()) as { token: string; shareId: string };
+    // Nothing stamped on the grant.
+    const themeRow = raw.prepare('SELECT shareTheme FROM grants WHERE grantId = ?').get(shareId) as { shareTheme: string | null };
+    expect(themeRow.shareTheme).toBeNull();
+
+    const html = await (await get(env, `/s/${token}`)).text();
+    expect(html).toContain('data-palette="graphite"');
+    expect(html).toContain('data-voice="sans"');
+    expect(html).toContain('data-mode="system"');
+    expect(html).toContain('[data-palette="graphite"][data-mode="light"],[data-palette="graphite"][data-mode="system"]');
+    expect(html).toContain("@font-face{font-family:'IBM Plex Sans'");
+  });
+
+  it('REJECTS an off-enum palette at the mint boundary (no CSS injection reaches the render)', async () => {
+    const res = await post(
+      env,
+      '/api/shares',
+      { resourceType: 'note', resourceId: NOTE_ID, palette: '#000;}body{}', voice: 'sans' },
+      owner.token,
+    );
+    // Strict enum → 400 at the schema boundary; nothing is stored.
+    expect(res.status).toBe(400);
+    const cnt = raw.prepare("SELECT COUNT(*) AS n FROM grants WHERE principalKind='anonymous'").get() as { n: number };
+    expect(cnt.n).toBe(0);
   });
 });
 

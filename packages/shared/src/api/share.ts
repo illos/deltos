@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { TimestampSchema } from '../spine/ids.js';
+import { PaletteSchema, VoiceSchema } from './shareTheme.js';
 
 /**
  * Read-only URL sharing (ROAD-0011 P2 §3) — the schema-first boundary contract for the owner-authed
@@ -32,11 +33,18 @@ export function buildShareUrl(origin: string, token: string): string {
  * POST /api/shares — mint an anonymous read-only share for a note/notebook the CALLER OWNS (verified via
  * `can(principal, 'share', resource)` at the route). `.strict()` so no unknown field rides along. There is
  * deliberately NO step-up on a share mint (Jim's call) — unlike an agent-token mint.
+ *
+ * `palette`/`voice` (ROAD-0011 P2) OPTIONALLY STAMP the owner's current theme onto the share, so the public
+ * render uses the owner's palette + font (honoring the viewer's system light/dark). Both are STRICT enums
+ * (PaletteSchema/VoiceSchema) — an arbitrary string is rejected here at the boundary, so it can never reach
+ * the inlined render CSS (no injection). Absent (older clients / no theme) → the render falls back.
  */
 export const ShareMintRequestSchema = z
   .object({
     resourceType: ShareResourceTypeSchema,
     resourceId: z.string().min(1),
+    palette: PaletteSchema.optional(),
+    voice: VoiceSchema.optional(),
   })
   .strict();
 export type ShareMintRequest = z.infer<typeof ShareMintRequestSchema>;

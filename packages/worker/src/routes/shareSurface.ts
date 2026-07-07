@@ -4,11 +4,16 @@ import {
   escapeHtmlText,
   escapeHtmlAttr,
   isTrashed,
+  SHARE_PALETTE_TOKENS,
+  SHARE_VOICE_FONTS,
+  SHARE_THEME_FALLBACK,
   type Block,
   type PropertyBag,
   type Resource,
   type AttachmentContent,
   type RequestPrincipal,
+  type ShareTheme,
+  type ShareColorTokens,
 } from '@deltos/shared';
 import type { AppEnv, AppContext } from '../context.js';
 import { canWith, resolveTokenPrincipal, resolvedGrantFor, type CanContext } from '../auth.js';
@@ -58,6 +63,8 @@ interface ShareContext {
   resource: Resource;
   /** The owner account the grant is stamped to (principal.id) — the scope for all owner-relative reads. */
   ownerAccountId: string;
+  /** The owner's theme stamped at mint (ROAD-0011 P2), or the fallback when the share carries no stamp. */
+  theme: ShareTheme;
   can: CanContext;
 }
 
@@ -76,12 +83,15 @@ async function resolveShare(c: AppContext, token: string): Promise<ShareContext 
   const grants = resolvedGrantFor(principal);
   const grant = grants?.[0];
   if (!grant) return null;
+  // Read the stamped theme for THIS share (share-surface-only lookup by grantId); absent/older → fallback.
+  const theme = (await store.getShareTheme(grant.grantId)) ?? SHARE_THEME_FALLBACK;
   return {
     db,
     store,
     principal,
     resource: grant.resource,
     ownerAccountId: principal.id,
+    theme,
     can: { resolveResourceOwner: createResourceOwnerResolver(db) },
   };
 }
@@ -105,6 +115,37 @@ async function underRate(store: AuthStore, prefix: string, token: string, policy
  * viewer-facing liveness poll only — it sends no cookies, carries no owner state, and only ever reveals a
  * monotonic version number the viewer is already authorized to see.
  */
+function paletteVars(t: ShareColorTokens): string {
+  return `--paper:${t.paper};--ink:${t.ink};--body:${t.body};--secondary:${t.secondary};--faint:${t.faint};--border:${t.border};--accent:${t.accent};--sync:${t.sync};`;
+}
+
+/**
+ * Build the share page's THEME CSS to inline into `<style>` (CONV-0004 — no app CSS, no tokens.css link):
+ * the stamped palette's LIGHT + DARK color tokens using the SAME selector shape as tokens.css
+ * (`[data-palette=X][data-mode=light|system]` + an `@media(prefers-color-scheme:dark)` re-point of
+ * `system`→dark), plus the stamped voice's same-origin `@font-face`s and a `body{font-family}`. The page root
+ * forces `data-mode="system"`, so the VIEWER's OS decides light/dark. Values come from the shared token module
+ * (visual source of truth: tokens.css) — nothing here is duplicated hex that can silently drift.
+ */
+function buildThemeCss(theme: ShareTheme): string {
+  const pal = SHARE_PALETTE_TOKENS[theme.palette];
+  const font = SHARE_VOICE_FONTS[theme.voice];
+  const sel = `[data-palette="${theme.palette}"]`;
+  const faces = font.faces
+    .map(
+      (f) =>
+        `@font-face{font-family:'${font.family}';font-style:normal;font-weight:${f.weight};font-display:swap;src:url('${f.src}') format('woff2');}`,
+    )
+    .join('');
+  return (
+    `html{color-scheme:light dark;}` +
+    `${sel}[data-mode="light"],${sel}[data-mode="system"]{${paletteVars(pal.light)}}` +
+    `@media (prefers-color-scheme: dark){${sel}[data-mode="system"]{${paletteVars(pal.dark)}}}` +
+    faces +
+    `body{font-family:${font.stack};}`
+  );
+}
+
 function renderSharePage(opts: {
   headingHtml: string; // already-escaped/rendered title or notebook name
   metaLabel: string; // "Shared note" | "Shared notebook"
@@ -114,25 +155,30 @@ function renderSharePage(opts: {
   kind: 'note' | 'notebook';
   backHref: string | null;
   nonce: string;
+  /** The owner's stamped theme (palette+voice) — drives the inlined palette tokens + voice font. */
+  theme: ShareTheme;
 }): string {
+  const pal = SHARE_PALETTE_TOKENS[opts.theme.palette];
+  const themeCss = buildThemeCss(opts.theme);
   const backLink = opts.backHref
     ? `<a class="share-back" href="${escapeHtmlAttr(opts.backHref)}">&larr; Back</a>`
     : '';
   return `<!doctype html>
-<html lang="en">
+<html lang="en" data-palette="${opts.theme.palette}" data-voice="${opts.theme.voice}" data-mode="system">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<meta name="theme-color" media="(prefers-color-scheme: light)" content="#F2F2F4">
-<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111113">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="${pal.light.paper}">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="${pal.dark.paper}">
 <meta name="referrer" content="no-referrer">
 <title>${escapeHtmlText(opts.metaLabel)} · deltos</title>
 <style>
-:root { color-scheme: light dark; --paper:#fff; --ink:#17171a; --secondary:#6e6e76; --border:#e7e7eb; --sync:#34c759; --faint:#9a9aa3; }
-@media (prefers-color-scheme: dark) { :root { --paper:#1a1a1d; --ink:#f0f0f2; --secondary:#9a9aa3; --border:#2a2a2e; --sync:#30d158; --faint:#6e6e76; } }
+/* Owner's stamped theme (ROAD-0011 P2): palette tokens (light + system→dark) + voice @font-face. Inlined,
+   zero app CSS. data-mode="system" on <html> → the viewer's OS decides light/dark. */
+${themeCss}
 * { box-sizing: border-box; }
-body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.65 -apple-system,system-ui,"IBM Plex Sans",sans-serif; -webkit-font-smoothing:antialiased; }
+body { margin:0; background:var(--paper); color:var(--ink); font-size:16px; line-height:1.65; -webkit-font-smoothing:antialiased; }
 .share-wrap { max-width:44rem; margin:0 auto; padding:2rem 1.25rem 3rem; }
 .share-head { display:flex; align-items:center; gap:.5rem; color:var(--secondary); font-size:.8rem; letter-spacing:.02em; text-transform:uppercase; margin-bottom:1rem; }
 .share-back { display:inline-block; margin-bottom:1rem; color:var(--secondary); text-decoration:none; font-size:.9rem; }
@@ -141,8 +187,9 @@ h1.doc-title { font-size:1.9rem; line-height:1.2; margin:.2rem 0 1.2rem; }
 /* Title row: the heading with the bare live dot inline immediately after it, vertically centered. */
 .doc-title-row { display:flex; align-items:center; flex-wrap:wrap; gap:.4rem .6rem; margin:.2rem 0 1.2rem; }
 .doc-title-row h1.doc-title { margin:0; }
-article :is(h1,h2,h3,h4,h5,h6) { line-height:1.25; margin:1.6rem 0 .6rem; }
-article p { margin:.6rem 0; }
+article :is(h1,h2,h3,h4,h5,h6) { line-height:1.25; margin:1.6rem 0 .6rem; color:var(--ink); }
+article p { margin:.6rem 0; color:var(--body); }
+article a { color:var(--accent); }
 article pre { background:rgba(127,127,127,.12); padding:.8rem 1rem; border-radius:8px; overflow:auto; }
 article code { font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.9em; }
 article pre code { font-size:.85rem; }
@@ -154,7 +201,7 @@ article img { max-width:100%; height:auto; border-radius:8px; }
 .note-list { list-style:none; padding:0; margin:0; }
 .note-list li { border-bottom:1px solid var(--border); }
 .note-list a { display:block; padding:.85rem .25rem; color:var(--ink); text-decoration:none; }
-.note-list a:hover { color:var(--sync); }
+.note-list a:hover { color:var(--accent); }
 .share-reload { appearance:none; border:1px solid var(--border); background:var(--paper); color:var(--ink); border-radius:999px; padding:.3rem .7rem; font-size:.8rem; cursor:pointer; }
 /* #105 sonar-ping dot — COPIED from client SyncIndicator.css, reused as pure CSS (no React component here). */
 .sync-indicator { position:relative; display:inline-flex; align-items:center; justify-content:center; line-height:0; }
@@ -216,10 +263,11 @@ function pageHeaders(nonce: string): Record<string, string> {
     'Referrer-Policy': 'no-referrer',
     'X-Frame-Options': 'DENY',
     // default-src 'none' — nothing loads unless explicitly allowed. img from same-origin (token-scoped blob),
-    // inline style allowed, script ONLY via the per-response nonce (so even a hypothetical escaping bug can't
-    // run injected inline script), fetch to same-origin (/live). No framing, no base, no forms.
+    // font from same-origin (the stamped voice's woff2 in /fonts), inline style allowed, script ONLY via the
+    // per-response nonce (so even a hypothetical escaping bug can't run injected inline script), fetch to
+    // same-origin (/live). No framing, no base, no forms.
     'Content-Security-Policy':
-      `default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+      `default-src 'none'; img-src 'self'; font-src 'self'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
   };
 }
 
@@ -369,6 +417,7 @@ shareSurface.get('/:token/n/:noteId', async (c: AppContext) => {
     kind: 'note',
     backHref,
     nonce,
+    theme: ctx.theme,
   });
   return new Response(html, { status: 200, headers: pageHeaders(nonce) });
 });
@@ -403,6 +452,7 @@ shareSurface.get('/:token', async (c: AppContext) => {
       kind: 'note',
       backHref: null,
       nonce,
+      theme: ctx.theme,
     });
     return new Response(html, { status: 200, headers: pageHeaders(nonce) });
   }
@@ -431,6 +481,7 @@ shareSurface.get('/:token', async (c: AppContext) => {
       kind: 'notebook',
       backHref: null,
       nonce,
+      theme: ctx.theme,
     });
     return new Response(html, { status: 200, headers: pageHeaders(nonce) });
   }
