@@ -49,7 +49,9 @@ import { resolveCollectionView } from './lib/collectionViews.js';
 import type { CollectionViewProps } from './lib/collectionViews.js';
 import { useNotebookStore } from './lib/notebookStore.js';
 import { notePreview, formatSmartDate } from './lib/notePreview.js';
-import { ComposeNew, Search, Ellipsis, VersionHistory, Info } from './icons/index.js';
+// `Link as ShareLink` — the icons module's chain-link glyph, our Share affordance, aliased to avoid
+// colliding with react-router's Link imported above.
+import { ComposeNew, Search, Ellipsis, VersionHistory, Info, Link as ShareLink } from './icons/index.js';
 import { SyncIndicator } from './components/SyncIndicator.js';
 import { SessionStatus } from './components/SessionStatus.js';
 import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
@@ -662,6 +664,18 @@ export function AuthedShell() {
               aria-label="Note info"
             >
               <Info size={20} />
+            </button>
+          )}
+          {/* Per-note Share (ROAD-0011 P2) — mobile counterpart of the desktop meta-bar Share button. Sets
+              ?share on the current /note/:id URL; NoteRoute opens its (lazy) SharesPanel on that param
+              (mirrors ?history / ?info). Its eventual home is the ROAD-0013 "…" context menu. */}
+          {onNoteRoute && (
+            <button
+              className="shell__nav-btn shell__nav-btn--mobile-only"
+              onClick={() => navigate(`${location.pathname}?share`)}
+              aria-label="Share note"
+            >
+              <ShareLink size={20} />
             </button>
           )}
           {/* "…" contextual-options button — mobile-only (stays visible in body.deck-custom). Opens the
