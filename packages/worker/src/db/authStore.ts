@@ -336,6 +336,44 @@ export interface AuthStore {
    */
   revokeAgentTokenGroupForAccount(tokenGroupId: string, accountId: string): Promise<number>;
 
+  // --- URL read-only shares (ROAD-0011 P2 §3) ------------------------------------------------------
+  // A share is a `grants` row with principalKind='anonymous', scope=['read'], non-expiring, bearer = the
+  // URL token (hash-stored, F6). principalId = the OWNER's accountId (server-derived) so the can() ownership
+  // belt + the notebook→note hierarchy resolver work exactly as for agent tokens. `share` scope is NEVER
+  // stored here (a share GRANTS read; minting one REQUIRES 'share' at the route — guard #8).
+
+  /**
+   * Persist a freshly-minted anonymous read-only share grant. The token is already HASHED by the caller (F6).
+   * `accountId` is the OWNER's server-derived principal.id (lands in principalId so reads/belt scope to it).
+   * scope is fixed `['read']`, expiresAtMs NULL (non-expiring), tokenGroupId = its own grantId.
+   */
+  insertShareGrant(row: {
+    grantId: string;
+    tokenHash: string;
+    accountId: string;
+    resource: Resource; // note | notebook
+    createdAt: string; // ISO-8601 Z
+  }): Promise<void>;
+
+  /**
+   * List an account's LIVE (revokedAt IS NULL) anonymous shares for ONE resource. Account-scoped on
+   * principalId (BOLA) + resource-scoped. NEVER returns the token/hash — only the grantId (= shareId),
+   * resource, and createdAt.
+   */
+  listSharesForResource(
+    accountId: string,
+    resourceKind: 'note' | 'notebook',
+    resourceId: string,
+  ): Promise<Array<{ shareId: string; resourceKind: 'note' | 'notebook'; resourceId: string; createdAt: string }>>;
+
+  /**
+   * BOLA-CRITICAL share revoke: set revokedAt on an anonymous share grant ONLY when owned by `accountId`
+   * (the account match is IN the WHERE) and principalKind='anonymous' (so it can never touch a session/agent
+   * grant). A non-match revokes zero rows → the route 404s (no cross-account existence disclosure).
+   * Immediate: the next `/s/<token>` request re-resolves and denies (guard #10). Returns rows affected.
+   */
+  revokeShareForAccount(shareId: string, accountId: string): Promise<number>;
+
   /**
    * Per-device revocation (PIN-ID-5), atomic in one batch: revoke the device row (blocks FUTURE
    * session mints via the session route's getDevice revoked-check) AND that device's OUTSTANDING
@@ -1115,6 +1153,62 @@ export function createAuthStore(db: DbAdapter): AuthStore {
           sql: `UPDATE grants SET revokedAt = ?
                  WHERE tokenGroupId = ? AND principalKind = 'agent' AND principalId = ? AND clientId IS NULL AND revokedAt IS NULL`,
           params: [now, tokenGroupId, accountId],
+        },
+      ]);
+      return res?.rowsWritten ?? 0;
+    },
+
+    async insertShareGrant(row) {
+      const resourceId = row.resource.kind === 'workspace' ? null : row.resource.id;
+      await db.batch([
+        {
+          // principalKind='anonymous', principalId = OWNER accountId (belt + hierarchy resolver scope to it),
+          // scope fixed ['read'], expiresAtMs NULL (non-expiring), tokenGroupId = self, clientId NULL.
+          sql: `INSERT INTO grants
+                  (grantId, tokenHash, tokenGroupId, principalKind, principalId, mintedByKeyId,
+                   resourceKind, resourceId, scope, expiresAtMs, revokedAt, createdAt, label, clientId)
+                VALUES (?, ?, ?, 'anonymous', ?, NULL, ?, ?, ?, NULL, NULL, ?, NULL, NULL)`,
+          params: [
+            row.grantId,
+            row.tokenHash,
+            row.grantId, // tokenGroupId = self
+            row.accountId,
+            row.resource.kind,
+            resourceId,
+            JSON.stringify(['read']),
+            row.createdAt,
+          ],
+        },
+      ]);
+    },
+
+    async listSharesForResource(accountId, resourceKind, resourceId) {
+      const rows = await db.all<{ shareId: string; resourceKind: string; resourceId: string; createdAt: string }>(
+        `SELECT grantId AS shareId, resourceKind, resourceId, createdAt
+           FROM grants
+          WHERE principalKind = 'anonymous' AND principalId = ? AND resourceKind = ? AND resourceId = ?
+            AND revokedAt IS NULL
+          ORDER BY createdAt, grantId`,
+        [accountId, resourceKind, resourceId],
+      );
+      return rows.map((r) => ({
+        shareId: r.shareId,
+        resourceKind: r.resourceKind === 'notebook' ? 'notebook' : 'note',
+        resourceId: r.resourceId,
+        createdAt: r.createdAt,
+      }));
+    },
+
+    async revokeShareForAccount(shareId, accountId) {
+      // BOLA: the account match is IN the WHERE + principalKind='anonymous' so it can never touch a
+      // session/agent grant. Idempotent re-revoke = 0 rows. rowsWritten counts index writes on real D1 — treat
+      // >0 as revoked. Immediate: the next /s request re-resolves and grantIsLive → deny (guard #10).
+      const now = new Date().toISOString();
+      const [res] = await db.batch([
+        {
+          sql: `UPDATE grants SET revokedAt = ?
+                 WHERE grantId = ? AND principalKind = 'anonymous' AND principalId = ? AND revokedAt IS NULL`,
+          params: [now, shareId, accountId],
         },
       ]);
       return res?.rowsWritten ?? 0;

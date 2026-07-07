@@ -5,6 +5,7 @@ export * from './reservedKeys.js';
 export * from './block.js';
 export * from './attachmentBlock.js';
 export * from './markdown.js';
+export * from './staticHtml.js';
 export * from './searchText.js';
 export * from './note.js';
 export * from './notebook.js';

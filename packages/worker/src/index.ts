@@ -37,6 +37,8 @@ import { account } from './routes/account.js';
 import { auditRoutes } from './routes/audit.js';
 import { mcp } from './routes/mcp.js';
 import { oauth, oauthWellKnown, oauthConsentSurface } from './routes/oauth.js';
+import { shares } from './routes/shares.js';
+import { shareSurface } from './routes/shareSurface.js';
 import { createAuthStore } from './db/authStore.js';
 import { sweepExtractions } from './extraction.js';
 import {
@@ -170,6 +172,18 @@ app.route('/api/mcp', mcp);
 app.route('/.well-known', oauthWellKnown);
 app.route('/api/oauth', oauth);
 app.route('/oauth', oauthConsentSurface);
+
+// ---------------------------------------------------------------------------
+// Read-only URL sharing (ROAD-0011 P2 §3). Owner-authed mint/list/revoke at /api/shares (op:'share' — an
+// agent token can never mint a share, guard #8). The PUBLIC render surface is a SEPARATE, SW-independent,
+// SERVER-RENDERED mount at /s/* (assumption guard #9): the worker renders the shared note/notebook to static
+// HTML (spineToHtml) — cookie-less, no-store, ZERO app bundle — and every request re-runs can() so revocation
+// is immediate (guard #10). /s/* is listed in wrangler run_worker_first + the client SW navigation denylist so
+// a top-level navigation reaches the worker, never the notes shell.
+// ---------------------------------------------------------------------------
+
+app.route('/api/shares', shares);
+app.route('/s', shareSurface);
 
 // ---------------------------------------------------------------------------
 // Helpers

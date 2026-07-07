@@ -79,7 +79,7 @@
     "binding": "ASSETS",
     "directory": "../client/dist",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/oauth/*"],
+    "run_worker_first": ["/api/*", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource", "/oauth/*", "/s/*"],
   },
   // Rich-embed unfurl cache (GET /api/unfurl). Not yet wired — add after creating the namespace:
   //   wrangler kv namespace create unfurl-cache   # copy the returned id into the block below
