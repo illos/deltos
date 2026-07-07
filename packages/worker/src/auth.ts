@@ -154,19 +154,33 @@ export async function resolvePrincipal(c: AppContext, store?: AuthStore): Promis
   const token = parseBearerToken(c.req.header('Authorization'));
   if (token) {
     const authStore = store ?? createAuthStore(d1Adapter(c.env.DB));
-    // Grant SETS (ROAD-0011 P1): resolve ALL rows sharing this token hash. All rows carry the same principal
-    // + scope (one mint event); evaluation is any-of over the set. The first row represents the principal.
-    const grants = await authStore.resolveGrantsByTokenHash(hashToken(token));
-    const [first] = grants;
-    if (first) {
-      const principal = principalForGrant(first);
-      resolvedGrants.set(principal, grants);
-      return principal;
-    }
+    const principal = await resolveTokenPrincipal(authStore, token);
     // Present but unrecognized token: fall through to the unverified stub (prod refuses it; dev has
     // no real auth anyway), so a bad bearer is never silently honored as an authenticated principal.
+    if (principal) return principal;
   }
   return LOCAL_OWNER;
+}
+
+/**
+ * Resolve a RAW token (a `Authorization: Bearer` value OR a `/s/<token>` URL-share token) to a live grant-set
+ * principal, stashing the resolved grant SET out-of-band so `can()`/`canWith` can evaluate it. Returns null
+ * when the token matches NO grant row (caller decides the failure surface). This is the ONE token→principal
+ * resolution used by every bearer path — the header path ({@link resolvePrincipal}) and the URL-token share
+ * surface (ROAD-0011 P2) — so an anonymous share grant flows through the exact same chokepoint as an agent
+ * token (assumption guard #1). Grant SETS: all rows sharing the hash carry the same principal + scope (one
+ * mint event); evaluation is any-of; the first row represents the principal.
+ */
+export async function resolveTokenPrincipal(
+  store: AuthStore,
+  token: string,
+): Promise<RequestPrincipal | null> {
+  const grants = await store.resolveGrantsByTokenHash(hashToken(token));
+  const [first] = grants;
+  if (!first) return null;
+  const principal = principalForGrant(first);
+  resolvedGrants.set(principal, grants);
+  return principal;
 }
 
 // ── Extended coverage: the notebook→note hierarchy resolver (ROAD-0011 P1 §1) ────────────────────────

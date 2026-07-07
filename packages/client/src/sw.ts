@@ -39,8 +39,11 @@ precacheAndRoute(self.__WB_MANIFEST);
 // shell. This SW controls scope '/', so without this exclusion it would intercept the /oauth/authorize
 // navigation and serve the cached notes index.html — the exact staleness/wrong-surface bug the separation
 // fixes. Passing it through to the network lets the worker serve the always-fresh consent surface.
+// `/s/` (read-only URL shares, ROAD-0011 P2) is denylisted for the SAME reason: the public share surface is
+// SERVER-RENDERED by the worker (no-store), a SEPARATE SW-independent surface — passing its navigation through
+// to the network lets the worker serve the fresh render instead of the cached notes shell.
 const shellHandler = createHandlerBoundToURL('index.html');
-registerRoute(new NavigationRoute(shellHandler, { denylist: [/^\/api\//, /^\/oauth\//] }));
+registerRoute(new NavigationRoute(shellHandler, { denylist: [/^\/api\//, /^\/oauth\//, /^\/s\//] }));
 
 // FONTS — permanent device cache (UI refresh, Lane 0). The everyday faces (Plex Sans + Plex Mono)
 // are PRECACHED via the manifest (woff2 in the injectManifest glob), so they're install-time and

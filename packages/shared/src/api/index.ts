@@ -5,3 +5,4 @@ export * from './agentToken.js';
 export * from './oauth.js';
 export * from './account.js';
 export * from './pickables.js';
+export * from './share.js';
