@@ -3,9 +3,11 @@ import {
   PrincipalSchema,
   ResourceSchema,
   ScopeSchema,
+  parseShareTheme,
   type Principal,
   type Resource,
   type Scope,
+  type ShareTheme,
 } from '@deltos/shared';
 import type { DbAdapter } from './schema.js';
 
@@ -345,15 +347,26 @@ export interface AuthStore {
   /**
    * Persist a freshly-minted anonymous read-only share grant. The token is already HASHED by the caller (F6).
    * `accountId` is the OWNER's server-derived principal.id (lands in principalId so reads/belt scope to it).
-   * scope is fixed `['read']`, expiresAtMs NULL (non-expiring), tokenGroupId = its own grantId.
+   * scope is fixed `['read']`, expiresAtMs NULL (non-expiring), tokenGroupId = its own grantId. `theme` (the
+   * owner's palette+voice, ROAD-0011 P2) is STAMPED onto the grant so the public render uses it; null = no
+   * stamp (→ the render falls back). Already enum-validated at the mint boundary (no injection).
    */
   insertShareGrant(row: {
     grantId: string;
     tokenHash: string;
     accountId: string;
     resource: Resource; // note | notebook
+    theme: ShareTheme | null; // owner's stamped palette+voice; null = unstamped
     createdAt: string; // ISO-8601 Z
   }): Promise<void>;
+
+  /**
+   * Read the theme stamped on a share grant (ROAD-0011 P2), by its grantId — the public `/s/<token>` render
+   * looks it up after resolving the token. Anonymous-scoped (can only ever return a share's stamp). Returns
+   * a validated {@link ShareTheme} or null (unstamped / older share / corrupt) → the render applies the
+   * fallback. Kept OFF the hot `resolveGrantsByTokenHash` projection so it touches only the share surface.
+   */
+  getShareTheme(grantId: string): Promise<ShareTheme | null>;
 
   /**
    * List an account's LIVE (revokedAt IS NULL) anonymous shares for ONE resource. Account-scoped on
@@ -1160,14 +1173,16 @@ export function createAuthStore(db: DbAdapter): AuthStore {
 
     async insertShareGrant(row) {
       const resourceId = row.resource.kind === 'workspace' ? null : row.resource.id;
+      // Stamp the owner's palette+voice as JSON (already enum-validated at the mint boundary); null = unstamped.
+      const shareTheme = row.theme ? JSON.stringify({ palette: row.theme.palette, voice: row.theme.voice }) : null;
       await db.batch([
         {
           // principalKind='anonymous', principalId = OWNER accountId (belt + hierarchy resolver scope to it),
           // scope fixed ['read'], expiresAtMs NULL (non-expiring), tokenGroupId = self, clientId NULL.
           sql: `INSERT INTO grants
                   (grantId, tokenHash, tokenGroupId, principalKind, principalId, mintedByKeyId,
-                   resourceKind, resourceId, scope, expiresAtMs, revokedAt, createdAt, label, clientId)
-                VALUES (?, ?, ?, 'anonymous', ?, NULL, ?, ?, ?, NULL, NULL, ?, NULL, NULL)`,
+                   resourceKind, resourceId, scope, expiresAtMs, revokedAt, createdAt, label, clientId, shareTheme)
+                VALUES (?, ?, ?, 'anonymous', ?, NULL, ?, ?, ?, NULL, NULL, ?, NULL, NULL, ?)`,
           params: [
             row.grantId,
             row.tokenHash,
@@ -1177,9 +1192,20 @@ export function createAuthStore(db: DbAdapter): AuthStore {
             resourceId,
             JSON.stringify(['read']),
             row.createdAt,
+            shareTheme,
           ],
         },
       ]);
+    },
+
+    async getShareTheme(grantId) {
+      // Share-surface-only read: SELECT the stamped theme by grantId, anonymous-scoped so it can only ever
+      // return a share's stamp. parseShareTheme fail-closes a corrupt/absent value to null (→ render fallback).
+      const row = await db.first<{ shareTheme: string | null }>(
+        `SELECT shareTheme FROM grants WHERE grantId = ? AND principalKind = 'anonymous'`,
+        [grantId],
+      );
+      return parseShareTheme(row?.shareTheme ?? null);
     },
 
     async listSharesForResource(accountId, resourceKind, resourceId) {

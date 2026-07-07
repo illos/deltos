@@ -76,7 +76,10 @@ shares.post(
       const shareId = randomToken(16);
       // Recognizable prefix + 32 bytes CSPRNG. Only SHA-256(token) is stored; the raw token is returned once.
       const token = `${SHARE_TOKEN_PREFIX}${randomToken(32)}`;
-      await store.insertShareGrant({ grantId: shareId, tokenHash: hashToken(token), accountId, resource, createdAt: now });
+      // Stamp the owner's theme (ROAD-0011 P2) — both axes or neither (the client sends both). Already
+      // strict-enum validated by ShareMintRequestSchema, so no arbitrary string reaches the render CSS.
+      const theme = req.palette && req.voice ? { palette: req.palette, voice: req.voice } : null;
+      await store.insertShareGrant({ grantId: shareId, tokenHash: hashToken(token), accountId, resource, theme, createdAt: now });
 
       await audit(c, {
         surface: 'auth',

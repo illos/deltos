@@ -58,6 +58,10 @@ vi.mock('../lib/shareApi.js', () => {
 });
 vi.mock('../lib/toastEvents.js', () => ({ showToast }));
 vi.mock('../db/storeHooks.js', () => ({ useNotebooks: () => [] }));
+// The panel reads the CURRENT theme off themeStore at mint to STAMP it onto the share (ROAD-0011 P2).
+vi.mock('../lib/themeStore.js', () => ({
+  useThemeStore: { getState: () => ({ palette: 'ember', voice: 'mono' }) },
+}));
 vi.mock('../db/shareUrls.js', () => ({ saveShareUrl, getShareUrls, deleteShareUrl }));
 // The panel reads the resident accountId off the auth store — pin it to a fixed account for the isolation scope.
 vi.mock('../auth/store.js', () => ({
@@ -104,7 +108,8 @@ describe('SharesPanel', () => {
     // The minted URL is surfaced (one-time reveal) in a selectable field.
     const field = (await waitFor(() => getByLabelText('Share link'))) as HTMLTextAreaElement;
     expect(field.value).toBe(URL_1);
-    expect(createShare).toHaveBeenCalledWith('note', 'note-1');
+    // The mint carries the owner's current theme stamp (palette+voice) from themeStore.
+    expect(createShare).toHaveBeenCalledWith('note', 'note-1', { palette: 'ember', voice: 'mono' });
     // …and was persisted locally, account-scoped.
     expect(saveShareUrl).toHaveBeenCalledWith('acct-1', 's1', URL_1);
 
@@ -152,7 +157,7 @@ describe('SharesPanel', () => {
     // Re-mint mints a fresh link and persists it.
     createShare.mockResolvedValue({ shareId: 's2', token: 'tok2', url: 'https://x/s/tok2' });
     fireEvent.click(getByLabelText('Re-mint share link'));
-    await waitFor(() => expect(createShare).toHaveBeenCalledWith('note', 'note-1'));
+    await waitFor(() => expect(createShare).toHaveBeenCalledWith('note', 'note-1', { palette: 'ember', voice: 'mono' }));
     await waitFor(() => expect(saveShareUrl).toHaveBeenCalledWith('acct-1', 's2', 'https://x/s/tok2'));
   });
 

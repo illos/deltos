@@ -17,11 +17,22 @@
  * never persisted at rest (F7).
  */
 import { useAuthStore } from '../auth/store.js';
+import type { Palette, Voice } from './themeStore.js';
 
 const BASE = '/api/shares';
 
 /** What a share link points at — a single note or a whole notebook. */
 export type ShareResourceType = 'note' | 'notebook';
+
+/**
+ * The owner's current theme, STAMPED onto a share at mint (ROAD-0011 P2) so the public `/s/<token>` render
+ * uses the owner's palette + font (honoring the viewer's system light/dark). Read from themeStore at the
+ * call site (SharesPanel); the server validates both against strict enums before storing.
+ */
+export interface ShareThemeStamp {
+  palette: Palette;
+  voice: Voice;
+}
 
 /**
  * The one-time result of minting a share link. `token` + `url` are shown ONCE here and can never be
@@ -108,16 +119,21 @@ async function readJson<T>(res: Response): Promise<T> {
 
 /**
  * Mint a read-only share link for a note or notebook. The returned token + url are shown ONCE and cannot
- * be recovered — surface them immediately at the call site.
+ * be recovered — surface them immediately at the call site. `theme` (the owner's current palette+voice) is
+ * STAMPED onto the share so the public render matches the owner's theme; omitted when unavailable (the render
+ * then falls back).
  */
 export async function createShare(
   resourceType: ShareResourceType,
   resourceId: string,
+  theme?: ShareThemeStamp,
 ): Promise<MintedShare> {
   const res = await authedFetch('', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resourceType, resourceId }),
+    body: JSON.stringify(
+      theme ? { resourceType, resourceId, palette: theme.palette, voice: theme.voice } : { resourceType, resourceId },
+    ),
   });
   if (!res.ok) throw new ShareError(`Could not create the share link (${res.status}).`, res.status);
   const data = await readJson<Partial<MintedShare>>(res);

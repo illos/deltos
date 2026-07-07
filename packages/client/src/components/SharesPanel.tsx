@@ -3,6 +3,7 @@ import type { Note } from '@deltos/shared';
 import { useNotebooks } from '../db/storeHooks.js';
 import { useAuthStore } from '../auth/store.js';
 import { showToast } from '../lib/toastEvents.js';
+import { useThemeStore } from '../lib/themeStore.js';
 import { saveShareUrl, getShareUrls, deleteShareUrl } from '../db/shareUrls.js';
 import {
   createShare,
@@ -104,7 +105,9 @@ function ShareTarget({
     setMintError(null);
     setCopiedKey(null);
     try {
-      const result = await createShare(resourceType, resourceId);
+      // Stamp the owner's CURRENT theme (palette+voice) onto the share so the public render matches it.
+      const { palette, voice } = useThemeStore.getState();
+      const result = await createShare(resourceType, resourceId, { palette, voice });
       // Remember the url locally (account-isolated) BEFORE surfacing it, so it stays visible + copyable in the
       // list after the one-time reveal is dismissed (and across reopening the sheet on this device).
       await saveShareUrl(accountId, result.shareId, result.url);

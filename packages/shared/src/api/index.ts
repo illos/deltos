@@ -6,3 +6,4 @@ export * from './oauth.js';
 export * from './account.js';
 export * from './pickables.js';
 export * from './share.js';
+export * from './shareTheme.js';
