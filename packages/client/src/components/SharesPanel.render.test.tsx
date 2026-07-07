@@ -3,8 +3,8 @@
  * panel over a mocked shareApi + a fake (in-memory) client-local url store, and proves the user-visible
  * contract:
  *   - it lists a resource's existing share links, each with a Revoke button;
- *   - "Create share link" → mint → the returned URL is shown with a working copy-to-clipboard, PERSISTED
- *     locally, and stays visible in the list row (with its own Copy) after the one-time reveal is dismissed;
+ *   - "Create share link" → mint → NO separate reveal dialog: the new link drops straight into the list row
+ *     with its URL + a working copy-to-clipboard, and is PERSISTED locally;
  *   - reopening the panel re-hydrates the persisted url into the list row;
  *   - Revoke calls DELETE (revokeShare), optimistically drops the row, AND forgets the local url;
  *   - a share with NO local url (minted on another device) renders "link not saved on this device" + Re-mint.
@@ -94,40 +94,37 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('SharesPanel', () => {
-  it('mints a link, shows + persists the URL, and keeps it copyable in the list', async () => {
+  it('mints a link (no reveal dialog), persists it, and surfaces it in the list row with Copy', async () => {
     // Empty on mount; after mint the refresh returns the new share so the list row appears.
     listShares.mockResolvedValueOnce([]).mockResolvedValue([share({ shareId: 's1' })]);
     createShare.mockResolvedValue({ shareId: 's1', token: 'tok_secret', url: URL_1 });
 
-    const { getByLabelText, getByText } = render(<SharesPanel note={NOTE} onBack={() => {}} />);
+    const { getByLabelText, getByText, queryByLabelText, queryByText } = render(
+      <SharesPanel note={NOTE} onBack={() => {}} />,
+    );
 
     await waitFor(() => expect(listShares).toHaveBeenCalledWith('note', 'note-1'));
 
     fireEvent.click(getByLabelText('Create share link for “Test note”'));
 
-    // The minted URL is surfaced (one-time reveal) in a selectable field.
-    const field = (await waitFor(() => getByLabelText('Share link'))) as HTMLTextAreaElement;
-    expect(field.value).toBe(URL_1);
+    // NO one-time reveal dialog — the new link drops straight into the list row (with its own url + Copy).
+    const listField = (await waitFor(() =>
+      getByLabelText('Share link created Jun 1, 2026'),
+    )) as HTMLInputElement;
+    expect(listField.value).toBe(URL_1);
+    // The reveal-dialog affordances are gone (no shown-once field, no Done button).
+    expect(queryByLabelText('Share link')).toBeNull();
+    expect(queryByText('Done')).toBeNull();
     // The mint carries the owner's current theme stamp (palette+voice) from themeStore.
     expect(createShare).toHaveBeenCalledWith('note', 'note-1', { palette: 'ember', voice: 'mono' });
     // …and was persisted locally, account-scoped.
     expect(saveShareUrl).toHaveBeenCalledWith('acct-1', 's1', URL_1);
 
-    // Copy from the one-time reveal writes the URL + toasts.
-    fireEvent.click(getByLabelText('Copy share link'));
+    // The row's own Copy button writes the URL + toasts + flashes "Copied!".
+    fireEvent.click(getByLabelText('Copy share link created Jun 1, 2026'));
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(URL_1));
     await waitFor(() => expect(getByText('Copied!')).toBeTruthy());
     expect(showToast).toHaveBeenCalledWith('Share link copied');
-
-    // Dismiss the one-time reveal — the URL persists in the list row with its own Copy button.
-    fireEvent.click(getByText('Done'));
-    const listField = (await waitFor(() =>
-      getByLabelText('Share link created Jun 1, 2026'),
-    )) as HTMLInputElement;
-    expect(listField.value).toBe(URL_1);
-    (navigator.clipboard.writeText as ReturnType<typeof vi.fn>).mockClear();
-    fireEvent.click(getByLabelText('Copy share link created Jun 1, 2026'));
-    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith(URL_1));
   });
 
   it('re-hydrates a persisted URL into the list row on (re)open', async () => {
