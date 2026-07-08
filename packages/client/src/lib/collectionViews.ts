@@ -10,9 +10,14 @@ import type { NotebookId } from '@deltos/shared';
  * kanban, a calendar, a board view, etc. — as a registration, never a refactor.
  *
  * Mirrors the item-view seam (`editor/views.ts`): same pattern, different granularity.
- * Resolution predicate receives the notebook ID and must be deterministic (no I/O) so
- * resolution stays synchronous. First registered view whose predicate matches wins; the
- * standard list is the unconditional fallback passed by the caller.
+ * Resolution predicate receives the notebook ID + the notebook's persisted view string and
+ * must be deterministic (no I/O) so resolution stays synchronous. First registered view whose
+ * predicate matches wins; the standard list is the unconditional fallback passed by the caller.
+ *
+ * The `view` arg (§6.1 option B): the caller reads the current notebook's synced
+ * `defaultCollectionView` off its row and passes it in, so a view's `matches` is a pure string
+ * check (`view === 'board'`) rather than reaching into async storage — resolution stays
+ * synchronous AND data-driven off the synced row (the same field the View switcher persists).
  */
 
 export interface CollectionViewProps {
@@ -21,7 +26,8 @@ export interface CollectionViewProps {
 
 export interface CollectionViewDescriptor {
   readonly key: string;
-  matches(notebookId: NotebookId | null): boolean;
+  /** True iff this view should render for `notebookId` given its persisted `view` string. */
+  matches(notebookId: NotebookId | null, view: string): boolean;
   component: ComponentType<CollectionViewProps>;
 }
 
@@ -33,15 +39,27 @@ export function registerCollectionView(descriptor: CollectionViewDescriptor): vo
 }
 
 /**
+ * List the registered non-default collection views (§7). The View switcher renders its options from this
+ * (plus the unconditional 'list' fallback the registry never holds), so registering a view AUTO-populates the
+ * menu — adding a Kanban is registration-only, no menu edit. Returns a shallow copy (callers must not mutate).
+ */
+export function listCollectionViews(): readonly CollectionViewDescriptor[] {
+  return _registry.slice();
+}
+
+/**
  * Resolve which collection-view component should render for this notebook. Returns the first
- * registered view whose predicate matches, or `fallback` (the standard list) if none do.
+ * registered view whose predicate matches (given the notebook's persisted `view`), or `fallback`
+ * (the standard list) if none do. `view` defaults to `'list'` so a caller that doesn't yet pass it
+ * keeps the pre-feature behaviour (fallback list).
  */
 export function resolveCollectionView(
   notebookId: NotebookId | null,
   fallback: ComponentType<CollectionViewProps>,
+  view: string = 'list',
 ): ComponentType<CollectionViewProps> {
   for (const descriptor of _registry) {
-    if (descriptor.matches(notebookId)) return descriptor.component;
+    if (descriptor.matches(notebookId, view)) return descriptor.component;
   }
   return fallback;
 }

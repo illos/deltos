@@ -1,0 +1,127 @@
+/* Keep-style Board CollectionView (notebook-menu-and-keep-view.md §6). A lazy chunk's CSS — only fetched with
+   the Board component (perf north star). Pure token reuse (--paper/--border/--ink/--secondary/--faint), no new
+   palette; the overlay popover re-sources the app's `.context-menu`/`.nav-sheet` blur language. */
+
+.board-view {
+  min-height: 100%;
+  box-sizing: border-box;
+}
+.board-view--loading { min-height: 100%; }
+.board-view__empty {
+  padding: 2rem 1rem;
+  color: var(--faint);
+  font-size: 0.9rem;
+}
+
+/* §6.2 responsive grid — an EXPLICIT column count per breakpoint (2 up → 3 → 4 → 5), so it reads as "2/4 up"
+   not "as many as fit". The 769px step aligns with the app's single device breakpoint (useIsDesktop). */
+.board {
+  list-style: none;
+  margin: 0;
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, 1fr);
+}
+@media (min-width: 480px)  { .board { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 769px)  { .board { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 1200px) { .board { grid-template-columns: repeat(5, 1fr); } }
+
+.board__cell { min-width: 0; }
+
+/* Tidy fixed-shape tile (§6.2): capped height + soft fade for overflow — NOT ragged masonry. Cards size to the
+   grid cell width; height is content-driven but bounded so the board reads as a grid of tiles. */
+.board__card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+  min-height: 96px;
+  max-height: 200px;
+  overflow: hidden;
+  padding: 12px 12px 14px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--ink);
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.board__card:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.board__card--selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+/* Soft fade at the bottom so clamped overflow dissolves rather than hard-cutting. */
+.board__card::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 26px;
+  background: linear-gradient(to bottom, transparent, var(--paper));
+  pointer-events: none;
+}
+
+.board__card-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.board__card-pin {
+  display: inline-block;
+  vertical-align: -1px;
+  margin-right: 3px;
+  color: var(--accent);
+}
+.board__card-preview {
+  font-size: 0.8rem;
+  color: var(--secondary);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.board__card-date {
+  margin-top: auto;
+  font-size: 0.7rem;
+  color: var(--faint);
+}
+
+/* §6.4 desktop note popover-over-blur — the note opens as a centered modal over the app's standard dimmed +
+   blurred backdrop (reuses the `.context-menu__backdrop` / `.nav-sheet__backdrop` language: rgba 0.42 + blur
+   8px), framed by a large --paper panel with the same radius+shadow token set. */
+.board-note-popover {
+  position: fixed;
+  inset: 0;
+  z-index: 360; /* just above the context-menu (350), below the move-picker (400) */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh 4vw;
+}
+.board-note-popover__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+.board-note-popover__panel {
+  position: relative;
+  width: min(860px, 92vw);
+  height: min(88vh, 900px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--paper);
+  border-radius: 18px;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.34), 0 12px 48px rgba(0, 0, 0, 0.28);
+}
+.board-note-popover__panel > * { flex: 1 1 auto; min-height: 0; overflow-y: auto; }

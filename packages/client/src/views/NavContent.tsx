@@ -7,7 +7,8 @@ import { mutateNotebooks } from '../db/mutateNotebooks.js';
 import { notifyQueueWrite } from '../lib/syncEngine.js';
 import { useIsDesktop } from '../lib/useIsDesktop.js';
 import { useNoteDnd } from '../lib/dnd/useNoteDnd.js';
-import { Notebook, BulletList, Plus, Trash, SettingsSliders } from '../icons/index.js';
+import { NotebookMenuPopover } from '../components/NotebookMenuPopover.js';
+import { Notebook, BulletList, Plus, Trash, SettingsSliders, Ellipsis } from '../icons/index.js';
 
 interface NavContentProps {
   /** Called after a navigation action (notebook select, trash link). Lets the drawer/sheet close itself. */
@@ -54,6 +55,10 @@ export function NavContent({ onNavigate, showWordmark = true }: NavContentProps)
   const isDesktop = useIsDesktop();
   const noteDnd = useNoteDnd(isDesktop);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  // Desktop notebook "…" menu (§2.4): a per-row kebab that appears on the CURRENT notebook row (the phase-2
+  // interactive pass NavContent's header comment defers). It opens the NotebookMenuPopover (rename/share/
+  // sort/view) anchored near the nav. Holds the id whose menu is open, or false = closed.
+  const [menuOpenFor, setMenuOpenFor] = useState<NotebookId | null | false>(false);
 
   const countByNotebook = useMemo(() => {
     const m: Record<string, number> = {};
@@ -120,6 +125,17 @@ export function NavContent({ onNavigate, showWordmark = true }: NavContentProps)
             <span className="nav-content__nb-name">All Notes</span>
             <span className="nav-content__nb-count">{notes.length}</span>
           </button>
+          {/* Desktop "…" — Sort/View for the aggregate (Rename/Share are hidden inside for the null notebook).
+              Current-row only: shown when All Notes is the active notebook (Jim: keep the nav clean). */}
+          {isDesktop && notebookHighlightActive && currentNotebookId === null && (
+            <button
+              className="nav-content__nb-kebab"
+              onClick={(e) => { e.stopPropagation(); setMenuOpenFor(null); }}
+              aria-label="All Notes options"
+            >
+              <Ellipsis size={16} />
+            </button>
+          )}
         </li>
         {notebooks.map((nb) => (
           <li
@@ -134,6 +150,16 @@ export function NavContent({ onNavigate, showWordmark = true }: NavContentProps)
               <span className="nav-content__nb-name">{nb.name}</span>
               <span className="nav-content__nb-count">{countByNotebook[nb.id] ?? 0}</span>
             </button>
+            {/* Desktop "…" — rename/share/sort/view for THIS notebook. Current-row only (Jim: clean nav). */}
+            {isDesktop && notebookHighlightActive && nb.id === currentNotebookId && (
+              <button
+                className="nav-content__nb-kebab"
+                onClick={(e) => { e.stopPropagation(); setMenuOpenFor(nb.id); }}
+                aria-label={`${nb.name} options`}
+              >
+                <Ellipsis size={16} />
+              </button>
+            )}
           </li>
         ))}
       </ul>
@@ -176,6 +202,12 @@ export function NavContent({ onNavigate, showWordmark = true }: NavContentProps)
           <span>Settings</span>
         </button>
       </div>
+
+      {/* Desktop notebook "…" menu (§2.4) — the anchored popover container for NotebookMenuBody. Mounts only
+          while open (menuOpenFor !== false); notebookId = the row's id (null = All Notes). */}
+      {menuOpenFor !== false && (
+        <NotebookMenuPopover open onClose={() => setMenuOpenFor(false)} notebookId={menuOpenFor} />
+      )}
     </nav>
   );
 }

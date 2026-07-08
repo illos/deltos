@@ -41,6 +41,16 @@
   flex-direction: column;
 }
 
+/* Board pane-dissolve (§6.3): the list + note panes collapse into ONE full-width region spanning the space
+   both used to occupy. Surface --paper (the notes canvas); the nav pane stays fixed to its left, no handle. */
+.shell-3region__board {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--paper);
+  overflow-y: auto;
+  position: relative;
+}
+
 /* Overlay-style scrollbars for the three scroll panes — thin, translucent thumb (theme-aware via
    color-mix on --secondary so it reads on both light and dark themes) over a transparent track. The
    default `overflow-y:auto` scrollbar reserved a chunky classic gutter hard against the list pane's right

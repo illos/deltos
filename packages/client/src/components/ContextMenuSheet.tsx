@@ -1,8 +1,12 @@
 import { useEffect, useRef } from 'react';
+import type { NotebookId } from '@deltos/shared';
+import { NotebookMenuBody } from './NotebookMenuBody.js';
 
 interface ContextMenuSheetProps {
   open: boolean;
   onClose: () => void;
+  /** The notebook these options act on. null = the synthetic "All Notes" aggregate (Rename/Share hidden). */
+  notebookId: NotebookId | null;
 }
 
 /**
@@ -19,8 +23,11 @@ interface ContextMenuSheetProps {
  * other overlays: backdrop tap + Escape. `inert` + aria-hidden when closed keep the panel out of the
  * tab / AT tree exactly like the other sheets. The CLOSE control sits at the BOTTOM of the surface
  * (thumb zone) per Jim — comfortably reachable, never a tiny top-corner ×.
+ *
+ * The BODY is {@link NotebookMenuBody} (the four notebook residents) — the MOBILE container of the
+ * one-content/two-container pair (the desktop container is {@link NotebookMenuPopover}).
  */
-export function ContextMenuSheet({ open, onClose }: ContextMenuSheetProps) {
+export function ContextMenuSheet({ open, onClose, notebookId }: ContextMenuSheetProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   // Escape closes (mirrors the NavSheet / drawer overlays).
@@ -45,9 +52,8 @@ export function ContextMenuSheet({ open, onClose }: ContextMenuSheetProps) {
         <div className="context-menu__grabber" aria-hidden="true">
           <span className="context-menu__grabber-bar" />
         </div>
-        <div className="context-menu__body">
-          {/* Empty state — the residents (rename / organize / display / sharing) land here later. */}
-          <p className="context-menu__hint">Notebook options will live here</p>
+        <div className="context-menu__body context-menu__body--menu">
+          <NotebookMenuBody notebookId={notebookId} onClose={onClose} />
         </div>
         {/* Bottom-of-surface close (thumb zone, Jim) — the comfortable dismiss target on mobile. */}
         <button type="button" className="context-menu__close" onClick={onClose}>

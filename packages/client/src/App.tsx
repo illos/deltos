@@ -50,6 +50,7 @@ import type { CollectionViewProps } from './lib/collectionViews.js';
 import { useNotebookStore } from './lib/notebookStore.js';
 import { notePreview, formatSmartDate } from './lib/notePreview.js';
 import { sortNotes, coerceNoteSort } from './lib/noteSort.js';
+import { useCustomOrderDrag } from './lib/useCustomOrderDrag.js';
 // `Link as ShareLink` — the icons module's chain-link glyph, our Share affordance, aliased to avoid
 // colliding with react-router's Link imported above.
 import { ComposeNew, Search, Ellipsis, VersionHistory, Info, Link as ShareLink, Pin } from './icons/index.js';
@@ -64,6 +65,10 @@ import { FileNotePill } from './components/FileNotePill.js';
 // Side-effect: register the FileNoteView against resolveNoteView so a file note opens in the viewer (not the
 // PM editor). Tiny module — the viewer itself is a lazy chunk (gate FN-8); see views/registerFileNoteView.ts.
 import './views/registerFileNoteView.js';
+// Side-effect: register the Keep-style Board CollectionView. Tiny (predicate + lazy ref) — the Board grid
+// itself is a SEPARATE lazy chunk, NOT in the entry bundle (perf north star); it loads only when a notebook's
+// defaultCollectionView is 'board'. See views/registerBoardView.ts.
+import './views/registerBoardView.js';
 import { NotebookPickerSheet } from './components/NotebookPickerSheet.js';
 import { useAuthStore } from './auth/store.js';
 import { selectBootView } from './auth/shellGate.js';
@@ -185,6 +190,10 @@ export function HomeView({ notebookId }: CollectionViewProps) {
   // null = All Notes = show every non-trashed note; a real id = filter to that notebook's notes.
   const filtered = notebookId === null ? allNotes : allNotes.filter((n) => n.notebookId === notebookId);
   const notes = useMemo(() => sortNotes(filtered, activeSort), [filtered, activeSort]);
+  // Custom-order drag-reorder (§5.4) — armed ONLY in 'custom' sort. The grip handle (rendered per row below in
+  // custom mode) is the ONLY drag origin, so it never fights SwipeRow's horizontal gesture (which stays on the
+  // row body). Persists a single fractional-key write via reorderCustom.
+  const customDrag = useCustomOrderDrag(notes, activeSort === 'custom');
   const listName = notebookId === null ? 'All Notes' : (notebook?.name ?? '…');
   // #75: in the All-Notes aggregate, each categorized row shows its notebook-name pill. id→name map for the
   // lookup (only consulted in the notebookId===null branch). A note whose id isn't here (shouldn't happen)
@@ -373,19 +382,29 @@ export function HomeView({ notebookId }: CollectionViewProps) {
       ) : notes.length === 0 ? (
         <p className="home__lede">No notes yet.</p>
       ) : (
-        <ul className="home__notes">
-          {notes.map(note => {
+        <ul className={`home__notes${customDrag.dragging ? ' home__notes--reordering' : ''}`}>
+          {notes.map((note, index) => {
             const { displayTitle, previewLine } = notePreview(note);
             const smartDate = formatSmartDate(note.updatedAt);
             const selected = note.id === openNoteId;
             const isFile = isFileNote(note);
+            const customMode = activeSort === 'custom';
             // Notebook pill: ONLY in the All-Notes aggregate, ONLY for a categorized note whose notebook is
             // known. Uncategorized (notebookId null) or a specific-notebook view → no pill.
             const nbName = notebookId === null && note.notebookId !== null
               ? notebookNameById.get(note.notebookId)
               : undefined;
             return (
-              <li key={note.id}>
+              <li
+                key={note.id}
+                ref={(el) => customDrag.registerRow(index, el)}
+                className={`${customDrag.draggingId === note.id ? 'home__note-li--dragging ' : ''}${customMode && customDrag.overIndex === index ? 'home__note-li--drop-target' : ''}`.trim() || undefined}
+              >
+                {customMode && (
+                  // §5.4 drag grip — the ONLY reorder origin (disambiguates from SwipeRow's horizontal swipe).
+                  // Rendered only in custom sort. Pointer-drag → reorderCustom (one fractional-key write).
+                  <span className="home__note-grip" {...customDrag.handleProps(index, note)} title="Drag to reorder">⠿</span>
+                )}
                 <SwipeRow
                   isOpen={openId === note.id}
                   onOpen={() => setOpenId(note.id)}
@@ -586,7 +605,11 @@ export function AuthedShell() {
 
   // null = All Notes (default); a real id = a specific notebook. Both are valid; render the shell.
   const notebookId: NotebookId | null = currentNotebookId;
-  const CollectionView = resolveCollectionView(notebookId, HomeView);
+  // §6.1 option B: resolve the view off the notebook's SYNCED `defaultCollectionView` (already loaded via
+  // useCurrentNotebook), so the Board's `matches` is a pure `view === 'board'` check — synchronous + data-
+  // driven off the same field the View switcher persists. All Notes (no row) → 'list' (the fallback).
+  const activeView = notebook?.defaultCollectionView ?? 'list';
+  const CollectionView = resolveCollectionView(notebookId, HomeView, activeView);
 
   // DESKTOP / tablet-landscape: the persistent 3-region shell (nav pane | resizable list | note
   // master-detail). All routes render in the note region (Jim's decision (a)); nav + list stay
@@ -594,7 +617,7 @@ export function AuthedShell() {
   if (isDesktop) {
     return (
       <>
-        <ThreeRegionShell notebookId={notebookId} CollectionView={CollectionView} />
+        <ThreeRegionShell notebookId={notebookId} CollectionView={CollectionView} boardMode={activeView === 'board'} />
         <ConflictToastHostSlot />
         {/* Upload-first large-file progress (direct-r2-upload.md §6.3): transient pills for in-flight
             direct-to-R2 uploads; persists across navigation while a big file streams. */}
@@ -626,8 +649,9 @@ export function AuthedShell() {
     <div className="shell">
       {/* Desktop: left-drawer nav (hidden on mobile via CSS). Mobile: BottomNav below. */}
       <DrawerNav open={navOpen} onClose={() => setNavOpen(false)} />
-      {/* Mobile-only contextual options surface — opened by the top-bar "…" (ROAD-0011). */}
-      <ContextMenuSheet open={optionsOpen} onClose={() => setOptionsOpen(false)} />
+      {/* Mobile-only contextual options surface — opened by the top-bar "…" (ROAD-0011). Carries the current
+          notebook so its residents (rename / share / sort / view) act on it (All Notes = null). */}
+      <ContextMenuSheet open={optionsOpen} onClose={() => setOptionsOpen(false)} notebookId={notebookId} />
 
       <header className="shell__bar">
         {/*

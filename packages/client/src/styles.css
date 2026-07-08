@@ -200,6 +200,37 @@
   flex-direction: column;
   overflow-y: auto;
 }
+.home__notes li { position: relative; }
+
+/* Custom-sort drag-reorder (§5.4). The grip is the ONLY reorder origin (SwipeRow's horizontal swipe stays on
+   the row body), overlaid on the row's left edge in custom mode so it doesn't disturb the SwipeRow layout. */
+.home__note-grip {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  color: var(--faint);
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: grab;
+  touch-action: none; /* the pointer-drag owns vertical movement on the handle */
+  user-select: none;
+}
+.home__note-grip:active { cursor: grabbing; }
+/* Nudge the row text right so it clears the overlaid grip in custom mode. */
+.home__notes--reordering .home__note-link,
+li:has(> .home__note-grip) .home__note-link { padding-left: 34px; }
+.home__note-li--dragging { opacity: 0.55; }
+.home__note-li--drop-target::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: -1px;
+  height: 2px;
+  background: var(--accent);
+  z-index: 3;
+}
 
 /* §2 rows — full-bleed, hairline divider, padding 12px 18px; reserve a 2px left gutter for the
    selected accent-bar (no text shift). */
@@ -3326,6 +3357,130 @@ a.auth__link { display: inline; }
   font-family: var(--ff); font-size: 1.05rem; font-weight: 600;
   cursor: pointer; touch-action: manipulation;
 }
+
+/* The "…" menu now carries the notebook residents — top-align its body as a scrollable list, not a centered
+   single hint (the empty-state hint is gone). */
+.context-menu__body--menu {
+  display: block;
+  align-items: stretch;
+  justify-content: flex-start;
+  min-height: 0;
+  padding: 8px 0 12px;
+}
+
+/* ── Notebook "…" residents (NotebookMenuBody) — rename / share / sort / view ────────────────────
+   One content component, two containers (mobile ContextMenuSheet + desktop NotebookMenuPopover). Rows reuse
+   the app's settings-row vocabulary, no new visual language. */
+.nb-menu { display: flex; flex-direction: column; }
+.nb-menu__row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.85rem 0.5rem;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--ink);
+  font-family: var(--ff);
+  font-size: 1rem;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.nb-menu__row:active { background: var(--border); }
+.nb-menu__row-label { flex: 1; }
+.nb-menu__row-value { color: var(--secondary); font-size: 0.85rem; }
+.nb-menu__row-chevron { color: var(--faint); font-size: 0.95rem; flex-shrink: 0; }
+
+/* Inline rename field (reuses the create-form idiom's shape). */
+.nb-menu__rename { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.75rem 0.5rem; border-bottom: 1px solid var(--border); }
+.nb-menu__rename-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.7rem;
+  font-size: 16px; /* iOS no-zoom floor (ios-input-16px-no-zoom) */
+  font-family: var(--ff);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.nb-menu__rename-actions { display: flex; gap: 0.5rem; }
+.nb-menu__confirm, .nb-menu__cancel {
+  flex: 1;
+  padding: 0.55rem;
+  border-radius: 8px;
+  font-family: var(--ff);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.nb-menu__confirm { border: none; background: var(--accent); color: var(--paper); }
+.nb-menu__cancel { border: 1px solid var(--border); background: none; color: var(--ink); }
+
+/* Sub-panel for expanded Sort / View / Share. */
+.nb-menu__sub { padding: 0.35rem 0.25rem 0.75rem; border-bottom: 1px solid var(--border); }
+.nb-menu__sub-loading { margin: 1rem auto; }
+.nb-menu__option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.6rem 0.5rem;
+  background: none;
+  border: none;
+  color: var(--ink);
+  font-family: var(--ff);
+  font-size: 0.95rem;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+  touch-action: manipulation;
+}
+.nb-menu__option:active { background: var(--border); }
+.nb-menu__option--active { color: var(--accent); font-weight: 600; }
+.nb-menu__option-check { width: 1rem; flex-shrink: 0; color: var(--accent); }
+
+/* Desktop per-row "…" kebab on the CURRENT notebook nav row (§2.4). Sits at the row's right edge. */
+.nav-content__nb-kebab {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px; height: 26px;
+  margin-left: 2px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--secondary);
+  cursor: pointer;
+}
+.nav-content__nb-kebab:hover { background: var(--border); color: var(--ink); }
+.nav-content__item { position: relative; }
+
+/* Desktop notebook-menu popover container (NotebookMenuPopover) — reuses the overlay language, floated
+   centered rather than pinned to the bottom edge (a bottom-sheet is wrong on a wide window). */
+.nb-popover { position: fixed; inset: 0; z-index: 355; display: flex; align-items: center; justify-content: center; }
+.nb-popover__backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.nb-popover__panel {
+  position: relative;
+  width: min(360px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0.75rem 1rem 1rem;
+  background: var(--nav);
+  border-radius: 18px;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.22), 0 12px 40px rgba(0, 0, 0, 0.28);
+}
+.nb-popover__body { overflow-y: auto; }
 
 /* Mobile / tablet-portrait: activate bottom nav, deactivate desktop nav controls. */
 @media (max-width: 768px) {

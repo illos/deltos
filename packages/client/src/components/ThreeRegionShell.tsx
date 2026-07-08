@@ -26,6 +26,12 @@ interface ThreeRegionShellProps {
   notebookId: NotebookId | null;
   /** The resolved collection view for the current notebook (passed in to avoid a circular App import). */
   CollectionView: ComponentType<CollectionViewProps>;
+  /**
+   * True when the resolved view is the Keep Board (§6.3 pane-dissolve): the middle list + right note panes
+   * collapse into ONE full-width grid region (the Board renders its own note popover-over-blur), the resize
+   * handle is hidden. The nav pane stays. Default false = the normal list|handle|note triple.
+   */
+  boardMode?: boolean;
 }
 
 /**
@@ -41,7 +47,7 @@ interface ThreeRegionShellProps {
  * are later phases. The list width is the device-local resizable width, with the --handle between
  * list and note.
  */
-export function ThreeRegionShell({ notebookId, CollectionView }: ThreeRegionShellProps) {
+export function ThreeRegionShell({ notebookId, CollectionView, boardMode = false }: ThreeRegionShellProps) {
   const { width, handleProps } = useResizableListPane();
   // On a /settings route the middle (list) pane becomes the settings tab RAIL, replacing the notes
   // list — the same slot the notes flow fills, so pane widths/borders stay consistent (settings-revamp
@@ -49,6 +55,22 @@ export function ThreeRegionShell({ notebookId, CollectionView }: ThreeRegionShel
   const settingsIndexMatch = useMatch('/settings');
   const settingsTabMatch = useMatch('/settings/:tab');
   const onSettings = settingsIndexMatch != null || settingsTabMatch != null;
+  // Board pane-dissolve (§6.3): a full-width single grid region (list+note collapsed), nav pane kept, no
+  // resize handle, no note region — the Board renders its own note popover. Suppressed on /settings /trash
+  // /search (those aren't the notes flow), which fall back to the normal list|handle|note triple below.
+  const onOffFlowRoute = onSettings || useMatch('/trash') != null || useMatch('/search') != null;
+  if (boardMode && !onOffFlowRoute) {
+    return (
+      <div className="shell-3region shell-3region--board">
+        <aside className="shell-3region__nav" aria-label="Notebooks">
+          <NavContent />
+        </aside>
+        <section className="shell-3region__board">
+          <CollectionView notebookId={notebookId} />
+        </section>
+      </div>
+    );
+  }
   return (
     <div className="shell-3region">
       <aside className="shell-3region__nav" aria-label="Notebooks">

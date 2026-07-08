@@ -72,6 +72,28 @@ export const mutateNotebooks = {
     );
   },
 
+  /**
+   * Set the per-notebook default COLLECTION VIEW ('list' | 'board' | future 'kanban'…) (§7). A clone of
+   * {@link rename}/{@link setNoteSort} that varies `defaultCollectionView` — same CAS + enqueue + server SET
+   * (renameNotebook already carries defaultCollectionView). The field is a server-opaque free string so a new
+   * view needs ZERO server/schema change. Synced so the chosen view follows Jim across devices. No-op on
+   * missing/deleted.
+   */
+  async setDefaultCollectionView(id: NotebookId, view: string): Promise<void> {
+    const nb = await getStore().getNotebook(id);
+    if (!nb || nb.deletedAt !== null) return;
+    const now = new Date().toISOString();
+    await getStore().putNotebookAndEnqueue(
+      { ...nb, defaultCollectionView: view, updatedAt: now },
+      {
+        id: crypto.randomUUID(),
+        recordId: id,
+        payload: { id, baseVersion: nb.version, draft: { name: nb.name, defaultCollectionView: view, noteSort: nb.noteSort as NoteSort } },
+        createdAt: now,
+      },
+    );
+  },
+
   async delete(id: NotebookId): Promise<void> {
     const nb = await getStore().getNotebook(id);
     if (!nb || nb.deletedAt !== null) return;

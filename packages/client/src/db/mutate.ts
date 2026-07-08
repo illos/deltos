@@ -1,5 +1,5 @@
 import type { Note, NoteId } from '@deltos/shared';
-import { setTrashedAt, setPinnedAt, isPinned, userProperties, setFileType, UNSYNCED_VERSION } from '@deltos/shared';
+import { setTrashedAt, setPinnedAt, isPinned, userProperties, setFileType, setNotebookOrder, UNSYNCED_VERSION } from '@deltos/shared';
 import { getStore } from './store.js';
 import type { ClientNote } from './schema.js';
 import { newNoteId } from '../lib/ids.js';
@@ -113,6 +113,23 @@ export const mutateNotes = {
       createdAt: new Date().toISOString(),
     });
     return nowPinned;
+  },
+
+  /**
+   * Set the CUSTOM per-notebook ORDER key on a note (custom-sort drag-reorder, §5.4) — writes the reserved
+   * `sys:notebookOrder` fractional index (via setNotebookOrder) and enqueues a plain upsert (rides updateNote's
+   * version CAS, exactly like togglePin/softDelete). A drag is ONE O(1) property write — only the moved note's
+   * key changes (fractionalMidpoint picks a value between its new neighbours), not a whole-list renumber.
+   */
+  async setOrder(note: Note, order: number): Promise<void> {
+    const next: Note = { ...note, properties: setNotebookOrder(note.properties, order) };
+    await getStore().putNoteAndEnqueue(next, {
+      id: crypto.randomUUID(),
+      recordId: note.id,
+      payload: next,
+      baseVersion: note.version,
+      createdAt: new Date().toISOString(),
+    });
   },
 
   /**
