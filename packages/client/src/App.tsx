@@ -58,6 +58,7 @@ import { SyncIndicator } from './components/SyncIndicator.js';
 import { SessionStatus } from './components/SessionStatus.js';
 import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
 import { UploadProgressHost } from './components/UploadProgressHost.js';
+import { AlertBanner } from './components/AlertBanner.js';
 import { Lightbox } from './components/Lightbox.js';
 import { ConflictBadgeSlot } from './components/ConflictBadgeSlot.js';
 import { SwipeRow } from './components/SwipeRow.js';
@@ -617,6 +618,10 @@ export function AuthedShell() {
   if (isDesktop) {
     return (
       <>
+        {/* Top-of-shell alert strip (alert-banner-system.md §5.1) — spans nav+list+note above the 3-region
+            grid (the desktop shell has no global top bar). Null-render when no alerts (off-first-load). This
+            is the DESKTOP half of the deliberate BOTH-shells mount; the mobile half is after the header. */}
+        <AlertBanner />
         <ThreeRegionShell notebookId={notebookId} CollectionView={CollectionView} boardMode={activeView === 'board'} />
         <ConflictToastHostSlot />
         {/* Upload-first large-file progress (direct-r2-upload.md §6.3): transient pills for in-flight
@@ -733,6 +738,13 @@ export function AuthedShell() {
           </button>
         </div>
       </header>
+
+      {/* Top-of-shell alert strip (alert-banner-system.md §5.1) — sits directly under the top bar so it reads
+          as chrome, pushing the list/editor down only when active. Null-render when empty (off-first-load,
+          same posture as ToastHost). This is the MOBILE half of the deliberate BOTH-shells mount; the desktop
+          half wraps ThreeRegionShell above. Both live in THIS file (the single host-owning file) so there is
+          one place to get the both-shells trap right. */}
+      <AlertBanner />
 
       <main className="shell__main">
         <Routes>

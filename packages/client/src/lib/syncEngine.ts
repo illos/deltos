@@ -1,6 +1,7 @@
 import { getStore } from '../db/store.js';
 import { useAuthStore } from '../auth/store.js';
 import { showConflictToast } from './toastEvents.js';
+import { setServerAlerts } from './alertStore.js';
 import type { SyncQueueEntry, NotebookQueueEntry, NotebookRow, DictionaryQueueEntry, DictionaryWordRow } from '../db/schema.js';
 import type { Note, NoteId, NotebookId, BlockBody, SyncPushEntry } from '@deltos/shared';
 import { NoteResponseSchema, SyncPushEntrySchema } from '@deltos/shared';
@@ -440,6 +441,10 @@ async function pullUpdates(notebookId: NotebookId, apiBase: string): Promise<voi
     await mergePull(json.notes, accountId);
     await mergeNotebooks(json.notebooks);
     await mergeDictionary(json.dictionaryWords);
+    // Alerts ride the pull as a CURRENT-STATE PROJECTION (alert-banner-system.md §4.1): REPLACE the client
+    // store's server set wholesale each pull — a resolved/expired alert simply stops appearing next pull.
+    // Defensive: `?? []` tolerates an absent field (old server) so it can NEVER throw a sync batch.
+    setServerAlerts(json.alerts ?? []);
 
     next = json.nextCursor;
     hasMore = json.hasMore;

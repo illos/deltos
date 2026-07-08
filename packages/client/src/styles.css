@@ -2643,6 +2643,71 @@ a.auth__link { display: inline; }
   touch-action: manipulation;
 }
 
+/* ── Alert banner strip (alert-banner-system.md §5) ──────────────────── */
+/* Top-of-shell strip, directly under the top bar. Renders null when no alert (off-first-load). A
+   severity-tinted row: glyph · title/message · actions (inline Approve/Deny + Review, or a × for a
+   dismissible passive alert). Reuses the theme tokens + the toast-in animation. */
+.alert-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  background: var(--paper);
+  color: var(--ink);
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  animation: toast-in 0.18s ease;
+}
+.alert-banner--warning { border-left-color: var(--danger, #c0392b); }
+.alert-banner--critical { border-left-color: var(--danger, #c0392b); background: color-mix(in srgb, var(--danger, #c0392b) 8%, var(--paper)); }
+.alert-banner--info { border-left-color: var(--accent); }
+.alert-banner__glyph { flex-shrink: 0; font-size: 1.1rem; line-height: 1; }
+.alert-banner__text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.alert-banner__title { font-size: 0.9rem; font-weight: 600; line-height: 1.3; }
+.alert-banner__message {
+  font-size: 0.82rem; color: var(--secondary); line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.alert-banner__actions { flex-shrink: 0; display: flex; align-items: center; gap: 0.4rem; }
+.alert-banner__btn {
+  border: 1px solid var(--border); background: none; color: inherit;
+  font-size: 0.82rem; font-weight: 600; padding: 0.25rem 0.6rem;
+  border-radius: 0.35rem; cursor: pointer; touch-action: manipulation;
+}
+.alert-banner__btn:disabled { opacity: 0.5; cursor: default; }
+.alert-banner__btn--primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.alert-banner__btn--danger { color: var(--danger, #c0392b); border-color: var(--danger, #c0392b); }
+.alert-banner__review {
+  background: none; border: none; color: var(--secondary);
+  font-size: 0.8rem; padding: 0.25rem 0.35rem; cursor: pointer; touch-action: manipulation;
+  text-decoration: underline;
+}
+.alert-banner__close {
+  background: none; border: none; color: var(--secondary);
+  font-size: 1.1rem; line-height: 1; padding: 0.1rem 0.3rem; cursor: pointer; touch-action: manipulation;
+}
+.alert-banner__more {
+  display: block; width: 100%; padding: 0.35rem 1rem;
+  background: var(--paper); border: none; border-bottom: 1px solid var(--border);
+  color: var(--secondary); font-size: 0.78rem; text-align: center; cursor: pointer;
+}
+
+/* ApprovalSheet — the LAZY Approve/Deny detail. Rides the .context-menu* overlay shell; these style only the
+   inner content (title/message/error + thumb-zone action row). */
+.approval-sheet { width: 100%; padding: 0.5rem 0.25rem 0; }
+.approval-sheet__title { margin: 0 0 0.5rem; font-size: 1.05rem; font-weight: 700; color: var(--ink); }
+.approval-sheet__message { margin: 0; font-size: 0.95rem; line-height: 1.5; color: var(--ink); }
+.approval-sheet__error { margin: 0.6rem 0 0; font-size: 0.85rem; color: var(--danger, #c0392b); }
+.approval-sheet__actions { flex-shrink: 0; display: flex; gap: 0.6rem; margin-top: 0.75rem; }
+.approval-sheet__btn {
+  flex: 1; min-height: 52px; border: 1px solid var(--border); border-radius: 14px;
+  background: var(--sel); color: var(--ink);
+  font-family: var(--ff); font-size: 1rem; font-weight: 600; cursor: pointer; touch-action: manipulation;
+}
+.approval-sheet__btn:disabled { opacity: 0.5; cursor: default; }
+.approval-sheet__btn--primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.approval-sheet__btn--danger { color: var(--danger, #c0392b); border-color: var(--danger, #c0392b); }
+
 /* ── Large-file upload progress (direct-r2-upload.md §6.3) ───────────── */
 
 /* Pinned card region (above the toast-host so it doesn't overlap an upload toast). Transient pills for the
