@@ -227,6 +227,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Pinned-note marker (notebook-organization) — a small pin glyph before the title. Faint accent so it
+   reads as a system marker, not content. */
+.home__note-pin {
+  display: inline-block;
+  vertical-align: -1px;
+  margin-right: 4px;
+  color: var(--accent);
+}
 .home__note-meta {
   display: flex;
   gap: 8px;
@@ -2328,7 +2336,8 @@ a.auth__link { display: inline; }
   inset: 0;
 }
 
-/* Right-swipe panel: Copy + Delete, anchored to left edge (revealed by right drag) */
+/* Right-swipe seam: the COPY tap button, anchored to the left edge (revealed by a right drag). Pin is the
+   right-FLING (no button). */
 .swipe-row__back-right {
   position: absolute;
   left: 0;
@@ -2338,7 +2347,8 @@ a.auth__link { display: inline; }
   align-items: stretch;
 }
 
-/* Left-swipe seam: the MOVE button (#78), anchored to the right edge (revealed by left drag). */
+/* Left-swipe seam: the MOVE tap button (#78), anchored to the right edge (revealed by a left drag). Delete
+   is the left-FLING (no button). */
 .swipe-row__back-left {
   position: absolute;
   right: 0;
@@ -2363,9 +2373,9 @@ a.auth__link { display: inline; }
   -webkit-tap-highlight-color: transparent;
 }
 
-.swipe-row__btn--copy   { background: #3b82f6; color: #fff; }
-.swipe-row__btn--delete { background: #ef4444; color: #fff; }
-/* #78 Move seam button (left drag) — theme accent so it reads as a primary action (light/dark/system). */
+/* Copy (right-drag tap) — rests at the 84px seam width so no gap shows behind the foreground. */
+.swipe-row__btn--copy   { background: #3b82f6; color: #fff; min-width: 84px; }
+/* Move seam button (left drag) — theme accent so it reads as a primary action (light/dark/system). */
 .swipe-row__btn--move   { background: var(--accent); color: #fff; min-width: 84px; }
 
 /* #78 notebook-picker BOTTOM SHEET — opened by the Move seam; replaces the old inline move-picker. Theme

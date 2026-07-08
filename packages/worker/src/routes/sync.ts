@@ -60,6 +60,7 @@ function notebookRowToSync(row: NotebookRow): SyncNotebook {
     id: row.id as SyncNotebook['id'],
     name: row.name,
     defaultCollectionView: row.defaultCollectionView,
+    noteSort: row.noteSort as SyncNotebook['noteSort'],
     version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -85,6 +86,7 @@ function notebookConflictRow(row: NotebookRow): NonNullable<Extract<NotebookPush
     id: row.id as SyncNotebook['id'],
     name: row.name,
     defaultCollectionView: row.defaultCollectionView,
+    noteSort: row.noteSort as SyncNotebook['noteSort'],
     version: row.version,
   };
 }

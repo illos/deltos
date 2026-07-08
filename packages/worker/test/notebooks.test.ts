@@ -5,9 +5,6 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import { isTrashed } from '@deltos/shared';
 import type { NotebookPushEntry, PropertyBag, SyncPushEntry } from '@deltos/shared';
 import { insertNote, updateNote, pullSince } from '../src/db/mutate.js';
@@ -18,20 +15,10 @@ import {
   notesInNotebook,
 } from '../src/db/notebooks.js';
 import type { DbAdapter } from '../src/db/schema.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS = [
-  '0000_baseline.sql', '0001_stream-b-sync.sql', '0002_stream-a-auth.sql', '0003_account-identity.sql',
-  '0004_password-auth.sql', '0005_recovery-established.sql', '0006_account-sync-seq.sql',
-  '0007_reconcile-account-sync-seq.sql', '0008_notebooks.sql', '0009_backfill-default-notebooks.sql',
-  '0010_nullable-notebookid-all-notes.sql',
-  '0011_drop-isdefault-notebooksyncseg-notes_pull.sql',
-  '0012_custom-dictionary.sql',
-  '0013_agent-token-label.sql',
-  '0014_grant-family-link.sql',
-  '0015_audit-log.sql',
-  '0016_usage-counter.sql',
-  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', '0020_grant-sets.sql', '0021_oauth-refresh-token.sql',].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
+import { allMigrations } from './helpers/migrations.js';
+// Read every migration from disk (helpers/migrations) so a new NNNN_*.sql (e.g. 0024 noteSort) is picked up
+// automatically — this file previously carried a hardcoded list that fell behind. Matches the real DB chain.
+const MIGRATIONS = allMigrations();
 
 function sqliteAdapter(db: Database.Database): DbAdapter {
   return {
@@ -62,7 +49,7 @@ const NB2 = '22222222-2222-4222-8222-222222222222';
 function nbEntry(id: string, baseVersion: number, name = 'Work', del = false): NotebookPushEntry {
   return del
     ? { id: id as NotebookPushEntry['id'], baseVersion, delete: true }
-    : { id: id as NotebookPushEntry['id'], baseVersion, draft: { name, defaultCollectionView: 'list' } };
+    : { id: id as NotebookPushEntry['id'], baseVersion, draft: { name, defaultCollectionView: 'list', noteSort: 'modified' } };
 }
 
 function noteEntry(id: string, notebookId: string | null, baseVersion = 0): SyncPushEntry & { notebookId: string | null } {
@@ -110,6 +97,26 @@ describe('notebooks — sync entity (mutate layer)', () => {
       expect(stale.reason).toBe('stale');
       expect(stale.serverRow?.name).toBe('Job');
     }
+  });
+
+  it('noteSort (migration 0024) persists on create + follows the rename SET path + streams on pull', async () => {
+    // Create defaults to 'modified'; a "setNoteSort" is a rename that varies noteSort → server SET carries it.
+    const created = await insertNotebook(db, nbEntry(NB1, 0, 'Work'), ACCT, NOW);
+    expect(created.outcome).toBe('accepted');
+    if (created.outcome === 'accepted') expect(created.row.noteSort).toBe('modified');
+
+    const resorted = await renameNotebook(
+      db,
+      { id: NB1 as NotebookPushEntry['id'], baseVersion: 1, draft: { name: 'Work', defaultCollectionView: 'list', noteSort: 'alpha' } },
+      ACCT,
+      NOW,
+    );
+    expect(resorted.outcome).toBe('accepted');
+    if (resorted.outcome === 'accepted') expect(resorted.row.noteSort).toBe('alpha');
+
+    // The synced value is on the pull stream (SELECT * → NotebookRow carries noteSort).
+    const { notebooks } = await pullSince(db, ACCT, 0);
+    expect(notebooks.find((n) => n.id === NB1)!.noteSort).toBe('alpha');
   });
 
   it('#58: ANY notebook is deletable — deleting one UNCATEGORIZES its live notes (notebookId→null, distinct syncSeq), not trash', async () => {

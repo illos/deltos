@@ -1,5 +1,5 @@
-import { DEFAULT_COLLECTION_VIEW } from '@deltos/shared';
-import type { NotebookId } from '@deltos/shared';
+import { DEFAULT_COLLECTION_VIEW, DEFAULT_NOTE_SORT } from '@deltos/shared';
+import type { NotebookId, NoteSort } from '@deltos/shared';
 import { getStore } from './store.js';
 import { newNotebookId } from '../lib/ids.js';
 import type { NotebookRow } from './schema.js';
@@ -21,6 +21,7 @@ export const mutateNotebooks = {
       id,
       name,
       defaultCollectionView: DEFAULT_COLLECTION_VIEW,
+      noteSort: DEFAULT_NOTE_SORT,
       version: 0,
       createdAt: now,
       updatedAt: now,
@@ -30,7 +31,7 @@ export const mutateNotebooks = {
     await getStore().putNotebookAndEnqueue(row, {
       id: crypto.randomUUID(),
       recordId: id,
-      payload: { id, baseVersion: 0, draft: { name, defaultCollectionView: DEFAULT_COLLECTION_VIEW } },
+      payload: { id, baseVersion: 0, draft: { name, defaultCollectionView: DEFAULT_COLLECTION_VIEW, noteSort: DEFAULT_NOTE_SORT } },
       createdAt: now,
     });
     return id;
@@ -45,7 +46,27 @@ export const mutateNotebooks = {
       {
         id: crypto.randomUUID(),
         recordId: id,
-        payload: { id, baseVersion: nb.version, draft: { name, defaultCollectionView: nb.defaultCollectionView } },
+        payload: { id, baseVersion: nb.version, draft: { name, defaultCollectionView: nb.defaultCollectionView, noteSort: nb.noteSort as NoteSort } },
+        createdAt: now,
+      },
+    );
+  },
+
+  /**
+   * Set the per-notebook NOTE-SORT mode (§5.3). A clone of {@link rename} that varies `noteSort` instead of
+   * `name` — same CAS + enqueue + server SET path (renameNotebook carries noteSort alongside name +
+   * defaultCollectionView). Synced so the sort follows Jim across devices. No-op on missing/deleted.
+   */
+  async setNoteSort(id: NotebookId, noteSort: NoteSort): Promise<void> {
+    const nb = await getStore().getNotebook(id);
+    if (!nb || nb.deletedAt !== null) return;
+    const now = new Date().toISOString();
+    await getStore().putNotebookAndEnqueue(
+      { ...nb, noteSort, updatedAt: now },
+      {
+        id: crypto.randomUUID(),
+        recordId: id,
+        payload: { id, baseVersion: nb.version, draft: { name: nb.name, defaultCollectionView: nb.defaultCollectionView, noteSort } },
         createdAt: now,
       },
     );

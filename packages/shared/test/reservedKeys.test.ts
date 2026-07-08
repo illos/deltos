@@ -10,11 +10,19 @@ import { describe, it, expect } from 'vitest';
 import {
   RESERVED_KEY_PREFIX,
   SYS_TRASHED_AT_KEY,
+  SYS_PINNED_AT_KEY,
+  SYS_NOTEBOOK_ORDER_KEY,
   isReservedKey,
   userProperties,
   isTrashed,
   trashedAt,
   setTrashedAt,
+  isPinned,
+  pinnedAt,
+  setPinnedAt,
+  clearPinned,
+  notebookOrder,
+  setNotebookOrder,
   UserPropertyKeySchema,
   UserPropertyBagSchema,
   containsReservedKey,
@@ -109,5 +117,80 @@ describe('reserved system-key namespace', () => {
     // A clean user bag passes.
     expect(containsReservedKey(userBag())).toBe(false);
     expect(UserPropertyBagSchema.safeParse(userBag()).success).toBe(true);
+  });
+
+  // ── PIN flag (sys:pinnedAt) — mirrors the trash contract ──────────────────────────────────────
+  describe('pin flag (sys:pinnedAt)', () => {
+    it('SYS_PINNED_AT_KEY is reserved and stripped by userProperties (UI-hide + export-exclude)', () => {
+      expect(isReservedKey(SYS_PINNED_AT_KEY)).toBe(true);
+      const bag = setPinnedAt(userBag(), NOW);
+      expect(userProperties(bag)).toEqual(userBag());
+      expect(SYS_PINNED_AT_KEY in userProperties(bag)).toBe(false);
+    });
+
+    it('isPinned / pinnedAt reflect the flag; set then clear round-trips clean (no residue)', () => {
+      const live = userBag();
+      expect(isPinned(live)).toBe(false);
+      expect(pinnedAt(live)).toBeNull();
+
+      const pinned = setPinnedAt(live, NOW);
+      expect(isPinned(pinned)).toBe(true);
+      expect(pinnedAt(pinned)).toBe(NOW);
+
+      const unpinned = clearPinned(pinned); // clear = OMIT the key
+      expect(isPinned(unpinned)).toBe(false);
+      expect(SYS_PINNED_AT_KEY in unpinned).toBe(false);
+      expect(unpinned).toEqual(userBag());
+    });
+
+    it('isPinned is FAIL-SAFE: a corrupt non-date value reads NOT-pinned', () => {
+      const corrupt: PropertyBag = { [SYS_PINNED_AT_KEY]: { type: 'boolean', value: true } };
+      expect(isPinned(corrupt)).toBe(false);
+      expect(pinnedAt(corrupt)).toBeNull();
+    });
+
+    it('setPinnedAt is pure — does not mutate its input', () => {
+      const original = userBag();
+      setPinnedAt(original, NOW);
+      expect(isPinned(original)).toBe(false);
+    });
+
+    it('a bag carrying sys:pinnedAt fails the user-input mutate-boundary guard (SA-9 class)', () => {
+      const sneaky = setPinnedAt(userBag(), NOW);
+      expect(containsReservedKey(sneaky)).toBe(true);
+      expect(UserPropertyBagSchema.safeParse(sneaky).success).toBe(false);
+    });
+
+    it('duplicate behavior: userProperties strips BOTH pin and trash → a copy is live + unpinned', () => {
+      // Mirrors how mutateNotes.duplicate strips reserved keys — a duplicated pinned/trashed note is clean.
+      const bag = setPinnedAt(setTrashedAt(userBag(), NOW), NOW);
+      const dup = userProperties(bag);
+      expect(isPinned(dup)).toBe(false);
+      expect(isTrashed(dup)).toBe(false);
+      expect(dup).toEqual(userBag());
+    });
+  });
+
+  // ── CUSTOM order (sys:notebookOrder) — fractional index ───────────────────────────────────────
+  describe('custom order (sys:notebookOrder)', () => {
+    it('SYS_NOTEBOOK_ORDER_KEY is reserved and stripped by userProperties', () => {
+      expect(isReservedKey(SYS_NOTEBOOK_ORDER_KEY)).toBe(true);
+      const bag = setNotebookOrder(userBag(), 1.5);
+      expect(userProperties(bag)).toEqual(userBag());
+    });
+
+    it('notebookOrder reads the number; set then clear round-trips clean', () => {
+      expect(notebookOrder(userBag())).toBeNull();
+      const ordered = setNotebookOrder(userBag(), 2.25);
+      expect(notebookOrder(ordered)).toBe(2.25);
+      const cleared = setNotebookOrder(ordered, null);
+      expect(notebookOrder(cleared)).toBeNull();
+      expect(SYS_NOTEBOOK_ORDER_KEY in cleared).toBe(false);
+    });
+
+    it('notebookOrder is FAIL-SAFE: a non-number value reads null', () => {
+      const corrupt: PropertyBag = { [SYS_NOTEBOOK_ORDER_KEY]: { type: 'text', value: 'x' } };
+      expect(notebookOrder(corrupt)).toBeNull();
+    });
   });
 });

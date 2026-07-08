@@ -98,6 +98,16 @@ export function Trash(props: IconProps) {
   );
 }
 
+/** Pin — a push-pin (pinned-note marker + the swipe Pin action). */
+export function Pin(props: IconProps) {
+  return (
+    <IconBase strokeWidth={1.6} {...props}>
+      <path d="M9 4h6l-1 6 3 3H7l3-3-1-6z" />
+      <line x1="12" y1="16" x2="12" y2="21" />
+    </IconBase>
+  );
+}
+
 /** User — head + shoulders (Account). */
 export function User(props: IconProps) {
   return (

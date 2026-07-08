@@ -52,6 +52,8 @@ export interface NotebookRow {
   id: NotebookId;
   name: string;
   defaultCollectionView: string;
+  /** Per-notebook note-sort mode ('modified'|'alpha'|'created'|'custom'); synced (migration 0024). */
+  noteSort: string;
   version: number;
   createdAt: string;
   updatedAt: string;

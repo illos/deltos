@@ -1,5 +1,5 @@
 import type { Note, NoteId } from '@deltos/shared';
-import { setTrashedAt, userProperties, setFileType, UNSYNCED_VERSION } from '@deltos/shared';
+import { setTrashedAt, setPinnedAt, isPinned, userProperties, setFileType, UNSYNCED_VERSION } from '@deltos/shared';
 import { getStore } from './store.js';
 import type { ClientNote } from './schema.js';
 import { newNoteId } from '../lib/ids.js';
@@ -91,6 +91,28 @@ export const mutateNotes = {
       baseVersion: note.version,
       createdAt: new Date().toISOString(),
     });
+  },
+
+  /**
+   * Toggle the PIN flag (swipe / Pin) — sets or clears the reserved `sys:pinnedAt` system property (via
+   * setPinnedAt), then enqueues a plain upsert (rides updateNote's version CAS, exactly like softDelete).
+   * Pinning stamps NOW so the note floats to the TOP of the pinned partition (most-recently-pinned first);
+   * unpinning REMOVES the key (no residue). Returns the resulting pinned state so callers can toast.
+   */
+  async togglePin(note: Note): Promise<boolean> {
+    const nowPinned = !isPinned(note.properties);
+    const next: Note = {
+      ...note,
+      properties: setPinnedAt(note.properties, nowPinned ? new Date().toISOString() : null),
+    };
+    await getStore().putNoteAndEnqueue(next, {
+      id: crypto.randomUUID(),
+      recordId: note.id,
+      payload: next,
+      baseVersion: note.version,
+      createdAt: new Date().toISOString(),
+    });
+    return nowPinned;
   },
 
   /**

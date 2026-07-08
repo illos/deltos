@@ -23,6 +23,7 @@ export interface NotebookRow {
   accountId: string;
   name: string;
   defaultCollectionView: string;
+  noteSort: string; // per-notebook note-sort mode ('modified'|'alpha'|'created'|'custom'); synced, server-opaque (migration 0024)
   version: number; // CAS counter (rename / delete)
   createdAt: string; // ISO-8601
   updatedAt: string; // ISO-8601

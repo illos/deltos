@@ -3,6 +3,7 @@ import {
   NoteIdSchema,
   NotebookIdSchema,
   DEFAULT_COLLECTION_VIEW,
+  DEFAULT_NOTE_SORT,
   UserPropertyKeySchema,
   PropertyValueSchema,
   setTrashedAt,
@@ -610,7 +611,7 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
       const entry = {
         id: NotebookIdSchema.parse(crypto.randomUUID()),
         baseVersion: 0 as const,
-        draft: { name: a.name, defaultCollectionView: DEFAULT_COLLECTION_VIEW },
+        draft: { name: a.name, defaultCollectionView: DEFAULT_COLLECTION_VIEW, noteSort: DEFAULT_NOTE_SORT },
       };
       const outcome = await insertNotebook(db, entry, accountId, now);
       if (outcome.outcome === 'conflict') return toolError('could not create notebook (id collision) — retry');

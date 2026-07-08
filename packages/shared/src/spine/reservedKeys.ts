@@ -31,6 +31,25 @@ export const RESERVED_KEY_PREFIX = 'sys:' as const;
  */
 export const SYS_TRASHED_AT_KEY = `${RESERVED_KEY_PREFIX}trashedAt` as const;
 
+/**
+ * PIN flag (notebook-organization). A `date`-typed system property, the direct sibling of
+ * {@link SYS_TRASHED_AT_KEY}: PRESENT ⇔ the note is pinned, value = when it was pinned. The timestamp is
+ * BOTH the pin flag AND the stack order — pinned notes float above the active sort ordered by this value
+ * DESCENDING (most-recently-pinned on top). Cleared (key removed) ⇔ unpinned. Rides the note `upsert`
+ * with zero protocol change (same as trash).
+ */
+export const SYS_PINNED_AT_KEY = `${RESERVED_KEY_PREFIX}pinnedAt` as const;
+
+/**
+ * CUSTOM per-notebook manual ORDER key (notebook-organization, `sort` mode = 'custom'). A `number`-typed
+ * system property carrying a FRACTIONAL INDEX: reordering a note picks a value between its new neighbours,
+ * so a drag is an O(1) single-property write (not a whole-list renumber) — critical for the perf bar and
+ * the sync-conflict window. When the active sort is 'custom', notes sort by this value ASCENDING; a note
+ * with no order key sorts AFTER keyed notes (lazily assigned on first custom reorder). Per-notebook falls
+ * out because a note belongs to exactly one notebook; moving notebooks clears it (drops to the end).
+ */
+export const SYS_NOTEBOOK_ORDER_KEY = `${RESERVED_KEY_PREFIX}notebookOrder` as const;
+
 /** True iff `key` is in the reserved system namespace (i.e. NOT a user-authored property). */
 export function isReservedKey(key: string): boolean {
   return key.startsWith(RESERVED_KEY_PREFIX);
@@ -75,6 +94,51 @@ export function isTrashed(bag: PropertyBag): boolean {
 export function setTrashedAt(bag: PropertyBag, atIso: string | null): PropertyBag {
   const { [SYS_TRASHED_AT_KEY]: _drop, ...rest } = bag;
   return atIso === null ? rest : { ...rest, [SYS_TRASHED_AT_KEY]: { type: 'date', value: atIso } };
+}
+
+/** The pin timestamp (ISO), or null if the note is not pinned (key absent OR not a valid date value). */
+export function pinnedAt(bag: PropertyBag): string | null {
+  const v = bag[SYS_PINNED_AT_KEY];
+  return v?.type === 'date' ? v.value : null;
+}
+
+/**
+ * Is this note currently pinned? FAIL-SAFE + consistent with {@link pinnedAt} (mirrors {@link isTrashed}):
+ * true ONLY for a well-formed date-typed flag; a corrupt/non-date value reads as NOT pinned.
+ */
+export function isPinned(bag: PropertyBag): boolean {
+  return pinnedAt(bag) !== null;
+}
+
+/**
+ * Return a NEW bag with the pin flag SET to `atIso` (pinned) or CLEARED (`null` → unpinned). Setting writes
+ * `{ type: 'date', value: atIso }`; clearing REMOVES the key entirely so an unpinned note carries no pin
+ * residue. Pure — mirrors {@link setTrashedAt}. Rides the normal `upsert` push (just a property edit).
+ */
+export function setPinnedAt(bag: PropertyBag, atIso: string | null): PropertyBag {
+  const { [SYS_PINNED_AT_KEY]: _drop, ...rest } = bag;
+  return atIso === null ? rest : { ...rest, [SYS_PINNED_AT_KEY]: { type: 'date', value: atIso } };
+}
+
+/** Convenience: CLEAR the pin (mirrors "restore" for trash). */
+export function clearPinned(bag: PropertyBag): PropertyBag {
+  return setPinnedAt(bag, null);
+}
+
+/** The custom-order fractional index (a number), or null if the note has no order key (or a bad value). */
+export function notebookOrder(bag: PropertyBag): number | null {
+  const v = bag[SYS_NOTEBOOK_ORDER_KEY];
+  return v?.type === 'number' && Number.isFinite(v.value) ? v.value : null;
+}
+
+/**
+ * Return a NEW bag with the custom-order fractional index SET to `n` or CLEARED (`null` → no order, sorts
+ * to the end). Setting writes `{ type: 'number', value: n }`. Pure — mirrors {@link setTrashedAt}. Rides
+ * the normal `upsert`. Cleared on a notebook move so the note drops to the end of its new notebook.
+ */
+export function setNotebookOrder(bag: PropertyBag, n: number | null): PropertyBag {
+  const { [SYS_NOTEBOOK_ORDER_KEY]: _drop, ...rest } = bag;
+  return n === null ? rest : { ...rest, [SYS_NOTEBOOK_ORDER_KEY]: { type: 'number', value: n } };
 }
 
 /**

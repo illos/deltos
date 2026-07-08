@@ -38,8 +38,8 @@ export async function insertNotebook(
     { sql: BUMP_SEQ_SQL, params: [accountId] },
     {
       sql: `
-        INSERT INTO notebooks (id, accountId, name, defaultCollectionView, version, createdAt, updatedAt, syncSeq)
-        SELECT ?, ?, ?, ?, ?, ?, ?, (${READ_SEQ_SQL})
+        INSERT INTO notebooks (id, accountId, name, defaultCollectionView, noteSort, version, createdAt, updatedAt, syncSeq)
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, (${READ_SEQ_SQL})
         WHERE NOT EXISTS (SELECT 1 FROM notebooks WHERE id = ?)
       `,
       params: [
@@ -47,6 +47,7 @@ export async function insertNotebook(
         accountId,
         draft.name,
         draft.defaultCollectionView,
+        draft.noteSort,
         FIRST_NOTEBOOK_VERSION,
         nowIso,
         nowIso,
@@ -76,10 +77,10 @@ export async function renameNotebook(
     {
       sql: `
         UPDATE notebooks
-        SET name = ?, defaultCollectionView = ?, updatedAt = ?, version = version + 1, syncSeq = (${READ_SEQ_SQL})
+        SET name = ?, defaultCollectionView = ?, noteSort = ?, updatedAt = ?, version = version + 1, syncSeq = (${READ_SEQ_SQL})
         WHERE id = ? AND accountId = ? AND version = ? AND deletedAt IS NULL
       `,
-      params: [draft.name, draft.defaultCollectionView, nowIso, accountId, entry.id, accountId, entry.baseVersion],
+      params: [draft.name, draft.defaultCollectionView, draft.noteSort, nowIso, accountId, entry.id, accountId, entry.baseVersion],
     },
   ]);
   // CAS hit ⇔ rowsWritten > 0 (real D1 counts index writes; see d1-rowswritten-index-inflation).

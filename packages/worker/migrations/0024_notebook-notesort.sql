@@ -1,0 +1,13 @@
+-- 0024 — per-notebook NOTE-SORT mode (notebook-menu-and-keep-view.md §5.3). A synced, per-notebook
+-- preference (Jim wants a notebook's "A—Z" sort to look A—Z on every device), added as a column on the
+-- notebooks row so it rides the EXISTING NotebookDraft→renameNotebook SET channel that already carries
+-- `defaultCollectionView` — zero protocol change, same as that field.
+--
+-- Values: 'modified' (default, = updatedAt DESC, the pre-feature behavior) | 'alpha' | 'created' | 'custom'.
+-- The DEFAULT 'modified' backfills every existing row, so this is behavior-preserving. The server stores +
+-- syncs the string but does not act on it (the client comparator does) — mirroring `defaultCollectionView`.
+--
+-- A NEW migration number (0023 was the highest applied — never rewrite an applied file,
+-- [[migration-never-rewrite-applied]]). Column ADD only — no CREATE TEMP TABLE (D1's authorizer rejects it,
+-- [[migration-d1-no-temp-table]]), no row mutation, no account boundary crossed.
+ALTER TABLE notebooks ADD COLUMN noteSort TEXT NOT NULL DEFAULT 'modified';

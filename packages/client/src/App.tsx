@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspense } fro
 import type { DragEvent } from 'react';
 import { BrowserRouter, Routes, Route, Link, Navigate, useNavigate, useMatch, useLocation } from 'react-router-dom';
 import type { Note } from '@deltos/shared';
-import { isFileNote } from '@deltos/shared';
+import { isFileNote, isPinned } from '@deltos/shared';
 import type { NotebookId } from '@deltos/shared';
 import { NewNote } from './routes/NewNote.js';
 import { RegisterRoute } from './routes/RegisterRoute.js';
@@ -49,9 +49,10 @@ import { resolveCollectionView } from './lib/collectionViews.js';
 import type { CollectionViewProps } from './lib/collectionViews.js';
 import { useNotebookStore } from './lib/notebookStore.js';
 import { notePreview, formatSmartDate } from './lib/notePreview.js';
+import { sortNotes, coerceNoteSort } from './lib/noteSort.js';
 // `Link as ShareLink` — the icons module's chain-link glyph, our Share affordance, aliased to avoid
 // colliding with react-router's Link imported above.
-import { ComposeNew, Search, Ellipsis, VersionHistory, Info, Link as ShareLink } from './icons/index.js';
+import { ComposeNew, Search, Ellipsis, VersionHistory, Info, Link as ShareLink, Pin } from './icons/index.js';
 import { SyncIndicator } from './components/SyncIndicator.js';
 import { SessionStatus } from './components/SessionStatus.js';
 import { ConflictToastHostSlot } from './components/ConflictToastHostSlot.js';
@@ -176,10 +177,14 @@ function AppRoutes() {
  */
 export function HomeView({ notebookId }: CollectionViewProps) {
   const allNotes = useNotes();
-  // null = All Notes = show every non-trashed note; a real id = filter to that notebook's notes.
-  const notes = notebookId === null ? allNotes : allNotes.filter((n) => n.notebookId === notebookId);
   // List header name: the current notebook, or "All Notes" for the null aggregate (#59).
   const notebook = useCurrentNotebook();
+  // The active per-notebook SORT mode (§5.3) — synced off the notebook row; All Notes (no row) uses the
+  // default. sortNotes applies the pin-partition + the mode as the ONE comparator every list view shares.
+  const activeSort = coerceNoteSort(notebookId === null ? null : notebook?.noteSort);
+  // null = All Notes = show every non-trashed note; a real id = filter to that notebook's notes.
+  const filtered = notebookId === null ? allNotes : allNotes.filter((n) => n.notebookId === notebookId);
+  const notes = useMemo(() => sortNotes(filtered, activeSort), [filtered, activeSort]);
   const listName = notebookId === null ? 'All Notes' : (notebook?.name ?? '…');
   // #75: in the All-Notes aggregate, each categorized row shows its notebook-name pill. id→name map for the
   // lookup (only consulted in the notebookId===null branch). A note whose id isn't here (shouldn't happen)
@@ -235,6 +240,12 @@ export function HomeView({ notebookId }: CollectionViewProps) {
 
   const handleDuplicate = useCallback((note: Note) => {
     mutateNotes.duplicate(note).then(() => showToast('Duplicated')).catch(console.error);
+  }, []);
+
+  const handlePin = useCallback((note: Note) => {
+    mutateNotes.togglePin(note)
+      .then((nowPinned) => showToast(nowPinned ? 'Pinned' : 'Unpinned'))
+      .catch(console.error);
   }, []);
 
   // ── In-place search ─────────────────────────────────────────────────────────────────────────────
@@ -382,6 +393,8 @@ export function HomeView({ notebookId }: CollectionViewProps) {
                   onDelete={() => handleDelete(note)}
                   onDuplicate={() => handleDuplicate(note)}
                   onMove={() => setMovingNote(note)}
+                  onPin={() => handlePin(note)}
+                  isPinned={isPinned(note.properties)}
                 >
                   <Link
                     to={`/note/${note.id}`}
@@ -397,7 +410,12 @@ export function HomeView({ notebookId }: CollectionViewProps) {
                       <FileNotePill note={note} />
                     ) : (
                       <>
-                        <span className="home__note-title">{displayTitle}</span>
+                        <span className="home__note-title">
+                          {isPinned(note.properties) && (
+                            <Pin size={13} className="home__note-pin" title="Pinned" />
+                          )}
+                          {displayTitle}
+                        </span>
                         <span className="home__note-meta">
                           <span className="home__note-date">{smartDate}</span>
                           {previewLine && <span className="home__note-preview">{previewLine}</span>}

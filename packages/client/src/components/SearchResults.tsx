@@ -155,6 +155,7 @@ export function SearchResultsBody({ debouncedQuery, showHintWhenEmpty = true }: 
       id: null as unknown as NotebookId,
       name: 'All Notes',
       defaultCollectionView: 'list',
+      noteSort: 'modified',
       version: 0,
       createdAt: '',
       updatedAt: '',
