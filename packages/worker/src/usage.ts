@@ -12,7 +12,7 @@
  * the cost guard, so if its D1 write throws the request fails anyway — there is no "allow on error" that
  * doesn't also re-open the denial-of-wallet hole.
  */
-import { createAuthStore } from './db/authStore.js';
+import { createAuthStore, type AuthStore } from './db/authStore.js';
 import { d1Adapter } from './db/schema.js';
 import { apiError, type AppContext } from './http.js';
 import { DAILY_QUOTA, dayBucket, type UsageMetric } from './abusePolicy.js';
@@ -45,6 +45,31 @@ export async function chargeUsage(
     new Date(nowMs).toISOString(),
   );
   return { allowed, count, cap, metric };
+}
+
+/**
+ * The EFFECTIVE per-token daily WRITE cap (alert-banner-system.md §6.5) — the base `mcpWrite` ceiling (100)
+ * PLUS any ACTIVE, human-approved extra quota for THIS token on THIS UTC day. Swaps the static
+ * `DAILY_QUOTA.mcpWrite` at the single write chokepoint (routes/mcp.ts) so a legitimate bulk import can
+ * proceed once the human Approves, WITHOUT re-opening the injection blast-radius guard:
+ *
+ *  - COUNT-boxed: the return is a ceiling raise, not a bypass — every write still charges the atomic
+ *    usageCounter against it, so the counter can never exceed `100 + Σ grantedCount` even under a burst.
+ *  - TIME-boxed: the extra is keyed on `windowDayBucket`; tomorrow's dayBucket matches no row → the cap
+ *    AUTO-REVERTS to exactly 100 with no cleanup job.
+ *  - TOKEN-boxed: keyed on `tokenGroupId`, so approving token A's import does not lift token B's cap.
+ *
+ * REGRESSION GUARD: with no active approval `approvedWriteExtra` returns 0, so the cap is EXACTLY
+ * `DAILY_QUOTA.mcpWrite` — the pre-existing behavior, unchanged.
+ */
+export async function effectiveWriteCap(
+  store: AuthStore,
+  accountId: string,
+  tokenGroupId: string,
+  day: string,
+): Promise<number> {
+  const extra = await store.approvedWriteExtra(accountId, tokenGroupId, day);
+  return DAILY_QUOTA.mcpWrite + extra;
 }
 
 /** The 429 a route returns when `chargeUsage` denies. Resets at UTC midnight when the day bucket rolls. */

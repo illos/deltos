@@ -4,6 +4,7 @@ import { VersionSchema } from '../spine/identity.js';
 import { NoteDraftSchema } from '../spine/note.js';
 import { NotebookSchema, NotebookDraftSchema } from '../spine/notebook.js';
 import { NoteResponseSchema } from './operations.js';
+import { AlertSchema } from './alert.js';
 
 /**
  * Sync protocol schemas — the internal client↔server contract for the offline-first
@@ -215,6 +216,17 @@ export const SyncPullResponseSchema = z.object({
   notes: z.array(SyncNoteSchema),
   notebooks: z.array(SyncNotebookSchema).default([]),
   dictionaryWords: z.array(SyncDictionaryWordSchema).default([]),
+  /**
+   * Server-active ALERTS for this account+token (alert-banner-system.md §4.1). ADDITIVE + optional:
+   * `.default([])` so an OLD pull response with no `alerts` still parses, and — because this response is
+   * a plain `z.object` (NOT `.strict()`) that the client type-casts rather than validates (syncEngine.ts)
+   * — an unknown/absent `alerts` field can NEVER 400 a sync batch. This is the identical, proven path by
+   * which `notebooks` and `dictionaryWords` were added to the same response. Alerts are a CURRENT-STATE
+   * PROJECTION recomputed fresh each pull (NOT a cursor/syncSeq stream entity): the client REPLACES its
+   * server-alert set from this array wholesale, so a resolved/expired alert simply stops appearing. It does
+   * NOT advance `nextCursor` and does NOT touch the sync stream.
+   */
+  alerts: z.array(AlertSchema).default([]),
   /** The highest syncSeq in this batch (across notes, notebooks AND dictionary); use as the next cursor. */
   nextCursor: z.number().int().nonnegative(),
   hasMore: z.boolean(),

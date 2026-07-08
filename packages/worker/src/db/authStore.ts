@@ -99,6 +99,21 @@ export interface AuditLogEntry extends AuditLogRow {
   id: number;
 }
 
+/** One `agentWriteApprovals` row (migration 0023) — the durable, token-scoped bulk-write approval record. */
+export interface WriteApprovalRow {
+  id: string;
+  accountId: string;
+  tokenGroupId: string;
+  requestedCount: number;
+  reason: string;
+  status: 'pending' | 'approved' | 'denied' | 'expired';
+  grantedCount: number | null;
+  approvedAt: number | null;
+  windowDayBucket: string | null;
+  createdAt: number;
+  expiresAt: number;
+}
+
 export interface AuthStore {
   /** Persist a freshly-minted, UNCONSUMED challenge. */
   createChallenge(row: {
@@ -594,6 +609,69 @@ export interface AuthStore {
 
   /** Reap `usageCounter` rows whose dayBucket is strictly before `beforeDayBucket` ('YYYY-MM-DD'). */
   pruneUsage(beforeDayBucket: string): Promise<void>;
+
+  // --- agent bulk-write approval (migration 0023) -------------------------------------------------
+  // alert-banner-system.md §6: an agent that trips the mcpWrite cap can ASK for a token-scoped, count- AND
+  // time-boxed quota lift; the human Approves/Denies in-app. The agent only ever asks — it cannot self-grant.
+
+  /**
+   * Insert a fresh PENDING write-approval request. Token-scoped (`tokenGroupId`) + account-owned
+   * (`accountId`, server-derived). `expiresAt` self-expires the pending request (createdAt + 30 min).
+   */
+  insertWriteApproval(row: {
+    id: string;
+    accountId: string;
+    tokenGroupId: string;
+    requestedCount: number;
+    reason: string;
+    createdAt: number; // ms epoch
+    expiresAt: number; // ms epoch
+  }): Promise<void>;
+
+  /**
+   * Read one approval by id, BOLA-scoped to the caller's account — a row owned by another account returns
+   * null (indistinguishable from not-found; no cross-account existence oracle). `nowMs` lets the reader
+   * report an unresolved-but-past-expiry pending request as effectively `expired` without a mutation.
+   */
+  getWriteApprovalForAccount(
+    id: string,
+    accountId: string,
+    nowMs: number,
+  ): Promise<WriteApprovalRow | null>;
+
+  /**
+   * The account's PENDING, unexpired approvals — feeds the sync-pull alert projection AND the REST list.
+   * BOLA-scoped on accountId. Excludes rows whose `expiresAt <= nowMs` (a lapsed pending request stops
+   * projecting as an actionable alert even before the lazy expiry sweep flips its status).
+   */
+  listPendingWriteApprovals(accountId: string, nowMs: number): Promise<WriteApprovalRow[]>;
+
+  /**
+   * CAS an approval `pending → approved`: sets `grantedCount = requestedCount`, `windowDayBucket`,
+   * `approvedAt`, ONLY when the row is (a) owned by `accountId` (BOLA) and (b) still `pending`. Returns the
+   * updated row, or null on any miss (not owned / already resolved / absent) — no read-then-write race.
+   */
+  approveWriteApproval(row: {
+    id: string;
+    accountId: string;
+    windowDayBucket: string;
+    approvedAt: number; // ms epoch
+  }): Promise<WriteApprovalRow | null>;
+
+  /**
+   * CAS an approval `pending → denied` (BOLA-scoped, pending-only). Returns the updated row or null on any
+   * miss. A deny closes the request so it stops projecting; it grants nothing.
+   */
+  denyWriteApproval(id: string, accountId: string): Promise<WriteApprovalRow | null>;
+
+  /**
+   * The APPROVED, TIME-BOXED extra write quota for `(accountId, tokenGroupId)` on `windowDayBucket` —
+   * `SUM(grantedCount)` over `status='approved'` rows whose window matches this UTC day. 0 when no active
+   * approval → the effective cap auto-reverts to the base 100. This is the count+time+token box: tomorrow's
+   * dayBucket doesn't match (auto-revert), a different token doesn't match (token-boxed), and every write
+   * still charges the atomic usageCounter against the resulting ceiling (count-boxed, no bypass).
+   */
+  approvedWriteExtra(accountId: string, tokenGroupId: string, windowDayBucket: string): Promise<number>;
 
   /**
    * Reap `auditLog` (the D1 PROJECTION mirror) rows older than `beforeIso`. The append-only AE dataset is
@@ -1654,6 +1732,89 @@ export function createAuthStore(db: DbAdapter): AuthStore {
       await db.batch([
         { sql: `DELETE FROM usageCounter WHERE dayBucket < ?`, params: [beforeDayBucket] },
       ]);
+    },
+
+    // --- agent bulk-write approval (migration 0023) ---------------------------------------------
+
+    async insertWriteApproval(row) {
+      await db.batch([
+        {
+          sql: `INSERT INTO agentWriteApprovals
+                  (id, accountId, tokenGroupId, requestedCount, reason, status,
+                   grantedCount, approvedAt, windowDayBucket, createdAt, expiresAt)
+                VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, ?)`,
+          params: [
+            row.id, row.accountId, row.tokenGroupId, row.requestedCount, row.reason,
+            row.createdAt, row.expiresAt,
+          ],
+        },
+      ]);
+    },
+
+    async getWriteApprovalForAccount(id, accountId, nowMs) {
+      // BOLA: account-scoped read — a row owned by another account returns null (no existence oracle).
+      const row = await db.first<WriteApprovalRow>(
+        `SELECT id, accountId, tokenGroupId, requestedCount, reason, status,
+                grantedCount, approvedAt, windowDayBucket, createdAt, expiresAt
+           FROM agentWriteApprovals WHERE id = ? AND accountId = ?`,
+        [id, accountId],
+      );
+      if (!row) return null;
+      // A still-`pending` request past its expiry reads as `expired` (no mutation) so the agent's poll learns
+      // the outcome without a sweep job. Approved/denied rows keep their resolved status regardless of clock.
+      if (row.status === 'pending' && row.expiresAt <= nowMs) return { ...row, status: 'expired' };
+      return row;
+    },
+
+    async listPendingWriteApprovals(accountId, nowMs) {
+      // Account-scoped, still-pending AND not-yet-expired: a lapsed pending request stops projecting even
+      // before its status is swept. Newest-first so the banner shows the most recent ask on top.
+      return db.all<WriteApprovalRow>(
+        `SELECT id, accountId, tokenGroupId, requestedCount, reason, status,
+                grantedCount, approvedAt, windowDayBucket, createdAt, expiresAt
+           FROM agentWriteApprovals
+          WHERE accountId = ? AND status = 'pending' AND expiresAt > ?
+          ORDER BY createdAt DESC`,
+        [accountId, nowMs],
+      );
+    },
+
+    async approveWriteApproval(row) {
+      // ATOMIC CAS pending→approved, BOLA-scoped (accountId in the WHERE) + single-transition (status='pending'
+      // in the WHERE), latching grantedCount=requestedCount + the time-box in the SAME statement. RETURNING the
+      // updated row proves the transition happened; absence = miss (not owned / already resolved / absent).
+      return db.first<WriteApprovalRow>(
+        `UPDATE agentWriteApprovals
+            SET status = 'approved', grantedCount = requestedCount,
+                windowDayBucket = ?, approvedAt = ?
+          WHERE id = ? AND accountId = ? AND status = 'pending'
+        RETURNING id, accountId, tokenGroupId, requestedCount, reason, status,
+                  grantedCount, approvedAt, windowDayBucket, createdAt, expiresAt`,
+        [row.windowDayBucket, row.approvedAt, row.id, row.accountId],
+      );
+    },
+
+    async denyWriteApproval(id, accountId) {
+      return db.first<WriteApprovalRow>(
+        `UPDATE agentWriteApprovals
+            SET status = 'denied'
+          WHERE id = ? AND accountId = ? AND status = 'pending'
+        RETURNING id, accountId, tokenGroupId, requestedCount, reason, status,
+                  grantedCount, approvedAt, windowDayBucket, createdAt, expiresAt`,
+        [id, accountId],
+      );
+    },
+
+    async approvedWriteExtra(accountId, tokenGroupId, windowDayBucket) {
+      // SUM the granted extra for THIS token on THIS day only (count+time+token box). A different day or a
+      // different token matches no row → 0 → the effective cap is exactly the base 100 (auto-revert, no job).
+      const row = await db.first<{ extra: number | null }>(
+        `SELECT SUM(grantedCount) AS extra
+           FROM agentWriteApprovals
+          WHERE accountId = ? AND tokenGroupId = ? AND status = 'approved' AND windowDayBucket = ?`,
+        [accountId, tokenGroupId, windowDayBucket],
+      );
+      return row?.extra ?? 0;
     },
 
     async pruneAuditLog(beforeIso) {

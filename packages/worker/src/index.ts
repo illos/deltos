@@ -39,6 +39,7 @@ import { mcp } from './routes/mcp.js';
 import { oauth, oauthWellKnown, oauthConsentSurface } from './routes/oauth.js';
 import { shares } from './routes/shares.js';
 import { shareSurface } from './routes/shareSurface.js';
+import { alerts } from './routes/alerts.js';
 import { createAuthStore } from './db/authStore.js';
 import { sweepExtractions } from './extraction.js';
 import {
@@ -149,6 +150,11 @@ app.route('/api/plugin/blob', blob);
 
 app.route('/api/agent-tokens', agentTokens);
 app.route('/api/account', account);
+
+// Alert-action surface (alert-banner-system.md §6.4) — owner-authed (op 'share') list + Approve/Deny of
+// actionable alerts (agent bulk-write approval). BOLA-safe on the server-derived account; each mutation is
+// audited as a security event → the D1 auditLog trust-surface. Server-resident: zero client-bundle weight.
+app.route('/api/alerts', alerts);
 
 // ---------------------------------------------------------------------------
 // Remote MCP server (llm-mcp-integration.md §6) — JSON-RPC 2.0 over a stateless Streamable-HTTP POST,

@@ -15,6 +15,9 @@ import { extractForNote } from '../extraction.js';
 import { insertNotebook, renameNotebook, deleteNotebook } from '../db/notebooks.js';
 import { addWord, removeWord } from '../db/dictionary.js';
 import { requireAccountId } from '../db/accountScope.js';
+import { createAuthStore } from '../db/authStore.js';
+import { resolvedGrantFor, grantIsLive } from '../auth.js';
+import { getActiveAlerts } from '../alerts.js';
 
 // Sync is scoped to the ACCOUNT, not a notebook (Option B, 2026-06-18): the boundary is the caller's
 // accountId, derived server-side from the bearer token (requireAccountId), never a client-supplied
@@ -227,10 +230,21 @@ sync.get(
       // absent.
       const accountId = requireAccountId(c);
       const { notes, notebooks, dictionaryWords, nextCursor, hasMore } = await pullSince(db, accountId, req.cursor);
+      // ALERT PROJECTION (alert-banner-system.md §4.1) — computed FRESH each pull, OUTSIDE the cursor window
+      // (does not advance nextCursor / touch the syncSeq stream). Scoped to the REQUESTING token so agent
+      // write-approval asks surface only to the token that raised them. Read off the guard-set principal (the
+      // same live-grant representative the MCP transport uses); a session/legacy row with no group → null.
+      const principal = c.get('principal')!;
+      const nowMs = Date.now();
+      const liveGrant = (resolvedGrantFor(principal) ?? []).find((g) => grantIsLive(g, nowMs));
+      const tokenGroupId = liveGrant?.tokenGroupId ?? liveGrant?.grantId ?? null;
+      const store = createAuthStore(db);
+      const activeAlerts = await getActiveAlerts(store, accountId, tokenGroupId, nowMs);
       return c.json({
         notes: notes.map(rowToSyncNote),
         notebooks: notebooks.map(notebookRowToSync),
         dictionaryWords: dictionaryWords.map(dictionaryRowToSync),
+        alerts: activeAlerts,
         nextCursor,
         hasMore,
       });

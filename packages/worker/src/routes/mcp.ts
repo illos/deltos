@@ -10,6 +10,7 @@ import { createAuthStore } from '../db/authStore.js';
 import { fixedWindowAllow } from '../rateLimit.js';
 import { MCP_RATE_LIMIT } from '../authPolicy.js';
 import { dayBucket, DAILY_QUOTA } from '../abusePolicy.js';
+import { effectiveWriteCap } from '../usage.js';
 import {
   JSONRPC_VERSION,
   RPC,
@@ -162,7 +163,9 @@ mcp.post('/', async (c) => {
     case 'tools/list':
       return c.json(rpcSuccess(id, toolListPayload(scopes)), 200);
     case 'tools/call':
-      return handleToolsCall(c, id, req.params, principal, store);
+      // Pass the requesting token's group id (same key as the rate-limit above) — the write-approval tools
+      // scope their pending record to it, and the effective-cap keys the approved lift on it.
+      return handleToolsCall(c, id, req.params, principal, store, rateKey);
     default:
       return c.json(rpcError(id, RPC.METHOD_NOT_FOUND, `unknown method: ${req.method}`), 200);
   }
@@ -175,6 +178,7 @@ async function handleToolsCall(
   params: unknown,
   principal: RequestPrincipal,
   store: ReturnType<typeof createAuthStore>,
+  tokenGroupId: string,
 ): Promise<Response> {
   const p = (typeof params === 'object' && params !== null ? params : {}) as {
     name?: unknown;
@@ -234,10 +238,22 @@ async function handleToolsCall(
   // is bounded to a handful of individually-recoverable writes, well under the 50k read ceiling. Reads
   // don't touch it. Over-cap → a handled tool error (the model sees it), not a protocol error.
   if (WRITE_OPS.has(tool.op)) {
-    const cap = await store.chargeUsage(accountId, 'mcpWrite', dayBucket(Date.now()), DAILY_QUOTA.mcpWrite, now);
+    // EFFECTIVE cap (alert-banner-system.md §6.5): the base 100 PLUS any ACTIVE human-approved extra for THIS
+    // token on THIS UTC day (0 → exactly 100, the unchanged default). Every write still charges the atomic
+    // usageCounter against this ceiling, so a granted lift is count-boxed (no bypass), time-boxed (auto-reverts
+    // tomorrow), and token-boxed. The chokepoint code is otherwise unchanged.
+    const day = dayBucket(Date.now());
+    const effCap = await effectiveWriteCap(store, accountId, tokenGroupId, day);
+    const cap = await store.chargeUsage(accountId, 'mcpWrite', day, effCap, now);
     if (!cap.allowed) {
       return c.json(
-        rpcSuccess(id, toolError('daily write limit reached for this account — try again after UTC midnight')),
+        rpcSuccess(
+          id,
+          toolError(
+            'daily write limit reached for this account — ask the user to approve more writes with ' +
+              'request_write_approval, or try again after UTC midnight',
+          ),
+        ),
         200,
       );
     }
@@ -246,6 +262,6 @@ async function handleToolsCall(
   // `authorize` lets collection tools filter each item through the SAME extended evaluator (per-notebook
   // coverage), so a notebook-scoped token's list_notebooks returns ONLY its granted notebooks.
   const authorize = (resource: Resource): Promise<boolean> => canWith(ctx, principal, 'read', resource);
-  const result = await tool.execute(args, { db, accountId, now, env: c.env, authorize });
+  const result = await tool.execute(args, { db, accountId, now, env: c.env, authorize, tokenGroupId, store });
   return c.json(rpcSuccess(id, result), 200);
 }

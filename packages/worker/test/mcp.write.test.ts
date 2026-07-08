@@ -20,17 +20,11 @@ import { fileURLToPath } from 'url';
 import app from '../src/index.js';
 import type { Env } from '../src/env.js';
 import { signupToken } from './helpers/passwordToken.js';
+import { allMigrations } from './helpers/migrations.js';
 import type { AgentWriteOpt } from '@deltos/shared';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ALL_MIGRATIONS = [
-  '0000_baseline.sql', '0001_stream-b-sync.sql', '0002_stream-a-auth.sql', '0003_account-identity.sql',
-  '0004_password-auth.sql', '0005_recovery-established.sql', '0006_account-sync-seq.sql',
-  '0007_reconcile-account-sync-seq.sql', '0008_notebooks.sql', '0009_backfill-default-notebooks.sql',
-  '0010_nullable-notebookid-all-notes.sql', '0011_drop-isdefault-notebooksyncseg-notes_pull.sql',
-  '0012_custom-dictionary.sql', '0013_agent-token-label.sql', '0014_grant-family-link.sql',
-  '0015_audit-log.sql', '0016_usage-counter.sql', '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', '0020_grant-sets.sql', '0021_oauth-refresh-token.sql',
-].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
+const ALL_MIGRATIONS = allMigrations();
 
 function d1Over(raw: Database.Database): D1Database {
   const prepare = (sql: string) => {
@@ -131,11 +125,12 @@ describe('MCP write tools (POST /api/mcp tools/call)', () => {
     const rwList = await (await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, rw)).json() as JsonRpcResult;
     // Read-only = the note/notebook readers PLUS the read-scoped import-map discovery tools (writing still gated).
     expect(roList.result.tools.map((t: any) => t.name).sort())
-      .toEqual(['get_import_guide', 'get_note', 'list_import_sources', 'list_notebooks', 'search_notes']);
+      .toEqual(['check_write_approval', 'get_import_guide', 'get_note', 'list_import_sources', 'list_notebooks', 'request_write_approval', 'search_notes']);
     // A write token sees everything the read token sees PLUS every write tool (incl. the two plugin-declared file
-    // tools create_file_note/embed_file via the seam).
+    // tools create_file_note/embed_file via the seam). The two write-approval tools are READ-scope, so they show
+    // on BOTH lists.
     expect(rwList.result.tools.map((t: any) => t.name).sort())
-      .toEqual(['append_block', 'create_file_note', 'create_note', 'create_notebook', 'embed_file', 'get_import_guide', 'get_note', 'list_import_sources', 'list_notebooks', 'search_notes', 'set_property', 'trash_note', 'update_note']);
+      .toEqual(['append_block', 'check_write_approval', 'create_file_note', 'create_note', 'create_notebook', 'embed_file', 'get_import_guide', 'get_note', 'list_import_sources', 'list_notebooks', 'request_write_approval', 'search_notes', 'set_property', 'trash_note', 'update_note']);
   });
 
   it('initialize instructions are scope-aware (read-only vs write)', async () => {

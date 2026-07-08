@@ -1,5 +1,6 @@
 export * from './grant.js';
 export * from './operations.js';
+export * from './alert.js';
 export * from './sync.js';
 export * from './agentToken.js';
 export * from './oauth.js';

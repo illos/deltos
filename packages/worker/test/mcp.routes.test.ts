@@ -19,21 +19,12 @@ import { randomUUID } from 'crypto';
 import app from '../src/index.js';
 import type { Env } from '../src/env.js';
 import { signupToken } from './helpers/passwordToken.js';
+import { allMigrations } from './helpers/migrations.js';
 import { createAuthStore } from '../src/db/authStore.js';
 import { d1Adapter } from '../src/db/schema.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ALL_MIGRATIONS = [
-  '0000_baseline.sql', '0001_stream-b-sync.sql', '0002_stream-a-auth.sql', '0003_account-identity.sql',
-  '0004_password-auth.sql', '0005_recovery-established.sql', '0006_account-sync-seq.sql',
-  '0007_reconcile-account-sync-seq.sql', '0008_notebooks.sql', '0009_backfill-default-notebooks.sql',
-  '0010_nullable-notebookid-all-notes.sql', '0011_drop-isdefault-notebooksyncseg-notes_pull.sql',
-  '0012_custom-dictionary.sql', '0013_agent-token-label.sql',
-  '0014_grant-family-link.sql',
-  '0015_audit-log.sql',
-  '0016_usage-counter.sql',
-  '0017_oauth-provider.sql', '0018_fts5-note-search.sql', '0019_note-routing-guide.sql', '0020_grant-sets.sql', '0021_oauth-refresh-token.sql',
-].map((f) => readFileSync(join(__dirname, '../migrations', f), 'utf8'));
+const ALL_MIGRATIONS = allMigrations();
 
 function d1Over(raw: Database.Database): D1Database {
   const prepare = (sql: string) => {
@@ -150,7 +141,8 @@ describe('MCP server — protocol / auth / tools (POST /api/mcp)', () => {
     const names = (body.result.tools as Array<{ name: string; inputSchema: unknown }>).map((t) => t.name).sort();
     // get_import_guide + list_import_sources are read-scoped (any token can DISCOVER how to import; writing still
     // needs the write tools), so a read-only token sees them alongside the three note/notebook readers.
-    expect(names).toEqual(['get_import_guide', 'get_note', 'list_import_sources', 'list_notebooks', 'search_notes']);
+    // The two write-approval tools (request/check) are ALSO read-scope — a read-only token may ASK for a lift.
+    expect(names).toEqual(['check_write_approval', 'get_import_guide', 'get_note', 'list_import_sources', 'list_notebooks', 'request_write_approval', 'search_notes']);
     for (const t of body.result.tools) expect(t.inputSchema).toBeDefined();
   });
 

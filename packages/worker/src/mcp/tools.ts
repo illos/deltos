@@ -21,7 +21,9 @@ import {
   type NoteId,
 } from '@deltos/shared';
 import type { DbAdapter } from '../db/schema.js';
+import type { AuthStore } from '../db/authStore.js';
 import type { Env } from '../env.js';
+import { WRITE_APPROVAL_TTL_MS } from '../alerts.js';
 import { searchNotes, insertNote, patchNote } from '../db/mutate.js';
 import { getNoteForAccount } from '../db/accountScope.js';
 import { getAccountRoutingGuide } from '../db/accountSettings.js';
@@ -65,6 +67,15 @@ export interface McpToolContext {
    * notebooks. The SAME chokepoint the per-call gate uses — advertised surface and enforced surface agree.
    */
   authorize: (resource: Resource) => Promise<boolean>;
+  /**
+   * The REQUESTING token's group id (grant-set id, stable across per-resource revocation; falls back to the
+   * row grantId for single-row grants) — the SAME key the MCP rate-limit + audit use. The write-approval
+   * tools scope their pending record to this so an approval lifts only THIS token's cap (§6.3). Present for
+   * every live bearer (the transport gate guarantees one).
+   */
+  tokenGroupId: string;
+  /** The request-context store (auth/usage/approval methods) — the approval tools own their own D1 table. */
+  store: AuthStore;
 }
 
 /** The `op` each WRITE tool checks at the `can()` chokepoint — used to scope the daily write cap + list. */
@@ -404,6 +415,103 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
         return toolError(`unknown import source "${a.source}" — valid sources: ${importSourceIds().join(', ')}`);
       }
       return toolOk({ source: a.source, title: entry.title, guide: entry.guide });
+    },
+  }),
+
+  // --- BULK-WRITE APPROVAL tools (alert-banner-system.md §6.3) — both READ-scope (op 'read'), so they do
+  // NOT consume the mcpWrite cap and ANY live token (even read-only) can ASK. The agent can only REQUEST a
+  // quota lift; the human Approves/Denies in-app. `request_write_approval` inserts a token-scoped pending
+  // record → surfaces as an actionable alert; `check_write_approval` polls the outcome so the agent knows
+  // when to retry its blocked writes. This is the injection defence: the agent asks, it cannot self-grant. --
+  defineTool({
+    name: 'request_write_approval',
+    description:
+      'Ask the user to approve a BURST of extra writes when you hit "daily write limit reached". The daily ' +
+      'write cap is deliberately low as a safety guard; a large legitimate task (e.g. importing ~400 notes ' +
+      'from another app) can exceed it. Call this to REQUEST more write headroom: pass how many extra writes ' +
+      'you need (count) and a short, honest reason the user will read (e.g. "importing 430 notes from ' +
+      'UpNote"). This does NOT grant anything by itself and does NOT block — it creates a pending request the ' +
+      'user sees as an in-app banner with your reason, and they tap Approve or Deny. After calling this, TELL ' +
+      'THE USER in chat that you have asked for approval and they should approve it in the app, then poll ' +
+      'check_write_approval with the returned approvalId until it is approved (or denied), and only then ' +
+      'retry your writes. An approval is scoped to THIS connection for the rest of the UTC day.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        count: {
+          type: 'integer',
+          description: 'How many EXTRA writes you need beyond the daily cap (a positive whole number).',
+        },
+        reason: {
+          type: 'string',
+          description: 'A short, honest reason shown to the user (e.g. "importing 430 notes from UpNote").',
+        },
+      },
+      required: ['count', 'reason'],
+      additionalProperties: false,
+    },
+    argsSchema: z
+      .object({
+        count: z.number().int().positive().max(100_000),
+        reason: z.string().trim().min(1).max(500),
+      })
+      .strict(),
+    op: 'read',
+    resource: (): Resource => ({ kind: 'workspace' }),
+    execute: async (a, { store, accountId, tokenGroupId }) => {
+      const nowMs = Date.now();
+      const id = crypto.randomUUID();
+      await store.insertWriteApproval({
+        id,
+        accountId,
+        tokenGroupId, // TOKEN-SCOPED: an approval lifts only THIS connection's cap (§6.3)
+        requestedCount: a.count,
+        reason: a.reason,
+        createdAt: nowMs,
+        expiresAt: nowMs + WRITE_APPROVAL_TTL_MS, // pending requests self-expire (30 min)
+      });
+      return toolOk({
+        approvalId: id,
+        status: 'pending',
+        message:
+          'Approval requested. Tell the user to approve it in the deltos app, then poll ' +
+          'check_write_approval with this approvalId. It expires in 30 minutes if not acted on.',
+      });
+    },
+  }),
+
+  defineTool({
+    name: 'check_write_approval',
+    description:
+      'Check the status of a write-approval request you made with request_write_approval. Pass the ' +
+      'approvalId it returned. Returns the current status: "pending" (the user has not acted yet — keep ' +
+      'waiting/polling), "approved" (the user granted it — you may now retry your writes, up to grantedCount ' +
+      'extra for the rest of the day), "denied" (the user refused — do NOT retry; explain and stop), or ' +
+      '"expired" (the request timed out unanswered — you may ask again if still needed). Poll this a few ' +
+      'times with a short pause between calls; do not hammer it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        approvalId: { type: 'string', description: 'The approvalId returned by request_write_approval.' },
+      },
+      required: ['approvalId'],
+      additionalProperties: false,
+    },
+    argsSchema: z.object({ approvalId: z.string().min(1) }).strict(),
+    op: 'read',
+    resource: (): Resource => ({ kind: 'workspace' }),
+    execute: async (a, { store, accountId }) => {
+      const nowMs = Date.now();
+      // BOLA: account-scoped read — a request from another account is invisible (not found), inheriting the
+      // account isolation the read tools have. (accountId is the server-derived owner; a token-scope narrowing
+      // isn't needed for the agent's OWN poll — same account, and the id is a server-minted uuid.)
+      const row = await store.getWriteApprovalForAccount(a.approvalId, accountId, nowMs);
+      if (!row) return toolError(`approval not found: ${a.approvalId}`);
+      return toolOk({
+        approvalId: row.id,
+        status: row.status,
+        ...(row.status === 'approved' ? { grantedCount: row.grantedCount } : {}),
+      });
     },
   }),
 
