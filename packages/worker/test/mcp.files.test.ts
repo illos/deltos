@@ -261,4 +261,76 @@ describe('MCP file tools (POST /api/mcp tools/call)', () => {
     expect(await instr(rw)).toMatch(/create_file_note/);
     expect(await instr(ro)).not.toMatch(/create_file_note/);
   });
+
+  // --- IMPORT TIMESTAMPS (Part A): create_note / create_file_note may preserve original createdAt/updatedAt ---
+
+  // A fixed historical instant well in the past (2019-05-20T15:30:00Z) — proves the import override, not "now".
+  const HIST_CREATED_MS = 1_558_366_200_000;
+  const HIST_UPDATED_MS = 1_600_000_000_000; // 2020-09-13
+  const isoOf = (ms: number) => new Date(ms).toISOString();
+
+  /** Read a note row's raw createdAt/updatedAt straight from the DB (the stored ISO strings). */
+  function rowStamps(id: string): { createdAt: string; updatedAt: string } {
+    return raw.prepare('SELECT createdAt, updatedAt FROM notes WHERE id = ?').get(id) as { createdAt: string; updatedAt: string };
+  }
+
+  it('create_note WITH createdAt/updatedAt stores exactly those historical stamps', async () => {
+    const token = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
+    const r = await call(env, token, 'create_note', {
+      title: 'Imported', text: 'old note', createdAt: HIST_CREATED_MS, updatedAt: HIST_UPDATED_MS,
+    });
+    const id = r.structuredContent.note.id;
+    const s = rowStamps(id);
+    expect(s.createdAt).toBe(isoOf(HIST_CREATED_MS));
+    expect(s.updatedAt).toBe(isoOf(HIST_UPDATED_MS));
+  });
+
+  it('create_note WITHOUT timestamps is server-stamped as before (regression guard)', async () => {
+    const token = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
+    const before = Date.now();
+    const r = await call(env, token, 'create_note', { title: 'Fresh', text: 'now note' });
+    const s = rowStamps(r.structuredContent.note.id);
+    // Both stamps are "now" (server), equal to each other, and NOT the historical instant.
+    expect(s.createdAt).toBe(s.updatedAt);
+    expect(new Date(s.createdAt).getTime()).toBeGreaterThanOrEqual(before - 1000);
+    expect(s.createdAt).not.toBe(isoOf(HIST_CREATED_MS));
+  });
+
+  it('create_note with ONLY createdAt defaults updatedAt to createdAt', async () => {
+    const token = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
+    const r = await call(env, token, 'create_note', { title: 'One date', text: 'x', createdAt: HIST_CREATED_MS });
+    const s = rowStamps(r.structuredContent.note.id);
+    expect(s.createdAt).toBe(isoOf(HIST_CREATED_MS));
+    expect(s.updatedAt).toBe(isoOf(HIST_CREATED_MS)); // updatedAt defaulted to createdAt
+  });
+
+  it('create_note rejects an absurd timestamp (<= 0 or far future) at the boundary', async () => {
+    const token = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
+    const zero = await callRaw(env, token, 'create_note', { title: 't', createdAt: 0 });
+    expect(zero.error?.code).toBe(-32602);
+    const future = await callRaw(env, token, 'create_note', { title: 't', createdAt: Date.now() + 30 * 24 * 60 * 60 * 1000 });
+    expect(future.error?.code).toBe(-32602);
+    const float = await callRaw(env, token, 'create_note', { title: 't', createdAt: 1.5 });
+    expect(float.error?.code).toBe(-32602);
+  });
+
+  it('create_file_note WITH created_at/updated_at (snake_case) stores those historical stamps', async () => {
+    const token = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
+    const r = await call(env, token, 'create_file_note', {
+      filename: 'old.pdf', mime: 'application/pdf', content_base64: b64(bytes(32)),
+      created_at: HIST_CREATED_MS, updated_at: HIST_UPDATED_MS,
+    });
+    const s = rowStamps(r.structuredContent.note.id);
+    expect(s.createdAt).toBe(isoOf(HIST_CREATED_MS));
+    expect(s.updatedAt).toBe(isoOf(HIST_UPDATED_MS));
+  });
+
+  it('create_file_note WITHOUT timestamps is server-stamped as before (regression guard)', async () => {
+    const token = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
+    const before = Date.now();
+    const r = await call(env, token, 'create_file_note', { filename: 'fresh.png', mime: 'image/png', content_base64: b64(bytes(48)) });
+    const s = rowStamps(r.structuredContent.note.id);
+    expect(s.createdAt).toBe(s.updatedAt);
+    expect(new Date(s.createdAt).getTime()).toBeGreaterThanOrEqual(before - 1000);
+  });
 });

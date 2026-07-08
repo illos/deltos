@@ -144,11 +144,13 @@ describe('MCP server — protocol / auth / tools (POST /api/mcp)', () => {
     expect(body.result.protocolVersion).toBe('2025-06-18');
   });
 
-  it('tools/list advertises exactly the three READ-ONLY tools (no write tools)', async () => {
+  it('tools/list advertises exactly the READ-ONLY tools (reads + import discovery, no write tools)', async () => {
     const res = await rpc(env, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, agentA);
     const body = (await res.json()) as JsonRpcResult;
     const names = (body.result.tools as Array<{ name: string; inputSchema: unknown }>).map((t) => t.name).sort();
-    expect(names).toEqual(['get_note', 'list_notebooks', 'search_notes']);
+    // get_import_guide + list_import_sources are read-scoped (any token can DISCOVER how to import; writing still
+    // needs the write tools), so a read-only token sees them alongside the three note/notebook readers.
+    expect(names).toEqual(['get_import_guide', 'get_note', 'list_import_sources', 'list_notebooks', 'search_notes']);
     for (const t of body.result.tools) expect(t.inputSchema).toBeDefined();
   });
 
@@ -223,6 +225,39 @@ describe('MCP server — protocol / auth / tools (POST /api/mcp)', () => {
     // list_notebooks
     const l = (await (await rpc(env, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_notebooks', arguments: {} } }, agentA)).json()) as JsonRpcResult;
     expect(l.result.structuredContent.notebooks.map((n: { id: string }) => n.id)).toContain(nbId);
+  });
+
+  // --- import maps (importGuides.ts): READ-scoped discovery, callable by a READ-ONLY token -------
+
+  it('list_import_sources returns the known sources (incl. upnote) to a READ-ONLY token', async () => {
+    const res = await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_import_sources', arguments: {} } }, agentA);
+    const body = (await res.json()) as JsonRpcResult;
+    expect(body.result.isError).toBeUndefined();
+    const sources = body.result.structuredContent.sources as Array<{ source: string; title: string; summary: string }>;
+    expect(sources.map((s) => s.source)).toContain('upnote');
+    const up = sources.find((s) => s.source === 'upnote')!;
+    expect(up.title).toBe('UpNote');
+    expect(up.summary.length).toBeGreaterThan(0);
+  });
+
+  it('get_import_guide(upnote) returns non-empty markdown mentioning the local image server + real tool names', async () => {
+    const res = await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_import_guide', arguments: { source: 'upnote' } } }, agentA);
+    const body = (await res.json()) as JsonRpcResult;
+    expect(body.result.isError).toBeUndefined();
+    const guide = body.result.structuredContent.guide as string;
+    expect(guide.length).toBeGreaterThan(100);
+    expect(guide).toContain('localhost:9425');   // the non-obvious UpNote image-server fact
+    expect(guide).toContain('create_notebook');  // the recipe uses REAL deltos tool names
+    expect(guide).toContain('create_note({ title, text: markdownBody, notebookId, createdAt, updatedAt })');
+    expect(guide).toContain('embed_file({ note_id, filename, mime, content_base64 })');
+  });
+
+  it('get_import_guide for an unknown source is a clean tool error listing the valid sources', async () => {
+    const res = await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_import_guide', arguments: { source: 'evernote' } } }, agentA);
+    const body = (await res.json()) as JsonRpcResult;
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0].text).toMatch(/unknown import source/i);
+    expect(body.result.content[0].text).toContain('upnote'); // lists the valid ones
   });
 
   it('get_note for an unknown id returns a tool error (not found)', async () => {

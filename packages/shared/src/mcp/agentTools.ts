@@ -57,7 +57,9 @@ export const FILES_AGENT_TOOLS: readonly AgentToolDef[] = [
       'whose title is the filename and whose body is the single file/image. Use this to save a file the user ' +
       'gave you into their notes. For an image the note renders the picture; for any other file it renders a ' +
       'download chip. Optionally pass a notebookId (from list_notebooks) to file it; omit it for "All Notes". ' +
-      'Returns the created note. Recoverable via trash_note.',
+      'Returns the created note. Recoverable via trash_note. IMPORTING a file from another app? Pass ' +
+      'created_at (and optionally updated_at) — the file\'s ORIGINAL dates as ms since the Unix epoch — so the ' +
+      'imported file-note keeps its real date and recency-sorts correctly. Omit them for a note created now.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -67,6 +69,14 @@ export const FILES_AGENT_TOOLS: readonly AgentToolDef[] = [
         notebookId: {
           type: 'string',
           description: 'Optional notebook id (from list_notebooks) to file the file-note under.',
+        },
+        created_at: {
+          type: 'integer',
+          description: 'IMPORT ONLY: the file\'s original creation time as ms since the Unix epoch. Omit for a note created now.',
+        },
+        updated_at: {
+          type: 'integer',
+          description: 'IMPORT ONLY: the file\'s original last-modified time as ms since the Unix epoch. Defaults to created_at if omitted.',
         },
       },
       required: ['filename', 'mime', 'content_base64'],

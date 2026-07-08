@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   NoteIdSchema,
   NotebookIdSchema,
+  DEFAULT_COLLECTION_VIEW,
   UserPropertyKeySchema,
   PropertyValueSchema,
   setTrashedAt,
@@ -24,10 +25,11 @@ import type { Env } from '../env.js';
 import { searchNotes, insertNote, patchNote } from '../db/mutate.js';
 import { getNoteForAccount } from '../db/accountScope.js';
 import { getAccountRoutingGuide } from '../db/accountSettings.js';
-import { listNotebooksForAccount } from '../db/notebooks.js';
+import { listNotebooksForAccount, insertNotebook } from '../db/notebooks.js';
 import { noteRowToResponse, noteRowToSummary } from '../present.js';
 import { storeBlob, type StoreBlobResult } from '../blobStore.js';
 import { type McpToolResult, toolOk, toolError } from './protocol.js';
+import { IMPORT_GUIDES, importSourceIds } from './importGuides.js';
 
 /**
  * The deltos MCP tool surface (llm-mcp-integration.md §6; write-tools.md) — a THIN adapter. Every tool
@@ -132,6 +134,41 @@ function normalizeB64(raw: string): string {
   return raw.replace(/\s+/g, '');
 }
 
+// ---------------------------------------------------------------------------
+// Import-timestamp override (create_note / create_file_note) — the NARROW opt-in that lets an IMPORTER preserve
+// a note's ORIGINAL createdAt/updatedAt (ms-epoch) so imported notes keep their real dates + recency-sort. The
+// sync push path never passes these; only these agent-import tools do (threaded into insertNote's `opts`).
+// ---------------------------------------------------------------------------
+
+/** Upper sanity bound: reject a timestamp more than ~1 day in the future (2026 real notes are all in the past;
+ *  a far-future stamp is a bug/abuse — it would let a note pin to the top of the last-modified sort forever). */
+const TS_MAX_FUTURE_SKEW_MS = 24 * 60 * 60 * 1000;
+
+/** A positive integer ms-epoch that isn't absurd (> 0, not far-future). Rejects 0/negative and NaN/float too. */
+const EpochMsSchema = z
+  .number()
+  .int('timestamp must be integer milliseconds since the epoch')
+  .positive('timestamp must be a positive ms-epoch')
+  .refine((ms) => ms <= Date.now() + TS_MAX_FUTURE_SKEW_MS, 'timestamp is too far in the future');
+
+/**
+ * Resolve caller-supplied import timestamps (ms-epoch) into insertNote's `opts` (ISO strings), or undefined when
+ * neither is given (→ server-stamped, unchanged). If only createdAt is given, updatedAt defaults to it (an
+ * imported note's "last modified" is its creation until edited). Validation already happened at the zod boundary.
+ */
+function importTimestampOpts(
+  createdAtMs: number | undefined,
+  updatedAtMs: number | undefined,
+): { createdAt?: string; updatedAt?: string } | undefined {
+  if (createdAtMs === undefined && updatedAtMs === undefined) return undefined;
+  const createdAt = createdAtMs !== undefined ? new Date(createdAtMs).toISOString() : undefined;
+  const updatedAt =
+    updatedAtMs !== undefined
+      ? new Date(updatedAtMs).toISOString()
+      : createdAt; // default updatedAt → createdAt when only createdAt supplied
+  return { ...(createdAt !== undefined ? { createdAt } : {}), ...(updatedAt !== undefined ? { updatedAt } : {}) };
+}
+
 /** Exact decoded byte count of a valid, whitespace-stripped base64 string — or null if it isn't well-formed. */
 function b64DecodedSize(b64: string): number | null {
   if (b64.length === 0 || b64.length % 4 !== 0) return null;
@@ -195,6 +232,9 @@ const CreateFileNoteArgs = z
     mime: MimeSchema,
     content_base64: ContentBase64Schema,
     notebookId: NotebookIdSchema.optional(),
+    // IMPORT ONLY: original file dates (ms-epoch) so an imported file-note keeps its real createdAt/updatedAt.
+    created_at: EpochMsSchema.optional(),
+    updated_at: EpochMsSchema.optional(),
   })
   .strict();
 
@@ -315,6 +355,58 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
     },
   }),
 
+  // --- IMPORT MAPS (importGuides.ts) — READ-scoped discovery so ANY token (even read-only) can learn HOW to
+  // import from another app; the actual writing still needs the write tools. Workspace resource + default gate:
+  // a read-scoped workspace token passes (same as get_note), which is every token this app mints. ------------
+  defineTool({
+    name: 'list_import_sources',
+    description:
+      'List the other note apps deltos knows how to import from (UpNote, and more over time). Returns each ' +
+      'source\'s id, title, and a one-line summary of what it takes. When the user asks to import their notes ' +
+      'from another app, call this to find the matching source id, then get_import_guide(id) for the full ' +
+      'step-by-step recipe. Takes no arguments.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    argsSchema: z.object({}).strict(),
+    op: 'read',
+    resource: (): Resource => ({ kind: 'workspace' }),
+    execute: async () =>
+      toolOk({
+        sources: importSourceIds().map((source) => ({
+          source,
+          title: IMPORT_GUIDES[source]!.title,
+          summary: IMPORT_GUIDES[source]!.summary,
+        })),
+      }),
+  }),
+
+  defineTool({
+    name: 'get_import_guide',
+    description:
+      'Get the full step-by-step import recipe (an "import map") for one source app, so you can import the ' +
+      'user\'s notes from it into deltos. Pass the source id from list_import_sources (e.g. "upnote"). Returns ' +
+      'agent-facing markdown covering prerequisites, the source export format, and the exact deltos tool ' +
+      'sequence (create_notebook / create_note / create_file_note / embed_file). If the source is unknown, ' +
+      'the tool reports the valid source ids.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        source: { type: 'string', description: 'The import source id from list_import_sources (e.g. "upnote").' },
+      },
+      required: ['source'],
+      additionalProperties: false,
+    },
+    argsSchema: z.object({ source: z.string().min(1) }).strict(),
+    op: 'read',
+    resource: (): Resource => ({ kind: 'workspace' }),
+    execute: async (a) => {
+      const entry = IMPORT_GUIDES[a.source];
+      if (!entry) {
+        return toolError(`unknown import source "${a.source}" — valid sources: ${importSourceIds().join(', ')}`);
+      }
+      return toolOk({ source: a.source, title: entry.title, guide: entry.guide });
+    },
+  }),
+
   // ---------------------------------------------------------------------------
   // WRITE tools (write-tools.md) — live-apply, recoverable. Each maps 1:1 to a REST mutator under the
   // agent principal + write scope; the `can()` chokepoint gates op + resource + account before execute.
@@ -332,13 +424,19 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
       'markdown (e.g. a leading "# ") in the title. The note id is generated by the server; you do not ' +
       'choose it. Optionally pass a notebookId (from list_notebooks) to file the note in that notebook; ' +
       'omit it to leave the note uncategorized (it appears in "All Notes"). Returns the created note. ' +
-      'Mistakes are recoverable: a note you created can be removed with trash_note.',
+      'Mistakes are recoverable: a note you created can be removed with trash_note. ' +
+      'IMPORTING notes from another app? Pass createdAt (and optionally updatedAt) — the note\'s ORIGINAL ' +
+      'dates as milliseconds since the Unix epoch — so the imported note keeps its real date and sorts by ' +
+      'recency correctly. Omit them for a note created NOW (the server stamps both). If you pass only ' +
+      'createdAt, updatedAt defaults to it.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string', description: 'The note title, as PLAIN TEXT (no markdown — no leading "# ").' },
         text: { type: 'string', description: 'The note body. Accepts markdown (headings, lists, checkboxes, quotes, code, bold/italic/etc.) — rendered as native blocks.' },
         notebookId: { type: 'string', description: 'Optional notebook id (from list_notebooks) to file the note under.' },
+        createdAt: { type: 'integer', description: 'IMPORT ONLY: the note\'s original creation time as ms since the Unix epoch. Omit for a note created now.' },
+        updatedAt: { type: 'integer', description: 'IMPORT ONLY: the note\'s original last-modified time as ms since the Unix epoch. Defaults to createdAt if omitted.' },
       },
       additionalProperties: false,
     },
@@ -347,6 +445,8 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
         title: z.string().max(2000).optional(),
         text: z.string().optional(),
         notebookId: NotebookIdSchema.optional(),
+        createdAt: EpochMsSchema.optional(),
+        updatedAt: EpochMsSchema.optional(),
       })
       .strict()
       .refine((a) => a.title !== undefined || a.text !== undefined, {
@@ -367,9 +467,46 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
           body: a.text !== undefined ? markdownToBody(a.text) : [],
         },
       };
-      const outcome = await insertNote(db, entry, accountId, now);
+      // Import override: thread the caller's original dates (if any) into insertNote's opts; undefined = server-stamped.
+      const outcome = await insertNote(db, entry, accountId, now, importTimestampOpts(a.createdAt, a.updatedAt));
       if (outcome.outcome === 'conflict') return toolError('could not create note (id collision) — retry');
       return toolOk({ status: 'applied', note: noteRowToResponse(outcome.row) });
+    },
+  }),
+
+  defineTool({
+    name: 'create_notebook',
+    description:
+      'Create a NEW notebook (a top-level collection the user files notes into). Applies immediately (there ' +
+      'is no draft/approval step). Provide a name (1–200 characters). The notebook id is generated by the ' +
+      'server; you do not choose it. Use this only when the user asks for a new collection, or when filing ' +
+      'a note and no existing notebook fits — prefer an EXISTING notebook (call list_notebooks first and ' +
+      'match by name/routingGuide) over minting a near-duplicate. Returns the created notebook\'s id and ' +
+      'name; pass that id to create_note to file notes into it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The notebook name (1–200 characters), as plain text.' },
+      },
+      required: ['name'],
+      additionalProperties: false,
+    },
+    argsSchema: z.object({ name: z.string().min(1).max(200) }).strict(),
+    // Minting a new top-level collection is a WORKSPACE-scoped create (like create_note with no notebookId):
+    // a notebook-scoped token, which covers only its granted notebook, is correctly denied at the chokepoint.
+    op: 'create',
+    resource: (): Resource => ({ kind: 'workspace' }),
+    execute: async (a, { db, accountId, now }) => {
+      // Mint the id SERVER-side (never client-chosen) and reuse the SAME account-scoped mutator the sync push
+      // path uses (routes/sync.ts) — baseVersion 0 = create; draft carries name + the default collection view.
+      const entry = {
+        id: NotebookIdSchema.parse(crypto.randomUUID()),
+        baseVersion: 0 as const,
+        draft: { name: a.name, defaultCollectionView: DEFAULT_COLLECTION_VIEW },
+      };
+      const outcome = await insertNotebook(db, entry, accountId, now);
+      if (outcome.outcome === 'conflict') return toolError('could not create notebook (id collision) — retry');
+      return toolOk({ status: 'applied', notebook: { id: outcome.row.id, name: outcome.row.name } });
     },
   }),
 
@@ -547,7 +684,9 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
         baseVersion: 0 as const,
         draft: { title: a.filename, properties: setFileType({}) as PropertyBag, body: [block] },
       };
-      const outcome = await insertNote(db, entry, accountId, now);
+      // Import override: preserve the file's original dates when the caller supplies them (snake_case here to
+      // match this tool's file-tool convention); undefined → server-stamped, unchanged.
+      const outcome = await insertNote(db, entry, accountId, now, importTimestampOpts(a.created_at, a.updated_at));
       if (outcome.outcome === 'conflict') return toolError('could not create file-note (id collision) — retry');
       return toolOk({ status: 'applied', note: noteRowToResponse(outcome.row) });
     },
@@ -645,6 +784,8 @@ export function mcpInstructions(canWrite: boolean): string {
     '- To target a collection, call list_notebooks first and pick the notebookId by soft-ranking: best name ',
     '  match to the user\'s intent, then most recent. Pass that notebookId to search_notes to scope it.',
     '- Cite note titles when you summarise. If nothing matches, say so plainly rather than guessing.',
+    '- To import notes from another app (UpNote, Evernote, Apple Notes…), call get_import_guide first for a ',
+    '  step-by-step recipe (list_import_sources shows what deltos can import from).',
   ];
   if (canWrite) {
     lines.push(
@@ -654,7 +795,8 @@ export function mcpInstructions(canWrite: boolean): string {
       '  asked you to. After a write, state exactly what you changed.',
       '- create_note makes a new note; update_note replaces a note\'s title/body; append_block adds to the ',
       '  end; set_property sets one metadata key; trash_note moves a note to the Trash (a RECOVERABLE ',
-      '  delete — never a permanent destroy).',
+      '  delete — never a permanent destroy). create_notebook makes a new collection — prefer filing into an ',
+      '  EXISTING notebook (list_notebooks) over minting a near-duplicate.',
       '- Note BODIES accept MARKDOWN and render as NATIVE BLOCKS — use it so the note reads well: ',
       '  "# / ## / ###" headings, "- " bullet and "1." numbered lists, "- [ ] " / "- [x] " CHECKBOXES ',
       '  (real to-do items the user can tick, ideal for tasks/runbooks), "> " blockquotes, ``` fenced ',

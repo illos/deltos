@@ -124,16 +124,18 @@ describe('MCP write tools (POST /api/mcp tools/call)', () => {
     expect(new Set(scope)).toEqual(new Set(['read', 'search', 'create']));
   });
 
-  it('tools/list is scope-filtered: read-only sees 3 tools, a write token sees all 10', async () => {
+  it('tools/list is scope-filtered: read-only sees the read + import-discovery tools, a write token sees all', async () => {
     const { token: ro } = await mintAgentToken(env, ownerA, passA); // no write opt-in
     const { token: rw } = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
     const roList = await (await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, ro)).json() as JsonRpcResult;
     const rwList = await (await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, rw)).json() as JsonRpcResult;
+    // Read-only = the note/notebook readers PLUS the read-scoped import-map discovery tools (writing still gated).
     expect(roList.result.tools.map((t: any) => t.name).sort())
-      .toEqual(['get_note', 'list_notebooks', 'search_notes']);
-    // The two plugin-declared file tools (create_file_note, embed_file) join the write surface via the seam.
+      .toEqual(['get_import_guide', 'get_note', 'list_import_sources', 'list_notebooks', 'search_notes']);
+    // A write token sees everything the read token sees PLUS every write tool (incl. the two plugin-declared file
+    // tools create_file_note/embed_file via the seam).
     expect(rwList.result.tools.map((t: any) => t.name).sort())
-      .toEqual(['append_block', 'create_file_note', 'create_note', 'embed_file', 'get_note', 'list_notebooks', 'search_notes', 'set_property', 'trash_note', 'update_note']);
+      .toEqual(['append_block', 'create_file_note', 'create_note', 'create_notebook', 'embed_file', 'get_import_guide', 'get_note', 'list_import_sources', 'list_notebooks', 'search_notes', 'set_property', 'trash_note', 'update_note']);
   });
 
   it('initialize instructions are scope-aware (read-only vs write)', async () => {
@@ -186,6 +188,43 @@ describe('MCP write tools (POST /api/mcp tools/call)', () => {
     await call(env, token, 'append_block', { id, text: 'second' });
     const note = await getNote(env, token, id);
     expect(note.body.map((b: any) => b.content.segments[0]?.text)).toEqual(['first', 'second']);
+  });
+
+  // --- create_notebook (workspace-scoped create) ----------------------------------------------------
+
+  it('create_notebook applies live — the notebook appears in list_notebooks with a server-minted id', async () => {
+    const { token } = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
+    const r = await call(env, token, 'create_notebook', { name: 'Recipes' });
+    expect(r.structuredContent.status).toBe('applied');
+    expect(r.structuredContent.notebook.name).toBe('Recipes');
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    expect(r.structuredContent.notebook.id).toMatch(uuid); // server-minted, not client-chosen
+    // It shows up in the account's notebook list, and a note can be filed into it.
+    const list = await call(env, token, 'list_notebooks', {});
+    const nb = list.structuredContent.notebooks.find((n: any) => n.id === r.structuredContent.notebook.id);
+    expect(nb?.name).toBe('Recipes');
+    const note = await call(env, token, 'create_note', { title: 'Ragu', notebookId: nb.id });
+    const got = await getNote(env, token, note.structuredContent.note.id);
+    expect(got.notebookId).toBe(nb.id);
+  });
+
+  it('create_notebook rejects an empty name and an over-200-char name at the boundary', async () => {
+    const { token } = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
+    const empty = await rpc(env, {
+      jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'create_notebook', arguments: { name: '' } },
+    }, token).then((r) => r.json()) as JsonRpcResult;
+    expect(empty.error?.code).toBe(-32602);
+    const tooLong = await rpc(env, {
+      jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'create_notebook', arguments: { name: 'x'.repeat(201) } },
+    }, token).then((r) => r.json()) as JsonRpcResult;
+    expect(tooLong.error?.code).toBe(-32602);
+  });
+
+  it('a READ-ONLY token is denied create_notebook at the chokepoint', async () => {
+    const { token } = await mintAgentToken(env, ownerA, passA); // no write opt-in
+    const r = await call(env, token, 'create_notebook', { name: 'nope' });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(/forbidden/i);
   });
 
   // --- markdown bodies render as native blocks; titles are plain text -------------------------------

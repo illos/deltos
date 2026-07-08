@@ -68,11 +68,20 @@ export async function insertNote(
   entry: SyncPushEntry & { notebookId: string | null },
   accountId: string,
   serverNow: string,
+  // NARROW OPT-IN OVERRIDE (agent-import tools ONLY): when a caller EXPLICITLY passes historical
+  // createdAt/updatedAt, those override the server stamp for those two columns. The sync PUSH path never
+  // passes this, so its behavior is byte-identical to before. See the createdAt invariant note below.
+  opts?: { createdAt?: string; updatedAt?: string },
 ): Promise<InsertOutcome> {
-  // The client never sends createdAt: NoteDraftSchema deliberately omits it because the server
-  // owns createdAt/updatedAt/version (the client owns syncStatus). New notes are server-stamped
-  // at first sync — so there is no client timestamp to clamp here.
-  const createdAt = serverNow;
+  // INVARIANT (sync path): the client never sends createdAt — NoteDraftSchema deliberately omits it because
+  // the server owns createdAt/updatedAt/version (the client owns syncStatus). New notes are server-stamped at
+  // first sync, so there is nothing client-supplied to clamp on the push path.
+  // EXPLICIT EXCEPTION (imports): the agent-import tools may pass `opts.createdAt`/`opts.updatedAt` to preserve
+  // a note's ORIGINAL dates so imported notes keep their real timestamps and recency-sort correctly. That is a
+  // deliberate, caller-explicit override — never reachable from the sync wire — and only overrides these two
+  // stamp columns; syncSeq stays server-assigned (an imported note is NEW to deltos → a fresh seq is correct).
+  const createdAt = opts?.createdAt ?? serverNow;
+  const updatedAt = opts?.updatedAt ?? serverNow;
 
   // Three-statement batch: bump seq counter → insert note with seq from counter → read back row.
   // All three run in one atomic D1 transaction.
@@ -95,7 +104,7 @@ export async function insertNote(
         JSON.stringify(entry.draft.body ?? []),
         FIRST_SERVER_VERSION,
         createdAt,
-        serverNow,
+        updatedAt,
         accountId, // READ_SEQ_SQL: read back the per-account counter
         entry.id, // for the NOT EXISTS check
       ],
