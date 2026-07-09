@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo } from 'react';
-import { Link, useMatch, useNavigate } from 'react-router-dom';
+import { Link, Route, Routes, useMatch, useNavigate } from 'react-router-dom';
 import type { Note, NotebookId } from '@deltos/shared';
 import { isFileNote, isPinned } from '@deltos/shared';
 import type { CollectionViewProps } from '../lib/collectionViews.js';
@@ -102,7 +102,12 @@ export function Board({ notebookId }: CollectionViewProps) {
           <div className="board-note-popover__backdrop" onClick={() => navigate('/')} aria-hidden="true" />
           <div className="board-note-popover__panel">
             <Suspense fallback={<div className="editor__pm" aria-busy="true" />}>
-              <NoteRoute />
+              {/* NoteRoute reads its id via useParams(), which only resolves inside a matching Route context —
+                  a bare <NoteRoute /> here gets no :id and renders "Invalid note URL". The nested Routes
+                  re-matches the current location (the popover only renders when /note/:id matches). */}
+              <Routes>
+                <Route path="/note/:id" element={<NoteRoute />} />
+              </Routes>
             </Suspense>
           </div>
         </div>

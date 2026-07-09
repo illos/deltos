@@ -41,7 +41,12 @@ vi.mock('../db/storeHooks.js', () => ({
   useCurrentNotebook: () => ({ id: 'nb-1', name: 'Work', defaultCollectionView: 'board', noteSort: 'modified' }),
 }));
 vi.mock('../lib/useIsDesktop.js', () => ({ useIsDesktop: () => desktop.current }));
-vi.mock('../routes/NoteRoute.js', () => ({ NoteRoute: () => <div data-testid="note-route">NOTE</div> }));
+// The mock reads useParams like the real NoteRoute — regression guard: the popover must mount it inside a
+// matching Route context or the :id param is undefined (the live "Invalid note URL" bug).
+vi.mock('../routes/NoteRoute.js', async () => {
+  const { useParams } = await import('react-router-dom');
+  return { NoteRoute: () => <div data-testid="note-route">{useParams().id ?? 'NO-PARAM'}</div> };
+});
 vi.mock('../components/FileNotePill.js', () => ({ FileNotePill: () => <div data-testid="file-pill" /> }));
 vi.mock('../components/ConflictBadgeSlot.js', () => ({ ConflictBadgeSlot: () => null }));
 
@@ -126,7 +131,9 @@ describe('Board (Keep grid view)', () => {
     );
     expect(container.querySelector('.board-note-popover')).not.toBeNull();
     expect(container.querySelector('.board-note-popover__backdrop')).not.toBeNull();
-    await findByTestId('note-route'); // the lazy NoteRoute mounts inside the popover
+    // The lazy NoteRoute mounts inside the popover AND receives the :id route param (not 'NO-PARAM').
+    const noteRoute = await findByTestId('note-route');
+    expect(noteRoute.textContent).toBe('n1');
   });
 
   it('does NOT open a popover on mobile (note is a separate full-screen route)', async () => {
