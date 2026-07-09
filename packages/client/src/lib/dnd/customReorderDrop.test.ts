@@ -9,7 +9,12 @@ import type { Note } from '@deltos/shared';
 const { reorderCustom } = vi.hoisted(() => ({ reorderCustom: vi.fn() }));
 vi.mock('../customOrderReorder.js', () => ({ reorderCustom }));
 
-import { computeReorderMove, commitReorder } from './customReorderDrop.js';
+import {
+  applyProjectedIndex,
+  computeReorderMove,
+  commitReorder,
+  projectedSortableIndex,
+} from './customReorderDrop.js';
 
 const notes = (ids: string[]): Note[] => ids.map((id) => ({ id }) as unknown as Note);
 
@@ -42,6 +47,53 @@ describe('computeReorderMove', () => {
 
   it('returns null when the moved id is missing', () => {
     expect(computeReorderMove(['a', 'b'], ['a', 'b'], 'zzz')).toBeNull();
+  });
+});
+
+describe('projectedSortableIndex', () => {
+  it('returns the projected index when the sortable moved', () => {
+    expect(projectedSortableIndex({ index: 2, initialIndex: 0 })).toBe(2);
+  });
+
+  it('returns null for a genuine no-move (index === initialIndex)', () => {
+    expect(projectedSortableIndex({ index: 1, initialIndex: 1 })).toBeNull();
+  });
+
+  it('returns null for a non-sortable or absent source', () => {
+    expect(projectedSortableIndex(null)).toBeNull();
+    expect(projectedSortableIndex({ id: 'a' })).toBeNull();
+    expect(projectedSortableIndex({ index: '2', initialIndex: 0 })).toBeNull();
+  });
+});
+
+describe('applyProjectedIndex', () => {
+  it('re-derives the reordered ids for a gap drop past the last row', () => {
+    // The exact live failure shape: drag the TOP item to the END, finger lands in the gap below the
+    // last card → dnd-kit move() no-ops (null target) but the sortable projected index is 2.
+    expect(applyProjectedIndex(['a', 'b', 'c'], 'a', 2)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('handles an upward gap drop', () => {
+    expect(applyProjectedIndex(['a', 'b', 'c'], 'c', 0)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('returns the original array for null / out-of-range / unmoved projections', () => {
+    const ids = ['a', 'b', 'c'];
+    expect(applyProjectedIndex(ids, 'a', null)).toBe(ids);
+    expect(applyProjectedIndex(ids, 'a', 3)).toBe(ids);
+    expect(applyProjectedIndex(ids, 'a', -1)).toBe(ids);
+    expect(applyProjectedIndex(ids, 'a', 0)).toBe(ids);
+    expect(applyProjectedIndex(ids, 'zzz', 1)).toBe(ids);
+  });
+});
+
+describe('gap-drop end-to-end mapping (projected index → commitReorder)', () => {
+  it('persists a top-to-end gap drop as reorderCustom(from=0, to=len)', async () => {
+    const list = notes(['a', 'b', 'c']);
+    const reordered = applyProjectedIndex(['a', 'b', 'c'], 'a', projectedSortableIndex({ index: 2, initialIndex: 0 }));
+    await commitReorder(list, ['a', 'b', 'c'], reordered, 'a');
+    expect(reorderCustom).toHaveBeenCalledTimes(1);
+    expect(reorderCustom).toHaveBeenCalledWith(list, 0, 3);
   });
 });
 

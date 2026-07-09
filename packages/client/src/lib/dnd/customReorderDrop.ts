@@ -33,6 +33,41 @@ export function computeReorderMove(
 }
 
 /**
+ * Read the projected sortable index off a dnd-kit source instance (duck-typed the same way dnd-kit's own
+ * move() helper does — SortableDraggable carries index/initialIndex at runtime but the DragEndEvent type
+ * only says Draggable). Returns null when the source isn't a sortable or genuinely didn't move.
+ */
+export function projectedSortableIndex(source: unknown): number | null {
+  if (source !== null && typeof source === 'object' && 'index' in source && 'initialIndex' in source) {
+    const { index, initialIndex } = source as { index: unknown; initialIndex: unknown };
+    if (typeof index === 'number' && typeof initialIndex === 'number' && index !== initialIndex) {
+      return index;
+    }
+  }
+  return null;
+}
+
+/**
+ * GAP-DROP fallback: when a drop ends over no droppable (masonry gutter, board padding, past the last row),
+ * dnd-kit's move() returns the id array UNCHANGED even though the sortable already optimistically moved the
+ * DOM — the visible order and the persisted order silently diverge until the next render snaps the list
+ * back. The projected index (where the sortable visually sits) is still known, so re-derive the reordered
+ * ids from it and persist what the user sees. Returns `orderedIds` untouched for a genuine no-move.
+ */
+export function applyProjectedIndex(
+  orderedIds: string[],
+  movedId: string,
+  projected: number | null,
+): string[] {
+  if (projected === null || projected < 0 || projected >= orderedIds.length) return orderedIds;
+  const from = orderedIds.indexOf(movedId);
+  if (from < 0 || from === projected) return orderedIds;
+  const next = orderedIds.slice();
+  next.splice(projected, 0, ...next.splice(from, 1));
+  return next;
+}
+
+/**
  * Bridge the reordered ids to the persistence seam. `notes` is the CURRENT sorted list (index-aligned with
  * `orderedIds`). No-op drops issue no write. One O(1) fractional-order write via reorderCustom.
  */

@@ -7,7 +7,7 @@ import { move } from '@dnd-kit/helpers';
 import { directionBiased } from '@dnd-kit/collision';
 import { PointerActivationConstraints } from '@dnd-kit/dom';
 import type { Note } from '@deltos/shared';
-import { commitReorder } from './customReorderDrop.js';
+import { applyProjectedIndex, commitReorder, projectedSortableIndex } from './customReorderDrop.js';
 
 // ── Library-based custom-order drag-reorder — the LAZY chunk (ROAD-0019) ─────────────────────────────
 // This module statically imports every @dnd-kit/* package, so it MUST stay off the entry bundle. It is
@@ -108,9 +108,18 @@ export function CustomReorderProvider({ notes, children, onReorder }: CustomReor
     const movedId = draggingId.current;
     draggingId.current = null;
     if (!movedId) return;
-    // move() applies the drag operation to the id list; a cancelled drag returns the same array → no-op.
-    const reorderedIds = move(dragIds.current, event) as string[];
-    void commitReorder(dragNotes.current, dragIds.current, reorderedIds, movedId);
+    const { canceled, source } = event.operation;
+    // A cancelled drag (Escape, pointercancel) reverts — never commit it (GOTCHA-0035 held the same line).
+    if (!canceled) {
+      let reorderedIds = move(dragIds.current, event) as string[];
+      // move() returns the SAME array reference when the drop had no droppable target (finger ended over a
+      // masonry gutter / board padding / past the last row) — even though the sortable already moved the DOM.
+      // Fall back to the projected sortable index so what the user sees is what gets persisted.
+      if (reorderedIds === dragIds.current) {
+        reorderedIds = applyProjectedIndex(dragIds.current, movedId, projectedSortableIndex(source));
+      }
+      void commitReorder(dragNotes.current, dragIds.current, reorderedIds, movedId);
+    }
     onReorder?.();
   };
 
