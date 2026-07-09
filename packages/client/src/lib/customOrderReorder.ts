@@ -4,6 +4,8 @@ import { fractionalMidpoint } from './noteSort.js';
 import { mutateNotes } from '../db/mutate.js';
 import { notifyQueueWrite } from './syncEngine.js';
 
+// NOTE: currently import-free — the hand-rolled long-press drag hook (useCustomOrderDrag) was ripped out;
+// this is the ORDER-PERSISTENCE seam (ROAD-0013) that the future library-based drag will call to commit a move.
 /**
  * Custom-order drag REORDER (notebook-menu-and-keep-view.md §5.4) — the persistence half of the drag gesture.
  * Given the CURRENT custom-sorted list and a move (drag note at `from` → drop at index `to`), compute the moved
