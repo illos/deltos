@@ -137,6 +137,9 @@ function BoardCell({ note, selected, registerMeasuredCell, sortableRef, isDraggi
         to={`/note/${note.id}`}
         className={`board__card${selected ? ' board__card--selected' : ''}`}
         aria-current={selected ? 'page' : undefined}
+        /* Anchors are natively draggable — explicit FALSE or the browser's HTML5 link-drag steals the pointer
+           stream and dnd-kit reorder never activates. The board has no HTML5-DnD feature, so always off. */
+        draggable={false}
       >
         <BoardCard note={note} />
         <ConflictBadgeSlot note={note} />

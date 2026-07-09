@@ -30,6 +30,15 @@ const pointerSensor = PointerSensor.configure({
       new PointerActivationConstraints.Distance({ value: 5 }),
     ];
   },
+  // The library DEFAULT vetoes activation whenever pointerdown lands on any interactive element other than
+  // the sortable element itself — and our whole row/card body is an <a> (the note Link), so the default
+  // blocks EVERY press and reorder can never start. Override: veto only real controls (same closest() guard
+  // the pre-library reorder used) so a press on the link body arms the drag but buttons/fields stay tappable.
+  preventActivation(event: PointerEvent) {
+    const target = event.target;
+    return target instanceof Element
+      && target.closest('button,input,textarea,select,[contenteditable="true"]') !== null;
+  },
 });
 
 const SENSORS = [pointerSensor, KeyboardSensor];

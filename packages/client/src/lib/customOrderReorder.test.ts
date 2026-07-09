@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Note } from '@deltos/shared';
-import { SYS_NOTEBOOK_ORDER_KEY } from '@deltos/shared';
+import { SYS_NOTEBOOK_ORDER_KEY, notebookOrder } from '@deltos/shared';
 
 /**
  * reorderCustom unit test (notebook-menu-and-keep-view.md §5.4) — the fractional-key math + the single O(1)
@@ -12,6 +12,7 @@ vi.mock('../db/mutate.js', () => ({ mutateNotes: { setOrder } }));
 vi.mock('./syncEngine.js', () => ({ notifyQueueWrite }));
 
 import { reorderCustom } from './customOrderReorder.js';
+import { sortNotes } from './noteSort.js';
 
 /** A note with a custom-order key (or none). */
 function note(id: string, order: number | null): Note {
@@ -64,5 +65,51 @@ describe('reorderCustom', () => {
     await reorderCustom(notes, 1, 0); // move b above a → before=null, after=a(0) → after-1 = -1
     const [, key] = setOrder.mock.calls[0]!;
     expect(key).toBe(-1);
+  });
+
+  /** Apply the recorded setOrder(note, key) writes onto fresh note copies, then real-sort by 'custom'. */
+  function applyWritesAndSort(base: Note[]): Note[] {
+    const byId = new Map(base.map((n) => [n.id, note(n.id, notebookOrder(n.properties))]));
+    for (const [n, key] of setOrder.mock.calls as [Note, number][]) {
+      byId.set(n.id, note(n.id, key));
+    }
+    return sortNotes([...byId.values()], 'custom');
+  }
+
+  it('cold notebook: seeds keys then drops the moved note where it landed', async () => {
+    // No note has a key. [a, b, c] — drag a (index 0) → insert position 2 ("after the second note", between
+    // b and c). reduced=[b,c], destIndex=1. before=b, after=c are BOTH null → seed b=0,c=1 then a=0.5.
+    const notes = [note('a', null), note('b', null), note('c', null)];
+    await reorderCustom(notes, 0, 2);
+
+    // Seeding writes over the reduced order [b, c] (b=0, c=1) + the final moved write (a).
+    const calls = setOrder.mock.calls as [Note, number][];
+    const byIdKey = new Map(calls.map(([n, k]) => [String(n.id), k]));
+    expect(byIdKey.get('b')).toBe(0);
+    expect(byIdKey.get('c')).toBe(1);
+    // a seeds nowhere (it's the moved note); its final fractional key is between b(0) and c(1) → 0.5.
+    expect(byIdKey.get('a')).toBe(0.5);
+    expect(notifyQueueWrite).toHaveBeenCalledWith('nb-1');
+
+    // REAL acceptance: applying the written keys + real 'custom' sort lands the moved note where dropped.
+    expect(applyWritesAndSort(notes).map((n) => n.id)).toEqual(['b', 'a', 'c']);
+  });
+
+  it('partially-keyed: needed neighbour already keyed → no seeding, single write (fast path)', async () => {
+    // [a=0, b=10, c=null] — move c (index 2) to index 1 (between a and b → midpoint 5). The needed bounds
+    // (a, b) are BOTH keyed → no seeding, exactly one setOrder for the moved note.
+    const notes = [note('a', 0), note('b', 10), note('c', null)];
+    await reorderCustom(notes, 2, 1);
+    expect(setOrder).toHaveBeenCalledTimes(1);
+    const [moved, key] = setOrder.mock.calls[0]!;
+    expect((moved as Note).id).toBe('c');
+    expect(key).toBe(5); // (0 + 10) / 2
+  });
+
+  it('cold notebook no-op drop (to === from) → zero writes (guards run before seeding)', async () => {
+    const notes = [note('a', null), note('b', null), note('c', null)];
+    await reorderCustom(notes, 1, 1);
+    expect(setOrder).not.toHaveBeenCalled();
+    expect(notifyQueueWrite).not.toHaveBeenCalled();
   });
 });

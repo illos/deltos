@@ -482,7 +482,9 @@ function NoteRow({
           to={`/note/${note.id}`}
           className={`home__note-link${selected ? ' home__note-link--selected' : ''}${isFile ? ' home__note-link--file' : ''}`}
           aria-current={selected ? 'page' : undefined}
-          draggable={noteDnd ? true : undefined}
+          /* Anchors are natively draggable — an explicit FALSE is required when noteDnd is off (custom-reorder
+             mode / mobile), or the browser's HTML5 link-drag steals the pointer stream and dnd-kit never activates. */
+          draggable={noteDnd ? true : false}
           onDragStart={noteDnd ? (e) => noteDnd.startNoteDrag(e, note) : undefined}
           onDragEnd={noteDnd ? () => noteDnd.endNoteDrag() : undefined}
         >
