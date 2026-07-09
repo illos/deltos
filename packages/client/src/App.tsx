@@ -43,6 +43,8 @@ import { useIsDesktop } from './lib/useIsDesktop.js';
 import { useTouchPrimary } from './lib/useTouchPrimary.js';
 import { useNoteDnd } from './lib/dnd/useNoteDnd.js';
 import { useFileNoteDnd } from './lib/dnd/useFileNoteDnd.js';
+import { useCustomReorder } from './lib/dnd/useCustomReorder.js';
+import type { useSortableRow as UseSortableRow } from './lib/dnd/customReorderImpl.js';
 import { useKeypadMode } from './lib/useKeypadMode.js';
 import { startSyncTriggers, syncNow } from './lib/syncEngine.js';
 import { resolveCollectionView } from './lib/collectionViews.js';
@@ -211,6 +213,12 @@ export function HomeView({ notebookId }: CollectionViewProps) {
   // #79 desktop note→notebook drag-and-drop: lazily-loaded chunk, desktop only (null on mobile / until loaded).
   const isDesktop = useIsDesktop();
   const noteDnd = useNoteDnd(isDesktop);
+  // Library-based custom-order drag-reorder (ROAD-0019) — armed ONLY in 'custom' sort. Long-press on the row
+  // body lifts; vertical drag reorders; drop → reorderCustom. The dnd-kit chunk is lazy (perf gate): null until
+  // 'custom' renders and the module resolves, so rows render plain until then. Coexists with SwipeRow — the
+  // 250ms/5px touch activation leaves an immediate horizontal move to SwipeRow's own pointer gesture.
+  const reorderEnabled = activeSort === 'custom';
+  const reorder = useCustomReorder(reorderEnabled);
   // file-notes §5.1 desktop list-drop → file-note creation: a second lazy desktop-only chunk (mirror of
   // noteDnd). Drop OS files on the list pane → one file note per file; stays on the list (reactive pill).
   const fileNoteDnd = useFileNoteDnd(isDesktop);
@@ -378,63 +386,44 @@ export function HomeView({ notebookId }: CollectionViewProps) {
       ) : notes.length === 0 ? (
         <p className="home__lede">No notes yet.</p>
       ) : (
-        <ul className="home__notes">
-          {notes.map((note) => {
-            const { displayTitle, previewLine } = notePreview(note);
-            const smartDate = formatSmartDate(note.updatedAt);
-            const selected = note.id === openNoteId;
-            const isFile = isFileNote(note);
-            // Notebook pill: ONLY in the All-Notes aggregate, ONLY for a categorized note whose notebook is
-            // known. Uncategorized (notebookId null) or a specific-notebook view → no pill.
-            const nbName = notebookId === null && note.notebookId !== null
-              ? notebookNameById.get(note.notebookId)
-              : undefined;
-            return (
-              <li key={note.id}>
-                <SwipeRow
-                  isOpen={openId === note.id}
-                  onOpen={() => setOpenId(note.id)}
-                  onClose={() => setOpenId(null)}
-                  onDelete={() => handleDelete(note)}
-                  onDuplicate={() => handleDuplicate(note)}
-                  onMove={() => setMovingNote(note)}
-                  onPin={() => handlePin(note)}
-                  isPinned={isPinned(note.properties)}
-                >
-                  <Link
-                    to={`/note/${note.id}`}
-                    className={`home__note-link${selected ? ' home__note-link--selected' : ''}${isFile ? ' home__note-link--file' : ''}`}
-                    aria-current={selected ? 'page' : undefined}
-                    draggable={noteDnd ? true : undefined}
-                    onDragStart={noteDnd ? (e) => noteDnd.startNoteDrag(e, note) : undefined}
-                    onDragEnd={noteDnd ? () => noteDnd.endNoteDrag() : undefined}
-                  >
-                    {isFile ? (
-                      // file-notes §3.1: a file note renders as an artifact pill (leading visual + filename +
-                      // size/type), not the prose title + preview row.
-                      <FileNotePill note={note} />
-                    ) : (
-                      <>
-                        <span className="home__note-title">
-                          {isPinned(note.properties) && (
-                            <Pin size={13} className="home__note-pin" title="Pinned" />
-                          )}
-                          {displayTitle}
-                        </span>
-                        <span className="home__note-meta">
-                          <span className="home__note-date">{smartDate}</span>
-                          {previewLine && <span className="home__note-preview">{previewLine}</span>}
-                          {nbName && <span className="home__note-nb-pill">{nbName}</span>}
-                        </span>
-                      </>
-                    )}
-                  </Link>
-                  <ConflictBadgeSlot note={note} />
-                </SwipeRow>
-              </li>
+        ((rows) =>
+          // In 'custom' sort with the lazy dnd-kit chunk resolved, wrap the list in the reorder provider so
+          // long-press drag reorders → reorderCustom. Until then (non-custom, or module still loading) render
+          // the SAME plain rows — the perf gate: no dnd-kit code touches the entry bundle or runs off 'custom'.
+          reorderEnabled && reorder ? (
+            <reorder.CustomReorderProvider notes={notes}>
+              <ul className="home__notes home__notes--reorderable">{rows}</ul>
+            </reorder.CustomReorderProvider>
+          ) : (
+            <ul className="home__notes">{rows}</ul>
+          ))(
+          notes.map((note, index) => {
+            const rowProps: NoteRowProps = {
+              note,
+              index,
+              selected: note.id === openNoteId,
+              nbName: notebookId === null && note.notebookId !== null
+                ? notebookNameById.get(note.notebookId)
+                : undefined,
+              swipeOpen: openId === note.id,
+              onOpen: () => setOpenId(note.id),
+              onClose: () => setOpenId(null),
+              onDelete: () => handleDelete(note),
+              onDuplicate: () => handleDuplicate(note),
+              onMove: () => setMovingNote(note),
+              onPin: () => handlePin(note),
+              // Desktop note→notebook HTML5 DnD: in custom mode the rows are drag-reorder targets, so DISABLE
+              // the HTML5 draggable to stop the two gestures fighting (restores the pre-c14b4e5 gate).
+              noteDnd: reorderEnabled ? null : noteDnd,
+            };
+            // Sortable rows only when the lazy module is ready AND we're in custom sort; else a plain row.
+            return reorderEnabled && reorder ? (
+              <SortableNoteRow key={note.id} useSortableRow={reorder.useSortableRow} {...rowProps} />
+            ) : (
+              <NoteRow key={note.id} {...rowProps} />
             );
-          })}
-        </ul>
+          }),
+        )
       )}
       {/* #78 swipe-to-move → notebook-picker bottom sheet (mobile). */}
       {movingNote && (
@@ -447,6 +436,91 @@ export function HomeView({ notebookId }: CollectionViewProps) {
       )}
     </div>
   );
+}
+
+/** Everything one note row in the HomeView list needs. Shared by the plain and the sortable row wrappers. */
+interface NoteRowProps {
+  note: Note;
+  index: number;
+  selected: boolean;
+  nbName: string | undefined;
+  swipeOpen: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+  onDelete: () => void;
+  onDuplicate: () => void;
+  onMove: () => void;
+  onPin: () => void;
+  /** Desktop note→notebook HTML5 DnD module (null on mobile / in custom-reorder mode / until loaded). */
+  noteDnd: ReturnType<typeof useNoteDnd>;
+  /** When sortable, the <li>'s reorder ref + dragging flag (supplied by SortableNoteRow). */
+  sortableRef?: (element: Element | null) => void;
+  isDragging?: boolean;
+}
+
+/** One HomeView list row: SwipeRow-wrapped note Link. The <li> takes the optional sortable ref/drag class. */
+function NoteRow({
+  note, selected, nbName, swipeOpen, onOpen, onClose, onDelete, onDuplicate, onMove, onPin, noteDnd,
+  sortableRef, isDragging,
+}: NoteRowProps) {
+  const { displayTitle, previewLine } = notePreview(note);
+  const smartDate = formatSmartDate(note.updatedAt);
+  const isFile = isFileNote(note);
+  return (
+    <li ref={sortableRef} className={isDragging ? 'home__note-li--dragging' : undefined}>
+      <SwipeRow
+        isOpen={swipeOpen}
+        onOpen={onOpen}
+        onClose={onClose}
+        onDelete={onDelete}
+        onDuplicate={onDuplicate}
+        onMove={onMove}
+        onPin={onPin}
+        isPinned={isPinned(note.properties)}
+      >
+        <Link
+          to={`/note/${note.id}`}
+          className={`home__note-link${selected ? ' home__note-link--selected' : ''}${isFile ? ' home__note-link--file' : ''}`}
+          aria-current={selected ? 'page' : undefined}
+          draggable={noteDnd ? true : undefined}
+          onDragStart={noteDnd ? (e) => noteDnd.startNoteDrag(e, note) : undefined}
+          onDragEnd={noteDnd ? () => noteDnd.endNoteDrag() : undefined}
+        >
+          {isFile ? (
+            // file-notes §3.1: a file note renders as an artifact pill (leading visual + filename + size/type).
+            <FileNotePill note={note} />
+          ) : (
+            <>
+              <span className="home__note-title">
+                {isPinned(note.properties) && (
+                  <Pin size={13} className="home__note-pin" title="Pinned" />
+                )}
+                {displayTitle}
+              </span>
+              <span className="home__note-meta">
+                <span className="home__note-date">{smartDate}</span>
+                {previewLine && <span className="home__note-preview">{previewLine}</span>}
+                {nbName && <span className="home__note-nb-pill">{nbName}</span>}
+              </span>
+            </>
+          )}
+        </Link>
+        <ConflictBadgeSlot note={note} />
+      </SwipeRow>
+    </li>
+  );
+}
+
+/**
+ * Sortable variant — calls the lazy module's useSortableRow at the top level (legal: only ever rendered when
+ * the module is loaded, so the hook set is stable for this component's lifetime) and feeds the ref/drag flag
+ * into NoteRow. Passing the hook as a prop keeps the dnd-kit import OUT of the entry bundle.
+ */
+function SortableNoteRow({
+  useSortableRow, ...rowProps
+}: NoteRowProps & { useSortableRow: typeof UseSortableRow }) {
+  const { ref, isDragging } = useSortableRow({ id: rowProps.note.id, index: rowProps.index, layout: 'list' });
+  return <NoteRow {...rowProps} sortableRef={ref} isDragging={isDragging} />;
 }
 
 // Sentinel used as the sync deduplication key on a fresh device before the default

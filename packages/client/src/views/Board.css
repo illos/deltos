@@ -36,6 +36,14 @@
   grid-row-end: span var(--board-row-span, 1);
 }
 
+/* ROAD-0019 masonry drag-reorder: lift the dragged card above the grid so it doesn't fight the reflow while
+   dnd-kit transforms it (directionBiased collision keeps drops precise between variable-height cards). */
+.board--reorderable .board__cell--dragging {
+  z-index: 2;
+  opacity: 0.9;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 0.2);
+}
+
 /* True-height board cards: CSS Grid owns placement, the ResizeObserver hook only supplies row spans. */
 .board__card {
   position: relative;

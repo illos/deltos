@@ -202,6 +202,15 @@
 }
 .home__notes li { position: relative; }
 
+/* ROAD-0019 custom-order drag-reorder: the lifted row reads as picked-up. dnd-kit owns the transform; we only
+   add the visual lift + stack it above its neighbours during the drag. touch-action:none while reorderable so
+   a long-press drag doesn't scroll — the 250ms activation still lets a quick vertical flick scroll natively. */
+.home__notes--reorderable .home__note-li--dragging {
+  z-index: 2;
+  opacity: 0.9;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
+}
+
 /* §2 rows — full-bleed, hairline divider, padding 12px 18px; reserve a 2px left gutter for the
    selected accent-bar (no text shift). */
 .home__note-link {

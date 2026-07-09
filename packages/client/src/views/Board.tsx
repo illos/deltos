@@ -8,6 +8,8 @@ import { sortNotes, coerceNoteSort } from '../lib/noteSort.js';
 import { notePreview, formatSmartDate } from '../lib/notePreview.js';
 import { useIsDesktop } from '../lib/useIsDesktop.js';
 import { useMeasuredGridSpans } from '../lib/useMeasuredGridSpans.js';
+import { useCustomReorder } from '../lib/dnd/useCustomReorder.js';
+import type { useSortableRow as UseSortableRow } from '../lib/dnd/customReorderImpl.js';
 import { FileNotePill } from '../components/FileNotePill.js';
 import { ConflictBadgeSlot } from '../components/ConflictBadgeSlot.js';
 import { Pin } from '../icons/index.js';
@@ -43,6 +45,12 @@ export function Board({ notebookId }: CollectionViewProps) {
   const filtered = notebookId === null ? allNotes : allNotes.filter((n) => n.notebookId === notebookId);
   const notes = useMemo(() => sortNotes(filtered, activeSort), [filtered, activeSort]);
   const registerMeasuredCell = useMeasuredGridSpans(notes.map((note) => note.id).join('|'));
+  // Custom-order drag-reorder (ROAD-0019) — SAME lazy dnd-kit chunk as HomeView (ONE wiring, one perf gate).
+  // Masonry layout → per-item directionBiased collision. Armed only in 'custom' sort; null until the module
+  // resolves, so cards render plain first. useMeasuredGridSpans stays the layout owner; recompute is driven by
+  // the ResizeObserver as spans change during drag (dnd-kit reorders DOM, the observer re-measures).
+  const reorderEnabled = activeSort === 'custom';
+  const reorder = useCustomReorder(reorderEnabled);
 
   // Desktop popover: the note open in the URL (works because Board renders even while /note/:id matches — the
   // desktop shell keeps the list region mounted). On mobile this stays null-effect: /note/:id is its own route.
@@ -55,24 +63,30 @@ export function Board({ notebookId }: CollectionViewProps) {
       {notes.length === 0 ? (
         <p className="board-view__empty">No notes yet.</p>
       ) : (
-        <ul className="board" aria-label="Notes">
-          {notes.map((note) => (
-            <li
-              key={note.id}
-              ref={(el) => registerMeasuredCell(note.id, el)}
-              className="board__cell"
-            >
-              <Link
-                to={`/note/${note.id}`}
-                className={`board__card${note.id === openNoteId ? ' board__card--selected' : ''}`}
-                aria-current={note.id === openNoteId ? 'page' : undefined}
-              >
-                <BoardCard note={note} />
-                <ConflictBadgeSlot note={note} />
-              </Link>
-            </li>
-          ))}
-        </ul>
+        ((cells) =>
+          // In 'custom' sort with the dnd-kit chunk resolved, wrap the grid in the reorder provider so a card
+          // drag reorders → reorderCustom. Otherwise render the SAME plain cells (perf gate preserved).
+          reorderEnabled && reorder ? (
+            <reorder.CustomReorderProvider notes={notes}>
+              <ul className="board board--reorderable" aria-label="Notes">{cells}</ul>
+            </reorder.CustomReorderProvider>
+          ) : (
+            <ul className="board" aria-label="Notes">{cells}</ul>
+          ))(
+          notes.map((note, index) => {
+            const cellProps: BoardCellProps = {
+              note,
+              index,
+              selected: note.id === openNoteId,
+              registerMeasuredCell,
+            };
+            return reorderEnabled && reorder ? (
+              <SortableBoardCell key={note.id} useSortableRow={reorder.useSortableRow} {...cellProps} />
+            ) : (
+              <BoardCell key={note.id} {...cellProps} />
+            );
+          }),
+        )
       )}
 
       {/* Desktop note popover-over-blur — the single genuinely-new structural piece. Reuses the overlay
@@ -95,6 +109,52 @@ export function Board({ notebookId }: CollectionViewProps) {
       )}
     </div>
   );
+}
+
+/** Everything one board cell needs. Shared by the plain and the sortable cell wrappers. */
+interface BoardCellProps {
+  note: Note;
+  index: number;
+  selected: boolean;
+  registerMeasuredCell: (id: string, el: HTMLElement | null) => void;
+  /** When sortable, the reorder ref + dragging flag (supplied by SortableBoardCell). */
+  sortableRef?: (element: Element | null) => void;
+  isDragging?: boolean;
+}
+
+/** One board grid cell. The <li> is BOTH the measured-grid cell and (when sortable) the reorder element. */
+function BoardCell({ note, selected, registerMeasuredCell, sortableRef, isDragging }: BoardCellProps) {
+  return (
+    <li
+      ref={(el) => {
+        // Merge refs: useMeasuredGridSpans owns layout (row spans); dnd-kit measures/moves the same element.
+        registerMeasuredCell(note.id, el);
+        sortableRef?.(el);
+      }}
+      className={`board__cell${isDragging ? ' board__cell--dragging' : ''}`}
+    >
+      <Link
+        to={`/note/${note.id}`}
+        className={`board__card${selected ? ' board__card--selected' : ''}`}
+        aria-current={selected ? 'page' : undefined}
+      >
+        <BoardCard note={note} />
+        <ConflictBadgeSlot note={note} />
+      </Link>
+    </li>
+  );
+}
+
+/**
+ * Sortable variant — calls the lazy module's useSortableRow at the top level (only rendered when the module
+ * is loaded, so the hook set is stable) with the masonry layout → directionBiased collision, and merges its
+ * ref into BoardCell alongside the measured-grid ref.
+ */
+function SortableBoardCell({
+  useSortableRow, ...cellProps
+}: BoardCellProps & { useSortableRow: typeof UseSortableRow }) {
+  const { ref, isDragging } = useSortableRow({ id: cellProps.note.id, index: cellProps.index, layout: 'masonry' });
+  return <BoardCell {...cellProps} sortableRef={ref} isDragging={isDragging} />;
 }
 
 /** One card's content: file notes → the artifact pill; prose notes → pin + title + date + preview. */
