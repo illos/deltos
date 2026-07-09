@@ -23,10 +23,16 @@ class MockResizeObserver {
   unobserve = (el: Element) => { this.elements.delete(el); };
   disconnect = () => { this.elements.clear(); };
   trigger(entries: Array<{ target: Element; height: number }>) {
-    this.cb(entries.map(({ target, height }) => ({
-      target,
-      contentRect: { height } as DOMRectReadOnly,
-    } as ResizeObserverEntry)), this as unknown as ResizeObserver);
+    this.cb(entries.map(({ target, height }) => {
+      // The hook measures the BORDER box: borderBoxSize (absent in jsdom) → getBoundingClientRect() fallback.
+      // Stub the target's bounding rect so the fallback yields the intended border-box height.
+      (target as HTMLElement).getBoundingClientRect = () =>
+        ({ height, width: 0, top: 0, left: 0, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+      return {
+        target,
+        contentRect: { height: 0 } as DOMRectReadOnly, // deliberately wrong — proves the hook ignores contentRect
+      } as ResizeObserverEntry;
+    }), this as unknown as ResizeObserver);
   }
 }
 

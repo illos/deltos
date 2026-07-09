@@ -60,6 +60,11 @@
   text-decoration: none;
   cursor: pointer;
   transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+  /* Long-press-drag on a <Link>: suppress iOS callout/preview + text selection so a hold arms a reorder
+     rather than the native link menu. Scroll stays native (no static touch-action:none here). */
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .board__card:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 .board__card--selected {

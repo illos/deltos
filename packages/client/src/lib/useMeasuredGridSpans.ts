@@ -46,7 +46,12 @@ export function useMeasuredGridSpans(depsKey: unknown = null) {
         for (const entry of entries) {
           const cell = observed.current.get(entry.target);
           if (!cell) continue;
-          measureCell(cell, entry.contentRect.height);
+          // Span math needs the BORDER box (card padding 12/14 + 2px border ≈ 28px); contentRect is the
+          // content box and under-measures, eating the 12px row gap and spilling the last row past .board.
+          // borderBoxSize is absent in Safari 15 and jsdom — fall back to the border-box bounding rect.
+          const borderBoxHeight =
+            entry.borderBoxSize?.[0]?.blockSize ?? entry.target.getBoundingClientRect().height;
+          measureCell(cell, borderBoxHeight);
         }
       });
     });

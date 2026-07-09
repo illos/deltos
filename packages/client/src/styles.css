@@ -230,6 +230,11 @@
   border-bottom: 1px solid var(--border);
   color: inherit;
   text-decoration: none;
+  /* Long-press-drag on a <Link>: suppress the iOS callout/preview and text selection so the hold arms a
+     reorder instead of the native link menu. touch-action stays on .swipe-row__foreground (pan-y). */
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 /* Selected row (master-detail open note) — --sel fill + 2px --accent left border. */
 .home__note-link--selected {
