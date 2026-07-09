@@ -44,6 +44,16 @@
   box-shadow: 0 8px 22px rgb(0 0 0 / 0.2);
 }
 
+/* iOS long-press suppression while reorderable — same rule as .home__notes--reorderable .home__note-link
+   (styles.css): WebKit's link callout/preview + selection loupe are decided at touchstart and pointercancel
+   a held press ~500ms in, killing the drag; only static CSS on the card suppresses them. */
+.board--reorderable .board__card {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
 /* True-height board cards: CSS Grid owns placement, the ResizeObserver hook only supplies row spans. */
 .board__card {
   position: relative;
