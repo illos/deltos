@@ -1,4 +1,5 @@
 import { lazy, Suspense, useMemo } from 'react';
+import type { CSSProperties } from 'react';
 import { Link, useMatch, useNavigate } from 'react-router-dom';
 import type { Note, NotebookId } from '@deltos/shared';
 import { isFileNote, isPinned } from '@deltos/shared';
@@ -7,6 +8,8 @@ import { useNotes, useCurrentNotebook } from '../db/storeHooks.js';
 import { sortNotes, coerceNoteSort } from '../lib/noteSort.js';
 import { notePreview, formatSmartDate } from '../lib/notePreview.js';
 import { useIsDesktop } from '../lib/useIsDesktop.js';
+import { useCustomOrderDrag } from '../lib/useCustomOrderDrag.js';
+import { useMeasuredGridSpans } from '../lib/useMeasuredGridSpans.js';
 import { FileNotePill } from '../components/FileNotePill.js';
 import { ConflictBadgeSlot } from '../components/ConflictBadgeSlot.js';
 import { Pin } from '../icons/index.js';
@@ -41,6 +44,8 @@ export function Board({ notebookId }: CollectionViewProps) {
   const activeSort = coerceNoteSort(notebookId === null ? null : notebook?.noteSort);
   const filtered = notebookId === null ? allNotes : allNotes.filter((n) => n.notebookId === notebookId);
   const notes = useMemo(() => sortNotes(filtered, activeSort), [filtered, activeSort]);
+  const customDrag = useCustomOrderDrag(notes, activeSort === 'custom', 'grid');
+  const registerMeasuredCell = useMeasuredGridSpans(notes.map((note) => note.id).join('|'));
 
   // Desktop popover: the note open in the URL (works because Board renders even while /note/:id matches — the
   // desktop shell keeps the list region mounted). On mobile this stays null-effect: /note/:id is its own route.
@@ -53,20 +58,49 @@ export function Board({ notebookId }: CollectionViewProps) {
       {notes.length === 0 ? (
         <p className="board-view__empty">No notes yet.</p>
       ) : (
-        <ul className="board" aria-label="Notes">
-          {notes.map((note) => (
-            <li key={note.id} className="board__cell">
-              <Link
-                to={`/note/${note.id}`}
-                className={`board__card${note.id === openNoteId ? ' board__card--selected' : ''}`}
-                aria-current={note.id === openNoteId ? 'page' : undefined}
+        <ul className={`board${customDrag.dragging ? ' board--reordering' : ''}`} aria-label="Notes">
+          {customDrag.renderItems.map((item) => {
+            if (item.kind === 'placeholder') {
+              return (
+                <li
+                  key={item.key}
+                  className="board__cell board__cell--placeholder"
+                  style={{ '--board-row-span': item.rowSpan } as CSSProperties}
+                  aria-hidden="true"
+                />
+              );
+            }
+            const { note, originalIndex } = item;
+            return (
+              <li
+                key={note.id}
+                ref={(el) => {
+                  customDrag.registerRow(note.id, el);
+                  registerMeasuredCell(note.id, el);
+                }}
+                className="board__cell"
               >
-                <BoardCard note={note} />
-                <ConflictBadgeSlot note={note} />
-              </Link>
-            </li>
-          ))}
+                <Link
+                  to={`/note/${note.id}`}
+                  className={`board__card${note.id === openNoteId ? ' board__card--selected' : ''}`}
+                  aria-current={note.id === openNoteId ? 'page' : undefined}
+                  {...customDrag.bodyProps(originalIndex, note)}
+                >
+                  <BoardCard note={note} />
+                  <ConflictBadgeSlot note={note} />
+                </Link>
+              </li>
+            );
+          })}
         </ul>
+      )}
+      {customDrag.overlay && (
+        <div className="board__drag-overlay" style={customDrag.overlay.style} aria-hidden="true">
+          <div className="board__card board__card--drag-preview">
+            <BoardCard note={customDrag.overlay.note} />
+            <ConflictBadgeSlot note={customDrag.overlay.note} />
+          </div>
+        </div>
       )}
 
       {/* Desktop note popover-over-blur — the single genuinely-new structural piece. Reuses the overlay
@@ -91,7 +125,7 @@ export function Board({ notebookId }: CollectionViewProps) {
   );
 }
 
-/** One card's content: file notes → the artifact pill; prose notes → pin + title + date + preview (capped). */
+/** One card's content: file notes → the artifact pill; prose notes → pin + title + date + preview. */
 function BoardCard({ note }: { note: Note }) {
   if (isFileNote(note)) return <FileNotePill note={note} />;
   const { displayTitle, previewLine } = notePreview(note);

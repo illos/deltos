@@ -1,98 +1,349 @@
-import { useCallback, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type {
+  CSSProperties,
+  PointerEvent as ReactPointerEvent,
+  MouseEvent as ReactMouseEvent,
+} from 'react';
 import type { Note } from '@deltos/shared';
 import { reorderCustom } from './customOrderReorder.js';
 
-/**
- * useCustomOrderDrag — the custom-sort drag-reorder INTERACTION for the note list (notebook-menu-and-keep-view.md
- * §5.4). Armed ONLY when the active sort is 'custom'; the persistence half is `reorderCustom` (fractional key via
- * `mutateNotes.setOrder`).
- *
- * GESTURE DISAMBIGUATION from SwipeRow (Jim: mobile-first, must coexist with the horizontal swipe): the drag is
- * initiated ONLY from an explicit GRIP HANDLE (`handleProps` below), never the row body — so a horizontal swipe
- * on the row still opens the swipe actions, and only a deliberate grab of the handle arms a vertical reorder.
- * The handle is rendered only in custom mode, so no new affordance appears otherwise.
- *
- * Pointer-based (works on touch AND mouse — HTML5 DnD doesn't fire from touch): pointerdown on the handle
- * captures the pointer; pointermove tracks which row index the finger is over (via the row rects the caller
- * registers); pointerup persists the move. A live `draggingId` + `overIndex` drive the caller's visual feedback.
- */
+const LONG_PRESS_MS = 260;
+const MOVE_TOLERANCE = 10;
+const FLIP_MS = 170;
+
+type LayoutMode = 'list' | 'grid';
+
+interface DragOverlay {
+  note: Note;
+  style: CSSProperties;
+}
+
+interface PendingPress {
+  pointerId: number;
+  index: number;
+  note: Note;
+  startX: number;
+  startY: number;
+  target: HTMLElement;
+  timer: number;
+  cancelled: boolean;
+}
+
+interface ActiveDrag {
+  pointerId: number;
+  from: number;
+  note: Note;
+  startX: number;
+  startY: number;
+  lastX: number;
+  lastY: number;
+  rect: DOMRect;
+}
+
+export type CustomOrderRenderItem =
+  | { kind: 'note'; note: Note; originalIndex: number }
+  | { kind: 'placeholder'; key: string; height: number; rowSpan: string };
+
 export interface CustomOrderDrag {
   /** True when a reorder drag is active. */
   dragging: boolean;
-  /** The id of the note being dragged (for styling the lifted row), or null. */
+  /** The id of the note being dragged, or null. */
   draggingId: string | null;
-  /** The index the dragged row would drop at (for a drop-line indicator), or null. */
+  /** The original-list insert index the dragged note would drop at, or null. */
   overIndex: number | null;
-  /** Register a row element for hit-testing (call in a ref callback keyed by index). */
-  registerRow: (index: number, el: HTMLElement | null) => void;
-  /** Props for the per-row grip handle; pass the row's index + its note. */
-  handleProps: (index: number, note: Note) => {
-    onPointerDown: (e: ReactPointerEvent) => void;
-    role: string;
-    'aria-label': string;
-    tabIndex: number;
+  /** Notes plus a real placeholder while dragging, still keyed to the source note order. */
+  renderItems: CustomOrderRenderItem[];
+  /** Fixed lifted copy following the pointer while the source item is out of flow. */
+  overlay: DragOverlay | null;
+  /** Register a rendered note element for hit-testing and FLIP animation. */
+  registerRow: (noteId: string, el: HTMLElement | null) => void;
+  /** Long-press-anywhere props for the note body. Horizontal movement before the hold is left to SwipeRow. */
+  bodyProps: (index: number, note: Note) => {
+    onPointerDown: (e: ReactPointerEvent<HTMLElement>) => void;
+    onClickCapture: (e: ReactMouseEvent<HTMLElement>) => void;
+    onContextMenu: (e: ReactMouseEvent<HTMLElement>) => void;
   };
 }
 
-export function useCustomOrderDrag(notes: Note[], enabled: boolean): CustomOrderDrag {
+export function useCustomOrderDrag(notes: Note[], enabled: boolean, layout: LayoutMode = 'list'): CustomOrderDrag {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
-  const rows = useRef<Map<number, HTMLElement>>(new Map());
-  const fromIndex = useRef<number | null>(null);
-  // Keep the latest notes for the pointerup handler (which is created once per drag).
+  const [overlay, setOverlay] = useState<DragOverlay | null>(null);
+  const [placeholder, setPlaceholder] = useState<{ height: number; rowSpan: string }>({ height: 0, rowSpan: '1' });
+
+  const rows = useRef<Map<string, HTMLElement>>(new Map());
+  const pending = useRef<PendingPress | null>(null);
+  const active = useRef<ActiveDrag | null>(null);
   const notesRef = useRef(notes);
+  const firstRects = useRef<Map<string, DOMRect> | null>(null);
+  const suppressClickUntil = useRef(0);
+  const raf = useRef<number | null>(null);
+
   notesRef.current = notes;
 
-  const registerRow = useCallback((index: number, el: HTMLElement | null) => {
-    if (el) rows.current.set(index, el);
-    else rows.current.delete(index);
+  const idToIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    notes.forEach((note, index) => map.set(note.id, index));
+    return map;
+  }, [notes]);
+
+  const registerRow = useCallback((noteId: string, el: HTMLElement | null) => {
+    if (el) rows.current.set(noteId, el);
+    else rows.current.delete(noteId);
   }, []);
 
-  /** Which row index is under clientY, using the registered row rects (midpoint split for insert position). */
-  const indexAtY = useCallback((clientY: number): number => {
-    let best = notesRef.current.length; // default: past the end
-    for (const [idx, el] of rows.current) {
-      const r = el.getBoundingClientRect();
-      if (clientY < r.top + r.height / 2) { best = Math.min(best, idx); }
+  const measureFirst = useCallback(() => {
+    const rects = new Map<string, DOMRect>();
+    for (const [id, el] of rows.current) rects.set(id, el.getBoundingClientRect());
+    firstRects.current = rects;
+  }, []);
+
+  const playFlip = useCallback(() => {
+    const before = firstRects.current;
+    if (!before) return;
+    firstRects.current = null;
+    for (const [id, el] of rows.current) {
+      if (id === active.current?.note.id) continue;
+      const prev = before.get(id);
+      if (!prev) continue;
+      const next = el.getBoundingClientRect();
+      const dx = prev.left - next.left;
+      const dy = prev.top - next.top;
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+      el.style.transition = 'none';
+      el.style.transform = `translate(${dx}px, ${dy}px)`;
+      el.getBoundingClientRect();
+      el.style.transition = `transform ${FLIP_MS}ms ease`;
+      el.style.transform = '';
+      window.setTimeout(() => {
+        if (el.style.transition.includes('transform')) el.style.transition = '';
+      }, FLIP_MS + 40);
     }
-    return best;
   }, []);
 
-  const handleProps = useCallback(
-    (index: number, note: Note) => ({
-      role: 'button',
-      'aria-label': 'Drag to reorder',
-      tabIndex: 0,
-      onPointerDown: (e: ReactPointerEvent) => {
-        if (!enabled) return;
-        e.preventDefault();
-        e.stopPropagation();
-        (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-        fromIndex.current = index;
-        setDraggingId(note.id);
-        setOverIndex(index);
+  useLayoutEffect(() => {
+    playFlip();
+  }, [overIndex, draggingId, playFlip]);
 
-        const onMove = (ev: PointerEvent) => {
-          setOverIndex(indexAtY(ev.clientY));
+  useEffect(() => () => {
+    if (pending.current) window.clearTimeout(pending.current.timer);
+    if (raf.current !== null) window.cancelAnimationFrame(raf.current);
+    window.removeEventListener('pointermove', onWindowPointerMove, true);
+    window.removeEventListener('pointerup', onWindowPointerUp, true);
+    window.removeEventListener('pointercancel', onWindowPointerUp, true);
+  // These handlers are function declarations intentionally scoped to the current hook instance.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const indexAtPoint = useCallback((clientX: number, clientY: number): number => {
+    const currentNotes = notesRef.current;
+    if (currentNotes.length === 0) return 0;
+
+    if (layout === 'list') {
+      for (const note of currentNotes) {
+        if (note.id === active.current?.note.id) continue;
+        const el = rows.current.get(note.id);
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        const idx = idToIndex.get(note.id);
+        if (idx === undefined) continue;
+        if (clientY < rect.top + rect.height / 2) return idx;
+      }
+      return currentNotes.length;
+    }
+
+    let best: { index: number; after: boolean; distance: number } | null = null;
+    for (const note of currentNotes) {
+      if (note.id === active.current?.note.id) continue;
+      const el = rows.current.get(note.id);
+      const idx = idToIndex.get(note.id);
+      if (!el || idx === undefined) continue;
+      const rect = el.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dx = clientX - cx;
+      const dy = clientY - cy;
+      const distance = dx * dx + dy * dy;
+      const after = Math.abs(dy) > rect.height / 3 ? clientY > cy : clientX > cx;
+      if (!best || distance < best.distance) best = { index: idx, after, distance };
+    }
+    if (!best) return currentNotes.length;
+    return best.index + (best.after ? 1 : 0);
+  }, [idToIndex, layout]);
+
+  const updateOverlay = useCallback((drag: ActiveDrag) => {
+    const dx = drag.lastX - drag.startX;
+    const dy = drag.lastY - drag.startY;
+    setOverlay({
+      note: drag.note,
+      style: {
+        position: 'fixed',
+        left: drag.rect.left,
+        top: drag.rect.top,
+        width: drag.rect.width,
+        height: drag.rect.height,
+        transform: `translate(${dx}px, ${dy}px)`,
+        zIndex: 370,
+        pointerEvents: 'none',
+      },
+    });
+  }, []);
+
+  const setTargetIndex = useCallback((next: number) => {
+    setOverIndex((prev) => {
+      if (prev === next) return prev;
+      measureFirst();
+      return next;
+    });
+  }, [measureFirst]);
+
+  const clearPending = useCallback(() => {
+    const press = pending.current;
+    if (!press) return;
+    window.clearTimeout(press.timer);
+    window.removeEventListener('pointermove', onWindowPointerMove, true);
+    window.removeEventListener('pointerup', onWindowPointerUp, true);
+    window.removeEventListener('pointercancel', onWindowPointerUp, true);
+    pending.current = null;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const finishDrag = useCallback((clientX: number, clientY: number) => {
+    const drag = active.current;
+    active.current = null;
+    setDraggingId(null);
+    setOverIndex(null);
+    setOverlay(null);
+    suppressClickUntil.current = Date.now() + 450;
+    window.removeEventListener('pointermove', onWindowPointerMove, true);
+    window.removeEventListener('pointerup', onWindowPointerUp, true);
+    window.removeEventListener('pointercancel', onWindowPointerUp, true);
+    if (!drag) return;
+    const to = indexAtPoint(clientX, clientY);
+    void reorderCustom(notesRef.current, drag.from, to);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [indexAtPoint]);
+
+  function armDrag(press: PendingPress) {
+    if (press.cancelled || !enabled) return;
+    const row = rows.current.get(press.note.id);
+    const rect = (row ?? press.target).getBoundingClientRect();
+    const rowSpan = row?.style.getPropertyValue('--board-row-span') || '1';
+    const drag: ActiveDrag = {
+      pointerId: press.pointerId,
+      from: press.index,
+      note: press.note,
+      startX: press.startX,
+      startY: press.startY,
+      lastX: press.startX,
+      lastY: press.startY,
+      rect,
+    };
+    active.current = drag;
+    pending.current = null;
+    setPlaceholder({ height: rect.height, rowSpan });
+    measureFirst();
+    setDraggingId(press.note.id);
+    setOverIndex(press.index);
+    updateOverlay(drag);
+    try { press.target.setPointerCapture(press.pointerId); } catch { /* jsdom */ }
+  }
+
+  function onWindowPointerMove(ev: PointerEvent) {
+    const drag = active.current;
+    if (drag) {
+      if (ev.pointerId !== drag.pointerId) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      drag.lastX = ev.clientX;
+      drag.lastY = ev.clientY;
+      if (raf.current !== null) window.cancelAnimationFrame(raf.current);
+      raf.current = window.requestAnimationFrame(() => {
+        raf.current = null;
+        updateOverlay(drag);
+        setTargetIndex(indexAtPoint(drag.lastX, drag.lastY));
+      });
+      return;
+    }
+
+    const press = pending.current;
+    if (!press || ev.pointerId !== press.pointerId) return;
+    const dx = ev.clientX - press.startX;
+    const dy = ev.clientY - press.startY;
+    if (Math.abs(dx) > MOVE_TOLERANCE || Math.abs(dy) > MOVE_TOLERANCE) {
+      press.cancelled = true;
+      clearPending();
+    }
+  }
+
+  function onWindowPointerUp(ev: PointerEvent) {
+    const drag = active.current;
+    if (drag && ev.pointerId === drag.pointerId) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      finishDrag(ev.clientX, ev.clientY);
+      return;
+    }
+    const press = pending.current;
+    if (press && ev.pointerId === press.pointerId) clearPending();
+  }
+
+  const bodyProps = useCallback(
+    (index: number, note: Note) => ({
+      onPointerDown: (e: ReactPointerEvent<HTMLElement>) => {
+        if (!enabled || e.button !== 0) return;
+        if ((e.target as HTMLElement).closest('button,input,textarea,select,[contenteditable="true"]')) return;
+        clearPending();
+        const target = e.currentTarget;
+        const press: PendingPress = {
+          pointerId: e.pointerId,
+          index,
+          note,
+          startX: e.clientX,
+          startY: e.clientY,
+          target,
+          cancelled: false,
+          timer: window.setTimeout(() => armDrag(press), LONG_PRESS_MS),
         };
-        const onUp = (ev: PointerEvent) => {
-          window.removeEventListener('pointermove', onMove);
-          window.removeEventListener('pointerup', onUp);
-          const from = fromIndex.current;
-          // indexAtY returns an INSERT position (0..len) — reorderCustom takes exactly that (len = drop at end).
-          const to = indexAtY(ev.clientY);
-          fromIndex.current = null;
-          setDraggingId(null);
-          setOverIndex(null);
-          if (from !== null) void reorderCustom(notesRef.current, from, to);
-        };
-        window.addEventListener('pointermove', onMove);
-        window.addEventListener('pointerup', onUp);
+        pending.current = press;
+        window.addEventListener('pointermove', onWindowPointerMove, true);
+        window.addEventListener('pointerup', onWindowPointerUp, true);
+        window.addEventListener('pointercancel', onWindowPointerUp, true);
+      },
+      onClickCapture: (e: ReactMouseEvent<HTMLElement>) => {
+        if (Date.now() < suppressClickUntil.current) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      },
+      onContextMenu: (e: ReactMouseEvent<HTMLElement>) => {
+        if (enabled) e.preventDefault();
       },
     }),
-    [enabled, indexAtY],
+    // `armDrag` and the window handlers intentionally read live refs; recreating the props on note/order changes
+    // is enough to keep the start index fresh without per-move React churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [clearPending, enabled],
   );
 
-  return { dragging: draggingId !== null, draggingId, overIndex, registerRow, handleProps };
+  const renderItems = useMemo<CustomOrderRenderItem[]>(() => {
+    if (!draggingId || overIndex === null) {
+      return notes.map((note, originalIndex) => ({ kind: 'note', note, originalIndex }));
+    }
+    const from = idToIndex.get(draggingId);
+    if (from === undefined) return notes.map((note, originalIndex) => ({ kind: 'note', note, originalIndex }));
+    const without: CustomOrderRenderItem[] = notes
+      .map((note, originalIndex) => ({ kind: 'note' as const, note, originalIndex }))
+      .filter((item) => item.note.id !== draggingId);
+    const insertAt = Math.max(0, Math.min(without.length, overIndex > from ? overIndex - 1 : overIndex));
+    without.splice(insertAt, 0, {
+      kind: 'placeholder',
+      key: `custom-order-placeholder-${draggingId}`,
+      height: placeholder.height,
+      rowSpan: placeholder.rowSpan,
+    });
+    return without;
+  }, [draggingId, idToIndex, notes, overIndex, placeholder.height, placeholder.rowSpan]);
+
+  return { dragging: draggingId !== null, draggingId, overIndex, renderItems, overlay, registerRow, bodyProps };
 }

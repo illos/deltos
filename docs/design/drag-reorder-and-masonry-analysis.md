@@ -1,5 +1,98 @@
 # Drag-to-reorder rebuild + Keep-Board masonry — perf & feasibility analysis
 
+> **2026-07-09 update / supersession:** the earlier pure-CSS masonry paths in this
+> doc are no longer acceptable for deltos. `grid-lanes` is not cross-browser enough for
+> Jim's Chrome/Firefox/Android use, and round-robin flex columns preserve visual order
+> only by scrambling DOM traversal order. Jim explicitly rejected that as sloppy design.
+> The current leading path is therefore **single-DOM measured CSS Grid row spans**:
+> keep one DOM-ordered grid, measure each true-height card, set a tiny row-span CSS
+> variable, and let browser Grid place cards in source order. This avoids separate
+> column containers, avoids absolute-positioning every card, avoids flagged CSS, and
+> keeps DOM order + visual order aligned.
+
+## 0. Current decision — DOM-correct measured CSS Grid masonry
+
+### Requirements now locked
+
+- One source-ordered `<ul>` / card list. DOM order must exactly match the canonical
+  `sortNotes(...)` order: pins first, then the active notebook sort/custom order.
+- Cross-browser: Safari, Firefox, Chrome, Android. No reliance on flagged CSS.
+- Cards use their **true content height**. No equal-height rows; no card text cap solely
+  to make the grid tidy.
+- Columns do not need perfectly equal bottoms. The goal is "masonry-like", not a
+  Pinterest-perfect packing demo.
+- Ordering may be implemented through style/JS, but not by changing DOM structure into
+  separate columns.
+- Drag preview must open a visible gap/drop zone where the card will land before release.
+
+### Recommended layout engine
+
+Use a board-only hook, roughly `useMeasuredGridSpans`, that lets CSS Grid own placement:
+
+1. Render notes in canonical DOM order inside one `.board` container.
+2. Keep a normal cross-browser CSS Grid. Do **not** use `grid-auto-flow: dense`, because
+   dense packing may visually move later notes into earlier holes.
+
+   ```css
+   .board {
+     display: grid;
+     grid-template-columns: repeat(var(--board-columns), minmax(0, 1fr));
+     grid-auto-rows: 8px;
+     grid-auto-flow: row;
+     gap: 12px;
+   }
+   .board__cell {
+     grid-row-end: span var(--board-row-span);
+   }
+   ```
+
+3. Determine column count from container width using the current intent: 2 columns on
+   mobile, roughly 4 on laptop, capped around 5 on wide desktop.
+4. Measure card heights with `ResizeObserver`. For each cell:
+
+   ```ts
+   span = Math.ceil((height + gap) / (rowUnit + gap))
+   cell.style.setProperty('--board-row-span', String(span))
+   ```
+
+   Batch observer callbacks into one `requestAnimationFrame`.
+5. Recompute spans only on:
+   initial mount, card content/height changes, note order changes, column-count changes,
+   and font/content changes. Do **not** measure on every pointer move.
+
+This is not mathematically shortest-column masonry. It is the more important shape for
+deltos: true-height, masonry-like cards in correct source/visual order, with the browser
+doing layout and JS only supplying row spans.
+
+### Performance notes
+
+This avoids the expensive version of JS masonry:
+
+- No layout library, no virtualization, no per-frame packing.
+- `ResizeObserver` batches height changes.
+- Span measurement is O(n) over visible board cards and is tiny at Jim's scale.
+- During pointer drag, update only pointer transform for the lifted card and throttle
+  hit-testing/reprojection to `requestAnimationFrame`.
+- Board is already lazy/off-track, so none of this affects first-load.
+
+### Drag composition
+
+The same grid should support drag by inserting a **real placeholder/gap cell** at the
+current target index:
+
+- On long-press, freeze the dragged card's measured height and render it as the lifted
+  layer following the pointer.
+- Remove that note from the grid flow.
+- Insert a placeholder `<li>` with the same measured row span at the computed target
+  index. The placeholder is the live drop zone.
+- Let CSS Grid reflow around the placeholder. FLIP non-dragged cards from old rects to
+  new rects using transform-only animation.
+- On drop, persist with the existing `reorderCustom(...)` fractional-order write, then
+  remove the placeholder and let the final projection settle.
+
+This is simpler and cheaper than owning every card's absolute position. CSS Grid owns
+resting layout; FLIP owns transient motion; the DOM/data order remains the source of truth.
+
 **Status:** analysis / decision doc (no code). **Author:** research crew, 2026-07-08.
 **Scope:** how to rebuild drag-to-reorder for the fluid "lift + others reflow around it"
 feel (list **and** Board), triggered by **long-press on the note body** (not a grip

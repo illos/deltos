@@ -191,9 +191,8 @@ export function HomeView({ notebookId }: CollectionViewProps) {
   // null = All Notes = show every non-trashed note; a real id = filter to that notebook's notes.
   const filtered = notebookId === null ? allNotes : allNotes.filter((n) => n.notebookId === notebookId);
   const notes = useMemo(() => sortNotes(filtered, activeSort), [filtered, activeSort]);
-  // Custom-order drag-reorder (§5.4) — armed ONLY in 'custom' sort. The grip handle (rendered per row below in
-  // custom mode) is the ONLY drag origin, so it never fights SwipeRow's horizontal gesture (which stays on the
-  // row body). Persists a single fractional-key write via reorderCustom.
+  // Custom-order drag-reorder (§5.4) — armed ONLY in 'custom' sort. Long-press on the row body starts reorder;
+  // moving horizontally first is left to SwipeRow's existing pointer gesture.
   const customDrag = useCustomOrderDrag(notes, activeSort === 'custom');
   const listName = notebookId === null ? 'All Notes' : (notebook?.name ?? '…');
   // #75: in the All-Notes aggregate, each categorized row shows its notebook-name pill. id→name map for the
@@ -383,8 +382,20 @@ export function HomeView({ notebookId }: CollectionViewProps) {
       ) : notes.length === 0 ? (
         <p className="home__lede">No notes yet.</p>
       ) : (
+        <>
         <ul className={`home__notes${customDrag.dragging ? ' home__notes--reordering' : ''}`}>
-          {notes.map((note, index) => {
+          {customDrag.renderItems.map((item) => {
+            if (item.kind === 'placeholder') {
+              return (
+                <li
+                  key={item.key}
+                  className="home__note-li--placeholder"
+                  style={{ height: item.height }}
+                  aria-hidden="true"
+                />
+              );
+            }
+            const { note, originalIndex: index } = item;
             const { displayTitle, previewLine } = notePreview(note);
             const smartDate = formatSmartDate(note.updatedAt);
             const selected = note.id === openNoteId;
@@ -398,14 +409,8 @@ export function HomeView({ notebookId }: CollectionViewProps) {
             return (
               <li
                 key={note.id}
-                ref={(el) => customDrag.registerRow(index, el)}
-                className={`${customDrag.draggingId === note.id ? 'home__note-li--dragging ' : ''}${customMode && customDrag.overIndex === index ? 'home__note-li--drop-target' : ''}`.trim() || undefined}
+                ref={(el) => customDrag.registerRow(note.id, el)}
               >
-                {customMode && (
-                  // §5.4 drag grip — the ONLY reorder origin (disambiguates from SwipeRow's horizontal swipe).
-                  // Rendered only in custom sort. Pointer-drag → reorderCustom (one fractional-key write).
-                  <span className="home__note-grip" {...customDrag.handleProps(index, note)} title="Drag to reorder">⠿</span>
-                )}
                 <SwipeRow
                   isOpen={openId === note.id}
                   onOpen={() => setOpenId(note.id)}
@@ -420,9 +425,10 @@ export function HomeView({ notebookId }: CollectionViewProps) {
                     to={`/note/${note.id}`}
                     className={`home__note-link${selected ? ' home__note-link--selected' : ''}${isFile ? ' home__note-link--file' : ''}`}
                     aria-current={selected ? 'page' : undefined}
-                    draggable={noteDnd ? true : undefined}
+                    draggable={customMode ? false : noteDnd ? true : undefined}
                     onDragStart={noteDnd ? (e) => noteDnd.startNoteDrag(e, note) : undefined}
                     onDragEnd={noteDnd ? () => noteDnd.endNoteDrag() : undefined}
+                    {...(customMode ? customDrag.bodyProps(index, note) : {})}
                   >
                     {isFile ? (
                       // file-notes §3.1: a file note renders as an artifact pill (leading visual + filename +
@@ -450,6 +456,39 @@ export function HomeView({ notebookId }: CollectionViewProps) {
             );
           })}
         </ul>
+        {customDrag.overlay && (() => {
+          const note = customDrag.overlay.note;
+          const { displayTitle, previewLine } = notePreview(note);
+          const smartDate = formatSmartDate(note.updatedAt);
+          const isFile = isFileNote(note);
+          const nbName = notebookId === null && note.notebookId !== null
+            ? notebookNameById.get(note.notebookId)
+            : undefined;
+          return (
+            <div className="home__note-drag-overlay" style={customDrag.overlay.style} aria-hidden="true">
+              <div className={`home__note-link${isFile ? ' home__note-link--file' : ''}`}>
+                {isFile ? (
+                  <FileNotePill note={note} />
+                ) : (
+                  <>
+                    <span className="home__note-title">
+                      {isPinned(note.properties) && (
+                        <Pin size={13} className="home__note-pin" title="Pinned" />
+                      )}
+                      {displayTitle}
+                    </span>
+                    <span className="home__note-meta">
+                      <span className="home__note-date">{smartDate}</span>
+                      {previewLine && <span className="home__note-preview">{previewLine}</span>}
+                      {nbName && <span className="home__note-nb-pill">{nbName}</span>}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+        </>
       )}
       {/* #78 swipe-to-move → notebook-picker bottom sheet (mobile). */}
       {movingNote && (
