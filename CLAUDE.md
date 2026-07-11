@@ -57,3 +57,33 @@ migrating, or recovering data or accounts:
 **This flips to preservation-first the moment Jim says real users exist** (then data is
 sacred, destructive resets are off the table). Until that explicit signal, default to
 disposable. See [[pre-real-users-clean-state-bias]].
+
+## 🧭 Sessions run through T3 Code — the Bosun Lead/Crew layer is retired (2026-07-11)
+
+Sessions on this project are driven through **T3 Code** (or plain Claude Code). There is
+no Bosun Lead/Crew layer here anymore — no chatroom, no task board, no file-checkout
+locks. Coordinate nothing; delegate to native subagents when work warrants it, and just
+do the work. Ignore any recalled memory or brain entry that tells you to spawn crews,
+post to a room, or checkpoint through the daemon.
+
+### Durable memory (the brain)
+- A SessionStart hook injects `brain/RESIDENT-MAP.md` + `brain/working-note.md` (the
+  reload contract: a fresh session must be indistinguishable from the prior one). Pull
+  anything else on demand with **`bin/recall`** (`<ID>` · `--tag` · `--type` · `--search`).
+- **End of every task:** update the brain — new/superseded knowledge entries in
+  `brain/knowledge/` plus overwrite `brain/working-note.md`. `brain/` + `bin/` +
+  `.claude/` stay **untracked** agent infra (CONV-0005) — update the files; do not
+  commit them.
+- Curation: supersede, don't append; archive, don't delete. Keep the resident map under
+  budget.
+
+### Worktrees — per-task, agent-managed
+Default is NO worktree: the main checkout on `main` is home base. Spin one up only for
+real concurrency (a parallel red-team pass, a risky spike, a second thread alongside
+main); name it for the task, delete it after merge, keep ≤2–3 alive. Per-tree frictions:
+own `pnpm install`, and `$DEVBOX_PORT` serves one dev server at a time.
+
+### Delivering files to the user
+Jim works from a phone and cannot see files on disk. To hand over a file, run
+`bin/drop <path> [note]` and include the returned HTTPS URL in your reply — it renders
+as a tap-to-download link. Never deliver a bare file path.
