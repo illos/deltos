@@ -193,33 +193,17 @@ describe('agent bulk-write approval (backend + shared)', () => {
     expect(await effectiveWriteCap(store, accountId, other.tokenGroupId, today)).toBe(100);
   });
 
-  it('end-to-end: a write blocked at cap succeeds after Approve, still count-boxed to the lift', async () => {
+  it('NO CEILING (Jim, 2026-07-27): writes go through unmetered even seeded past the old cap — approval is not needed', async () => {
     const { token, accountId } = await mintAgentToken(env, ownerA, passA, raw, WRITE_ALL);
     const today = dayBucket(Date.now());
-    // Seed the write counter at the base cap (100 already spent today).
+    // Seed the write counter far past the old base cap; enforcement was removed, so it must be ignored.
     raw.prepare('INSERT INTO usageCounter (accountId, metric, dayBucket, count, updatedAt) VALUES (?,?,?,?,?)')
-      .run(accountId, 'mcpWrite', today, 100, new Date().toISOString());
+      .run(accountId, 'mcpWrite', today, 999999, new Date().toISOString());
 
-    // Blocked (message now points the agent at request_write_approval).
-    const blocked = await call(env, token, 'create_note', { title: 'over cap' });
-    expect(blocked.isError).toBe(true);
-    expect(blocked.content[0].text).toMatch(/request_write_approval/);
-
-    // Ask → Approve for 2 extra.
-    const req = await call(env, token, 'request_write_approval', { count: 2, reason: 'two more' });
-    await app.request(`/api/alerts/${req.structuredContent.approvalId}/action`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', Authorization: `Bearer ${ownerA}` },
-      body: JSON.stringify({ actionId: 'approve' }),
-    }, env);
-
-    // Two writes now go through (cap raised to 102, counter at 100 → 101, 102).
+    // No block — the write applies straight away, no approval round-trip.
     expect((await call(env, token, 'create_note', { title: 'one' })).structuredContent.status).toBe('applied');
     expect((await call(env, token, 'create_note', { title: 'two' })).structuredContent.status).toBe('applied');
-    // The third is COUNT-boxed out (102 reached) — the lift is a ceiling raise, not a bypass.
-    const third = await call(env, token, 'create_note', { title: 'three' });
-    expect(third.isError).toBe(true);
-    expect(third.content[0].text).toMatch(/daily write limit/i);
+    expect((await call(env, token, 'create_note', { title: 'three' })).structuredContent.status).toBe('applied');
   });
 
   // --- REST Approve/Deny: audit + BOLA --------------------------------------------------------------

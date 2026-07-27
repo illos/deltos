@@ -7,10 +7,6 @@ import { audit, credentialRefOf } from '../audit.js';
 import { callerAccountId } from '../db/accountScope.js';
 import { d1Adapter } from '../db/schema.js';
 import { createAuthStore } from '../db/authStore.js';
-import { fixedWindowAllow } from '../rateLimit.js';
-import { MCP_RATE_LIMIT } from '../authPolicy.js';
-import { dayBucket, DAILY_QUOTA } from '../abusePolicy.js';
-import { effectiveWriteCap } from '../usage.js';
 import {
   JSONRPC_VERSION,
   RPC,
@@ -106,32 +102,13 @@ mcp.post('/', async (c) => {
   // Per-TOKEN key: the shared tokenGroupId is stable across per-resource revocation (revoking one notebook
   // from a set doesn't reset the token's window); legacy single-row grants fall back to the row grantId.
   const rateKey = primaryGrant.tokenGroupId ?? primaryGrant.grantId;
-  const allowed = await fixedWindowAllow(
-    store,
-    `mcp:${rateKey}`,
-    MCP_RATE_LIMIT.limit,
-    MCP_RATE_LIMIT.windowMs,
-    Date.now(),
-  );
-  if (!allowed) {
-    return c.json(rpcError(id, RPC.RATE_LIMITED, 'rate limit exceeded — slow down and retry shortly'), 429);
-  }
 
-  // 3. D DAILY QUOTA (ROAD-0005 P4, Tier-2): durable per-ACCOUNT, per-UTC-day denial-of-wallet ceiling on
-  //    top of the per-TOKEN window above. principal.id is the SERVER-derived owning account — for an agent
-  //    token this is the owner's accountId, so the cap bounds total daily spend ACROSS all of the account's
-  //    tokens (a fresh token can't reset the budget). Fail-CLOSED. Over-cap → JSON-RPC error + 429 until the
-  //    day rolls. Reuses the store already built for the per-token check.
-  const quota = await store.chargeUsage(
-    principal.id,
-    'mcp',
-    dayBucket(Date.now()),
-    DAILY_QUOTA.mcp,
-    new Date().toISOString(),
-  );
-  if (!quota.allowed) {
-    return c.json(rpcError(id, RPC.RATE_LIMITED, 'daily request quota reached — retry after UTC midnight'), 429);
-  }
+  // RATE LIMITS + DAILY QUOTA DISABLED (Jim, 2026-07-27): an authenticated agent token has full,
+  // unmetered access to all tools — no per-token burst window, no per-account/UTC-day request quota,
+  // no write cap. Jim kept hitting the ceilings during dogfood and wants none while the agent is
+  // authorized. The transport bearer gate (401 above) and per-tool scope/authorization checks are the
+  // only controls. To restore, re-add fixedWindowAllow(MCP_RATE_LIMIT) + chargeUsage(DAILY_QUOTA.mcp)
+  // here (see git history / ROAD-0005 P4).
 
   // 4. Notifications (e.g. notifications/initialized) get a bare 202 ack — never a JSON-RPC response.
   if (isNotification) {
@@ -233,31 +210,10 @@ async function handleToolsCall(
   const accountId = callerAccountId(principal);
   const now = new Date().toISOString();
 
-  // WRITE cap (write-tools.md §7): a LOW, durable, per-account/UTC-day ceiling on WRITE tool calls,
-  // charged fail-CLOSED after authorization but BEFORE the mutation — so an injection-driven write flood
-  // is bounded to a handful of individually-recoverable writes, well under the 50k read ceiling. Reads
-  // don't touch it. Over-cap → a handled tool error (the model sees it), not a protocol error.
-  if (WRITE_OPS.has(tool.op)) {
-    // EFFECTIVE cap (alert-banner-system.md §6.5): the base 100 PLUS any ACTIVE human-approved extra for THIS
-    // token on THIS UTC day (0 → exactly 100, the unchanged default). Every write still charges the atomic
-    // usageCounter against this ceiling, so a granted lift is count-boxed (no bypass), time-boxed (auto-reverts
-    // tomorrow), and token-boxed. The chokepoint code is otherwise unchanged.
-    const day = dayBucket(Date.now());
-    const effCap = await effectiveWriteCap(store, accountId, tokenGroupId, day);
-    const cap = await store.chargeUsage(accountId, 'mcpWrite', day, effCap, now);
-    if (!cap.allowed) {
-      return c.json(
-        rpcSuccess(
-          id,
-          toolError(
-            'daily write limit reached for this account — ask the user to approve more writes with ' +
-              'request_write_approval, or try again after UTC midnight',
-          ),
-        ),
-        200,
-      );
-    }
-  }
+  // WRITE cap DISABLED (Jim, 2026-07-27): the per-account/UTC-day mcpWrite ceiling was removed at Jim's
+  // request — he kept hitting it during dogfood. WRITE tools now go straight through (still gated by
+  // authorization + scope above). The read ceiling is untouched. To restore, re-charge effectiveWriteCap
+  // against 'mcpWrite' here for WRITE_OPS (see git history / write-tools.md §7).
 
   // `authorize` lets collection tools filter each item through the SAME extended evaluator (per-notebook
   // coverage), so a notebook-scoped token's list_notebooks returns ONLY its granted notebooks.

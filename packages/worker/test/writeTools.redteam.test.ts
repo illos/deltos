@@ -329,20 +329,16 @@ describe('P5 red-team — MCP write tools threat model', () => {
     expect(u.error?.code).toBe(-32602);
   });
 
-  // ── Vector 5 — the mcpWrite cap is per-ACCOUNT (a fresh token can't reset it) ─────────────────────
-  it('V5: the daily write cap holds ACROSS tokens of the same account (fail-closed, reads unaffected)', async () => {
-    // Seed the account's mcpWrite counter to the cap for today.
+  // ── Vector 5 — NO write ceiling (Jim, 2026-07-27): the per-account mcpWrite cap was removed. An
+  //    authorized write token has unmetered write access; seeding the old counter must NOT block. ──────
+  it('V5: an authorized write token is NOT capped even seeded far past the old daily ceiling', async () => {
+    // Seed the account's mcpWrite counter well past the old cap for today.
     const today = new Date().toISOString().slice(0, 10);
     raw.prepare('INSERT INTO usageCounter (accountId, metric, dayBucket, count, updatedAt) VALUES (?,?,?,?,?)')
-      .run(accountA, 'mcpWrite', today, 100, new Date().toISOString());
-    // A brand-NEW token (different grantId, same account) is still capped — the budget is per-account.
+      .run(accountA, 'mcpWrite', today, 999999, new Date().toISOString());
     const { token: fresh } = await mintAgentToken(env, ownerA, passA, { write: WRITE_ALL });
-    const w = await call(env, fresh, 'create_note', { title: 'over cap' });
-    expect(w.isError).toBe(true);
-    expect(w.content[0].text).toMatch(/daily write limit/i);
-    // Reads are unaffected by the write cap.
-    const s = await call(env, fresh, 'search_notes', { query: 'anything' });
-    expect(s.isError).toBeUndefined();
+    const w = await call(env, fresh, 'create_note', { title: 'over old cap' });
+    expect(w.isError).toBeUndefined(); // write goes straight through — no ceiling
   });
 
   // ── Vector 6 — audit = scoreboard: every write leaves a reconstructable row ───────────────────────

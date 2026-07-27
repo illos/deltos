@@ -362,18 +362,17 @@ describe('MCP write tools (POST /api/mcp tools/call)', () => {
 
   // --- write cap (denial-of-wallet / injection blast-radius) ----------------------------------------
 
-  it('the daily WRITE cap trips fail-closed (read tools remain unaffected)', async () => {
+  it('NO WRITE CEILING (Jim, 2026-07-27): writes apply even seeded past the old daily cap', async () => {
     const { token, grantId } = await mintAgentToken(env, ownerA, passA, WRITE_ALL);
-    // Resolve the acting account, then seed the mcpWrite counter to the cap for today.
+    // Resolve the acting account, then seed the mcpWrite counter far past the old cap for today.
     const acct = raw.prepare('SELECT principalId FROM grants WHERE grantId = ?').get(grantId) as { principalId: string };
     const today = new Date().toISOString().slice(0, 10);
     raw.prepare('INSERT INTO usageCounter (accountId, metric, dayBucket, count, updatedAt) VALUES (?,?,?,?,?)')
-      .run(acct.principalId, 'mcpWrite', today, 100, new Date().toISOString());
+      .run(acct.principalId, 'mcpWrite', today, 999999, new Date().toISOString());
 
-    const w = await call(env, token, 'create_note', { title: 'over cap' });
-    expect(w.isError).toBe(true);
-    expect(w.content[0].text).toMatch(/daily write limit/i);
-    // Reads still work — the cap is write-only.
+    const w = await call(env, token, 'create_note', { title: 'over old cap' });
+    expect(w.isError).toBeUndefined(); // no ceiling — the write applies
+    // Reads still work too.
     const s = await call(env, token, 'search_notes', { query: 'anything' });
     expect(s.isError).toBeUndefined();
   });

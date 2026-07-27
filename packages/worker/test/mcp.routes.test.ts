@@ -302,52 +302,38 @@ describe('MCP server — protocol / auth / tools (POST /api/mcp)', () => {
     expect(JSON.stringify(s.result)).not.toContain('xylophone'); // no leak of A's content
   });
 
-  // --- C RATE-LIMIT (ROAD-0005 P0): per-token request ceiling -----------------------------------
+  // --- NO CEILINGS (Jim, 2026-07-27): an authenticated agent has full, unmetered access. The per-token
+  //     burst window AND the per-account daily request quota were removed from the MCP path. These tests
+  //     lock in the no-limit contract: seeding the old ceilings does NOT block. -----------------------
 
-  it('RATE-LIMIT: a token over its per-token request ceiling is 429 (JSON-RPC rate_limited)', async () => {
+  it('NO CEILING: a token with a seeded throttle window still succeeds (per-token window removed)', async () => {
     const { token: agentTok, tokenId } = await mintAgentToken(env, ownerA, 'mcp-owner-password');
-    // Seed the per-token fixed window AT the limit (window-end in the future) so the next request trips it.
+    // Seed a would-be-tripping per-token window; it must be ignored now.
     const store = createAuthStore(d1Adapter(env.DB));
     await store.recordThrottleFailure(`mcp:${tokenId}`, 600, Date.now() + 60_000, new Date().toISOString());
 
     const res = await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, agentTok);
-    expect(res.status).toBe(429);
-    const body = (await res.json()) as { error?: { code?: number } };
-    expect(body.error?.code).toBe(-32029); // RPC.RATE_LIMITED
+    expect(res.status).toBe(200);
   });
 
-  it('RATE-LIMIT also meters NOTIFICATIONS — no unmetered 202 work path', async () => {
-    const { token: agentTok, tokenId } = await mintAgentToken(env, ownerA, 'mcp-owner-password');
-    const store = createAuthStore(d1Adapter(env.DB));
-    await store.recordThrottleFailure(`mcp:${tokenId}`, 600, Date.now() + 60_000, new Date().toISOString());
-    // A notification (no id) is now gated by the window too — it must NOT slip through as a 202.
-    const res = await rpc(env, { jsonrpc: '2.0', method: 'notifications/initialized' }, agentTok);
-    expect(res.status).toBe(429);
-  });
-
-  // --- D DAILY QUOTA (ROAD-0005 P4, Tier-2): per-ACCOUNT denial-of-wallet ceiling ----------------
-
-  it('DAILY QUOTA: an account over its daily MCP ceiling is 429 (JSON-RPC rate_limited) across all its tokens', async () => {
+  it('NO CEILING: an account seeded far over the old daily MCP ceiling still succeeds', async () => {
     const today = new Date().toISOString().slice(0, 10);
-    // Pre-seed the per-ACCOUNT mcp counter AT the cap (50000/day, DAILY_QUOTA.mcp). The cap is keyed on the
-    // OWNING account (principal.id = accountA), so any of the account's tokens is over budget.
+    // Seed the per-account mcp counter well past the old 50000 cap — must be ignored now.
     raw.prepare(
-      `INSERT INTO usageCounter (accountId, metric, dayBucket, count, updatedAt) VALUES (?, 'mcp', ?, 50000, ?)`,
+      `INSERT INTO usageCounter (accountId, metric, dayBucket, count, updatedAt) VALUES (?, 'mcp', ?, 999999, ?)`,
     ).run(accountA, today, new Date().toISOString());
 
     const res = await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_notebooks', arguments: {} } }, agentA);
-    expect(res.status).toBe(429);
-    const body = (await res.json()) as { error?: { code?: number } };
-    expect(body.error?.code).toBe(-32029); // RPC.RATE_LIMITED
+    expect(res.status).toBe(200);
   });
 
-  it('DAILY QUOTA: a call under the daily ceiling succeeds and increments the per-account mcp counter', async () => {
+  it('NO CEILING: a successful MCP call no longer charges the per-account mcp counter', async () => {
     const today = new Date().toISOString().slice(0, 10);
     const res = await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, agentA);
     expect(res.status).toBe(200);
     const row = raw
       .prepare('SELECT count FROM usageCounter WHERE accountId=? AND metric=? AND dayBucket=?')
       .get(accountA, 'mcp', today) as { count: number } | undefined;
-    expect(row?.count).toBe(1);
+    expect(row).toBeUndefined(); // no metering row created
   });
 });
