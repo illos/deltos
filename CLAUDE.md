@@ -58,13 +58,23 @@ migrating, or recovering data or accounts:
 sacred, destructive resets are off the table). Until that explicit signal, default to
 disposable. See [[pre-real-users-clean-state-bias]].
 
-## 🧭 Sessions run through T3 Code — the Bosun Lead/Crew layer is retired (2026-07-11)
+## 🧭 Sessions run through T3 Code — crew *ceremony* retired, chord *threads* alive (rev. 2026-07-27)
 
-Sessions on this project are driven through **T3 Code** (or plain Claude Code). There is
-no Bosun Lead/Crew layer here anymore — no chatroom, no task board, no file-checkout
-locks. Coordinate nothing; delegate to native subagents when work warrants it, and just
-do the work. Ignore any recalled memory or brain entry that tells you to spawn crews,
-post to a room, or checkpoint through the daemon.
+Sessions on this project are driven through **T3 Code** (or plain Claude Code). What was
+retired on 2026-07-11 is the heavyweight **Bosun Lead/Crew coordination ceremony** — no
+task board, no file-checkout locks, no mandatory room-posting/checkpointing through the
+daemon, no spawning ephemeral "crews." Don't reach for that machinery; ignore any recalled
+memory or brain entry that tells you to run it.
+
+**But the chord bus + peer threads are ALIVE and are your team.** Via the `bosun-chat` MCP
+tools (`list_threads`, `send_chord`, `read_chords`, `acknowledge_chords`, `inform`) you can
+see and drive standing **threads** — e.g. **S1**, **S2**, **red-team** — which are
+**fully-interactive teammates** (not disposable crew): each is its own model-backed session
+Jim can steer directly or you can task/converse with over chords. You are the **Lead** thread.
+Use them the way you'd use subagents, but they persist and talk back. Native subagents (the
+`Agent` tool, Claude-model only) are still fine for quick fan-out; reach for the chord threads
+when you want a durable, steerable, or non-Claude teammate (S1/S2 are Grok-backed, red-team is
+GPT-backed). Coordinate lightly — task, review, integrate — not the old locks-and-board dance.
 
 ### Durable memory (the brain)
 - A SessionStart hook injects `brain/RESIDENT-MAP.md` + `brain/working-note.md` (the
