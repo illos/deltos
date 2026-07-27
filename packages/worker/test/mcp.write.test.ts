@@ -125,12 +125,12 @@ describe('MCP write tools (POST /api/mcp tools/call)', () => {
     const rwList = await (await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, rw)).json() as JsonRpcResult;
     // Read-only = the note/notebook readers PLUS the read-scoped import-map discovery tools (writing still gated).
     expect(roList.result.tools.map((t: any) => t.name).sort())
-      .toEqual(['check_write_approval', 'get_import_guide', 'get_note', 'list_import_sources', 'list_notebooks', 'request_write_approval', 'search_notes']);
+      .toEqual(['check_write_approval', 'fetch', 'get_import_guide', 'get_note', 'list_import_sources', 'list_notebooks', 'request_write_approval', 'search', 'search_notes']);
     // A write token sees everything the read token sees PLUS every write tool (incl. the two plugin-declared file
     // tools create_file_note/embed_file via the seam). The two write-approval tools are READ-scope, so they show
     // on BOTH lists.
     expect(rwList.result.tools.map((t: any) => t.name).sort())
-      .toEqual(['append_block', 'check_write_approval', 'create_file_note', 'create_note', 'create_notebook', 'embed_file', 'get_import_guide', 'get_note', 'list_import_sources', 'list_notebooks', 'request_write_approval', 'search_notes', 'set_property', 'trash_note', 'update_note']);
+      .toEqual(['append_block', 'check_write_approval', 'create_file_note', 'create_note', 'create_notebook', 'embed_file', 'fetch', 'get_import_guide', 'get_note', 'list_import_sources', 'list_notebooks', 'request_write_approval', 'search', 'search_notes', 'set_property', 'trash_note', 'update_note']);
   });
 
   it('initialize instructions are scope-aware (read-only vs write)', async () => {

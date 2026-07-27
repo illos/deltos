@@ -12,6 +12,7 @@ import {
   buildAttachmentContent,
   buildAttachmentBlock,
   markdownToBody,
+  spineToMarkdown,
   stripTitleMarkdown,
   findAgentToolDef,
   agentToolInstructions,
@@ -77,6 +78,11 @@ export interface McpToolContext {
   tokenGroupId: string;
   /** The request-context store (auth/usage/approval methods) — the approval tools own their own D1 table. */
   store: AuthStore;
+  /**
+   * Request origin used to build citation URLs for ChatGPT-connector tools (`search`/`fetch`).
+   * Same value the MCP route uses for the `WWW-Authenticate` `resource_metadata` URL — never hardcoded.
+   */
+  appOrigin: string;
 }
 
 /** The `op` each WRITE tool checks at the `can()` chokepoint — used to scope the daily write cap + list. */
@@ -94,6 +100,11 @@ export interface McpTool<A> {
   description: string;
   /** JSON Schema advertised in `tools/list` (hand-authored to mirror `argsSchema`). */
   inputSchema: Record<string, unknown>;
+  /**
+   * Optional JSON Schema for the structured tool result (`tools/list`). Emit only when present so existing
+   * tools stay unchanged; ChatGPT-connector tools declare it so clients can validate result shape.
+   */
+  outputSchema?: Record<string, unknown>;
   /** Zod validation of the call `arguments` at the boundary (schema-first). */
   argsSchema: z.ZodType<A>;
   /** The scope op checked at the `can()` chokepoint. */
@@ -115,6 +126,7 @@ function defineTool<S extends z.ZodTypeAny>(tool: {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
   argsSchema: S;
   op: Op;
   resource: (args: z.infer<S>) => Resource;
@@ -122,6 +134,11 @@ function defineTool<S extends z.ZodTypeAny>(tool: {
   execute: (args: z.infer<S>, ctx: McpToolContext) => Promise<McpToolResult>;
 }): McpTool<unknown> {
   return tool as unknown as McpTool<unknown>;
+}
+
+/** Citation URL for a note — origin is request-derived (never a hardcoded host). */
+function noteUrl(appOrigin: string, id: string): string {
+  return `${appOrigin}/note/${id}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -320,6 +337,105 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
       const row = await getNoteForAccount(db, accountId, a.id);
       if (!row) return toolError(`note not found: ${a.id}`);
       return toolOk(noteRowToResponse(row));
+    },
+  }),
+
+  // --- ChatGPT connector aliases (chatgpt-mcp-connector-spec.md) — same data-layer readers as
+  // search_notes / get_note, fixed names + shapes required by OpenAI standard connectors / Deep Research.
+  // Purely additive; existing tools are unchanged.
+  defineTool({
+    name: 'search',
+    description:
+      "Search the user's deltos notes by free text; returns a list of matching notes as `{id, title, url}`. " +
+      'Use `fetch` with an id to read full content.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search keywords (full-text matched against note titles and bodies).' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        results: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              title: { type: 'string' },
+              url: { type: 'string' },
+            },
+            required: ['id', 'title', 'url'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['results'],
+      additionalProperties: false,
+    },
+    // Cap query length at the boundary (red-team LOW): reject absurd inputs before FTS token expansion.
+    argsSchema: z.object({ query: z.string().min(1).max(1000) }).strict(),
+    op: 'search',
+    resource: (): Resource => ({ kind: 'workspace' }),
+    execute: async (a, { db, accountId, appOrigin }) => {
+      const rows = await searchNotes(db, undefined, accountId, a.query);
+      return toolOk({
+        results: rows.map((row) => ({
+          id: row.id,
+          title: row.title,
+          url: noteUrl(appOrigin, row.id),
+        })),
+      });
+    },
+  }),
+
+  defineTool({
+    name: 'fetch',
+    description:
+      'Read one deltos note in full by its id (from `search`). Returns `{id, title, text, url, metadata}` ' +
+      'where `text` is the note body as markdown.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The note id (from search).' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        title: { type: 'string' },
+        text: { type: 'string' },
+        url: { type: 'string' },
+        metadata: { type: 'object', additionalProperties: true },
+      },
+      required: ['id', 'title', 'text', 'url', 'metadata'],
+      additionalProperties: false,
+    },
+    argsSchema: z.object({ id: NoteIdSchema }).strict(),
+    // Mirror get_note EXACTLY so ownership / notebook-scope gating is inherited at the can() chokepoint.
+    op: 'read',
+    resource: (a): Resource => ({ kind: 'note', id: a.id }),
+    execute: async (a, { db, accountId, appOrigin }) => {
+      const row = await getNoteForAccount(db, accountId, a.id);
+      if (!row) return toolError('note not found');
+      const note = noteRowToResponse(row);
+      const text = spineToMarkdown(note.body, { title: note.title });
+      const metadata: Record<string, unknown> = {
+        notebookId: note.notebookId ?? null,
+        updatedAt: note.updatedAt,
+      };
+      if (isTrashed(note.properties)) metadata.trashed = true;
+      return toolOk({
+        id: note.id,
+        title: note.title,
+        text,
+        url: noteUrl(appOrigin, note.id),
+        metadata,
+      });
     },
   }),
 
@@ -846,13 +962,21 @@ export function findTool(name: unknown): McpTool<unknown> | undefined {
  */
 export function toolListPayload(
   scopes: readonly Op[],
-): { tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> } {
+): {
+  tools: Array<{
+    name: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
+  }>;
+} {
   const allowed = new Set(scopes);
   return {
     tools: MCP_TOOLS.filter((t) => allowed.has(t.op)).map((t) => ({
       name: t.name,
       description: t.description,
       inputSchema: t.inputSchema,
+      ...(t.outputSchema ? { outputSchema: t.outputSchema } : {}),
     })),
   };
 }
@@ -890,6 +1014,7 @@ export function mcpInstructions(canWrite: boolean): string {
     'How to read:',
     '- To answer a question about the user\'s notes, start with search_notes using a few specific keywords, ',
     '  then get_note(id) on the best hit(s) to read full content. search_notes returns summaries, not bodies.',
+    '- search and fetch are ChatGPT-connector aliases of that same search_notes → get_note read path.',
     '- To target a collection, call list_notebooks first and pick the notebookId by soft-ranking: best name ',
     '  match to the user\'s intent, then most recent. Pass that notebookId to search_notes to scope it.',
     '- Cite note titles when you summarise. If nothing matches, say so plainly rather than guessing.',

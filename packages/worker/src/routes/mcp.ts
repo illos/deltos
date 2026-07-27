@@ -262,6 +262,19 @@ async function handleToolsCall(
   // `authorize` lets collection tools filter each item through the SAME extended evaluator (per-notebook
   // coverage), so a notebook-scoped token's list_notebooks returns ONLY its granted notebooks.
   const authorize = (resource: Resource): Promise<boolean> => canWith(ctx, principal, 'read', resource);
-  const result = await tool.execute(args, { db, accountId, now, env: c.env, authorize, tokenGroupId, store });
+  // Citation origin for ChatGPT-connector search/fetch. Prefer the CONFIGURED deployment host
+  // (AUTH_AUDIENCE, the canonical hostname) so a spoofed Host header can't poison the citation links
+  // ChatGPT renders as trusted; fall back to the request origin only when unset (dev/test deploys).
+  const appOrigin = c.env.AUTH_AUDIENCE ? `https://${c.env.AUTH_AUDIENCE}` : new URL(c.req.url).origin;
+  const result = await tool.execute(args, {
+    db,
+    accountId,
+    now,
+    env: c.env,
+    authorize,
+    tokenGroupId,
+    store,
+    appOrigin,
+  });
   return c.json(rpcSuccess(id, result), 200);
 }
