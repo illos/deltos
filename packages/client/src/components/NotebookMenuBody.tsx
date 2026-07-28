@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useState } from 'react';
 import type { NotebookId, NoteSort } from '@deltos/shared';
 import { coerceNoteSort } from '../lib/noteSort.js';
 import { mutateNotebooks } from '../db/mutateNotebooks.js';
+import { mutateCollections } from '../db/mutateCollections.js';
 import { notifyQueueWrite } from '../lib/syncEngine.js';
 import { useAuthStore } from '../auth/store.js';
 import { useCurrentNotebook } from '../db/storeHooks.js';
@@ -54,7 +55,7 @@ interface NotebookMenuBodyProps {
   onClose: () => void;
 }
 
-type Expanded = null | 'rename' | 'share' | 'sort' | 'view';
+type Expanded = null | 'rename' | 'share' | 'sort' | 'view' | 'new-collection';
 
 export function NotebookMenuBody({ notebookId, onClose }: NotebookMenuBodyProps) {
   const notebook = useCurrentNotebook();
@@ -63,6 +64,7 @@ export function NotebookMenuBody({ notebookId, onClose }: NotebookMenuBodyProps)
   // Which resident is expanded (in-place accordion; one at a time). Share reuses this as its expand latch.
   const [expanded, setExpanded] = useState<Expanded>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [collectionName, setCollectionName] = useState('');
 
   const activeSort = coerceNoteSort(notebook?.noteSort);
   const activeView = notebook?.defaultCollectionView ?? 'list';
@@ -109,6 +111,20 @@ export function NotebookMenuBody({ notebookId, onClose }: NotebookMenuBodyProps)
     [notebookId],
   );
 
+  const commitNewCollection = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      const trimmed = collectionName.trim();
+      if (!trimmed || notebookId === null) { setExpanded(null); return; }
+      await mutateCollections.create(notebookId, trimmed);
+      notifyQueueWrite(notebookId);
+      setCollectionName('');
+      setExpanded(null);
+      onClose();
+    },
+    [collectionName, notebookId, onClose],
+  );
+
   return (
     <div className="nb-menu" aria-label="Notebook options">
       {/* 1 — RENAME (hidden for All Notes: no real row). */}
@@ -132,6 +148,35 @@ export function NotebookMenuBody({ notebookId, onClose }: NotebookMenuBodyProps)
         ) : (
           <button type="button" className="nb-menu__row" onClick={startRename}>
             <span className="nb-menu__row-label">Rename notebook</span>
+          </button>
+        )
+      )}
+
+      {/* 1b — NEW COLLECTION (hidden for All Notes; collections.md §5.2). */}
+      {!isAllNotes && (
+        expanded === 'new-collection' ? (
+          <form className="nb-menu__rename" onSubmit={(e) => { void commitNewCollection(e); }}>
+            <input
+              className="nb-menu__rename-input"
+              value={collectionName}
+              onChange={(e) => setCollectionName(e.target.value)}
+              placeholder="Collection name"
+              aria-label="Collection name"
+              autoFocus
+              onKeyDown={(e) => { if (e.key === 'Escape') setExpanded(null); }}
+            />
+            <div className="nb-menu__rename-actions">
+              <button type="submit" className="nb-menu__confirm">Create</button>
+              <button type="button" className="nb-menu__cancel" onClick={() => setExpanded(null)}>Cancel</button>
+            </div>
+          </form>
+        ) : (
+          <button
+            type="button"
+            className="nb-menu__row"
+            onClick={() => { setCollectionName(''); setExpanded('new-collection'); }}
+          >
+            <span className="nb-menu__row-label">New collection</span>
           </button>
         )
       )}

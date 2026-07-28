@@ -10,6 +10,7 @@ import type { NotebookRow, NoteRow, DbAdapter } from './schema.js';
 import type { NotebookPushEntry } from '@deltos/shared';
 import { DEFAULT_COLLECTION_VIEW } from '@deltos/shared';
 import { BUMP_SEQ_SQL, READ_SEQ_SQL } from './mutate.js';
+import { tombstoneCollectionsForNotebook } from './collections.js';
 
 export type NotebookOutcome =
   | { outcome: 'accepted'; version: number; syncSeq: number; row: NotebookRow }
@@ -112,8 +113,10 @@ export async function deleteNotebook(
   nowIso: string,
 ): Promise<NotebookOutcome> {
   // Step 1 — CAS-tombstone. No default exists anymore, so there is no isDefault guard: any owned, live
-  // notebook at the expected version is deletable.
-  const tombstone = await db.batch([
+  // notebook at the expected version is deletable. Resumable: if already tombstoned, we still run the
+  // cascades below so a retry after a mid-cascade failure finishes stragglers (never gates cascade on
+  // a freshly-won CAS).
+  await db.batch([
     { sql: BUMP_SEQ_SQL, params: [accountId] },
     {
       sql: `
@@ -125,42 +128,54 @@ export async function deleteNotebook(
     },
   ]);
 
-  if (tombstone[1]!.rowsWritten === 0) {
-    return { outcome: 'conflict', serverRow: await fetchNotebook(db, entry.id, accountId), reason: 'stale' };
+  const parent = await fetchNotebook(db, entry.id, accountId);
+  // Still live → CAS missed on a live row (stale version) → conflict; do NOT cascade.
+  if (!parent || parent.deletedAt === null) {
+    return { outcome: 'conflict', serverRow: parent, reason: 'stale' };
   }
 
   // Step 2 — UNCATEGORIZE the notebook's live notes (notebookId → NULL), account-scoped, each with a
-  // distinct syncSeq so every device pulls the move to All Notes. Covers ALL live notes (trashed or not —
-  // a trashed note also loses its notebook so a later restore lands it in All Notes).
-  const countRow = await db.first<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM notes WHERE accountId = ? AND notebookId = ? AND deletedAt IS NULL`,
-    [accountId, entry.id],
-  );
-  const n = countRow?.n ?? 0;
-  if (n > 0) {
-    await db.batch([
-      // Reserve N seq values up front; the note UPDATE derives each note's syncSeq from the counter.
-      { sql: `UPDATE accountSyncSeq SET seq = seq + ? WHERE accountId = ?`, params: [n, accountId] },
-      {
-        // Each note: notebookId → NULL, bump version, assign syncSeq = (newCounter - N + rank). ROW_NUMBER
-        // orders by IMMUTABLE columns (createdAt,id), never the syncSeq being rewritten. Account-scoped.
-        sql: `
-          WITH t AS (
-            SELECT id, ROW_NUMBER() OVER (ORDER BY createdAt, id) AS rn
-            FROM notes
-            WHERE accountId = ? AND notebookId = ? AND deletedAt IS NULL
-          )
-          UPDATE notes
-          SET notebookId = NULL,
-              updatedAt  = ?,
-              version    = version + 1,
-              syncSeq    = ((SELECT seq FROM accountSyncSeq WHERE accountId = ?) - ? + (SELECT rn FROM t WHERE t.id = notes.id))
-          WHERE id IN (SELECT id FROM t)
-        `,
-        params: [accountId, entry.id, nowIso, accountId, n],
-      },
-    ]);
-  }
+  // distinct syncSeq. Seq reservation is atomic with the assignment (COUNT inside the same batch).
+  // Re-runnable: only touches still-live notes that still carry this notebookId.
+  await db.batch([
+    {
+      sql: `
+        UPDATE accountSyncSeq
+        SET seq = seq + (
+          SELECT COUNT(*) FROM notes
+          WHERE accountId = ? AND notebookId = ? AND deletedAt IS NULL
+        )
+        WHERE accountId = ?
+      `,
+      params: [accountId, entry.id, accountId],
+    },
+    {
+      // Each note: notebookId → NULL, bump version, assign syncSeq = (newCounter - N + rank).
+      sql: `
+        WITH t AS (
+          SELECT id, ROW_NUMBER() OVER (ORDER BY createdAt, id) AS rn
+          FROM notes
+          WHERE accountId = ? AND notebookId = ? AND deletedAt IS NULL
+        ),
+        cnt AS (SELECT COUNT(*) AS n FROM t)
+        UPDATE notes
+        SET notebookId = NULL,
+            updatedAt  = ?,
+            version    = version + 1,
+            syncSeq    = (
+              (SELECT seq FROM accountSyncSeq WHERE accountId = ?)
+              - (SELECT n FROM cnt)
+              + (SELECT rn FROM t WHERE t.id = notes.id)
+            )
+        WHERE id IN (SELECT id FROM t)
+      `,
+      params: [accountId, entry.id, nowIso, accountId],
+    },
+  ]);
+
+  // Step 3 — tombstone the notebook's home collections + their members (collections.md §4 cascade).
+  // Set-based + re-runnable (only live stragglers). A collection cannot outlive its home notebook in v1.
+  await tombstoneCollectionsForNotebook(db, accountId, entry.id, nowIso);
 
   const row = (await fetchNotebook(db, entry.id, accountId))!;
   return { outcome: 'accepted', version: row.version, syncSeq: row.syncSeq, row };

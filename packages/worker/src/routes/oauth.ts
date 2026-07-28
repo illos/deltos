@@ -6,6 +6,7 @@ import {
   TokenGrantRequestSchema,
   clampAgentScopes,
   clampAgentResources,
+  UnsupportedAgentResourceError,
   buildAuthServerMetadata,
   buildProtectedResourceMetadata,
   type RegisterClientResponse,
@@ -252,7 +253,16 @@ oauth.post(
       // CLAMP the RESOURCE SET the user approved (grant sets, ROAD-0011 P1 §1.3) — the SAME clamp + ownership
       // validation as manual mint, so a client-requested resource the user unchecked never survives, and a
       // foreign selection is rejected. Absent picker ⇒ the whole workspace (today's OAuth default).
-      const resources = clampAgentResources(req.resources);
+      // Collection-scoped agent tokens are a v1 non-goal (collections.md §10).
+      let resources: Resource[];
+      try {
+        resources = clampAgentResources(req.resources);
+      } catch (e) {
+        if (e instanceof UnsupportedAgentResourceError) {
+          return oauthError(c, 400, 'invalid_request', e.message);
+        }
+        throw e;
+      }
       const resolveOwner = createResourceOwnerResolver(d1Adapter(c.env.DB));
       for (const r of resources) {
         if (r.kind === 'workspace') continue;

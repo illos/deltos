@@ -1,4 +1,11 @@
-import type { NoteRow, NotebookRow, DictionaryWordRow, DbAdapter } from './schema.js';
+import type {
+  NoteRow,
+  NotebookRow,
+  DictionaryWordRow,
+  CollectionRow,
+  CollectionMemberRow,
+  DbAdapter,
+} from './schema.js';
 import type { SyncPushEntry } from '@deltos/shared';
 import { FIRST_SERVER_VERSION, UNSYNCED_VERSION, isTrashed } from '@deltos/shared';
 import { upsertNoteFts, deleteNoteFts } from './searchIndex.js';
@@ -425,15 +432,17 @@ export async function pullNotes(
 export interface PullSinceResult {
   notes: NoteRow[];
   notebooks: NotebookRow[];
+  collections: CollectionRow[];
+  collectionMembers: CollectionMemberRow[];
   dictionaryWords: DictionaryWordRow[];
   nextCursor: number;
   hasMore: boolean;
 }
 
 /**
- * Fetch the account's NOTES and NOTEBOOKS with syncSeq > cursor as ONE ordered stream. Both entity
- * kinds share `accountSyncSeq`, so a single cursor walks both. We page over the union by syncSeq, then
- * hydrate full rows for the ids in the page — so a page boundary never skips an entity of either kind
+ * Fetch the account's stream entities with syncSeq > cursor as ONE ordered stream. All entity kinds
+ * share `accountSyncSeq`, so a single cursor walks them. We page over the union by syncSeq, then
+ * hydrate full rows for the ids in the page — so a page boundary never skips an entity of any kind
  * (the bug a per-kind cursor would have). Account-scoped on every query (read isolation).
  */
 export async function pullSince(
@@ -441,23 +450,41 @@ export async function pullSince(
   accountId: string,
   cursor: number,
 ): Promise<PullSinceResult> {
-  // The window UNIONs all three entity kinds on the shared syncSeq. For dictionary words the "id" column
-  // is the WORD (its account-scoped identity has no surrogate id) — hydrated by word below.
+  // The window UNIONs all stream entity kinds on the shared syncSeq. For dictionary words the "id"
+  // column is the WORD (its account-scoped identity has no surrogate id) — hydrated by word below.
   const window = await db.all<{ id: string; syncSeq: number; kind: string }>(
     `SELECT id, syncSeq, 'note' AS kind FROM notes WHERE accountId = ? AND syncSeq > ?
      UNION ALL
      SELECT id, syncSeq, 'notebook' AS kind FROM notebooks WHERE accountId = ? AND syncSeq > ?
      UNION ALL
+     SELECT id, syncSeq, 'collection' AS kind FROM collections WHERE accountId = ? AND syncSeq > ?
+     UNION ALL
+     SELECT id, syncSeq, 'collectionMember' AS kind FROM collectionMembers WHERE accountId = ? AND syncSeq > ?
+     UNION ALL
      SELECT word AS id, syncSeq, 'dictionary' AS kind FROM dictionaryWords WHERE accountId = ? AND syncSeq > ?
      ORDER BY syncSeq ASC, kind ASC, id ASC
      LIMIT ?`,
-    [accountId, cursor, accountId, cursor, accountId, cursor, PULL_PAGE + 1],
+    [
+      accountId,
+      cursor,
+      accountId,
+      cursor,
+      accountId,
+      cursor,
+      accountId,
+      cursor,
+      accountId,
+      cursor,
+      PULL_PAGE + 1,
+    ],
   );
 
   const hasMore = window.length > PULL_PAGE;
   const page = hasMore ? window.slice(0, PULL_PAGE) : window;
   const noteIds = page.filter((w) => w.kind === 'note').map((w) => w.id);
   const nbIds = page.filter((w) => w.kind === 'notebook').map((w) => w.id);
+  const colIds = page.filter((w) => w.kind === 'collection').map((w) => w.id);
+  const memIds = page.filter((w) => w.kind === 'collectionMember').map((w) => w.id);
   const dictKeys = page.filter((w) => w.kind === 'dictionary').map((w) => w.id);
 
   const notes = noteIds.length
@@ -472,6 +499,18 @@ export async function pullSince(
         [accountId, ...nbIds],
       )
     : [];
+  const collections = colIds.length
+    ? await db.all<CollectionRow>(
+        `SELECT * FROM collections WHERE accountId = ? AND id IN (${colIds.map(() => '?').join(',')}) ORDER BY syncSeq ASC`,
+        [accountId, ...colIds],
+      )
+    : [];
+  const collectionMembers = memIds.length
+    ? await db.all<CollectionMemberRow>(
+        `SELECT * FROM collectionMembers WHERE accountId = ? AND id IN (${memIds.map(() => '?').join(',')}) ORDER BY syncSeq ASC`,
+        [accountId, ...memIds],
+      )
+    : [];
   const dictionaryWords = dictKeys.length
     ? await db.all<DictionaryWordRow>(
         `SELECT * FROM dictionaryWords WHERE accountId = ? AND word IN (${dictKeys.map(() => '?').join(',')}) ORDER BY syncSeq ASC`,
@@ -480,7 +519,7 @@ export async function pullSince(
     : [];
   const nextCursor = page.length > 0 ? page[page.length - 1]!.syncSeq : cursor;
 
-  return { notes, notebooks, dictionaryWords, nextCursor, hasMore };
+  return { notes, notebooks, collections, collectionMembers, dictionaryWords, nextCursor, hasMore };
 }
 
 // ---------------------------------------------------------------------------

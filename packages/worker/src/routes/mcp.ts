@@ -215,9 +215,10 @@ async function handleToolsCall(
   // authorization + scope above). The read ceiling is untouched. To restore, re-charge effectiveWriteCap
   // against 'mcpWrite' here for WRITE_OPS (see git history / write-tools.md §7).
 
-  // `authorize` lets collection tools filter each item through the SAME extended evaluator (per-notebook
-  // coverage), so a notebook-scoped token's list_notebooks returns ONLY its granted notebooks.
-  const authorize = (resource: Resource): Promise<boolean> => canWith(ctx, principal, 'read', resource);
+  // OP-AWARE authorize: collection tools self-filter with authorize('read', …); create_note filing
+  // checks authorize('write', {kind:'collection'}) so membership needs the same authority as add_notes.
+  const authorize = (op: Op, resource: Resource): Promise<boolean> =>
+    canWith(ctx, principal, op, resource);
   // Citation origin for ChatGPT-connector search/fetch. Prefer the CONFIGURED deployment host
   // (AUTH_AUDIENCE, the canonical hostname) so a spoofed Host header can't poison the citation links
   // ChatGPT renders as trusted; fall back to the request origin only when unset (dev/test deploys).

@@ -1,6 +1,11 @@
 import Dexie, { type EntityTable, type Table } from 'dexie';
-import type { Note, NoteId, NotebookId } from '@deltos/shared';
-import type { NotebookPushEntry, DictionaryPushEntry } from '@deltos/shared';
+import type { Note, NoteId, NotebookId, CollectionId, CollectionMemberId } from '@deltos/shared';
+import type {
+  NotebookPushEntry,
+  DictionaryPushEntry,
+  CollectionPushEntry,
+  CollectionMemberPushEntry,
+} from '@deltos/shared';
 
 /**
  * The client's stored note shape: the spine {@link Note} plus client-only state. `syncStatus` is
@@ -124,6 +129,64 @@ export interface DictionaryQueueEntry {
 }
 
 /**
+ * A locally-mirrored collection (collections.md §3.1/§5). Home-notebook grouping entity; membership is
+ * a separate join table. Synced via collectionQueue + mergeCollections/pushCollections.
+ */
+export interface CollectionRow {
+  id: CollectionId;
+  /** HOME notebook. v1 always set; null reserved for v2 global/cross-notebook. */
+  notebookId: NotebookId | null;
+  name: string;
+  icon?: string;
+  color?: string;
+  /** Accordion order within the home notebook. */
+  ord: number;
+  /** v1 always null; opaque reserved seam for auto-membership. */
+  rule: unknown | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  syncSeq: number;
+}
+
+/**
+ * One entry in the outbound collection sync queue. Mirrors {@link NotebookQueueEntry}.
+ */
+export interface CollectionQueueEntry {
+  id: string;
+  recordId: CollectionId;
+  payload: CollectionPushEntry;
+  createdAt: string;
+}
+
+/**
+ * A locally-mirrored collection-member join row (collections.md §3.2). Id is DETERMINISTIC via
+ * `collectionMemberId(collectionId, noteId)` — never a random UUID.
+ */
+export interface CollectionMemberRow {
+  id: CollectionMemberId;
+  collectionId: CollectionId;
+  noteId: NoteId;
+  ord: number;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  syncSeq: number;
+}
+
+/**
+ * One entry in the outbound collection-member sync queue. Mirrors {@link NotebookQueueEntry}.
+ */
+export interface CollectionMemberQueueEntry {
+  id: string;
+  recordId: CollectionMemberId;
+  payload: CollectionMemberPushEntry;
+  createdAt: string;
+}
+
+/**
  * A content-addressed local cache of blob bytes (originals + host-baked webp derivatives), so reopening a
  * PDF/image is instant + offline-capable and never re-races the cold-boot pre-auth window. Bytes are
  * content-addressed (hash) → immutable → safe to cache indefinitely; the cache layer only ever swaps a
@@ -197,6 +260,10 @@ class DeltosDB extends Dexie {
   blobCache!: Table<BlobCacheRow, [string, string]>;
   blobCacheMeta!: Table<BlobCacheMetaRow, [string, string]>;
   shareUrls!: Table<ShareUrlRow, [string, string]>;
+  collections!: EntityTable<CollectionRow, 'id'>;
+  collectionQueue!: EntityTable<CollectionQueueEntry, 'id'>;
+  collectionMembers!: EntityTable<CollectionMemberRow, 'id'>;
+  collectionMemberQueue!: EntityTable<CollectionMemberQueueEntry, 'id'>;
 
   constructor() {
     super('deltos');
@@ -249,6 +316,14 @@ class DeltosDB extends Dexie {
       // isolation — a share url is only readable under the account that minted it), + an accountId index for
       // scoped sweeps. Wiped in wipeLocalState on account-switch/logout, exactly like blobCache.
       shareUrls: '[accountId+shareId], accountId',
+    });
+    this.version(11).stores({
+      // Collections + members (collections.md §5): home-notebook grouping + join-table membership.
+      // Member compound [collectionId+ord] serves ordered-by-collection liveQuery.
+      collections: 'id, notebookId',
+      collectionQueue: 'id, recordId, createdAt',
+      collectionMembers: 'id, collectionId, noteId, [collectionId+ord]',
+      collectionMemberQueue: 'id, recordId, createdAt',
     });
   }
 }

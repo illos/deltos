@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import type { Note, NoteId } from '@deltos/shared';
+import type { Note, NoteId, CollectionId } from '@deltos/shared';
 import { getStore } from './store.js';
-import type { NotebookRow } from './schema.js';
+import type { NotebookRow, CollectionRow, CollectionMemberRow } from './schema.js';
 import { useNotebookStore } from '../lib/notebookStore.js';
 
 /**
@@ -62,4 +62,24 @@ export function useCurrentNotebook(): NotebookRow | null {
     });
   }, [currentNotebookId]);
   return notebook;
+}
+
+/** Reactively read all live collections (filter by notebookId in the consumer). */
+export function useCollections(): CollectionRow[] {
+  const [collections, setCollections] = useState<CollectionRow[]>([]);
+  useEffect(() => getStore().observeCollections(setCollections), []);
+  return collections;
+}
+
+/** Reactively read live members of one collection, ordered by ord. */
+export function useCollectionMembers(collectionId: CollectionId | null | undefined): CollectionMemberRow[] {
+  const [members, setMembers] = useState<CollectionMemberRow[]>([]);
+  useEffect(() => {
+    if (!collectionId) {
+      setMembers([]);
+      return;
+    }
+    return getStore().observeMembersForCollection(collectionId, setMembers);
+  }, [collectionId]);
+  return members;
 }

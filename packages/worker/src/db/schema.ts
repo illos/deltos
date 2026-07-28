@@ -44,6 +44,37 @@ export interface DictionaryWordRow {
   syncSeq: number; // shared per-account pull-stream position (same counter as notes)
 }
 
+/** D1 row for a collection — account-scoped, synced grouping entity (collections.md §3.1). */
+export interface CollectionRow {
+  id: string;
+  accountId: string;
+  notebookId: string | null; // HOME notebook; v1 always set, null reserved for v2 global
+  name: string;
+  icon: string | null;
+  color: string | null;
+  ord: number;
+  rule: string | null; // JSON text; NULL in v1
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  syncSeq: number;
+}
+
+/** D1 row for a collection membership join (collections.md §3.2). */
+export interface CollectionMemberRow {
+  id: string;
+  accountId: string;
+  collectionId: string;
+  noteId: string;
+  ord: number;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  syncSeq: number;
+}
+
 /**
  * Thin abstraction over D1 and the better-sqlite3 test double. Production code calls
  * `d1Adapter(env.DB)`; tests call `sqliteAdapter(db)`. The SQL is identical — D1 is SQLite.

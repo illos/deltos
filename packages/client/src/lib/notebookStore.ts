@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { NotebookId } from '@deltos/shared';
+import type { NotebookId, CollectionId } from '@deltos/shared';
 import { loadCurrentNotebookId, writeCurrentNotebookId, deleteCurrentNotebookId } from '../db/notebookPointer.js';
 
 interface NotebookState {
@@ -7,10 +7,17 @@ interface NotebookState {
   _ready: boolean;
   /** The device-local current notebook. Null = no notebook selected (show the picker). */
   currentNotebookId: NotebookId | null;
+  /**
+   * Device-local set of expanded collection accordion ids (collections.md §5.1). NOT synced —
+   * pure UI state for the inline note-list accordions. Cleared on account wipe via {@link reset}.
+   */
+  openCollectionIds: ReadonlySet<CollectionId>;
   /** Called once by AuthedShell on mount. Reads IDB (with localStorage migration). */
   init(): Promise<void>;
   /** Persist a new current notebook to IDB and update in-memory state. null = select All Notes (clears IDB pointer). */
   setCurrentNotebook(id: NotebookId | null): Promise<void>;
+  /** Toggle a collection accordion open/closed (device-local only). */
+  toggleCollectionOpen(id: CollectionId): void;
   /**
    * Reset the in-memory store to its pre-init state (#57). Called on an account-change wipe so a
    * logout→login shows NO stale prior-account notebook for the ~1 tick before AuthedShell re-runs
@@ -19,9 +26,10 @@ interface NotebookState {
   reset(): void;
 }
 
-export const useNotebookStore = create<NotebookState>((set) => ({
+export const useNotebookStore = create<NotebookState>((set, get) => ({
   _ready: false,
   currentNotebookId: null,
+  openCollectionIds: new Set(),
 
   async init() {
     const id = await loadCurrentNotebookId();
@@ -37,7 +45,14 @@ export const useNotebookStore = create<NotebookState>((set) => ({
     set({ currentNotebookId: id });
   },
 
+  toggleCollectionOpen(id: CollectionId) {
+    const next = new Set(get().openCollectionIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    set({ openCollectionIds: next });
+  },
+
   reset() {
-    set({ _ready: false, currentNotebookId: null });
+    set({ _ready: false, currentNotebookId: null, openCollectionIds: new Set() });
   },
 }));

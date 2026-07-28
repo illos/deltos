@@ -216,10 +216,15 @@ export interface CanContext {
  *     cross-account control (a workspace token for A physically can't read B's rows), so — exactly as
  *     today's `can()` — the owner-resolver/belt is NOT applied here; a nonexistent note stays a data-layer
  *     "not found", never a spurious "forbidden".
- *   - NOTEBOOK/NOTE grant → needs the resolved owner. OWNERSHIP BELT: owner.accountId MUST equal the grant's
- *     account (a notebook grant for A can never reach B's note, even on a matching notebookId). A notebook(X)
- *     grant covers note(N) IFF N currently lives in X (live) — move it out and coverage is lost; a
- *     `notebookId = null` note is covered ONLY by a workspace grant. Unresolvable resource → deny.
+ *   - NOTEBOOK grant → exact notebook OR a note currently living in that notebook. Does NOT cover a
+ *     collection (collections are account-scoped and cross notebooks — collections.md §6).
+ *   - NOTE grant → exact note only.
+ *   - COLLECTION grant → exact collection only. OWNERSHIP BELT: owner.accountId MUST equal the grant's
+ *     account. Missing collection → deny (not found), no leak.
+ *   - NOTEBOOK/NOTE/COLLECTION grants need the resolved owner. OWNERSHIP BELT: owner.accountId MUST equal
+ *     the grant's account. A notebook(X) grant covers note(N) IFF N currently lives in X (live) — move it
+ *     out and coverage is lost; a `notebookId = null` note is covered ONLY by a workspace grant.
+ *     Unresolvable resource → deny.
  *
  * `can()` WITHOUT a resolver keeps exact-match — a notebook grant + note resource on the plain path is a
  * DENY (the deliberate fail-closed default the DB-bound caller upgrades by using this).
@@ -259,9 +264,13 @@ export async function canWith(
     const o = await getOwner();
     if (!o || o.accountId !== g.principal.id) continue; // unresolvable or cross-account → belt deny
     if (granted.kind === 'notebook') {
-      if (resource.kind === 'notebook' ? granted.id === resource.id : o.notebookId === granted.id) return true;
+      // Notebook exact, or note currently in that notebook — NEVER a collection.
+      if (resource.kind === 'notebook' && granted.id === resource.id) return true;
+      if (resource.kind === 'note' && o.notebookId === granted.id) return true;
     } else if (granted.kind === 'note') {
       if (resource.kind === 'note' && granted.id === resource.id) return true;
+    } else if (granted.kind === 'collection') {
+      if (resource.kind === 'collection' && granted.id === resource.id) return true;
     }
   }
   return false;

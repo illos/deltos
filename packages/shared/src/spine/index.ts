@@ -10,5 +10,6 @@ export * from './staticHtml.js';
 export * from './searchText.js';
 export * from './note.js';
 export * from './notebook.js';
+export * from './collection.js';
 export * from './fileNote.js';
 export * from './extract.js';

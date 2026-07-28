@@ -2,8 +2,18 @@ import { getStore } from '../db/store.js';
 import { useAuthStore } from '../auth/store.js';
 import { showConflictToast } from './toastEvents.js';
 import { setServerAlerts } from './alertStore.js';
-import type { SyncQueueEntry, NotebookQueueEntry, NotebookRow, DictionaryQueueEntry, DictionaryWordRow } from '../db/schema.js';
-import type { Note, NoteId, NotebookId, BlockBody, SyncPushEntry } from '@deltos/shared';
+import type {
+  SyncQueueEntry,
+  NotebookQueueEntry,
+  NotebookRow,
+  DictionaryQueueEntry,
+  DictionaryWordRow,
+  CollectionQueueEntry,
+  CollectionRow,
+  CollectionMemberQueueEntry,
+  CollectionMemberRow,
+} from '../db/schema.js';
+import type { Note, NoteId, NotebookId, CollectionId, CollectionMemberId, BlockBody, SyncPushEntry } from '@deltos/shared';
 import { NoteResponseSchema, SyncPushEntrySchema } from '@deltos/shared';
 import type {
   SyncPushRequest,
@@ -12,7 +22,11 @@ import type {
   SyncNote,
   SyncNotebook,
   SyncDictionaryWord,
+  SyncCollection,
+  SyncCollectionMember,
   NotebookPushResult,
+  CollectionPushResult,
+  CollectionMemberPushResult,
 } from '@deltos/shared';
 import { sanitizeBlockIds } from '../editor/serializer.js';
 import { useNotebookStore } from './notebookStore.js';
@@ -199,6 +213,11 @@ async function runSync(notebookId: NotebookId, apiBase: string): Promise<void> {
     setState('syncing');
     await pushQueued(notebookId, apiBase);
     await pushNotebooks(apiBase);
+    // collections.md §4: client can push arms separately; server dependency order is
+    // notebooks → collections → members → notes. Notes already flushed above; members for brand-new
+    // notes may conflict once and retry next cycle (mirror notebook-move).
+    await pushCollections(apiBase);
+    await pushCollectionMembers(apiBase);
     await pushDictionary(apiBase);
     if (_suspended) return; // suspended mid-cycle (e.g. logout): the push flushed; SKIP the re-populating pull
     await pullUpdates(notebookId, apiBase);
@@ -330,6 +349,8 @@ async function pushQueued(notebookId: NotebookId, apiBase: string): Promise<void
     const body: SyncPushRequest = {
       entries: batch.map((p) => p.push),
       notebookEntries: [],
+      collectionEntries: [],
+      collectionMemberEntries: [],
       dictionaryEntries: [],
     };
 
@@ -440,6 +461,8 @@ async function pullUpdates(notebookId: NotebookId, apiBase: string): Promise<voi
 
     await mergePull(json.notes, accountId);
     await mergeNotebooks(json.notebooks);
+    await mergeCollections(json.collections ?? []);
+    await mergeCollectionMembers(json.collectionMembers ?? []);
     await mergeDictionary(json.dictionaryWords);
     // Alerts ride the pull as a CURRENT-STATE PROJECTION (alert-banner-system.md §4.1): REPLACE the client
     // store's server set wholesale each pull — a resolved/expired alert simply stops appearing next pull.
@@ -547,6 +570,8 @@ async function pushNotebooks(apiBase: string): Promise<void> {
   const body: SyncPushRequest = {
     entries: [],
     notebookEntries: entries.map((e) => e.payload),
+    collectionEntries: [],
+    collectionMemberEntries: [],
     dictionaryEntries: [],
   };
 
@@ -591,6 +616,170 @@ async function pushNotebooks(apiBase: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Collection + member sync helpers (collections.md §4/§5)
+// ---------------------------------------------------------------------------
+
+/** Apply incoming server collections (live or tombstoned) to the local mirror. */
+export async function mergeCollections(collections: SyncCollection[]): Promise<void> {
+  if (collections.length === 0) return;
+  for (const c of collections) {
+    const row: CollectionRow = {
+      id: c.id as CollectionId,
+      notebookId: c.notebookId as NotebookId | null,
+      name: c.name,
+      ...(c.icon !== undefined ? { icon: c.icon } : {}),
+      ...(c.color !== undefined ? { color: c.color } : {}),
+      ord: c.ord,
+      rule: c.rule ?? null,
+      version: c.version,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
+      deletedAt: c.deletedAt,
+      syncSeq: c.syncSeq,
+    };
+    await getStore().putCollection(row);
+  }
+}
+
+/** Apply incoming server collection-members (live or tombstoned) to the local mirror. */
+export async function mergeCollectionMembers(members: SyncCollectionMember[]): Promise<void> {
+  if (members.length === 0) return;
+  for (const m of members) {
+    const row: CollectionMemberRow = {
+      id: m.id as CollectionMemberId,
+      collectionId: m.collectionId as CollectionId,
+      noteId: m.noteId as NoteId,
+      ord: m.ord,
+      version: m.version,
+      createdAt: m.createdAt,
+      updatedAt: m.updatedAt,
+      deletedAt: m.deletedAt,
+      syncSeq: m.syncSeq,
+    };
+    await getStore().putCollectionMember(row);
+  }
+}
+
+async function dedupeCollectionQueue(): Promise<CollectionQueueEntry[]> {
+  const all = await getStore().collectionQueueEntries();
+  const byId = new Map<string, CollectionQueueEntry>();
+  for (const e of all) {
+    const existing = byId.get(e.recordId);
+    if (!existing || e.createdAt > existing.createdAt) byId.set(e.recordId, e);
+  }
+  return [...byId.values()];
+}
+
+async function dedupeCollectionMemberQueue(): Promise<CollectionMemberQueueEntry[]> {
+  const all = await getStore().collectionMemberQueueEntries();
+  const byId = new Map<string, CollectionMemberQueueEntry>();
+  for (const e of all) {
+    const existing = byId.get(e.recordId);
+    if (!existing || e.createdAt > existing.createdAt) byId.set(e.recordId, e);
+  }
+  return [...byId.values()];
+}
+
+async function pushCollections(apiBase: string): Promise<void> {
+  const entries = await dedupeCollectionQueue();
+  if (entries.length === 0) return;
+
+  const body: SyncPushRequest = {
+    entries: [],
+    notebookEntries: [],
+    collectionEntries: entries.map((e) => e.payload),
+    collectionMemberEntries: [],
+    dictionaryEntries: [],
+  };
+
+  const res = await syncFetch(apiBase, '/sync/push', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`push collections ${res.status}`);
+
+  const json: SyncPushResponse = await res.json();
+  const results = json.collectionResults ?? [];
+
+  for (const result of results) {
+    const pushed = entries.find((e) => e.payload.id === result.id);
+    if (!pushed) continue;
+    if (result.outcome === 'accepted') {
+      await getStore().updateCollectionVersion(result.id as CollectionId, result.version);
+    } else {
+      const conflictResult = result as Extract<CollectionPushResult, { outcome: 'conflict' }>;
+      if (conflictResult.serverCollection) {
+        const sc = conflictResult.serverCollection;
+        await getStore().putCollection({
+          id: sc.id as CollectionId,
+          notebookId: sc.notebookId as NotebookId | null,
+          name: sc.name,
+          ...(sc.icon !== undefined ? { icon: sc.icon } : {}),
+          ...(sc.color !== undefined ? { color: sc.color } : {}),
+          ord: sc.ord,
+          rule: sc.rule ?? null,
+          version: sc.version,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          deletedAt: null,
+          syncSeq: 0,
+        });
+      }
+    }
+    await getStore().drainCollectionQueueEntry(pushed.id);
+  }
+}
+
+async function pushCollectionMembers(apiBase: string): Promise<void> {
+  const entries = await dedupeCollectionMemberQueue();
+  if (entries.length === 0) return;
+
+  const body: SyncPushRequest = {
+    entries: [],
+    notebookEntries: [],
+    collectionEntries: [],
+    collectionMemberEntries: entries.map((e) => e.payload),
+    dictionaryEntries: [],
+  };
+
+  const res = await syncFetch(apiBase, '/sync/push', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`push collection-members ${res.status}`);
+
+  const json: SyncPushResponse = await res.json();
+  const results = json.collectionMemberResults ?? [];
+
+  for (const result of results) {
+    const pushed = entries.find((e) => e.payload.id === result.id);
+    if (!pushed) continue;
+    if (result.outcome === 'accepted') {
+      await getStore().updateCollectionMemberVersion(result.id as CollectionMemberId, result.version);
+    } else {
+      const conflictResult = result as Extract<CollectionMemberPushResult, { outcome: 'conflict' }>;
+      if (conflictResult.serverMember) {
+        const sm = conflictResult.serverMember;
+        await getStore().putCollectionMember({
+          id: sm.id as CollectionMemberId,
+          collectionId: sm.collectionId as CollectionId,
+          noteId: sm.noteId as NoteId,
+          ord: sm.ord,
+          version: sm.version,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          deletedAt: null,
+          syncSeq: 0,
+        });
+      }
+    }
+    await getStore().drainCollectionMemberQueueEntry(pushed.id);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Custom-dictionary sync helpers (§5.2) — set semantics, conflict-free
 // ---------------------------------------------------------------------------
 
@@ -627,6 +816,8 @@ async function pushDictionary(apiBase: string): Promise<void> {
   const body: SyncPushRequest = {
     entries: [],
     notebookEntries: [],
+    collectionEntries: [],
+    collectionMemberEntries: [],
     dictionaryEntries: entries.map((e) => e.payload),
   };
 

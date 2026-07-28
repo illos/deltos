@@ -65,21 +65,25 @@ describe('PrincipalVerification discriminated union', () => {
 describe('resourceEquals — structural, never reference equality', () => {
   const note = (n: number) => ResourceSchema.parse({ kind: 'note', id: uuid(n) });
   const notebook = (n: number) => ResourceSchema.parse({ kind: 'notebook', id: uuid(n) });
+  const collection = (n: number) => ResourceSchema.parse({ kind: 'collection', id: uuid(n) });
   const workspace = ResourceSchema.parse({ kind: 'workspace' });
 
   it('equal when same kind and same id (distinct objects)', () => {
     expect(resourceEquals(note(1), note(1))).toBe(true);
     expect(resourceEquals(notebook(1), notebook(1))).toBe(true);
+    expect(resourceEquals(collection(1), collection(1))).toBe(true);
     expect(resourceEquals(workspace, ResourceSchema.parse({ kind: 'workspace' }))).toBe(true);
   });
 
   it('different id ⇒ not equal', () => {
     expect(resourceEquals(note(1), note(2))).toBe(false);
     expect(resourceEquals(notebook(1), notebook(2))).toBe(false);
+    expect(resourceEquals(collection(1), collection(2))).toBe(false);
   });
 
   it('different kind (even same id) ⇒ not equal', () => {
     expect(resourceEquals(note(1), notebook(1))).toBe(false);
     expect(resourceEquals(note(1), workspace)).toBe(false);
+    expect(resourceEquals(collection(1), notebook(1))).toBe(false);
   });
 });

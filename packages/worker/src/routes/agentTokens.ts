@@ -5,6 +5,7 @@ import {
   RevokeAgentTokenRequestSchema,
   clampAgentScopes,
   clampAgentResources,
+  UnsupportedAgentResourceError,
   type Resource,
 } from '@deltos/shared';
 import type { AppEnv } from '../context.js';
@@ -111,7 +112,16 @@ agentTokens.post(
       const scope = clampAgentScopes(req.scope, req.write ? { allowWrite: req.write } : undefined);
       // CLAMP the RESOURCE SET (the second half of the ONE mint clamp): normalize/dedupe/collapse-to-
       // workspace; absent ⇒ the whole workspace. Only what survives is persisted (grant sets, ROAD-0011 P1).
-      const resources = clampAgentResources(req.resources);
+      // Collection-scoped agent tokens are a v1 non-goal — clamp throws; never map-to-workspace.
+      let resources: Resource[];
+      try {
+        resources = clampAgentResources(req.resources);
+      } catch (e) {
+        if (e instanceof UnsupportedAgentResourceError) {
+          return apiError(c, 400, 'invalid_resource', e.message);
+        }
+        throw e;
+      }
       // OWNERSHIP VALIDATION (fail-closed): every non-workspace selection MUST belong to the minter's account.
       // A foreign/absent resource is rejected — otherwise it would mint an INERT grant (the canWith belt would
       // never let it cover anything anyway; this makes the footgun a clear 400 instead of a silent dud).

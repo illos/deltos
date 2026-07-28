@@ -3,6 +3,7 @@ import {
   clampAgentScopes,
   clampToReadOnlyScopes,
   clampAgentResources,
+  UnsupportedAgentResourceError,
   MAX_GRANT_RESOURCES,
   MintAgentTokenRequestSchema,
   ResourceSchema,
@@ -71,6 +72,17 @@ describe('clampAgentResources — the resource-set half of the ONE mint clamp (R
   it('caps the set at MAX_GRANT_RESOURCES (bounds a runaway mint)', () => {
     const many = Array.from({ length: MAX_GRANT_RESOURCES + 25 }, (_, i) => nb(i + 1));
     expect(clampAgentResources(many)).toHaveLength(MAX_GRANT_RESOURCES);
+  });
+
+  it('REJECTS collection resources (v1 non-goal — never map-to-workspace)', () => {
+    const col = ResourceSchema.parse({
+      kind: 'collection',
+      id: '00000000-0000-4000-a000-000000000001',
+    });
+    expect(() => clampAgentResources([col])).toThrow(UnsupportedAgentResourceError);
+    expect(() => clampAgentResources([col])).toThrow(/collection-scoped agent tokens are not supported/);
+    // Mixed with notebook still rejects (no silent strip → workspace).
+    expect(() => clampAgentResources([nb(1), col])).toThrow(UnsupportedAgentResourceError);
   });
 });
 

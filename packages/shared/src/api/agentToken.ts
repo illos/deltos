@@ -96,18 +96,37 @@ export function clampToReadOnlyScopes(requested?: Scope[]): AgentTokenScope[] {
 export const MAX_GRANT_RESOURCES = 100;
 
 /**
+ * Thrown when a mint request asks for a resource kind agent tokens do not support in v1.
+ * Mint routes map this to a 4xx; nothing is persisted.
+ */
+export class UnsupportedAgentResourceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnsupportedAgentResourceError';
+  }
+}
+
+/**
  * Clamp a requested RESOURCE SET to the canonical, minimal set a token is minted against (ROAD-0011 P1 §1.2
  * — the second half of the ONE mint clamp path). Fail-closed + normalizing:
  *   - absent / empty        ⇒ `[{workspace}]` — the whole account, backward-compatible with today's mint.
  *   - workspace anywhere    ⇒ collapses to `[{workspace}]` — a workspace grant already covers every notebook
  *     and note, so any finer selection alongside it is redundant (and confusing to display/revoke).
  *   - otherwise             ⇒ the de-duplicated notebook/note selection, capped at {@link MAX_GRANT_RESOURCES}.
+ *   - collection anywhere   ⇒ REJECT (throws {@link UnsupportedAgentResourceError}). Collection-scoped agent
+ *     tokens are a v1 NON-GOAL (collections.md §10). Do NOT map-to-workspace (that would misrepresent
+ *     authority). canWith still understands collection grants for future/share use.
+ *     // v2: full lifecycle would add AGENT_RESOURCE_KINDS + AgentGrantResourceRow + mapper + response schema.
  * This is the CLAMP the security model leans on: only what survives this call is persisted, so a
  * client-requested (e.g. RFC-8707-seeded) resource the user did not keep never becomes a grant row.
  * Ownership of each selection is validated separately at the route (against the minter's account).
  */
 export function clampAgentResources(requested?: Resource[]): Resource[] {
   if (!requested || requested.length === 0) return [{ kind: 'workspace' }];
+  // v1 non-goal: never persist a collection grant for an agent token (collections.md §10).
+  if (requested.some((r) => r.kind === 'collection')) {
+    throw new UnsupportedAgentResourceError('collection-scoped agent tokens are not supported');
+  }
   if (requested.some((r) => r.kind === 'workspace')) return [{ kind: 'workspace' }];
   const seen = new Set<string>();
   const out: Resource[] = [];

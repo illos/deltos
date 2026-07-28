@@ -24,6 +24,14 @@ const SettingsRoute = lazy(() =>
 const ProbeNavRoute = lazy(() =>
   import('./probe/ProbeNavRoute.js').then((m) => ({ default: m.ProbeNavRoute })),
 );
+// LAZY (collections.md §5.2 / plugins-lazy-past-first-paint): collection accordions stay off the
+// mobile first-load hot path. Only mounts inside a real notebook (All Notes = no accordions in v1).
+const CollectionsSection = lazy(() =>
+  import('./components/CollectionsSection.js').then((m) => ({ default: m.CollectionsSection })),
+);
+const CollectionPickerSheet = lazy(() =>
+  import('./components/CollectionPickerSheet.js').then((m) => ({ default: m.CollectionPickerSheet })),
+);
 // NOTE: OAuth consent is NO LONGER a route in this app. It is a SEPARATE standalone surface served at
 // /oauth/* (oauth-consent-surface-separation.md / DEC-0005), decoupled from this router / shell / service
 // worker. The notes SW passes /oauth/ navigations through to the network (sw.ts denylist).
@@ -210,6 +218,8 @@ export function HomeView({ notebookId }: CollectionViewProps) {
   const [openId, setOpenId] = useState<string | null>(null);
   // #78 swipe-to-move: the note whose notebook-picker sheet is open (null = closed).
   const [movingNote, setMovingNote] = useState<Note | null>(null);
+  // collections.md §5.2: note whose "Add to collection…" sheet is open (null = closed).
+  const [collectingNote, setCollectingNote] = useState<Note | null>(null);
   // #79 desktop note→notebook drag-and-drop: lazily-loaded chunk, desktop only (null on mobile / until loaded).
   const isDesktop = useIsDesktop();
   const noteDnd = useNoteDnd(isDesktop);
@@ -383,47 +393,81 @@ export function HomeView({ notebookId }: CollectionViewProps) {
 
       {showResults ? (
         <SearchResultsBody debouncedQuery={debouncedQuery} showHintWhenEmpty={false} />
-      ) : notes.length === 0 ? (
-        <p className="home__lede">No notes yet.</p>
       ) : (
-        ((rows) =>
-          // In 'custom' sort with the lazy dnd-kit chunk resolved, wrap the list in the reorder provider so
-          // long-press drag reorders → reorderCustom. Until then (non-custom, or module still loading) render
-          // the SAME plain rows — the perf gate: no dnd-kit code touches the entry bundle or runs off 'custom'.
-          reorderEnabled && reorder ? (
-            <reorder.CustomReorderProvider notes={notes}>
-              <ul className="home__notes home__notes--reorderable">{rows}</ul>
-            </reorder.CustomReorderProvider>
+        <>
+          {/* collections.md §5.1: accordion folders ABOVE the flat list. Only in a real notebook. */}
+          {notebookId !== null && (
+            <Suspense fallback={null}>
+              <CollectionsSection
+                notebookId={notebookId}
+                notes={notes}
+                renderNoteRow={(note, index) => {
+                  const rowProps: NoteRowProps = {
+                    note,
+                    index,
+                    selected: note.id === openNoteId,
+                    nbName: undefined,
+                    swipeOpen: openId === note.id,
+                    onOpen: () => setOpenId(note.id),
+                    onClose: () => setOpenId(null),
+                    onDelete: () => handleDelete(note),
+                    onDuplicate: () => handleDuplicate(note),
+                    onMove: () => setMovingNote(note),
+                    onPin: () => handlePin(note),
+                    onAddToCollection: () => setCollectingNote(note),
+                    noteDnd: null,
+                  };
+                  return <NoteRow key={`coll-${note.id}`} {...rowProps} />;
+                }}
+              />
+            </Suspense>
+          )}
+          {notes.length === 0 ? (
+            <p className="home__lede">No notes yet.</p>
           ) : (
-            <ul className="home__notes">{rows}</ul>
-          ))(
-          notes.map((note, index) => {
-            const rowProps: NoteRowProps = {
-              note,
-              index,
-              selected: note.id === openNoteId,
-              nbName: notebookId === null && note.notebookId !== null
-                ? notebookNameById.get(note.notebookId)
-                : undefined,
-              swipeOpen: openId === note.id,
-              onOpen: () => setOpenId(note.id),
-              onClose: () => setOpenId(null),
-              onDelete: () => handleDelete(note),
-              onDuplicate: () => handleDuplicate(note),
-              onMove: () => setMovingNote(note),
-              onPin: () => handlePin(note),
-              // Desktop note→notebook HTML5 DnD: in custom mode the rows are drag-reorder targets, so DISABLE
-              // the HTML5 draggable to stop the two gestures fighting (restores the pre-c14b4e5 gate).
-              noteDnd: reorderEnabled ? null : noteDnd,
-            };
-            // Sortable rows only when the lazy module is ready AND we're in custom sort; else a plain row.
-            return reorderEnabled && reorder ? (
-              <SortableNoteRow key={note.id} useSortableRow={reorder.useSortableRow} {...rowProps} />
-            ) : (
-              <NoteRow key={note.id} {...rowProps} />
-            );
-          }),
-        )
+            ((rows) =>
+              // In 'custom' sort with the lazy dnd-kit chunk resolved, wrap the list in the reorder provider so
+              // long-press drag reorders → reorderCustom. Until then (non-custom, or module still loading) render
+              // the SAME plain rows — the perf gate: no dnd-kit code touches the entry bundle or runs off 'custom'.
+              reorderEnabled && reorder ? (
+                <reorder.CustomReorderProvider notes={notes}>
+                  <ul className="home__notes home__notes--reorderable">{rows}</ul>
+                </reorder.CustomReorderProvider>
+              ) : (
+                <ul className="home__notes">{rows}</ul>
+              ))(
+              notes.map((note, index) => {
+                const rowProps: NoteRowProps = {
+                  note,
+                  index,
+                  selected: note.id === openNoteId,
+                  nbName: notebookId === null && note.notebookId !== null
+                    ? notebookNameById.get(note.notebookId)
+                    : undefined,
+                  swipeOpen: openId === note.id,
+                  onOpen: () => setOpenId(note.id),
+                  onClose: () => setOpenId(null),
+                  onDelete: () => handleDelete(note),
+                  onDuplicate: () => handleDuplicate(note),
+                  onMove: () => setMovingNote(note),
+                  onPin: () => handlePin(note),
+                  ...(notebookId !== null
+                    ? { onAddToCollection: () => setCollectingNote(note) }
+                    : {}),
+                  // Desktop note→notebook HTML5 DnD: in custom mode the rows are drag-reorder targets, so DISABLE
+                  // the HTML5 draggable to stop the two gestures fighting (restores the pre-c14b4e5 gate).
+                  noteDnd: reorderEnabled ? null : noteDnd,
+                };
+                // Sortable rows only when the lazy module is ready AND we're in custom sort; else a plain row.
+                return reorderEnabled && reorder ? (
+                  <SortableNoteRow key={note.id} useSortableRow={reorder.useSortableRow} {...rowProps} />
+                ) : (
+                  <NoteRow key={note.id} {...rowProps} />
+                );
+              }),
+            )
+          )}
+        </>
       )}
       {/* #78 swipe-to-move → notebook-picker bottom sheet (mobile). */}
       {movingNote && (
@@ -433,6 +477,16 @@ export function HomeView({ notebookId }: CollectionViewProps) {
           onSelect={(nbId) => handleMove(movingNote, nbId)}
           onClose={() => setMovingNote(null)}
         />
+      )}
+      {/* collections.md §5.2 — add/remove note ↔ collections multi-select sheet. */}
+      {collectingNote && notebookId !== null && (
+        <Suspense fallback={null}>
+          <CollectionPickerSheet
+            notebookId={notebookId}
+            noteId={collectingNote.id}
+            onClose={() => setCollectingNote(null)}
+          />
+        </Suspense>
       )}
     </div>
   );
@@ -451,6 +505,8 @@ interface NoteRowProps {
   onDuplicate: () => void;
   onMove: () => void;
   onPin: () => void;
+  /** collections.md §5.2 — open the add-to-collection sheet (only when in a real notebook). */
+  onAddToCollection?: () => void;
   /** Desktop note→notebook HTML5 DnD module (null on mobile / in custom-reorder mode / until loaded). */
   noteDnd: ReturnType<typeof useNoteDnd>;
   /** When sortable, the <li>'s reorder ref + dragging flag (supplied by SortableNoteRow). */
@@ -460,7 +516,8 @@ interface NoteRowProps {
 
 /** One HomeView list row: SwipeRow-wrapped note Link. The <li> takes the optional sortable ref/drag class. */
 function NoteRow({
-  note, selected, nbName, swipeOpen, onOpen, onClose, onDelete, onDuplicate, onMove, onPin, noteDnd,
+  note, selected, nbName, swipeOpen, onOpen, onClose, onDelete, onDuplicate, onMove, onPin,
+  onAddToCollection, noteDnd,
   sortableRef, isDragging,
 }: NoteRowProps) {
   const { displayTitle, previewLine } = notePreview(note);
@@ -476,6 +533,7 @@ function NoteRow({
         onDuplicate={onDuplicate}
         onMove={onMove}
         onPin={onPin}
+        {...(onAddToCollection ? { onAddToCollection } : {})}
         isPinned={isPinned(note.properties)}
       >
         <Link

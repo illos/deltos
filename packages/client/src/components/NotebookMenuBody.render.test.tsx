@@ -10,8 +10,12 @@ import { render, cleanup, fireEvent, waitFor } from '@testing-library/react';
  *   - All Notes (null notebook) hides Rename + Share; Sort/View still render.
  */
 
-const { rename, setNoteSort, setDefaultCollectionView, notifyQueueWrite } = vi.hoisted(() => ({
-  rename: vi.fn(), setNoteSort: vi.fn(), setDefaultCollectionView: vi.fn(), notifyQueueWrite: vi.fn(),
+const { rename, setNoteSort, setDefaultCollectionView, notifyQueueWrite, createCollection } = vi.hoisted(() => ({
+  rename: vi.fn(),
+  setNoteSort: vi.fn(),
+  setDefaultCollectionView: vi.fn(),
+  notifyQueueWrite: vi.fn(),
+  createCollection: vi.fn().mockResolvedValue('coll-1'),
 }));
 
 const nb = { current: { id: 'nb-1', name: 'Work', defaultCollectionView: 'list', noteSort: 'alpha' } as
@@ -22,6 +26,7 @@ vi.mock('../auth/store.js', () => ({
   useAuthStore: (sel: (s: { accountId: string | null }) => unknown) => sel({ accountId: 'acct-1' }),
 }));
 vi.mock('../db/mutateNotebooks.js', () => ({ mutateNotebooks: { rename, setNoteSort, setDefaultCollectionView } }));
+vi.mock('../db/mutateCollections.js', () => ({ mutateCollections: { create: createCollection } }));
 vi.mock('../lib/syncEngine.js', () => ({ notifyQueueWrite }));
 // Registry: 'board' is registered so the View list shows List + Board.
 vi.mock('../lib/collectionViews.js', () => ({
@@ -73,11 +78,26 @@ describe('NotebookMenuBody', () => {
     expect(setDefaultCollectionView).toHaveBeenCalledWith('nb-1', 'board');
   });
 
-  it('All Notes (null notebook) hides Rename + Share, keeps Sort + View', () => {
+  it('New collection expands an inline field and commits via mutateCollections.create', async () => {
+    const onClose = vi.fn();
+    const { getByText, getByLabelText } = render(
+      <NotebookMenuBody notebookId={'nb-1' as never} onClose={onClose} />,
+    );
+    fireEvent.click(getByText('New collection'));
+    const field = getByLabelText('Collection name') as HTMLInputElement;
+    fireEvent.change(field, { target: { value: 'Invoices' } });
+    fireEvent.click(getByText('Create'));
+    await waitFor(() => expect(createCollection).toHaveBeenCalledWith('nb-1', 'Invoices'));
+    expect(notifyQueueWrite).toHaveBeenCalledWith('nb-1');
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('All Notes (null notebook) hides Rename + Share + New collection, keeps Sort + View', () => {
     nb.current = null;
     const { queryByText, getByText } = render(
       <NotebookMenuBody notebookId={null} onClose={() => {}} />,
     );
+    expect(queryByText('New collection')).toBeNull();
     expect(queryByText('Rename notebook')).toBeNull();
     expect(queryByText('Share notebook')).toBeNull();
     expect(getByText('Sort')).not.toBeNull();

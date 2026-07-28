@@ -78,7 +78,7 @@ export async function readAccountMarker(): Promise<string | null> {
 async function wipeLocalState(): Promise<void> {
   await db.transaction(
     'rw',
-    [db.notes, db.notebooks, db.noteVersions, db.syncQueue, db.notebookQueue, db.dictionaryWords, db.dictionaryQueue, db.blobCache, db.blobCacheMeta, db.shareUrls, db.deviceState],
+    [db.notes, db.notebooks, db.noteVersions, db.syncQueue, db.notebookQueue, db.dictionaryWords, db.dictionaryQueue, db.blobCache, db.blobCacheMeta, db.shareUrls, db.collections, db.collectionQueue, db.collectionMembers, db.collectionMemberQueue, db.deviceState],
     async () => {
       await Promise.all([
         db.notes.clear(),
@@ -91,6 +91,10 @@ async function wipeLocalState(): Promise<void> {
         db.blobCache.clear(), // ISOLATION: cached blob bytes are account-scoped — never inherit across accounts (#52)
         db.blobCacheMeta.clear(), // the size-only LRU sidecar — dropped in lockstep with blobCache
         db.shareUrls.clear(), // ISOLATION: locally-remembered share URLs are account-scoped — never inherit across accounts (ROAD-0011 P2)
+        db.collections.clear(), // collections.md: account-scoped grouping — never inherit across accounts
+        db.collectionQueue.clear(),
+        db.collectionMembers.clear(),
+        db.collectionMemberQueue.clear(),
       ]);
       // DENY-BY-DEFAULT deviceState wipe (#57): delete EVERY key except the device-global allowlist
       // (the notebook pointer + the resident-account marker + any future per-account pointer all go).

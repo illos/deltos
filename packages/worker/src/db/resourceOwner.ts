@@ -37,8 +37,20 @@ export function createResourceOwnerResolver(db: DbAdapter): ResolveResourceOwner
         if (!row || row.accountId === null) return null;
         return { accountId: row.accountId, notebookId: row.notebookId };
       }
-      default:
+      case 'collection': {
+        // Collections are account-scoped (home notebook is metadata, not a grant nest).
+        const row = await db.first<{ accountId: string | null; notebookId: string | null }>(
+          `SELECT accountId, notebookId FROM collections WHERE id = ? AND deletedAt IS NULL`,
+          [resource.id],
+        );
+        if (!row || row.accountId === null) return null;
+        return { accountId: row.accountId, notebookId: row.notebookId };
+      }
+      default: {
+        const _exhaustive: never = resource;
+        void _exhaustive;
         return null;
+      }
     }
   };
 }

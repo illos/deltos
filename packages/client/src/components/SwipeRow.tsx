@@ -29,7 +29,8 @@ import { useDragAxis } from '../lib/useDragAxis.js';
 
 const SNAP_OPEN = 55;
 const FAR = 200;
-const OPEN = 84; // resting width of the single tap button on each side
+const OPEN_ONE = 84; // resting width of a single tap button
+const OPEN_TWO = 168; // Move + Collect side-by-side
 
 export interface SwipeRowProps {
   isOpen: boolean;
@@ -39,6 +40,8 @@ export interface SwipeRowProps {
   onDuplicate: () => void;
   /** Left-drag Move tap → open the notebook-picker sheet for this row. */
   onMove?: () => void;
+  /** Left-drag Collect tap → open the add-to-collection sheet (collections.md §5.2). */
+  onAddToCollection?: () => void;
   /** Right-fling Pin toggle → flip sys:pinnedAt for this row. */
   onPin?: () => void;
   /** Whether this row is currently pinned (drives the Pin button label pin/unpin). */
@@ -53,10 +56,13 @@ export function SwipeRow({
   onDelete,
   onDuplicate,
   onMove,
+  onAddToCollection,
   onPin,
   isPinned = false,
   children,
 }: SwipeRowProps) {
+  // Left-side resting open width: wider when both Move and Collect are wired.
+  const leftOpen = onMove && onAddToCollection ? OPEN_TWO : OPEN_ONE;
   const containerRef = useRef<HTMLDivElement>(null);
   const foregroundRef = useRef<HTMLDivElement>(null);
 
@@ -138,7 +144,7 @@ export function SwipeRow({
 
   const dragHandlers = useDragAxis({
     axis: 'x',
-    getBase: () => (isDeletingRef.current ? 0 : isOpen ? (sideRef.current === 'left' ? -OPEN : OPEN) : 0),
+    getBase: () => (isDeletingRef.current ? 0 : isOpen ? (sideRef.current === 'left' ? -leftOpen : OPEN_ONE) : 0),
     // Left-fling delete needs the drag to travel past -FAR; right-fling pin past +FAR. Cap a touch beyond.
     min: -(FAR + 40),
     max: FAR + 40,
@@ -148,18 +154,18 @@ export function SwipeRow({
         // RIGHT fling → Pin toggle (only when wired; else just snap open to Copy).
         if (onPin) { commitPin(); return; }
         sideRef.current = 'right';
-        snapTo(OPEN);
+        snapTo(OPEN_ONE);
         onOpenRef.current();
       } else if (pos <= -FAR) {
         // LEFT fling → Delete fly-off.
         commitDelete();
       } else if (pos >= SNAP_OPEN) {
         sideRef.current = 'right'; // open the Copy tap seam (no fling-commit — Copy is a tap)
-        snapTo(OPEN);
+        snapTo(OPEN_ONE);
         onOpenRef.current();
-      } else if (onMove && pos <= -SNAP_OPEN) {
-        sideRef.current = 'left'; // open the Move tap seam (no fling-commit — Move is a tap)
-        snapTo(-OPEN);
+      } else if ((onMove || onAddToCollection) && pos <= -SNAP_OPEN) {
+        sideRef.current = 'left'; // open the Move/Collect tap seam (no fling-commit)
+        snapTo(-leftOpen);
         onOpenRef.current();
       } else {
         if (isOpen) onCloseRef.current();
@@ -186,15 +192,25 @@ export function SwipeRow({
             Copy
           </button>
         </div>
-        {/* LEFT side (revealed by a left-drag): Move tap. Delete is the left-FLING, not a button. */}
-        {onMove && (
+        {/* LEFT side (revealed by a left-drag): Collect + Move taps. Delete is the left-FLING. */}
+        {(onMove || onAddToCollection) && (
           <div className="swipe-row__back-left">
-            <button
-              className="swipe-row__btn swipe-row__btn--move"
-              onClick={(e) => { e.stopPropagation(); onClose(); sideRef.current = null; snapTo(0); onMove(); }}
-            >
-              Move
-            </button>
+            {onAddToCollection && (
+              <button
+                className="swipe-row__btn swipe-row__btn--collect"
+                onClick={(e) => { e.stopPropagation(); onClose(); sideRef.current = null; snapTo(0); onAddToCollection(); }}
+              >
+                Collect
+              </button>
+            )}
+            {onMove && (
+              <button
+                className="swipe-row__btn swipe-row__btn--move"
+                onClick={(e) => { e.stopPropagation(); onClose(); sideRef.current = null; snapTo(0); onMove(); }}
+              >
+                Move
+              </button>
+            )}
           </div>
         )}
       </div>

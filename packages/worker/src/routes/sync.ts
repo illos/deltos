@@ -3,16 +3,42 @@ import {
   SyncPushRequestSchema,
   SyncPullRequestSchema,
 } from '@deltos/shared';
-import type { SyncPushResult, NotebookPushResult, DictionaryPushResult, SyncNote, SyncNotebook, SyncDictionaryWord, NoteResponse } from '@deltos/shared';
+import type {
+  SyncPushResult,
+  NotebookPushResult,
+  DictionaryPushResult,
+  CollectionPushResult,
+  CollectionMemberPushResult,
+  SyncNote,
+  SyncNotebook,
+  SyncDictionaryWord,
+  SyncCollection,
+  SyncCollectionMember,
+  NoteResponse,
+} from '@deltos/shared';
 import type { Resource } from '@deltos/shared';
 import { needsExtraction, type PropertyBag, type Block } from '@deltos/shared';
 import type { AppEnv } from '../context.js';
 import { guard, type AppContext } from '../http.js';
 import { d1Adapter } from '../db/schema.js';
-import type { NoteRow, NotebookRow, DictionaryWordRow } from '../db/schema.js';
+import type {
+  NoteRow,
+  NotebookRow,
+  DictionaryWordRow,
+  CollectionRow,
+  CollectionMemberRow,
+} from '../db/schema.js';
 import { insertNote, updateNote, pullSince } from '../db/mutate.js';
 import { extractForNote } from '../extraction.js';
 import { insertNotebook, renameNotebook, deleteNotebook } from '../db/notebooks.js';
+import {
+  insertCollection,
+  renameCollection,
+  deleteCollection,
+  addMember,
+  removeMember,
+  reorderMember,
+} from '../db/collections.js';
 import { addWord, removeWord } from '../db/dictionary.js';
 import { requireAccountId } from '../db/accountScope.js';
 import { createAuthStore } from '../db/authStore.js';
@@ -91,6 +117,75 @@ function notebookConflictRow(row: NotebookRow): NonNullable<Extract<NotebookPush
   };
 }
 
+function parseRule(rule: string | null): unknown {
+  if (rule === null) return null;
+  try {
+    return JSON.parse(rule) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/** CollectionRow (DB) → SyncCollection (wire). */
+function collectionRowToSync(row: CollectionRow): SyncCollection {
+  return {
+    id: row.id as SyncCollection['id'],
+    notebookId: row.notebookId as SyncCollection['notebookId'],
+    name: row.name,
+    ...(row.icon != null ? { icon: row.icon } : {}),
+    ...(row.color != null ? { color: row.color } : {}),
+    ord: row.ord,
+    rule: parseRule(row.rule),
+    version: row.version,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    deletedAt: row.deletedAt ?? null,
+    syncSeq: row.syncSeq,
+  };
+}
+
+/** CollectionMemberRow (DB) → SyncCollectionMember (wire). */
+function memberRowToSync(row: CollectionMemberRow): SyncCollectionMember {
+  return {
+    id: row.id as SyncCollectionMember['id'],
+    collectionId: row.collectionId as SyncCollectionMember['collectionId'],
+    noteId: row.noteId as SyncCollectionMember['noteId'],
+    ord: row.ord,
+    version: row.version,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    deletedAt: row.deletedAt ?? null,
+    syncSeq: row.syncSeq,
+  };
+}
+
+function collectionConflictRow(
+  row: CollectionRow,
+): NonNullable<Extract<CollectionPushResult, { outcome: 'conflict' }>['serverCollection']> {
+  return {
+    id: row.id as SyncCollection['id'],
+    notebookId: row.notebookId as SyncCollection['notebookId'],
+    name: row.name,
+    ...(row.icon != null ? { icon: row.icon } : {}),
+    ...(row.color != null ? { color: row.color } : {}),
+    ord: row.ord,
+    rule: parseRule(row.rule),
+    version: row.version,
+  };
+}
+
+function memberConflictRow(
+  row: CollectionMemberRow,
+): NonNullable<Extract<CollectionMemberPushResult, { outcome: 'conflict' }>['serverMember']> {
+  return {
+    id: row.id as SyncCollectionMember['id'],
+    collectionId: row.collectionId as SyncCollectionMember['collectionId'],
+    noteId: row.noteId as SyncCollectionMember['noteId'],
+    ord: row.ord,
+    version: row.version,
+  };
+}
+
 /**
  * ROAD-0014: after an accepted note upsert, kick off FILE-CONTENT extraction (digital-PDF text / image OCR)
  * OUT OF BAND via `waitUntil` so it never fails or slows the push response. Cheap-gated: only file notes with
@@ -145,12 +240,19 @@ sync.post(
       const now = new Date().toISOString();
       const results: SyncPushResult[] = [];
       const notebookResults: NotebookPushResult[] = [];
+      const collectionResults: CollectionPushResult[] = [];
+      const collectionMemberResults: CollectionMemberPushResult[] = [];
       const dictionaryResults: DictionaryPushResult[] = [];
 
-      // NOTEBOOKS FIRST (secSys gate #19 / #23 ordering): a same-batch "create notebook then move a note
-      // into it" must see the notebook already exist when the note move's target-ownership check runs.
-      // create (baseVersion 0) / rename (baseVersion N) / delete (delete:true → tombstone + cascade live
-      // notes to Trash). Same accountId scope + accountSyncSeq stream as notes.
+      // ORDERING IS LOAD-BEARING (secSys #19 / collections.md §4, revised for same-batch note file):
+      // notebooks → collections → NOTES → collectionMembers.
+      // Members run LAST so a same-batch "create note + file into collection" resolves the note
+      // ownership SELECT; collections still run before members so a same-batch create-collection
+      // is visible. Boundary contract: Zod parses the whole SyncPushRequest — a *syntactically*
+      // malformed entry 400s the batch (same as notebook/note today); per-entry conflict is for
+      // SEMANTIC conflicts only.
+
+      // 1. NOTEBOOKS
       for (const nb of req.notebookEntries) {
         const outcome = nb.delete === true
           ? await deleteNotebook(db, nb, accountId, now)
@@ -169,8 +271,32 @@ sync.post(
         }
       }
 
-      // NOTES — each entry carries its own notebookId (Option B; stamped on insert, restamped on a
-      // move, ownership-checked). accountId is server-derived and scopes every write + conflict SELECT.
+      // 2. COLLECTIONS (home notebook must already exist for same-batch create)
+      for (const col of req.collectionEntries) {
+        const outcome = col.delete === true
+          ? await deleteCollection(db, col, accountId, now)
+          : col.baseVersion === 0
+            ? await insertCollection(db, col, accountId, now)
+            : await renameCollection(db, col, accountId, now);
+        if (outcome.outcome === 'accepted') {
+          collectionResults.push({
+            id: col.id,
+            outcome: 'accepted',
+            version: outcome.version,
+            syncSeq: outcome.syncSeq,
+          });
+        } else {
+          collectionResults.push({
+            id: col.id,
+            outcome: 'conflict',
+            serverCollection: outcome.serverRow ? collectionConflictRow(outcome.serverRow) : null,
+          });
+        }
+      }
+
+      // 3. NOTES — before members so a same-batch new note is live for membership ownership checks.
+      // Each entry carries its own notebookId (Option B; stamped on insert, restamped on a move,
+      // ownership-checked). accountId is server-derived and scopes every write + conflict SELECT.
       for (const entry of req.entries) {
         if (entry.baseVersion === 0) {
           // INSERT notebookId (#58 tri-state): an explicit per-entry value (id OR null) wins; if omitted,
@@ -196,6 +322,29 @@ sync.post(
         }
       }
 
+      // 4. COLLECTION MEMBERS LAST (collection + note both visible for ownership checks)
+      for (const mem of req.collectionMemberEntries) {
+        const outcome = mem.delete === true
+          ? await removeMember(db, mem, accountId, now)
+          : mem.baseVersion === 0
+            ? await addMember(db, mem, accountId, now)
+            : await reorderMember(db, mem, accountId, now);
+        if (outcome.outcome === 'accepted') {
+          collectionMemberResults.push({
+            id: mem.id,
+            outcome: 'accepted',
+            version: outcome.version,
+            syncSeq: outcome.syncSeq,
+          });
+        } else {
+          collectionMemberResults.push({
+            id: mem.id,
+            outcome: 'conflict',
+            serverMember: outcome.serverRow ? memberConflictRow(outcome.serverRow) : null,
+          });
+        }
+      }
+
       // CUSTOM DICTIONARY (§5.2) — set semantics, conflict-free: add (upsert, clears tombstone) or remove
       // (tombstone). accountId scopes every write; the word is the account-scoped identity. Always accepted.
       for (const dict of req.dictionaryEntries) {
@@ -205,7 +354,13 @@ sync.post(
         dictionaryResults.push({ word: outcome.word, outcome: 'accepted', syncSeq: outcome.syncSeq });
       }
 
-      return c.json({ results, notebookResults, dictionaryResults });
+      return c.json({
+        results,
+        notebookResults,
+        collectionResults,
+        collectionMemberResults,
+        dictionaryResults,
+      });
     },
   }),
 );
@@ -231,7 +386,15 @@ sync.get(
       // off the principal, never the body), across every notebookId the account owns. Fail-closed if
       // absent.
       const accountId = requireAccountId(c);
-      const { notes, notebooks, dictionaryWords, nextCursor, hasMore } = await pullSince(db, accountId, req.cursor);
+      const {
+        notes,
+        notebooks,
+        collections,
+        collectionMembers,
+        dictionaryWords,
+        nextCursor,
+        hasMore,
+      } = await pullSince(db, accountId, req.cursor);
       // ALERT PROJECTION (alert-banner-system.md §4.1) — computed FRESH each pull, OUTSIDE the cursor window
       // (does not advance nextCursor / touch the syncSeq stream). Scoped to the REQUESTING token so agent
       // write-approval asks surface only to the token that raised them. Read off the guard-set principal (the
@@ -245,6 +408,8 @@ sync.get(
       return c.json({
         notes: notes.map(rowToSyncNote),
         notebooks: notebooks.map(notebookRowToSync),
+        collections: collections.map(collectionRowToSync),
+        collectionMembers: collectionMembers.map(memberRowToSync),
         dictionaryWords: dictionaryWords.map(dictionaryRowToSync),
         alerts: activeAlerts,
         nextCursor,

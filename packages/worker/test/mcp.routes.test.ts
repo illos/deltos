@@ -142,7 +142,19 @@ describe('MCP server — protocol / auth / tools (POST /api/mcp)', () => {
     // get_import_guide + list_import_sources are read-scoped (any token can DISCOVER how to import; writing still
     // needs the write tools), so a read-only token sees them alongside the three note/notebook readers.
     // The two write-approval tools (request/check) are ALSO read-scope — a read-only token may ASK for a lift.
-    expect(names).toEqual(['check_write_approval', 'fetch', 'get_import_guide', 'get_note', 'list_import_sources', 'list_notebooks', 'request_write_approval', 'search', 'search_notes']);
+    expect(names).toEqual([
+      'check_write_approval',
+      'fetch',
+      'get_collection',
+      'get_import_guide',
+      'get_note',
+      'list_collections',
+      'list_import_sources',
+      'list_notebooks',
+      'request_write_approval',
+      'search',
+      'search_notes',
+    ]);
     for (const t of body.result.tools) expect(t.inputSchema).toBeDefined();
   });
 

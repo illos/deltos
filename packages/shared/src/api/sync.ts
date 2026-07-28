@@ -1,8 +1,20 @@
 import { z } from 'zod';
-import { NoteIdSchema, NotebookIdSchema, TimestampSchema } from '../spine/ids.js';
+import {
+  CollectionIdSchema,
+  CollectionMemberIdSchema,
+  NoteIdSchema,
+  NotebookIdSchema,
+  TimestampSchema,
+} from '../spine/ids.js';
 import { VersionSchema } from '../spine/identity.js';
 import { NoteDraftSchema } from '../spine/note.js';
 import { NotebookSchema, NotebookDraftSchema } from '../spine/notebook.js';
+import {
+  CollectionSchema,
+  CollectionDraftSchema,
+  CollectionMemberSchema,
+  CollectionMemberDraftSchema,
+} from '../spine/collection.js';
 import { NoteResponseSchema } from './operations.js';
 import { AlertSchema } from './alert.js';
 
@@ -85,20 +97,68 @@ export const DictionaryPushEntrySchema = z.object({
 export type DictionaryPushEntry = z.infer<typeof DictionaryPushEntrySchema>;
 
 /**
- * Push request — notes, notebooks, and/or dictionary words in one batch. `notebookId` is the OPTIONAL
- * batch-level default notebook for note INSERTS that omit their own `entry.notebookId` (the "current
- * notebook"); it is never applied to updates. At least one entry across the three arrays is required.
+ * One queued COLLECTION write to push (collections.md §3.1/§4). Mirrors NotebookPushEntry:
+ *  - `draft` present, `delete` absent → create (baseVersion 0) or rename/restyle/reorder (baseVersion N)
+ *  - `delete: true` → tombstone the collection AND all its live members (distinct syncSeq each)
+ */
+export const CollectionPushEntrySchema = z
+  .object({
+    id: CollectionIdSchema,
+    baseVersion: VersionSchema,
+    draft: CollectionDraftSchema.optional(),
+    delete: z.literal(true).optional(),
+  })
+  .refine((e) => e.delete === true || e.draft !== undefined, {
+    message: 'a collection entry must carry a draft (create/rename) or delete:true',
+  });
+export type CollectionPushEntry = z.infer<typeof CollectionPushEntrySchema>;
+
+/**
+ * One queued COLLECTION-MEMBER write to push (collections.md §3.2/§4). Membership lifecycle:
+ *  - baseVersion 0 + draft → add member (idempotent revive of a tombstone via unique index)
+ *  - baseVersion N + draft → reorder (CAS on version)
+ *  - delete: true → tombstone the membership (soft remove so other devices learn it)
+ */
+export const CollectionMemberPushEntrySchema = z
+  .object({
+    id: CollectionMemberIdSchema,
+    baseVersion: VersionSchema,
+    draft: CollectionMemberDraftSchema.optional(),
+    delete: z.literal(true).optional(),
+  })
+  .refine((e) => e.delete === true || e.draft !== undefined, {
+    message: 'a collection-member entry must carry a draft (add/reorder) or delete:true',
+  });
+export type CollectionMemberPushEntry = z.infer<typeof CollectionMemberPushEntrySchema>;
+
+/**
+ * Push request — notes, notebooks, collections, collection-members, and/or dictionary words in one
+ * batch. `notebookId` is the OPTIONAL batch-level default notebook for note INSERTS that omit their
+ * own `entry.notebookId` (the "current notebook"); it is never applied to updates. At least one entry
+ * across the arrays is required.
  */
 export const SyncPushRequestSchema = z
   .object({
     notebookId: NotebookIdSchema.optional(),
     entries: z.array(SyncPushEntrySchema).max(100).default([]),
     notebookEntries: z.array(NotebookPushEntrySchema).max(100).default([]),
+    collectionEntries: z.array(CollectionPushEntrySchema).max(100).default([]),
+    collectionMemberEntries: z.array(CollectionMemberPushEntrySchema).max(100).default([]),
     dictionaryEntries: z.array(DictionaryPushEntrySchema).max(100).default([]),
   })
-  .refine((r) => r.entries.length + r.notebookEntries.length + r.dictionaryEntries.length >= 1, {
-    message: 'push must carry at least one note, notebook, or dictionary entry',
-  });
+  .refine(
+    (r) =>
+      r.entries.length +
+        r.notebookEntries.length +
+        r.collectionEntries.length +
+        r.collectionMemberEntries.length +
+        r.dictionaryEntries.length >=
+      1,
+    {
+      message:
+        'push must carry at least one note, notebook, collection, collection-member, or dictionary entry',
+    },
+  );
 export type SyncPushRequest = z.infer<typeof SyncPushRequestSchema>;
 
 /**
@@ -152,9 +212,45 @@ export const DictionaryPushResultSchema = z.object({
 });
 export type DictionaryPushResult = z.infer<typeof DictionaryPushResultSchema>;
 
+/** Per-COLLECTION result. Mirrors the notebook result. */
+export const CollectionPushResultSchema = z.discriminatedUnion('outcome', [
+  z.object({
+    id: CollectionIdSchema,
+    outcome: z.literal('accepted'),
+    version: VersionSchema,
+    syncSeq: z.number().int().positive(),
+  }),
+  z.object({
+    id: CollectionIdSchema,
+    outcome: z.literal('conflict'),
+    /** Current server collection — null when it does not exist for this account. */
+    serverCollection: CollectionSchema.extend({ version: VersionSchema }).nullable(),
+  }),
+]);
+export type CollectionPushResult = z.infer<typeof CollectionPushResultSchema>;
+
+/** Per-COLLECTION-MEMBER result. Mirrors the notebook result. */
+export const CollectionMemberPushResultSchema = z.discriminatedUnion('outcome', [
+  z.object({
+    id: CollectionMemberIdSchema,
+    outcome: z.literal('accepted'),
+    version: VersionSchema,
+    syncSeq: z.number().int().positive(),
+  }),
+  z.object({
+    id: CollectionMemberIdSchema,
+    outcome: z.literal('conflict'),
+    /** Current server member — null when it does not exist for this account. */
+    serverMember: CollectionMemberSchema.extend({ version: VersionSchema }).nullable(),
+  }),
+]);
+export type CollectionMemberPushResult = z.infer<typeof CollectionMemberPushResultSchema>;
+
 export const SyncPushResponseSchema = z.object({
   results: z.array(SyncPushResultSchema),
   notebookResults: z.array(NotebookPushResultSchema).default([]),
+  collectionResults: z.array(CollectionPushResultSchema).default([]),
+  collectionMemberResults: z.array(CollectionMemberPushResultSchema).default([]),
   dictionaryResults: z.array(DictionaryPushResultSchema).default([]),
 });
 export type SyncPushResponse = z.infer<typeof SyncPushResponseSchema>;
@@ -188,6 +284,30 @@ export const SyncNotebookSchema = NotebookSchema.extend({
 export type SyncNotebook = z.infer<typeof SyncNotebookSchema>;
 
 /**
+ * A server collection in the pull stream (collections.md §4). `deletedAt` is the tombstone.
+ */
+export const SyncCollectionSchema = CollectionSchema.extend({
+  version: VersionSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+  deletedAt: TimestampSchema.nullable(),
+  syncSeq: z.number().int().nonnegative(),
+});
+export type SyncCollection = z.infer<typeof SyncCollectionSchema>;
+
+/**
+ * A server collection-member in the pull stream. `deletedAt` is the soft-remove tombstone.
+ */
+export const SyncCollectionMemberSchema = CollectionMemberSchema.extend({
+  version: VersionSchema,
+  createdAt: TimestampSchema,
+  updatedAt: TimestampSchema,
+  deletedAt: TimestampSchema.nullable(),
+  syncSeq: z.number().int().nonnegative(),
+});
+export type SyncCollectionMember = z.infer<typeof SyncCollectionMemberSchema>;
+
+/**
  * Pull request. The sync boundary is the ACCOUNT (Option B, 2026-06-18): the server scopes the pull
  * stream to the caller's accountId (derived from the bearer token), NOT to a notebookId. `cursor` is
  * the caller's per-ACCOUNT stream position; `cursor = 0` triggers a full account sync. The server
@@ -215,6 +335,8 @@ export type SyncDictionaryWord = z.infer<typeof SyncDictionaryWordSchema>;
 export const SyncPullResponseSchema = z.object({
   notes: z.array(SyncNoteSchema),
   notebooks: z.array(SyncNotebookSchema).default([]),
+  collections: z.array(SyncCollectionSchema).default([]),
+  collectionMembers: z.array(SyncCollectionMemberSchema).default([]),
   dictionaryWords: z.array(SyncDictionaryWordSchema).default([]),
   /**
    * Server-active ALERTS for this account+token (alert-banner-system.md §4.1). ADDITIVE + optional:
@@ -227,7 +349,7 @@ export const SyncPullResponseSchema = z.object({
    * NOT advance `nextCursor` and does NOT touch the sync stream.
    */
   alerts: z.array(AlertSchema).default([]),
-  /** The highest syncSeq in this batch (across notes, notebooks AND dictionary); use as the next cursor. */
+  /** The highest syncSeq in this batch (across all stream entities); use as the next cursor. */
   nextCursor: z.number().int().nonnegative(),
   hasMore: z.boolean(),
 });

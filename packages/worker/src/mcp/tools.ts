@@ -2,6 +2,8 @@ import { z } from 'zod';
 import {
   NoteIdSchema,
   NotebookIdSchema,
+  CollectionIdSchema,
+  collectionMemberId,
   DEFAULT_COLLECTION_VIEW,
   DEFAULT_NOTE_SORT,
   UserPropertyKeySchema,
@@ -30,6 +32,15 @@ import { searchNotes, insertNote, patchNote } from '../db/mutate.js';
 import { getNoteForAccount } from '../db/accountScope.js';
 import { getAccountRoutingGuide } from '../db/accountSettings.js';
 import { listNotebooksForAccount, insertNotebook } from '../db/notebooks.js';
+import {
+  listCollectionsForAccount,
+  membersForCollection,
+  insertCollection,
+  renameCollection,
+  deleteCollection,
+  addMember,
+  removeMember,
+} from '../db/collections.js';
 import { noteRowToResponse, noteRowToSummary } from '../present.js';
 import { storeBlob, type StoreBlobResult } from '../blobStore.js';
 import { type McpToolResult, toolOk, toolError } from './protocol.js';
@@ -64,11 +75,12 @@ export interface McpToolContext {
    */
   env: Env;
   /**
-   * The extended `can()` bound to this request's principal + owner-resolver (ROAD-0011 P1 §1.5). COLLECTION
-   * tools (list_notebooks) filter each item through it, so a notebook-scoped token sees only its granted
-   * notebooks. The SAME chokepoint the per-call gate uses — advertised surface and enforced surface agree.
+   * OP-AWARE extended `canWith` bound to this request's principal + owner-resolver (ROAD-0011 P1 §1.5).
+   * COLLECTION tools self-filter items through `authorize('read', …)`; create_note filing checks
+   * `authorize('write', {kind:'collection', id})` so membership mutation requires the same authority as
+   * add_notes_to_collection. The SAME chokepoint the per-call gate uses.
    */
-  authorize: (resource: Resource) => Promise<boolean>;
+  authorize: (op: Op, resource: Resource) => Promise<boolean>;
   /**
    * The REQUESTING token's group id (grant-set id, stable across per-resource revocation; falls back to the
    * row grantId for single-row grants) — the SAME key the MCP rate-limit + audit use. The write-approval
@@ -139,6 +151,61 @@ function defineTool<S extends z.ZodTypeAny>(tool: {
 /** Citation URL for a note — origin is request-derived (never a hardcoded host). */
 function noteUrl(appOrigin: string, id: string): string {
   return `${appOrigin}/note/${id}`;
+}
+
+/**
+ * Live collections a note belongs to (id + name), account-scoped. Reused by get_note + search_notes so
+ * an agent sees memberships without a second tool call. Skips tombstoned members and deleted collections.
+ * When `authorize` is provided, drops any collection the token may not read (fine-grained resource boundary).
+ */
+async function liveCollectionsForNote(
+  db: DbAdapter,
+  accountId: string,
+  noteId: string,
+  authorize?: (op: Op, resource: Resource) => Promise<boolean>,
+): Promise<Array<{ id: string; name: string }>> {
+  const rows = await db.all<{ id: string; name: string }>(
+    `SELECT c.id AS id, c.name AS name
+     FROM collectionMembers m
+     INNER JOIN collections c ON c.id = m.collectionId AND c.accountId = m.accountId
+     WHERE m.accountId = ? AND m.noteId = ? AND m.deletedAt IS NULL AND c.deletedAt IS NULL
+     ORDER BY c.ord ASC, c.name ASC`,
+    [accountId, noteId],
+  );
+  if (!authorize) return rows;
+  const visible: Array<{ id: string; name: string }> = [];
+  for (const c of rows) {
+    if (await authorize('read', { kind: 'collection', id: CollectionIdSchema.parse(c.id) })) {
+      visible.push(c);
+    }
+  }
+  return visible;
+}
+
+/** Stable de-dupe preserving first-seen order (caps fan-out of 100× the same id). */
+function dedupeIds<T extends string>(ids: readonly T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+/** Live member count for one collection (account-scoped). */
+async function liveMemberCount(
+  db: DbAdapter,
+  accountId: string,
+  collectionId: string,
+): Promise<number> {
+  const row = await db.first<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM collectionMembers
+     WHERE accountId = ? AND collectionId = ? AND deletedAt IS NULL`,
+    [accountId, collectionId],
+  );
+  return row?.n ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -309,9 +376,14 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
     op: 'search',
     resource: (a): Resource =>
       a.notebookId ? { kind: 'notebook', id: a.notebookId } : { kind: 'workspace' },
-    execute: async (a, { db, accountId }) => {
+    execute: async (a, { db, accountId, authorize }) => {
       const rows = await searchNotes(db, a.notebookId, accountId, a.query);
-      return toolOk({ results: rows.map(noteRowToSummary) });
+      const results = [];
+      for (const row of rows) {
+        const collections = await liveCollectionsForNote(db, accountId, row.id, authorize);
+        results.push({ ...noteRowToSummary(row), collections });
+      }
+      return toolOk({ results });
     },
   }),
 
@@ -319,11 +391,12 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
     name: 'get_note',
     description:
       'Read one note in full by its id (the id comes from search_notes or list_notebooks). Returns the ' +
-      'title, the property bag, and the full body. The body is an ordered array of typed blocks (the ' +
-      '"spine"): each block has a "type" (paragraph, heading, list item, etc.) and its content; an ' +
-      'unfamiliar block type still carries readable text — summarise around it rather than failing. ' +
-      'Properties is an open key→value bag of note metadata (tags, status, dates, and app system keys ' +
-      'like sys:trashedAt). If the id is unknown or belongs to someone else, the tool reports not found.',
+      'title, the property bag, the full body, and collections (live folder memberships as {id,name}[]). ' +
+      'The body is an ordered array of typed blocks (the "spine"): each block has a "type" (paragraph, ' +
+      'heading, list item, etc.) and its content; an unfamiliar block type still carries readable text — ' +
+      'summarise around it rather than failing. Properties is an open key→value bag of note metadata ' +
+      '(tags, status, dates, and app system keys like sys:trashedAt). If the id is unknown or belongs ' +
+      'to someone else, the tool reports not found.',
     inputSchema: {
       type: 'object',
       properties: { id: { type: 'string', description: 'The note id (a UUID).' } },
@@ -333,10 +406,11 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
     argsSchema: z.object({ id: NoteIdSchema }).strict(),
     op: 'read',
     resource: (a): Resource => ({ kind: 'note', id: a.id }),
-    execute: async (a, { db, accountId }) => {
+    execute: async (a, { db, accountId, authorize }) => {
       const row = await getNoteForAccount(db, accountId, a.id);
       if (!row) return toolError(`note not found: ${a.id}`);
-      return toolOk(noteRowToResponse(row));
+      const collections = await liveCollectionsForNote(db, accountId, row.id, authorize);
+      return toolOk({ ...noteRowToResponse(row), collections });
     },
   }),
 
@@ -468,7 +542,9 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
       const visible = [];
       for (const nb of rows) {
         // nb.id is a stored, already-valid notebook id; parse re-brands it to the Resource union (cheap).
-        if (await authorize({ kind: 'notebook', id: NotebookIdSchema.parse(nb.id) })) visible.push(nb);
+        if (await authorize('read', { kind: 'notebook', id: NotebookIdSchema.parse(nb.id) })) {
+          visible.push(nb);
+        }
       }
       return toolOk({
         notebooks: visible.map((nb) => ({
@@ -480,6 +556,396 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
         })),
         routingGuide,
       });
+    },
+  }),
+
+  // ---------------------------------------------------------------------------
+  // COLLECTIONS (collections.md §6) — first-class MCP surface. Live-apply mutators reuse
+  // db/collections.ts (same spine as sync). REST mirrors SKIPPED for v1 (MCP + sync suffice).
+  // ---------------------------------------------------------------------------
+
+  defineTool({
+    name: 'list_collections',
+    description:
+      'List the user\'s collections (named folders inside a notebook that group notes). Optionally pass ' +
+      'notebookId to filter to one home notebook. Returns id, name, icon, color, notebookId, and ' +
+      'memberCount (live members). Use list_notebooks first if you need to pick a notebook.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        notebookId: {
+          type: 'string',
+          description: 'Optional home notebook id — when set, only collections in that notebook are returned.',
+        },
+      },
+      additionalProperties: false,
+    },
+    argsSchema: z.object({ notebookId: NotebookIdSchema.optional() }).strict(),
+    op: 'read',
+    resource: (): Resource => ({ kind: 'workspace' }),
+    // COLLECTION gate: any read-scoped token; each item is filtered through authorize so a
+    // collection-scoped token only sees its granted collection(s).
+    gate: 'collection',
+    execute: async (a, { db, accountId, authorize }) => {
+      let rows = await listCollectionsForAccount(db, accountId);
+      if (a.notebookId !== undefined) {
+        rows = rows.filter((c) => c.notebookId === a.notebookId);
+      }
+      const visible = [];
+      for (const c of rows) {
+        if (await authorize('read', { kind: 'collection', id: CollectionIdSchema.parse(c.id) })) {
+          visible.push(c);
+        }
+      }
+      const out = [];
+      for (const c of visible) {
+        const memberCount = await liveMemberCount(db, accountId, c.id);
+        out.push({
+          id: c.id,
+          name: c.name,
+          ...(c.icon != null ? { icon: c.icon } : {}),
+          ...(c.color != null ? { color: c.color } : {}),
+          notebookId: c.notebookId,
+          memberCount,
+        });
+      }
+      return toolOk({ collections: out });
+    },
+  }),
+
+  defineTool({
+    name: 'get_collection',
+    description:
+      'Read one collection by id: its metadata plus its live notes (summaries — id, title, notebookId, ' +
+      'updatedAt). Missing or trashed notes are skipped. Use list_collections to discover ids.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        collectionId: { type: 'string', description: 'The collection id (a UUID).' },
+      },
+      required: ['collectionId'],
+      additionalProperties: false,
+    },
+    argsSchema: z.object({ collectionId: CollectionIdSchema }).strict(),
+    op: 'read',
+    resource: (a): Resource => ({ kind: 'collection', id: a.collectionId }),
+    execute: async (a, { db, accountId }) => {
+      const cols = await listCollectionsForAccount(db, accountId);
+      const col = cols.find((c) => c.id === a.collectionId);
+      if (!col) return toolError(`collection not found: ${a.collectionId}`);
+      const members = await membersForCollection(db, accountId, a.collectionId);
+      const notes = [];
+      for (const m of members) {
+        const note = await getNoteForAccount(db, accountId, m.noteId);
+        if (!note) continue;
+        let props: PropertyBag;
+        try {
+          props = JSON.parse(note.properties) as PropertyBag;
+        } catch {
+          continue;
+        }
+        if (isTrashed(props)) continue;
+        notes.push(noteRowToSummary(note));
+      }
+      return toolOk({
+        collection: {
+          id: col.id,
+          name: col.name,
+          notebookId: col.notebookId,
+          ...(col.icon != null ? { icon: col.icon } : {}),
+          ...(col.color != null ? { color: col.color } : {}),
+          ord: col.ord,
+        },
+        notes,
+      });
+    },
+  }),
+
+  defineTool({
+    name: 'create_collection',
+    description:
+      'Create a NEW collection (a named folder inside a notebook). Requires notebookId (the home ' +
+      'notebook — v1 collections always live in one notebook). Optionally pass icon and color. The ' +
+      'collection id is server-minted. Prefer listing existing collections before minting a near-duplicate.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', minLength: 1, maxLength: 200, description: 'Collection name (1–200 characters).' },
+        notebookId: { type: 'string', description: 'Home notebook id (required in v1).' },
+        icon: { type: 'string', maxLength: 64, description: 'Optional icon token.' },
+        color: { type: 'string', maxLength: 32, description: 'Optional color token.' },
+      },
+      required: ['name', 'notebookId'],
+      additionalProperties: false,
+    },
+    argsSchema: z
+      .object({
+        name: z.string().min(1).max(200),
+        notebookId: NotebookIdSchema,
+        icon: z.string().max(64).optional(),
+        color: z.string().max(32).optional(),
+      })
+      .strict(),
+    op: 'create',
+    // Create is gated on the home notebook (ownership of the notebook); collection id is minted after.
+    resource: (a): Resource => ({ kind: 'notebook', id: a.notebookId }),
+    execute: async (a, { db, accountId, now }) => {
+      const entry = {
+        id: CollectionIdSchema.parse(crypto.randomUUID()),
+        baseVersion: 0 as const,
+        draft: {
+          notebookId: a.notebookId,
+          name: a.name,
+          ...(a.icon !== undefined ? { icon: a.icon } : {}),
+          ...(a.color !== undefined ? { color: a.color } : {}),
+          ord: 0,
+          rule: null,
+        },
+      };
+      const outcome = await insertCollection(db, entry, accountId, now);
+      if (outcome.outcome === 'conflict') {
+        return toolError('could not create collection (id collision or invalid home notebook) — retry');
+      }
+      return toolOk({
+        status: 'applied',
+        collection: {
+          id: outcome.row.id,
+          name: outcome.row.name,
+          notebookId: outcome.row.notebookId,
+          ...(outcome.row.icon != null ? { icon: outcome.row.icon } : {}),
+          ...(outcome.row.color != null ? { color: outcome.row.color } : {}),
+        },
+      });
+    },
+  }),
+
+  defineTool({
+    name: 'update_collection',
+    description:
+      'Rename or restyle an existing collection (name, icon, color). Home notebook is fixed at create and ' +
+      'cannot be moved. Applies immediately.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        collectionId: { type: 'string', description: 'The collection id.' },
+        name: { type: 'string', minLength: 1, maxLength: 200, description: 'New name (1–200 characters).' },
+        icon: { type: 'string', maxLength: 64, description: 'Optional icon token.' },
+        color: { type: 'string', maxLength: 32, description: 'Optional color token.' },
+      },
+      required: ['collectionId'],
+      additionalProperties: false,
+    },
+    argsSchema: z
+      .object({
+        collectionId: CollectionIdSchema,
+        name: z.string().min(1).max(200).optional(),
+        icon: z.string().max(64).optional(),
+        color: z.string().max(32).optional(),
+      })
+      .strict()
+      .refine((a) => a.name !== undefined || a.icon !== undefined || a.color !== undefined, {
+        message: 'provide at least one of: name, icon, color',
+      }),
+    op: 'write',
+    resource: (a): Resource => ({ kind: 'collection', id: a.collectionId }),
+    execute: async (a, { db, accountId, now }) => {
+      const cols = await listCollectionsForAccount(db, accountId);
+      const current = cols.find((c) => c.id === a.collectionId);
+      if (!current) return toolError(`collection not found: ${a.collectionId}`);
+      // Home is fixed at create — always re-send the current notebookId; never move.
+      let rule: unknown = null;
+      if (current.rule !== null) {
+        try {
+          rule = JSON.parse(current.rule) as unknown;
+        } catch {
+          rule = null;
+        }
+      }
+      const outcome = await renameCollection(
+        db,
+        {
+          id: CollectionIdSchema.parse(current.id),
+          baseVersion: current.version,
+          draft: {
+            notebookId: current.notebookId as import('@deltos/shared').NotebookId | null,
+            name: a.name ?? current.name,
+            ...(a.icon !== undefined
+              ? { icon: a.icon }
+              : current.icon != null
+                ? { icon: current.icon }
+                : {}),
+            ...(a.color !== undefined
+              ? { color: a.color }
+              : current.color != null
+                ? { color: current.color }
+                : {}),
+            ord: current.ord,
+            rule,
+          },
+        },
+        accountId,
+        now,
+      );
+      if (outcome.outcome === 'conflict') {
+        return toolError('collection changed since you read it — get_collection and retry');
+      }
+      return toolOk({
+        status: 'applied',
+        collection: {
+          id: outcome.row.id,
+          name: outcome.row.name,
+          notebookId: outcome.row.notebookId,
+          ...(outcome.row.icon != null ? { icon: outcome.row.icon } : {}),
+          ...(outcome.row.color != null ? { color: outcome.row.color } : {}),
+        },
+      });
+    },
+  }),
+
+  defineTool({
+    name: 'delete_collection',
+    description:
+      'Delete a collection (soft tombstone). Its member rows are cascade-tombstoned; notes themselves are ' +
+      'untouched — they only lose the grouping. Applies immediately.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        collectionId: { type: 'string', description: 'The collection id to delete.' },
+      },
+      required: ['collectionId'],
+      additionalProperties: false,
+    },
+    argsSchema: z.object({ collectionId: CollectionIdSchema }).strict(),
+    op: 'delete',
+    resource: (a): Resource => ({ kind: 'collection', id: a.collectionId }),
+    execute: async (a, { db, accountId, now }) => {
+      const cols = await listCollectionsForAccount(db, accountId);
+      const current = cols.find((c) => c.id === a.collectionId);
+      if (!current) return toolError(`collection not found: ${a.collectionId}`);
+      const outcome = await deleteCollection(
+        db,
+        { id: CollectionIdSchema.parse(current.id), baseVersion: current.version, delete: true },
+        accountId,
+        now,
+      );
+      if (outcome.outcome === 'conflict') {
+        return toolError('collection changed since you read it — get_collection and retry');
+      }
+      return toolOk({ status: 'applied', collectionId: outcome.row.id, deleted: true });
+    },
+  }),
+
+  defineTool({
+    name: 'add_notes_to_collection',
+    description:
+      'Add one or more notes to a collection (folder membership). Notes must live in the collection\'s ' +
+      'home notebook (same-notebook rule). Idempotent — re-adding an existing membership succeeds. ' +
+      'Returns per-note results (added | conflict).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        collectionId: { type: 'string', description: 'Target collection id.' },
+        noteIds: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          maxItems: 100,
+          description: 'Note ids to add (1–100; duplicates are ignored).',
+        },
+      },
+      required: ['collectionId', 'noteIds'],
+      additionalProperties: false,
+    },
+    argsSchema: z
+      .object({
+        collectionId: CollectionIdSchema,
+        noteIds: z.array(NoteIdSchema).min(1).max(100),
+      })
+      .strict(),
+    op: 'write',
+    resource: (a): Resource => ({ kind: 'collection', id: a.collectionId }),
+    execute: async (a, { db, accountId, now }) => {
+      // Account-scoped existence check first (BOLA → not found, never a silent per-note conflict only).
+      const owned = (await listCollectionsForAccount(db, accountId)).some((c) => c.id === a.collectionId);
+      if (!owned) return toolError(`collection not found: ${a.collectionId}`);
+      const results: Array<{ noteId: string; outcome: 'added' | 'conflict' }> = [];
+      for (const noteId of dedupeIds(a.noteIds)) {
+        const memberId = collectionMemberId(a.collectionId, noteId);
+        const outcome = await addMember(
+          db,
+          {
+            id: memberId,
+            baseVersion: 0,
+            draft: { collectionId: a.collectionId, noteId, ord: 0 },
+          },
+          accountId,
+          now,
+        );
+        results.push({
+          noteId,
+          outcome: outcome.outcome === 'accepted' ? 'added' : 'conflict',
+        });
+      }
+      return toolOk({ status: 'applied', results });
+    },
+  }),
+
+  defineTool({
+    name: 'remove_notes_from_collection',
+    description:
+      'Remove one or more notes from a collection (soft membership tombstone). Notes themselves are ' +
+      'untouched. Returns per-note results (removed | conflict | missing).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        collectionId: { type: 'string', description: 'Target collection id.' },
+        noteIds: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 1,
+          maxItems: 100,
+          description: 'Note ids to remove (1–100; duplicates are ignored).',
+        },
+      },
+      required: ['collectionId', 'noteIds'],
+      additionalProperties: false,
+    },
+    argsSchema: z
+      .object({
+        collectionId: CollectionIdSchema,
+        noteIds: z.array(NoteIdSchema).min(1).max(100),
+      })
+      .strict(),
+    op: 'write',
+    resource: (a): Resource => ({ kind: 'collection', id: a.collectionId }),
+    execute: async (a, { db, accountId, now }) => {
+      const owned = (await listCollectionsForAccount(db, accountId)).some((c) => c.id === a.collectionId);
+      if (!owned) return toolError(`collection not found: ${a.collectionId}`);
+      const members = await membersForCollection(db, accountId, a.collectionId);
+      const byNote = new Map(members.map((m) => [m.noteId, m]));
+      const results: Array<{ noteId: string; outcome: 'removed' | 'conflict' | 'missing' }> = [];
+      for (const noteId of dedupeIds(a.noteIds)) {
+        const row = byNote.get(noteId);
+        if (!row) {
+          results.push({ noteId, outcome: 'missing' });
+          continue;
+        }
+        const outcome = await removeMember(
+          db,
+          {
+            id: collectionMemberId(a.collectionId, noteId),
+            baseVersion: row.version,
+            delete: true,
+          },
+          accountId,
+          now,
+        );
+        results.push({
+          noteId,
+          outcome: outcome.outcome === 'accepted' ? 'removed' : 'conflict',
+        });
+      }
+      return toolOk({ status: 'applied', results });
     },
   }),
 
@@ -653,13 +1119,21 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
       'IMPORTING notes from another app? Pass createdAt (and optionally updatedAt) — the note\'s ORIGINAL ' +
       'dates as milliseconds since the Unix epoch — so the imported note keeps its real date and sorts by ' +
       'recency correctly. Omit them for a note created NOW (the server stamps both). If you pass only ' +
-      'createdAt, updatedAt defaults to it.',
+      'createdAt, updatedAt defaults to it. Optionally pass collectionIds to file the new note into one or ' +
+      'more collections in the same notebook — each filing requires write on that collection (same as ' +
+      'add_notes_to_collection); unauthorized or foreign homes surface as per-id skipped/conflict.',
     inputSchema: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'The note title, as PLAIN TEXT (no markdown — no leading "# ").' },
+        title: { type: 'string', maxLength: 2000, description: 'The note title, as PLAIN TEXT (no markdown — no leading "# ").' },
         text: { type: 'string', description: 'The note body. Accepts markdown (headings, lists, checkboxes, quotes, code, bold/italic/etc.) — rendered as native blocks.' },
         notebookId: { type: 'string', description: 'Optional notebook id (from list_notebooks) to file the note under.' },
+        collectionIds: {
+          type: 'array',
+          items: { type: 'string' },
+          maxItems: 100,
+          description: 'Optional collection ids (same home notebook) to add the new note to on create (deduped; needs write on each).',
+        },
         createdAt: { type: 'integer', description: 'IMPORT ONLY: the note\'s original creation time as ms since the Unix epoch. Omit for a note created now.' },
         updatedAt: { type: 'integer', description: 'IMPORT ONLY: the note\'s original last-modified time as ms since the Unix epoch. Defaults to createdAt if omitted.' },
       },
@@ -670,6 +1144,7 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
         title: z.string().max(2000).optional(),
         text: z.string().optional(),
         notebookId: NotebookIdSchema.optional(),
+        collectionIds: z.array(CollectionIdSchema).max(100).optional(),
         createdAt: EpochMsSchema.optional(),
         updatedAt: EpochMsSchema.optional(),
       })
@@ -680,7 +1155,7 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
     op: 'create',
     resource: (a): Resource =>
       a.notebookId ? { kind: 'notebook', id: a.notebookId } : { kind: 'workspace' },
-    execute: async (a, { db, accountId, now }) => {
+    execute: async (a, { db, accountId, now, authorize }) => {
       const entry = {
         id: crypto.randomUUID() as NoteId,
         notebookId: a.notebookId ?? null,
@@ -695,7 +1170,40 @@ export const MCP_TOOLS: ReadonlyArray<McpTool<unknown>> = [
       // Import override: thread the caller's original dates (if any) into insertNote's opts; undefined = server-stamped.
       const outcome = await insertNote(db, entry, accountId, now, importTimestampOpts(a.createdAt, a.updatedAt));
       if (outcome.outcome === 'conflict') return toolError('could not create note (id collision) — retry');
-      return toolOk({ status: 'applied', note: noteRowToResponse(outcome.row) });
+      // Filing requires the SAME authority as add_notes_to_collection (op=write on the collection).
+      // Unauthorized filings are skipped — the note is still created.
+      const collectionResults: Array<{
+        collectionId: string;
+        outcome: 'added' | 'conflict' | 'skipped';
+      }> = [];
+      for (const collectionId of dedupeIds(a.collectionIds ?? [])) {
+        const noteId = outcome.row.id as NoteId;
+        const allowed = await authorize('write', { kind: 'collection', id: collectionId });
+        if (!allowed) {
+          collectionResults.push({ collectionId, outcome: 'skipped' });
+          continue;
+        }
+        const memberOutcome = await addMember(
+          db,
+          {
+            id: collectionMemberId(collectionId, noteId),
+            baseVersion: 0,
+            draft: { collectionId, noteId, ord: 0 },
+          },
+          accountId,
+          now,
+        );
+        collectionResults.push({
+          collectionId,
+          outcome: memberOutcome.outcome === 'accepted' ? 'added' : 'conflict',
+        });
+      }
+      const collections = await liveCollectionsForNote(db, accountId, outcome.row.id, authorize);
+      return toolOk({
+        status: 'applied',
+        note: { ...noteRowToResponse(outcome.row), collections },
+        ...(collectionResults.length > 0 ? { collectionResults } : {}),
+      });
     },
   }),
 
@@ -1008,14 +1516,18 @@ export function mcpInstructions(canWrite: boolean): string {
     '  "spine") — paragraphs, headings, list items, and richer block types; read them in order. Properties ',
     '  is an open key→value bag (tags, status, dates; keys prefixed "sys:" are app internals, e.g. ',
     '  sys:trashedAt marks a note the user trashed — treat trashed notes as deleted unless asked otherwise).',
-    '- A NOTEBOOK is a named collection of notes. A note can also be uncategorized (no notebook) and appear ',
-    '  only in the synthetic "All Notes" view, so a missing notebook is normal.',
+    '- A NOTEBOOK is a named top-level container of notes. A note can also be uncategorized (no notebook) ',
+    '  and appear only in the synthetic "All Notes" view, so a missing notebook is normal.',
+    '- A COLLECTION is a named folder *inside* a notebook that groups notes (membership is many-to-many, ',
+    '  within the note\'s notebook). Use list_collections / get_collection; add_notes_to_collection / ',
+    '  remove_notes_from_collection to manage membership. get_note and search_notes also return each ',
+    '  note\'s live collections.',
     '',
     'How to read:',
     '- To answer a question about the user\'s notes, start with search_notes using a few specific keywords, ',
     '  then get_note(id) on the best hit(s) to read full content. search_notes returns summaries, not bodies.',
     '- search and fetch are ChatGPT-connector aliases of that same search_notes → get_note read path.',
-    '- To target a collection, call list_notebooks first and pick the notebookId by soft-ranking: best name ',
+    '- To target a notebook, call list_notebooks first and pick the notebookId by soft-ranking: best name ',
     '  match to the user\'s intent, then most recent. Pass that notebookId to search_notes to scope it.',
     '- Cite note titles when you summarise. If nothing matches, say so plainly rather than guessing.',
     '- To import notes from another app (UpNote, Evernote, Apple Notes…), call get_import_guide first for a ',
@@ -1029,8 +1541,9 @@ export function mcpInstructions(canWrite: boolean): string {
       '  asked you to. After a write, state exactly what you changed.',
       '- create_note makes a new note; update_note replaces a note\'s title/body; append_block adds to the ',
       '  end; set_property sets one metadata key; trash_note moves a note to the Trash (a RECOVERABLE ',
-      '  delete — never a permanent destroy). create_notebook makes a new collection — prefer filing into an ',
-      '  EXISTING notebook (list_notebooks) over minting a near-duplicate.',
+      '  delete — never a permanent destroy). create_notebook makes a new notebook — prefer filing into an ',
+      '  EXISTING notebook (list_notebooks) over minting a near-duplicate. create_collection makes a folder ',
+      '  inside a notebook; add_notes_to_collection / remove_notes_from_collection manage membership.',
       '- Note BODIES accept MARKDOWN and render as NATIVE BLOCKS — use it so the note reads well: ',
       '  "# / ## / ###" headings, "- " bullet and "1." numbered lists, "- [ ] " / "- [x] " CHECKBOXES ',
       '  (real to-do items the user can tick, ideal for tasks/runbooks), "> " blockquotes, ``` fenced ',

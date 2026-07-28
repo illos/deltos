@@ -13,6 +13,12 @@ export type NoteId = z.infer<typeof NoteIdSchema>;
 export const NotebookIdSchema = z.string().uuid().brand<'NotebookId'>();
 export type NotebookId = z.infer<typeof NotebookIdSchema>;
 
+export const CollectionIdSchema = z.string().uuid().brand<'CollectionId'>();
+export type CollectionId = z.infer<typeof CollectionIdSchema>;
+
+export const CollectionMemberIdSchema = z.string().uuid().brand<'CollectionMemberId'>();
+export type CollectionMemberId = z.infer<typeof CollectionMemberIdSchema>;
+
 export const BlockIdSchema = z.string().uuid().brand<'BlockId'>();
 export type BlockId = z.infer<typeof BlockIdSchema>;
 

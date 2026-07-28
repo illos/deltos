@@ -1,5 +1,17 @@
-import type { Note, NoteId, NotebookId } from '@deltos/shared';
-import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry, NotebookQueueEntry, DictionaryWordRow, DictionaryQueueEntry } from './schema.js';
+import type { Note, NoteId, NotebookId, CollectionId, CollectionMemberId } from '@deltos/shared';
+import type {
+  ClientNote,
+  NotebookRow,
+  NoteVersion,
+  SyncQueueEntry,
+  NotebookQueueEntry,
+  DictionaryWordRow,
+  DictionaryQueueEntry,
+  CollectionRow,
+  CollectionQueueEntry,
+  CollectionMemberRow,
+  CollectionMemberQueueEntry,
+} from './schema.js';
 
 /** Conflict resolution actions (UX-called) — values match the spec + UX button labels. */
 export type ConflictResolution = 'keep-mine' | 'keep-theirs' | 'keep-both';
@@ -203,4 +215,37 @@ export interface LocalStore {
   dictionaryQueueEntries(): Promise<DictionaryQueueEntry[]>;
   /** Remove a single dictionary queue entry after it has been pushed. */
   drainDictionaryQueueEntry(id: string): Promise<void>;
+
+  // --- collections mirror (collections.md §5) ---
+  getCollection(id: CollectionId): Promise<CollectionRow | undefined>;
+  putCollection(row: CollectionRow): Promise<void>;
+  /** Reactive list of all live (non-deleted) collections. */
+  observeCollections(cb: (collections: CollectionRow[]) => void): Unsubscribe;
+  /** Atomic collection write + queue entry (create/rename/restyle/reorder/delete). */
+  putCollectionAndEnqueue(row: CollectionRow, entry: CollectionQueueEntry): Promise<void>;
+  /** Bump confirmed server version after an accepted collection push. */
+  updateCollectionVersion(id: CollectionId, version: number): Promise<void>;
+  collectionQueueEntries(): Promise<CollectionQueueEntry[]>;
+  drainCollectionQueueEntry(id: string): Promise<void>;
+
+  getCollectionMember(id: CollectionMemberId): Promise<CollectionMemberRow | undefined>;
+  putCollectionMember(row: CollectionMemberRow): Promise<void>;
+  /**
+   * Reactive live members for one collection (`deletedAt === null`), ordered by `ord` asc.
+   * Local join to notes is the consumer's job.
+   */
+  observeMembersForCollection(
+    collectionId: CollectionId,
+    cb: (members: CollectionMemberRow[]) => void,
+  ): Unsubscribe;
+  /** Atomic member write + queue entry (add/reorder/remove). */
+  putCollectionMemberAndEnqueue(row: CollectionMemberRow, entry: CollectionMemberQueueEntry): Promise<void>;
+  updateCollectionMemberVersion(id: CollectionMemberId, version: number): Promise<void>;
+  collectionMemberQueueEntries(): Promise<CollectionMemberQueueEntry[]>;
+  drainCollectionMemberQueueEntry(id: string): Promise<void>;
+  /**
+   * Local-only cascade: tombstone every live member of a collection (delete-collection path).
+   * No queue entries — the server cascade is authoritative; next pull confirms.
+   */
+  tombstoneMembersForCollection(collectionId: CollectionId, deletedAt: string): Promise<void>;
 }

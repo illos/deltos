@@ -199,9 +199,14 @@ describe('P5 red-team — MCP write tools threat model', () => {
     const { token } = await mintAgentToken(env, ownerA, passA, { write: WRITE_ALL });
     const list = await (await rpc(env, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, token)).json() as JsonRpcResult;
     const names: string[] = list.result.tools.map((t: any) => t.name);
-    // The only delete-shaped tool is trash_note; there is no destroy/purge/delete tool at all.
-    expect(names.filter((n) => /delete|destroy|purge|remove/i.test(n))).toEqual([]);
+    // Notes: the only delete-shaped tool is trash_note (soft). Collections may soft-tombstone
+    // (delete_collection / remove_notes_from_collection) — never a hard-purge/destroy of note rows.
+    const hardish = names.filter((n) => /destroy|purge/i.test(n));
+    expect(hardish).toEqual([]);
     expect(names).toContain('trash_note');
+    // Soft collection lifecycle tools are allowed and are NOT note hard-delete.
+    expect(names).toContain('delete_collection');
+    expect(names).toContain('remove_notes_from_collection');
   });
 
   // ── Vector 2 — read→write escalation DENIED on BOTH auth paths, and audited ───────────────────────

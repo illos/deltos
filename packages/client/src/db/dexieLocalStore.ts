@@ -1,10 +1,22 @@
 import { liveQuery } from 'dexie';
-import type { Note, NoteId, NotebookId, SyncStatus } from '@deltos/shared';
+import type { Note, NoteId, NotebookId, CollectionId, CollectionMemberId, SyncStatus } from '@deltos/shared';
 import { isTrashed, trashedAt, setTrashedAt } from '@deltos/shared';
 import { noteHasContent } from '../lib/noteContent.js';
 import { computeCharDelta, deltaMagnitude, noteText } from '../lib/textDelta.js';
 import { db } from './schema.js';
-import type { ClientNote, NotebookRow, NoteVersion, SyncQueueEntry, NotebookQueueEntry, DictionaryWordRow, DictionaryQueueEntry } from './schema.js';
+import type {
+  ClientNote,
+  NotebookRow,
+  NoteVersion,
+  SyncQueueEntry,
+  NotebookQueueEntry,
+  DictionaryWordRow,
+  DictionaryQueueEntry,
+  CollectionRow,
+  CollectionQueueEntry,
+  CollectionMemberRow,
+  CollectionMemberQueueEntry,
+} from './schema.js';
 import type { ConflictResolution, LocalStore, Unsubscribe } from './localStore.js';
 
 /**
@@ -465,5 +477,102 @@ export const dexieLocalStore: LocalStore = {
 
   async drainDictionaryQueueEntry(id: string): Promise<void> {
     await db.dictionaryQueue.delete(id);
+  },
+
+  // --- collections mirror (collections.md §5) ---
+  getCollection(id: CollectionId): Promise<CollectionRow | undefined> {
+    return db.collections.get(id);
+  },
+
+  async putCollection(row: CollectionRow): Promise<void> {
+    await db.collections.put(row);
+  },
+
+  observeCollections(cb: (collections: CollectionRow[]) => void): Unsubscribe {
+    const sub = liveQuery(async () => {
+      const all = await db.collections.toArray();
+      return all
+        .filter((c) => c.deletedAt === null)
+        .sort((a, b) => a.ord - b.ord || a.name.localeCompare(b.name));
+    }).subscribe({ next: cb });
+    return () => sub.unsubscribe();
+  },
+
+  async putCollectionAndEnqueue(row: CollectionRow, entry: CollectionQueueEntry): Promise<void> {
+    await db.transaction('rw', db.collections, db.collectionQueue, async () => {
+      await db.collections.put(row);
+      await db.collectionQueue.add(entry);
+    });
+  },
+
+  async updateCollectionVersion(id: CollectionId, version: number): Promise<void> {
+    await db.collections.where('id').equals(id).modify((c: CollectionRow) => {
+      c.version = version;
+    });
+  },
+
+  collectionQueueEntries(): Promise<CollectionQueueEntry[]> {
+    return db.collectionQueue.toArray();
+  },
+
+  async drainCollectionQueueEntry(id: string): Promise<void> {
+    await db.collectionQueue.delete(id);
+  },
+
+  getCollectionMember(id: CollectionMemberId): Promise<CollectionMemberRow | undefined> {
+    return db.collectionMembers.get(id);
+  },
+
+  async putCollectionMember(row: CollectionMemberRow): Promise<void> {
+    await db.collectionMembers.put(row);
+  },
+
+  observeMembersForCollection(
+    collectionId: CollectionId,
+    cb: (members: CollectionMemberRow[]) => void,
+  ): Unsubscribe {
+    const sub = liveQuery(async () => {
+      const all = await db.collectionMembers.where('collectionId').equals(collectionId).toArray();
+      return all
+        .filter((m) => m.deletedAt === null)
+        .sort((a, b) => a.ord - b.ord);
+    }).subscribe({ next: cb });
+    return () => sub.unsubscribe();
+  },
+
+  async putCollectionMemberAndEnqueue(
+    row: CollectionMemberRow,
+    entry: CollectionMemberQueueEntry,
+  ): Promise<void> {
+    await db.transaction('rw', db.collectionMembers, db.collectionMemberQueue, async () => {
+      await db.collectionMembers.put(row);
+      await db.collectionMemberQueue.add(entry);
+    });
+  },
+
+  async updateCollectionMemberVersion(id: CollectionMemberId, version: number): Promise<void> {
+    await db.collectionMembers.where('id').equals(id).modify((m: CollectionMemberRow) => {
+      m.version = version;
+    });
+  },
+
+  collectionMemberQueueEntries(): Promise<CollectionMemberQueueEntry[]> {
+    return db.collectionMemberQueue.toArray();
+  },
+
+  async drainCollectionMemberQueueEntry(id: string): Promise<void> {
+    await db.collectionMemberQueue.delete(id);
+  },
+
+  async tombstoneMembersForCollection(collectionId: CollectionId, deletedAt: string): Promise<void> {
+    await db.collectionMembers
+      .where('collectionId')
+      .equals(collectionId)
+      .modify((m: CollectionMemberRow) => {
+        if (m.deletedAt === null) {
+          m.deletedAt = deletedAt;
+          m.updatedAt = deletedAt;
+        }
+      });
   },
 };

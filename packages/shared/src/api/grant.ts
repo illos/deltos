@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { NoteIdSchema, NotebookIdSchema, TimestampSchema } from '../spine/ids.js';
+import { CollectionIdSchema, NoteIdSchema, NotebookIdSchema, TimestampSchema } from '../spine/ids.js';
 
 /**
  * Authorization is one primitive through one chokepoint. A share link, an agent token, and a
@@ -49,18 +49,21 @@ export type Principal = z.infer<typeof PrincipalSchema>;
 
 /**
  * Resources form a coarse-to-fine hierarchy. A discriminated union keeps the id strongly
- * typed to the level it addresses — `workspace` carries none, `notebook`/`note` carry theirs.
+ * typed to the level it addresses — `workspace` carries none; `notebook`/`note`/`collection`
+ * carry theirs. A `collection` is account-scoped and does NOT nest under a notebook grant
+ * (collections.md §6) — coverage is workspace or exact collection only.
  */
 export const ResourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('workspace') }),
   z.object({ kind: z.literal('notebook'), id: NotebookIdSchema }),
   z.object({ kind: z.literal('note'), id: NoteIdSchema }),
+  z.object({ kind: z.literal('collection'), id: CollectionIdSchema }),
 ]);
 export type Resource = z.infer<typeof ResourceSchema>;
 
 /**
  * Structural equality over the discriminated {@link Resource} union — same `kind`, and for
- * `notebook`/`note` the same `id`. NEVER reference equality. `can()` uses this to bind a
+ * id-bearing kinds the same `id`. NEVER reference equality. `can()` uses this to bind a
  * step-up `signed-request` to the exact resource its signature was verified for, so it cannot
  * be presented against a different resource.
  */
@@ -72,6 +75,8 @@ export function resourceEquals(a: Resource, b: Resource): boolean {
       return b.kind === 'notebook' && a.id === b.id;
     case 'note':
       return b.kind === 'note' && a.id === b.id;
+    case 'collection':
+      return b.kind === 'collection' && a.id === b.id;
     default: {
       const _exhaustive: never = a;
       return false;
